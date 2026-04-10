@@ -54,3 +54,8 @@ dkms.conf
 # IDE
 .vscode
 .idea
+
+
+# Added by cargo
+
+/target

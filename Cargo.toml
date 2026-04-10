@@ -1,0 +1,14 @@
+[package]
+name = "spacewasm"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "spacewasm"
+path = "src/lib.rs"
+
+[[bin]]
+name = "spacewasm-wasi"
+path = "src/main.rs"
+
+[dependencies]

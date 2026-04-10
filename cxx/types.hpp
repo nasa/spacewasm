@@ -27,6 +27,10 @@ namespace wasm
     struct Type
     {
         TypeKind kind;
+    };
+
+    struct TypeSection
+    {
         
     };
 }

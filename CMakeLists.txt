@@ -15,4 +15,6 @@ add_library(
         src/buffer.hpp
         src/string.cpp
         src/string.hpp
+        src/module.cpp
+        src/module.hpp
 )
