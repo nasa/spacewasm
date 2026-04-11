@@ -3,8 +3,10 @@ use core::alloc::Layout;
 use core::ops::{Deref, DerefMut};
 use core::ptr::NonNull;
 
-/// A fixed size vector allocated on the heap
-///
+/// A fixed size vector allocated on the heap.
+/// The capacity is set on construction and cannot be changed.
+/// This is very similar to [::alloc::Vec] however it guarantees
+/// maximum memory efficiency.
 pub struct Vec<T: Sized> {
     ptr: *mut T,
     capacity: u32,

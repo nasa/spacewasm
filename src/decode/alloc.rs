@@ -1,11 +1,11 @@
 use core::alloc::{Layout, LayoutError};
 
+// TODO(tumbar) Do we want a more interesting alloc error?
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AllocError;
 
 impl From<LayoutError> for AllocError {
     fn from(_value: LayoutError) -> Self {
-        // TODO(tumbar) Do we want a more interesting alloc error
         AllocError
     }
 }
@@ -35,10 +35,12 @@ pub unsafe fn init(allocator: *const dyn Allocator) {
     }
 }
 
+/// Alloc some memory from the heap
 pub unsafe fn alloc(layout: Layout) -> Result<*mut u8, AllocError> {
     unsafe { (*ALLOCATOR).allocate(layout) }
 }
 
+/// Free some memory from the heap
 pub unsafe fn dealloc(ptr: *mut u8, layout: Layout) {
     unsafe { (*ALLOCATOR).deallocate(ptr, layout) }
 }

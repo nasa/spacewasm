@@ -5,36 +5,36 @@ use core::str::Utf8Error;
 #[derive(Debug, Clone)]
 pub struct ParseError {
     pub offset: u32,
-    pub err: SectionError,
+    pub err: SectionDecodeError,
 }
 
 impl ParseError {
-    pub fn new(offset: u32, err: SectionError) -> Self {
+    pub fn new(offset: u32, err: SectionDecodeError) -> Self {
         Self { offset, err }
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct SectionError {
+pub struct SectionDecodeError {
     pub section: Option<SectionTy>,
-    pub err: ValidationError,
+    pub err: DecodeError,
 }
 
-impl SectionError {
-    pub fn new_with_section(section: SectionTy, err: ValidationError) -> SectionError {
-        SectionError {
+impl SectionDecodeError {
+    pub fn new_with_section(section: SectionTy, err: DecodeError) -> SectionDecodeError {
+        SectionDecodeError {
             section: Some(section),
             err,
         }
     }
 
-    pub fn new(err: ValidationError) -> SectionError {
-        SectionError { section: None, err }
+    pub fn new(err: DecodeError) -> SectionDecodeError {
+        SectionDecodeError { section: None, err }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ValidationError {
+pub enum DecodeError {
     MalformedMagic([u8; 4]),
     MalformedVersion([u8; 4]),
     MalformedVariableLengthInteger,
@@ -55,26 +55,26 @@ pub enum ValidationError {
     InvalidSectionSize { read: u32, expected: u32 },
 }
 
-impl From<AllocError> for ValidationError {
+impl From<AllocError> for DecodeError {
     fn from(value: AllocError) -> Self {
-        ValidationError::AllocationFailure(value)
+        DecodeError::AllocationFailure(value)
     }
 }
 
-impl From<AllocError> for SectionError {
+impl From<AllocError> for SectionDecodeError {
     fn from(value: AllocError) -> Self {
-        Self::new(ValidationError::AllocationFailure(value))
+        Self::new(DecodeError::AllocationFailure(value))
     }
 }
 
-impl From<ValidationError> for SectionError {
-    fn from(value: ValidationError) -> Self {
+impl From<DecodeError> for SectionDecodeError {
+    fn from(value: DecodeError) -> Self {
         Self::new(value)
     }
 }
 
-impl ValidationError {
-    pub fn with_section(self, section: SectionTy) -> SectionError {
-        SectionError::new_with_section(section, self)
+impl DecodeError {
+    pub fn with_section(self, section: SectionTy) -> SectionDecodeError {
+        SectionDecodeError::new_with_section(section, self)
     }
 }
