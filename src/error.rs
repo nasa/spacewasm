@@ -52,6 +52,7 @@ pub enum ValidationError {
     AllocationFailure(AllocError),
     InvalidSectionOrdering(SectionTy, SectionTy),
     DuplicateSection(SectionTy),
+    InvalidSectionSize { read: u32, expected: u32 },
 }
 
 impl From<AllocError> for ValidationError {

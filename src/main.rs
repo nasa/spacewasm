@@ -28,6 +28,10 @@ fn main() {
         let data = std::fs::read(&path).expect("failed to read file");
         let module = spacewasm::Module::new(&data).expect("failed to parse file");
 
+        for item in module.functions {
+            println!("{:?}", item);
+        }
+
         println!("Found {} imports", module.imports.len());
     })
 }

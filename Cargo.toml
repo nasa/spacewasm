@@ -12,3 +12,10 @@ name = "spacewasm-wasi"
 path = "src/main.rs"
 
 [dependencies]
+
+[profile.release]
+opt-level = 3
+lto = true
+debug = "none"
+panic = "abort"
+strip = true

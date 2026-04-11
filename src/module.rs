@@ -54,7 +54,7 @@ impl Module {
 
         // We need to do a single set of vector allocations per-section
         // First we need to traverse the sections
-        let section_start = wasm.save();
+        let data_start = wasm.save();
 
         // pub custom: Vec<CustomSection>,
         let mut n_custom = 0u32;
@@ -95,6 +95,8 @@ impl Module {
             }
 
             let section_size = wasm.read_u32()?;
+            let section_start = wasm.save();
+
             match section_ty {
                 Custom => {
                     // Count the custom section and skip over them for now
@@ -150,12 +152,22 @@ impl Module {
                 Data => {}
                 DataCount => {}
             }
+
+            let section_end = wasm.save();
+            let section_length = section_end - section_start;
+            if section_length != section_size {
+                return Err(ValidationError::InvalidSectionSize {
+                    read: section_length,
+                    expected: section_size,
+                }
+                .with_section(section_ty));
+            }
         }
 
         // Now that we know how many custom sections there are, we can load them into a vector
         let mut custom = Vec::new(n_custom)?;
 
-        wasm.restore(section_start);
+        wasm.restore(data_start);
         loop {
             use SectionTy::*;
             let section_ty = match SectionTy::read(wasm) {
@@ -265,6 +277,7 @@ impl TypeSection {
 
 macro_rules! read_impl_u32 {
     ($type_name:ident) => {
+        #[derive(Debug, Clone)]
         pub struct $type_name(u32);
         impl $type_name {
             pub fn read(wasm: &mut WasmReader) -> Result<Self, ValidationError> {
