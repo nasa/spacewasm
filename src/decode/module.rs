@@ -62,14 +62,14 @@ impl<'wasm> Module<'wasm> {
 
         // pub custom: Vec<CustomSection>,
         let mut n_custom = 0u32;
-        let mut types: Option<Vec<FuncType>> = None;
-        let mut functions: Option<Vec<TypeIdx>> = None;
-        let mut tables: Option<Vec<TableType>> = None;
-        let mut memories: Option<Vec<MemType>> = None;
-        let mut globals: Option<Vec<Global>> = None;
-        let mut imports: Option<Vec<Import>> = None;
-        let mut exports: Option<Vec<Export>> = None;
-        let mut elements: Option<Vec<Element>> = None;
+        let mut types: Vec<FuncType> = Vec::zero();
+        let mut functions: Vec<TypeIdx> = Vec::zero();
+        let mut tables: Vec<TableType> = Vec::zero();
+        let mut memories: Vec<MemType> = Vec::zero();
+        let mut globals: Vec<Global> = Vec::zero();
+        let mut imports: Vec<Import> = Vec::zero();
+        let mut exports: Vec<Export> = Vec::zero();
+        let mut elements: Vec<Element> = Vec::zero();
         let mut start: Option<FuncIdx> = None;
 
         let mut last_section: SectionKind = SectionKind::Custom;
@@ -111,44 +111,33 @@ impl<'wasm> Module<'wasm> {
                     n_custom += 1;
                 }
                 Type => {
-                    types.replace(TypeSection::read(wasm).map_err(|e| e.with_section(section_ty))?);
+                    types = TypeSection::read(wasm).map_err(|e| e.with_section(section_ty))?;
                 }
                 Import => {
-                    imports.replace(
-                        ImportSection::read(wasm).map_err(|e| e.with_section(section_ty))?,
-                    );
+                    imports = ImportSection::read(wasm).map_err(|e| e.with_section(section_ty))?;
                 }
                 Function => {
-                    functions.replace(
-                        FunctionSection::read(wasm).map_err(|e| e.with_section(section_ty))?,
-                    );
+                    functions =
+                        FunctionSection::read(wasm).map_err(|e| e.with_section(section_ty))?;
                 }
                 Table => {
-                    tables
-                        .replace(TableSection::read(wasm).map_err(|e| e.with_section(section_ty))?);
+                    tables = TableSection::read(wasm).map_err(|e| e.with_section(section_ty))?;
                 }
                 Memory => {
-                    memories.replace(
-                        MemorySection::read(wasm).map_err(|e| e.with_section(section_ty))?,
-                    );
+                    memories = MemorySection::read(wasm).map_err(|e| e.with_section(section_ty))?;
                 }
                 Global => {
-                    globals.replace(
-                        GlobalSection::read(wasm).map_err(|e| e.with_section(section_ty))?,
-                    );
+                    globals = GlobalSection::read(wasm).map_err(|e| e.with_section(section_ty))?;
                 }
                 Export => {
-                    exports.replace(
-                        ExportSection::read(wasm).map_err(|e| e.with_section(section_ty))?,
-                    );
+                    exports = ExportSection::read(wasm).map_err(|e| e.with_section(section_ty))?;
                 }
                 Start => {
                     start.replace(FuncIdx::read(wasm).map_err(|e| e.with_section(section_ty))?);
                 }
                 Element => {
-                    elements.replace(
-                        ElementSection::read(wasm).map_err(|e| e.with_section(section_ty))?,
-                    );
+                    elements =
+                        ElementSection::read(wasm).map_err(|e| e.with_section(section_ty))?;
                 }
                 Code => {
                     // stats.code += 1;
@@ -198,14 +187,14 @@ impl<'wasm> Module<'wasm> {
 
         Ok(Module {
             custom,
-            types: types.unwrap_or(Vec::zero()),
-            functions: functions.unwrap_or(Vec::zero()),
-            tables: tables.unwrap_or(Vec::zero()),
-            memories: memories.unwrap_or(Vec::zero()),
-            globals: globals.unwrap_or(Vec::zero()),
-            imports: imports.unwrap_or(Vec::zero()),
-            exports: exports.unwrap_or(Vec::zero()),
-            elements: elements.unwrap_or(Vec::zero()),
+            types,
+            functions,
+            tables,
+            memories,
+            globals,
+            imports,
+            exports,
+            elements,
             start,
             _marker: Default::default(),
         })
