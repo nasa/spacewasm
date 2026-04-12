@@ -1,5 +1,5 @@
 use crate::alloc::AllocError;
-use crate::SectionTy;
+use crate::SectionKind;
 use core::str::Utf8Error;
 
 #[derive(Debug, Clone)]
@@ -16,12 +16,12 @@ impl ParseError {
 
 #[derive(Debug, Clone)]
 pub struct SectionDecodeError {
-    pub section: Option<SectionTy>,
+    pub section: Option<SectionKind>,
     pub err: DecodeError,
 }
 
 impl SectionDecodeError {
-    pub fn new_with_section(section: SectionTy, err: DecodeError) -> SectionDecodeError {
+    pub fn new_with_section(section: SectionKind, err: DecodeError) -> SectionDecodeError {
         SectionDecodeError {
             section: Some(section),
             err,
@@ -50,9 +50,10 @@ pub enum DecodeError {
     MalformedImportExportDesc(u8),
     InitVecTooLarge(u32),
     AllocationFailure(AllocError),
-    InvalidSectionOrdering(SectionTy, SectionTy),
-    DuplicateSection(SectionTy),
+    InvalidSectionOrdering(SectionKind, SectionKind),
+    DuplicateSection(SectionKind),
     InvalidSectionSize { read: u32, expected: u32 },
+    InvalidZeroMaxLimit,
 }
 
 impl From<AllocError> for DecodeError {
@@ -74,7 +75,7 @@ impl From<DecodeError> for SectionDecodeError {
 }
 
 impl DecodeError {
-    pub fn with_section(self, section: SectionTy) -> SectionDecodeError {
+    pub fn with_section(self, section: SectionKind) -> SectionDecodeError {
         SectionDecodeError::new_with_section(section, self)
     }
 }

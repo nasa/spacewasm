@@ -1,4 +1,3 @@
-
 mod reader;
 pub(crate) use reader::*;
 
@@ -12,6 +11,4 @@ mod opcode;
 mod types;
 pub use types::*;
 
-pub mod alloc;
-mod vec;
-pub(crate) use vec::*;
+mod code;

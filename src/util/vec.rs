@@ -20,11 +20,15 @@ impl<T: Sized> Vec<T> {
             assert!(size_of::<T>() != 0);
         }
 
-        let ptr = unsafe {
-            alloc::alloc(Layout::from_size_align(
-                size_of::<T>() * capacity as usize,
-                align_of::<T>(),
-            )?)?
+        let ptr = if capacity > 0 {
+            unsafe {
+                alloc::alloc(Layout::from_size_align(
+                    size_of::<T>() * capacity as usize,
+                    align_of::<T>(),
+                )?)?
+            }
+        } else {
+            core::ptr::null_mut()
         };
 
         Ok(Vec {

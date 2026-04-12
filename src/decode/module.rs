@@ -1,4 +1,5 @@
 use crate::*;
+use core::marker::PhantomData;
 
 #[derive(Default)]
 #[repr(C)]
@@ -14,7 +15,7 @@ pub struct Statistics {
     pub elements: u32,
 }
 
-pub struct Module {
+pub struct Module<'wasm> {
     pub custom: Vec<CustomSection>,
     pub types: Vec<FuncType>,
     pub functions: Vec<TypeIdx>,
@@ -25,10 +26,15 @@ pub struct Module {
     pub exports: Vec<Export>,
     pub elements: Vec<Element>,
     pub start: Option<FuncIdx>,
+
+    // We need to keep this lifetime since we are tracking offsets as `u32` rather
+    // than platform dependent `&'wasm` references. This will keep the same outer
+    // borrow checking guarentees that we'd get if we tracked true references.
+    _marker: PhantomData<&'wasm ()>,
 }
 
-impl Module {
-    pub fn new(raw: &[u8]) -> Result<Module, ParseError> {
+impl<'wasm> Module<'wasm> {
+    pub fn new(raw: &'wasm [u8]) -> Result<Module<'wasm>, ParseError> {
         let mut wasm = WasmReader::new(raw);
         let start = wasm.save();
 
@@ -38,7 +44,7 @@ impl Module {
         })
     }
 
-    fn read(wasm: &mut WasmReader) -> Result<Module, SectionDecodeError> {
+    fn read(wasm: &mut WasmReader<'wasm>) -> Result<Module<'wasm>, SectionDecodeError> {
         let magic = wasm.strip_bytes::<4>()?;
         if magic != [0x00, 0x61, 0x73, 0x6D] {
             return Err(DecodeError::MalformedMagic(magic).into());
@@ -66,11 +72,11 @@ impl Module {
         let mut elements: Option<Vec<Element>> = None;
         let mut start: Option<FuncIdx> = None;
 
-        let mut last_section: SectionTy = SectionTy::Custom;
+        let mut last_section: SectionKind = SectionKind::Custom;
 
         loop {
-            use SectionTy::*;
-            let section_ty = match SectionTy::read(wasm) {
+            use SectionKind::*;
+            let section_ty = match SectionKind::read(wasm) {
                 Ok(section) => section,
                 Err(DecodeError::Eof) => {
                     break;
@@ -167,8 +173,8 @@ impl Module {
 
         wasm.restore(data_start);
         loop {
-            use SectionTy::*;
-            let section_ty = match SectionTy::read(wasm) {
+            use SectionKind::*;
+            let section_ty = match SectionKind::read(wasm) {
                 Ok(section) => section,
                 Err(DecodeError::Eof) => {
                     break;
@@ -201,13 +207,14 @@ impl Module {
             exports: exports.unwrap_or(Vec::zero()),
             elements: elements.unwrap_or(Vec::zero()),
             start,
+            _marker: Default::default(),
         })
     }
 }
 
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq, Ord, PartialOrd)]
 #[repr(u32)]
-pub enum SectionTy {
+pub enum SectionKind {
     Custom = 0,
     Type = 1,
     Import = 2,
@@ -223,9 +230,9 @@ pub enum SectionTy {
     DataCount = 12,
 }
 
-impl SectionTy {
+impl SectionKind {
     pub fn read(wasm: &mut WasmReader) -> Result<Self, DecodeError> {
-        use SectionTy::*;
+        use SectionKind::*;
         let ty = match wasm.read_u8()? {
             0 => Custom,
             1 => Type,
