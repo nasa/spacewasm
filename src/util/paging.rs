@@ -4,11 +4,9 @@ use core::cell::UnsafeCell;
 
 #[derive(Debug, Default, Clone)]
 pub struct PageAllocatorStatistics {
-    pub n_allocations: u32,
-    pub n_bytes_requested: u32,
-    pub n_bytes_used: u32,
-    pub n_wasted_bytes: u32,
-    pub page_high_water: u32,
+    pub total_bytes: u32,
+    pub pad_bytes: u32,
+    pub pages: u32,
 }
 
 /// A page is an allocator that utilizes a large contiguous blocks of memory
@@ -22,49 +20,52 @@ pub struct PageAllocatorStatistics {
 /// fit the next allocation in any of it's currently allocated pages.
 ///
 /// This allocator supports a static number of pages and therefore can run out of memory
-pub struct PageAllocator<'a, const PAGE_SIZE: usize, const MAX_PAGES: usize> {
-    inner: UnsafeCell<PageAllocatorInner<'a, PAGE_SIZE, MAX_PAGES>>,
+pub struct PageAllocator<'a, const MAX_PAGES: usize> {
+    inner: UnsafeCell<PageAllocatorInner<'a, MAX_PAGES>>,
 }
 
-impl<'a, const PAGE_SIZE: usize, const MAX_PAGES: usize> PageAllocator<'a, PAGE_SIZE, MAX_PAGES> {
-    pub const fn new(alloc: &'a dyn Allocator) -> Self {
+impl<'a, const MAX_PAGES: usize> PageAllocator<'a, MAX_PAGES> {
+    pub const fn new(alloc: &'a dyn Allocator, page_size: usize) -> Self {
         Self {
-            inner: UnsafeCell::new(PageAllocatorInner::new(alloc)),
+            inner: UnsafeCell::new(PageAllocatorInner::new(alloc, page_size)),
         }
     }
 
-    pub fn finish(self) -> PageAllocatorStatistics {
-        unsafe { (*self.inner.get()).stats.clone() }
+    pub fn stats(&self) -> PageAllocatorStatistics {
+        let inner = unsafe { &*self.inner.get() };
+        let mut stats = PageAllocatorStatistics::default();
+        for bucket in &inner.pages {
+            match bucket {
+                None => {}
+                Some(page) => {
+                    stats.total_bytes += page.allocated as u32;
+                    stats.pad_bytes += page.wasted as u32;
+                    stats.pages += 1;
+                }
+            }
+        }
+
+        stats
     }
 }
 
-struct PageAllocatorInner<'a, const PAGE_SIZE: usize, const MAX_PAGES: usize> {
+struct PageAllocatorInner<'a, const MAX_PAGES: usize> {
     page_allocator: &'a dyn Allocator,
-    pages: [Option<Page<PAGE_SIZE>>; MAX_PAGES],
-    stats: PageAllocatorStatistics,
+    page_size: usize,
+    pages: [Option<Page>; MAX_PAGES],
 }
 
-impl<'a, const PAGE_SIZE: usize, const MAX_PAGES: usize>
-    PageAllocatorInner<'a, PAGE_SIZE, MAX_PAGES>
-{
-    const fn new(alloc: &'a dyn Allocator) -> PageAllocatorInner<'a, PAGE_SIZE, MAX_PAGES> {
+impl<'a, const MAX_PAGES: usize> PageAllocatorInner<'a, MAX_PAGES> {
+    const fn new(alloc: &'a dyn Allocator, page_size: usize) -> PageAllocatorInner<'a, MAX_PAGES> {
         PageAllocatorInner {
             page_allocator: alloc,
+            page_size,
             pages: [None; MAX_PAGES],
-            stats: PageAllocatorStatistics {
-                n_allocations: 0,
-                n_bytes_requested: 0,
-                n_bytes_used: 0,
-                n_wasted_bytes: 0,
-                page_high_water: 0,
-            },
         }
     }
 }
 
-unsafe impl<'a, const PAGE_SIZE: usize, const MAX_PAGES: usize> Allocator
-    for PageAllocator<'a, PAGE_SIZE, MAX_PAGES>
-{
+unsafe impl<'a, const MAX_PAGES: usize> Allocator for PageAllocator<'a, MAX_PAGES> {
     unsafe fn alloc(&self, layout: Layout) -> Result<*mut u8, AllocError> {
         unsafe { (&mut *self.inner.get()).alloc(layout) }
     }
@@ -74,20 +75,15 @@ unsafe impl<'a, const PAGE_SIZE: usize, const MAX_PAGES: usize> Allocator
     }
 }
 
-impl<'a, const PAGE_SIZE: usize, const MAX_PAGES: usize>
-    PageAllocatorInner<'a, PAGE_SIZE, MAX_PAGES>
-{
+impl<'a, const MAX_PAGES: usize> PageAllocatorInner<'a, MAX_PAGES> {
     unsafe fn alloc(&mut self, layout: Layout) -> Result<*mut u8, AllocError> {
         if layout.size() == 0 {
             return Err(AllocError::IllegalZeroSize);
         }
 
-        self.stats.n_allocations += 1;
-        self.stats.n_bytes_requested += layout.size() as u32;
-
         // Go through each page one-by-one and try to allocate
         // If we reach a 'None' page, allocate the page and allocate this request there
-        for (i, bucket) in self.pages.iter_mut().enumerate() {
+        for bucket in self.pages.iter_mut() {
             match bucket {
                 Some(page) => {
                     // Attempt to allocate to this page
@@ -103,11 +99,11 @@ impl<'a, const PAGE_SIZE: usize, const MAX_PAGES: usize>
                 None => {
                     // We have reached an empty page
                     // Allocate the page and place the allocation here
-                    let page_layout = Layout::from_size_align(PAGE_SIZE, 128)?;
+                    let page_layout = Layout::from_size_align(self.page_size, 128)?;
                     let addr = unsafe { self.page_allocator.alloc(page_layout)? };
 
                     // Attempt to allocate this memory into the page
-                    let mut page = Page::new(addr);
+                    let mut page = Page::new(addr, self.page_size);
                     let ptr = match page.alloc(layout) {
                         None => {
                             // Allocation failed on a new page
@@ -121,10 +117,6 @@ impl<'a, const PAGE_SIZE: usize, const MAX_PAGES: usize>
 
                     // Place the new page in the bucket
                     bucket.replace(page);
-                    if (i + 1) as u32 > self.stats.page_high_water {
-                        self.stats.page_high_water = (i + 1) as u32;
-                    }
-
                     return Ok(ptr);
                 }
             }
@@ -144,12 +136,10 @@ impl<'a, const PAGE_SIZE: usize, const MAX_PAGES: usize>
                     }
                     Some(drop_page) => {
                         if drop_page {
-                            self.stats.n_bytes_used += page.allocated as u32;
-                            self.stats.n_wasted_bytes += page.wasted as u32;
                             unsafe {
                                 self.page_allocator.dealloc(
                                     page.ptr,
-                                    Layout::from_size_align(PAGE_SIZE, 128).unwrap(),
+                                    Layout::from_size_align(self.page_size, 128).unwrap(),
                                 );
                             }
 
@@ -164,17 +154,17 @@ impl<'a, const PAGE_SIZE: usize, const MAX_PAGES: usize>
     }
 }
 
-impl<'a, const PAGE_SIZE: usize, const MAX_PAGES: usize> Drop
-    for PageAllocatorInner<'a, PAGE_SIZE, MAX_PAGES>
-{
+impl<'a, const MAX_PAGES: usize> Drop for PageAllocatorInner<'a, MAX_PAGES> {
     fn drop(&mut self) {
         for bucket in self.pages.iter_mut() {
             match bucket {
                 None => {}
                 Some(page) => {
                     unsafe {
-                        self.page_allocator
-                            .dealloc(page.ptr, Layout::from_size_align(PAGE_SIZE, 128).unwrap());
+                        self.page_allocator.dealloc(
+                            page.ptr,
+                            Layout::from_size_align(self.page_size, 128).unwrap(),
+                        );
                     }
 
                     bucket.take();
@@ -185,17 +175,19 @@ impl<'a, const PAGE_SIZE: usize, const MAX_PAGES: usize> Drop
 }
 
 #[derive(Clone, Copy)]
-struct Page<const PAGE_SIZE: usize> {
+struct Page {
     ptr: *mut u8,
+    size: usize,
     allocated: usize,
     n_allocations: usize,
     wasted: usize,
 }
 
-impl<const PAGE_SIZE: usize> Page<PAGE_SIZE> {
-    fn new(ptr: *mut u8) -> Self {
+impl Page {
+    fn new(ptr: *mut u8, size: usize) -> Self {
         Self {
             ptr,
+            size,
             allocated: 0,
             n_allocations: 0,
             wasted: 0,
@@ -214,7 +206,7 @@ impl<const PAGE_SIZE: usize> Page<PAGE_SIZE> {
 
         // Make sure out buffer can fit in here
         let final_offset = (start_address - self.ptr as usize) + layout.size();
-        if final_offset <= PAGE_SIZE {
+        if final_offset <= self.size {
             self.allocated = final_offset;
             self.n_allocations += 1;
             Some(start_address as *mut u8)
@@ -228,7 +220,7 @@ impl<const PAGE_SIZE: usize> Page<PAGE_SIZE> {
         let dealloc_ptr = ptr as usize;
         let page_ptr = self.ptr as usize;
 
-        if page_ptr <= dealloc_ptr && dealloc_ptr <= page_ptr + PAGE_SIZE {
+        if page_ptr <= dealloc_ptr && dealloc_ptr <= page_ptr + self.size {
             // This is out pointer, 'free' it
             // FIXME(tumbar) We may want to track used regions of the pages
             self.n_allocations -= 1;

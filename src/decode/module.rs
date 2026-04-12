@@ -1,18 +1,20 @@
+extern crate std;
 use crate::*;
 use core::marker::PhantomData;
 
 pub struct Module<'wasm> {
-    pub custom: Vec<CustomSection>,
+    pub custom: Vec<CustomSection<'wasm>>,
     pub types: Vec<FuncType>,
     pub functions: Vec<TypeIdx>,
-    pub code: Vec<Func>,
+    pub code: Vec<Func<'wasm>>,
 
     pub tables: Vec<TableType>,
     pub memories: Vec<MemType>,
-    pub globals: Vec<Global>,
-    pub imports: Vec<Import>,
-    pub exports: Vec<Export>,
-    pub elements: Vec<Element>,
+    pub globals: Vec<Global<'wasm>>,
+    pub imports: Vec<Import<'wasm>>,
+    pub exports: Vec<Export<'wasm>>,
+    pub elements: Vec<Element<'wasm>>,
+    pub data: Vec<Data<'wasm>>,
     pub start: Option<FuncIdx>,
 
     // We need to keep this lifetime since we are tracking offsets as `u32` rather
@@ -58,6 +60,8 @@ impl<'wasm> Module<'wasm> {
         let mut exports: Vec<Export> = Vec::zero();
         let mut elements: Vec<Element> = Vec::zero();
         let mut code: Vec<Func> = Vec::zero();
+        let mut data: Vec<Data> = Vec::zero();
+
         let mut start: Option<FuncIdx> = None;
 
         let mut last_section: SectionKind = SectionKind::Custom;
@@ -74,8 +78,8 @@ impl<'wasm> Module<'wasm> {
 
             // Validate the section ordering
             // Custom sections can be interspersed as needed
-            if section_ty != Custom && last_section != Custom {
-                if last_section > section_ty {
+            if section_ty != Custom {
+                if last_section > section_ty && last_section != Custom {
                     return Err(
                         DecodeError::InvalidSectionOrdering(last_section, section_ty).into(),
                     );
@@ -89,12 +93,13 @@ impl<'wasm> Module<'wasm> {
             let section_size = wasm.read_u32()?;
             let section_start = wasm.save();
 
+            std::eprintln!("reading section {:?}", section_ty);
+
             match section_ty {
                 Custom => {
                     // Count the custom section and skip over them for now
                     // We have nowhere to store them
-                    let _ = wasm
-                        .read_n(section_size as usize)
+                    wasm.skip(section_size as usize)
                         .map_err(|e| e.with_section(section_ty))?;
                     n_custom += 1;
                 }
@@ -116,8 +121,7 @@ impl<'wasm> Module<'wasm> {
                 }
                 Global => {
                     // globals = GlobalSection::read(wasm).map_err(|e| e.with_section(section_ty))?;
-                    let _ = wasm
-                        .read_n(section_size as usize)
+                    wasm.skip(section_size as usize)
                         .map_err(|e| e.with_section(section_ty))?;
                 }
                 Export => {
@@ -129,15 +133,17 @@ impl<'wasm> Module<'wasm> {
                 Element => {
                     // elements =
                     //     ElementSection::read(wasm).map_err(|e| e.with_section(section_ty))?;
-                    let _ = wasm
-                        .read_n(section_size as usize)
+                    wasm.skip(section_size as usize)
                         .map_err(|e| e.with_section(section_ty))?;
                 }
                 Code => {
                     code = CodeSection::read(wasm).map_err(|e| e.with_section(section_ty))?;
                 }
-                Data => {}
-                DataCount => {}
+                Data => {
+                    // data = DataSection::read(wasm).map_err(|e| e.with_section(section_ty))?;
+                    wasm.skip(section_size as usize)
+                        .map_err(|e| e.with_section(section_ty))?;
+                }
             }
 
             let section_end = wasm.save();
@@ -166,7 +172,7 @@ impl<'wasm> Module<'wasm> {
             };
 
             let section_size = wasm.read_u32()?;
-            if section_ty != Custom {
+            if section_ty == Custom {
                 custom.push(
                     CustomSection::read(wasm, section_size)
                         .map_err(|e| e.with_section(section_ty))?,
@@ -174,7 +180,7 @@ impl<'wasm> Module<'wasm> {
             } else {
                 // Skip over this section
                 // We already processed it
-                wasm.read_n(section_size as usize)
+                wasm.skip(section_size as usize)
                     .map_err(|e| e.with_section(section_ty))?;
             }
         }
@@ -190,28 +196,29 @@ impl<'wasm> Module<'wasm> {
             imports,
             exports,
             elements,
+            data,
             start,
             _marker: Default::default(),
         })
     }
 }
 
-#[derive(Debug, Copy, Clone, Hash, PartialEq, Eq, Ord, PartialOrd)]
+/// All WASM sections ordered by the order expected in the file
+#[derive(Debug, Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u8)]
 pub enum SectionKind {
-    Custom = 0,
-    Type = 1,
-    Import = 2,
-    Function = 3,
-    Table = 4,
-    Memory = 5,
-    Global = 6,
-    Export = 7,
-    Start = 8,
-    Element = 9,
-    Code = 10,
-    Data = 11,
-    DataCount = 12,
+    Custom,
+    Type,
+    Import,
+    Function,
+    Table,
+    Memory,
+    Global,
+    Export,
+    Start,
+    Element,
+    Code,
+    Data,
 }
 
 impl SectionKind {
@@ -230,7 +237,6 @@ impl SectionKind {
             9 => Element,
             10 => Code,
             11 => Data,
-            12 => DataCount,
             other => return Err(DecodeError::MalformedSectionId(other)),
         };
 
@@ -238,13 +244,13 @@ impl SectionKind {
     }
 }
 
-pub struct CustomSection {
-    pub name: Name,
-    pub data: Slice,
+pub struct CustomSection<'wasm> {
+    pub name: Name<'wasm>,
+    pub data: Slice<'wasm>,
 }
 
-impl CustomSection {
-    pub fn read(wasm: &mut WasmReader, size: u32) -> Result<Self, DecodeError> {
+impl<'wasm> CustomSection<'wasm> {
+    pub fn read(wasm: &mut WasmReader<'wasm>, size: u32) -> Result<Self, DecodeError> {
         let start = wasm.save();
         let name = Name::read(wasm)?;
         let name_length = wasm.save() - start;
@@ -266,7 +272,7 @@ impl TypeSection {
 macro_rules! read_impl_u32 {
     ($type_name:ident) => {
         #[derive(Debug, Clone)]
-        pub struct $type_name(u32);
+        pub struct $type_name(pub u32);
         impl $type_name {
             pub fn read(wasm: &mut WasmReader) -> Result<Self, DecodeError> {
                 Ok($type_name(wasm.read_u32()?))
@@ -321,14 +327,14 @@ impl ExportDesc {
     }
 }
 
-pub struct Import {
-    pub module: Name,
-    pub name: Name,
+pub struct Import<'wasm> {
+    pub module: Name<'wasm>,
+    pub name: Name<'wasm>,
     pub desc: ImportDesc,
 }
 
-impl Import {
-    pub fn read(wasm: &mut WasmReader) -> Result<Self, DecodeError> {
+impl<'wasm> Import<'wasm> {
+    pub fn read(wasm: &mut WasmReader<'wasm>) -> Result<Self, DecodeError> {
         let module = Name::read(wasm)?;
         let name = Name::read(wasm)?;
         let desc = ImportDesc::read(wasm)?;
@@ -339,7 +345,7 @@ impl Import {
 pub struct ImportSection;
 
 impl ImportSection {
-    pub fn read(wasm: &mut WasmReader) -> Result<Vec<Import>, DecodeError> {
+    pub fn read<'wasm>(wasm: &mut WasmReader<'wasm>) -> Result<Vec<Import<'wasm>>, DecodeError> {
         wasm.read_vec(Import::read)
     }
 }
@@ -367,11 +373,11 @@ impl MemorySection {
     }
 }
 
-pub struct Expr {
-    pub instructions: Slice,
+pub struct Expr<'wasm> {
+    pub instructions: Slice<'wasm>,
 }
-impl Expr {
-    pub fn read(wasm: &mut WasmReader) -> Result<Self, DecodeError> {
+impl<'wasm> Expr<'wasm> {
+    pub fn read(wasm: &mut WasmReader<'wasm>) -> Result<Self, DecodeError> {
         // TODO(tumbar) Decode instructions
         Ok(Expr {
             instructions: Slice::read(wasm, 0)?,
@@ -379,13 +385,13 @@ impl Expr {
     }
 }
 
-pub struct Global {
+pub struct Global<'wasm> {
     pub type_: GlobalType,
-    pub init: Expr,
+    pub init: Expr<'wasm>,
 }
 
-impl Global {
-    pub fn read(wasm: &mut WasmReader) -> Result<Self, DecodeError> {
+impl<'wasm> Global<'wasm> {
+    pub fn read(wasm: &mut WasmReader<'wasm>) -> Result<Self, DecodeError> {
         let type_ = GlobalType::read(wasm)?;
         let init = Expr::read(wasm)?;
         Ok(Global { type_, init })
@@ -394,18 +400,18 @@ impl Global {
 
 pub struct GlobalSection;
 impl GlobalSection {
-    pub fn read(wasm: &mut WasmReader) -> Result<Vec<Global>, DecodeError> {
+    pub fn read<'wasm>(wasm: &mut WasmReader<'wasm>) -> Result<Vec<Global<'wasm>>, DecodeError> {
         wasm.read_vec(Global::read)
     }
 }
 
-pub struct Export {
-    pub name: Name,
+pub struct Export<'wasm> {
+    pub name: Name<'wasm>,
     pub desc: ExportDesc,
 }
 
-impl Export {
-    pub fn read(wasm: &mut WasmReader) -> Result<Self, DecodeError> {
+impl<'wasm> Export<'wasm> {
+    pub fn read(wasm: &mut WasmReader<'wasm>) -> Result<Self, DecodeError> {
         let name = Name::read(wasm)?;
         let desc = ExportDesc::read(wasm)?;
         Ok(Export { name, desc })
@@ -414,19 +420,19 @@ impl Export {
 
 pub struct ExportSection;
 impl ExportSection {
-    pub fn read(wasm: &mut WasmReader) -> Result<Vec<Export>, DecodeError> {
+    pub fn read<'wasm>(wasm: &mut WasmReader<'wasm>) -> Result<Vec<Export<'wasm>>, DecodeError> {
         wasm.read_vec(Export::read)
     }
 }
 
-pub struct Element {
+pub struct Element<'wasm> {
     pub table: TableIdx,
-    pub offset: Expr,
+    pub offset: Expr<'wasm>,
     pub init: Vec<FuncIdx>,
 }
 
-impl Element {
-    pub fn read(wasm: &mut WasmReader) -> Result<Self, DecodeError> {
+impl<'wasm> Element<'wasm> {
+    pub fn read(wasm: &mut WasmReader<'wasm>) -> Result<Self, DecodeError> {
         let table = TableIdx::read(wasm)?;
         let offset = Expr::read(wasm)?;
         let init = wasm.read_vec(FuncIdx::read)?;
@@ -441,7 +447,7 @@ impl Element {
 
 pub struct ElementSection;
 impl ElementSection {
-    pub fn read(wasm: &mut WasmReader) -> Result<Vec<Element>, DecodeError> {
+    pub fn read<'wasm>(wasm: &mut WasmReader<'wasm>) -> Result<Vec<Element<'wasm>>, DecodeError> {
         wasm.read_vec(Element::read)
     }
 }
@@ -449,10 +455,32 @@ impl ElementSection {
 pub struct CodeSection;
 
 impl CodeSection {
-    pub fn read(wasm: &mut WasmReader) -> Result<Vec<Func>, DecodeError> {
-        wasm.read_vec(|wasm| {
-            let size = wasm.read_u32()?;
-            Func::read(wasm, size)
-        })
+    pub fn read<'wasm>(wasm: &mut WasmReader<'wasm>) -> Result<Vec<Func<'wasm>>, DecodeError> {
+        wasm.read_vec(Func::read)
+    }
+}
+
+pub struct Data<'wasm> {
+    pub mem: MemIdx,
+    pub offset: Expr<'wasm>,
+    pub init: Slice<'wasm>,
+}
+
+impl<'wasm> Data<'wasm> {
+    pub fn read(wasm: &mut WasmReader<'wasm>) -> Result<Self, DecodeError> {
+        let mem = MemIdx::read(wasm)?;
+        let offset = Expr::read(wasm)?;
+
+        let init_n = wasm.read_u32()?;
+        let init = Slice::read(wasm, init_n)?;
+
+        Ok(Data { mem, offset, init })
+    }
+}
+
+pub struct DataSection;
+impl DataSection {
+    pub fn read<'wasm>(wasm: &mut WasmReader<'wasm>) -> Result<Vec<Data<'wasm>>, DecodeError> {
+        wasm.read_vec(Data::read)
     }
 }

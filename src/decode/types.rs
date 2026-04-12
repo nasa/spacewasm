@@ -6,34 +6,37 @@ extern crate std;
 use crate::{DecodeError, Vec, WasmReader, WasmReaderState};
 
 /// An offset and length to select a subset of the WASM binary
-pub struct Slice {
-    pub start: WasmReaderState,
+pub struct Slice<'wasm> {
+    pub start: WasmReaderState<'wasm>,
     pub len: u32,
 }
 
-impl Slice {
-    pub(crate) fn read(wasm: &mut WasmReader, len: u32) -> Result<Slice, DecodeError> {
+impl<'wasm> Slice<'wasm> {
+    pub(crate) fn read(
+        wasm: &mut WasmReader<'wasm>,
+        len: u32,
+    ) -> Result<Slice<'wasm>, DecodeError> {
         let start = wasm.save();
 
         // Make sure we can read the entire slice
-        let _ = wasm.read_n(len as usize)?;
+        wasm.skip(len as usize)?;
 
         Ok(Slice { start, len })
     }
 
     /// Dereference the string name from the WASM binary
     /// Safety note: `wasm` MUST point to the same memory that was used to construct this name
-    pub fn deref<'wasm>(&self, mut wasm: WasmReader<'wasm>) -> &'wasm [u8] {
+    pub fn deref(&self, mut wasm: WasmReader<'wasm>) -> &'wasm [u8] {
         wasm.restore(self.start);
         wasm.read_n(self.len as usize).unwrap()
     }
 }
 
 /// A pointer and length into a UTF-8 string on the original WASM
-pub struct Name(Slice);
+pub struct Name<'wasm>(Slice<'wasm>);
 
-impl Name {
-    pub(crate) fn read(wasm: &mut WasmReader) -> Result<Name, DecodeError> {
+impl<'wasm> Name<'wasm> {
+    pub(crate) fn read(wasm: &mut WasmReader<'wasm>) -> Result<Name<'wasm>, DecodeError> {
         let len = wasm.read_u32()?;
 
         // Read the string and validate the utf-8 characters
@@ -51,7 +54,7 @@ impl Name {
 
     /// Dereference the string name from the WASM binary
     /// Safety note: `wasm` MUST point to the same memory that was used to construct this name
-    pub fn deref<'wasm>(&self, wasm: WasmReader<'wasm>) -> &'wasm str {
+    pub fn deref(&self, wasm: WasmReader<'wasm>) -> &'wasm str {
         // This has already been checked for validity ahead of time
         // We could just unwrap here though it's unnecessary.
         unsafe { core::str::from_utf8_unchecked(self.0.deref(wasm)) }
@@ -61,7 +64,7 @@ impl Name {
 /// Value types classify the individual values that WebAssembly code can compute with and the values
 /// that a variable accepts.
 /// https://www.w3.org/TR/wasm-core-1/#syntax-valtype
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 #[repr(u8)]
 pub enum ValType {
     I32,

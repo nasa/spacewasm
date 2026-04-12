@@ -13,26 +13,23 @@ unsafe impl core::alloc::GlobalAlloc for GlobalAllocator {
 }
 
 fn main() {
-    let allocator: PageAllocator<4096, 2> = PageAllocator::new(&GlobalAllocator {});
+    let allocator: PageAllocator<2> = PageAllocator::new(&GlobalAllocator {}, 4096);
     spacewasm::alloc::run(&allocator, || {
         std::env::args().skip(1).for_each(|path| {
             let data = std::fs::read(&path).expect("failed to read file");
 
             match spacewasm::Module::new(&data) {
                 Ok(module) => {
-                    for item in module.functions {
-                        println!("{:?}", item);
-                    }
+                    eprintln!("{:#?}", allocator.stats());
+                    eprintln!("{:?}", module.functions);
 
                     println!("Found {} imports", module.imports.len());
                 }
                 Err(err) => {
+                    eprintln!("{:#?}", allocator.stats());
                     eprintln!("Failed to parse: {:?}", err)
                 }
             }
         });
     });
-
-    let stats = allocator.finish();
-    println!("{:#?}", stats);
 }

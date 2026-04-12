@@ -5,6 +5,7 @@
 /// This implementation is heavily based off of DLR's WASM interpreter:
 /// <https://github.com/DLR-FT/wasm-interpreter>
 use crate::{DecodeError, Vec};
+use core::marker::PhantomData;
 
 
 /// Wasm encodes integers according to the LEB128 format, which specifies that
@@ -29,9 +30,9 @@ pub struct WasmReader<'wasm> {
 }
 
 #[derive(Clone, Copy)]
-pub struct WasmReaderState(u32);
+pub struct WasmReaderState<'wasm>(u32, PhantomData<&'wasm ()>);
 
-impl core::ops::Sub for WasmReaderState {
+impl<'wasm> core::ops::Sub for WasmReaderState<'wasm> {
     type Output = u32;
 
     fn sub(self, rhs: Self) -> Self::Output {
@@ -44,8 +45,8 @@ impl<'wasm> WasmReader<'wasm> {
         Self { binary, offset: 0 }
     }
 
-    pub fn save(&self) -> WasmReaderState {
-        WasmReaderState(self.offset as u32)
+    pub fn save(&self) -> WasmReaderState<'wasm> {
+        WasmReaderState(self.offset as u32, PhantomData::default())
     }
 
     pub fn restore(&mut self, state: WasmReaderState) {
@@ -397,6 +398,15 @@ impl<'wasm> WasmReader<'wasm> {
         }
 
         Ok(result)
+    }
+
+    pub fn skip(&mut self, len: usize) -> Result<(), DecodeError> {
+        if self.offset + len > self.binary.len() {
+            Err(DecodeError::Eof)
+        } else {
+            self.offset += len;
+            Ok(())
+        }
     }
 
     pub fn read_n(&mut self, len: usize) -> Result<&'wasm [u8], DecodeError> {
