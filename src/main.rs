@@ -17,13 +17,22 @@ fn main() {
     spacewasm::alloc::run(&allocator, || {
         std::env::args().skip(1).for_each(|path| {
             let data = std::fs::read(&path).expect("failed to read file");
-            let module = spacewasm::Module::new(&data).expect("failed to parse file");
 
-            for item in module.functions {
-                println!("{:?}", item);
+            match spacewasm::Module::new(&data) {
+                Ok(module) => {
+                    for item in module.functions {
+                        println!("{:?}", item);
+                    }
+
+                    println!("Found {} imports", module.imports.len());
+                }
+                Err(err) => {
+                    eprintln!("Failed to parse: {:?}", err)
+                }
             }
-
-            println!("Found {} imports", module.imports.len());
         });
     });
+
+    let stats = allocator.finish();
+    println!("{:#?}", stats);
 }

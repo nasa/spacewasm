@@ -1,24 +1,65 @@
 use crate::alloc::{AllocError, Allocator};
 use core::alloc::Layout;
+use core::cell::UnsafeCell;
 
-/// A page is an allocator that utilizes a single contiguous block of memory
+#[derive(Debug, Default, Clone)]
+pub struct PageAllocatorStatistics {
+    pub n_allocations: u32,
+    pub n_bytes_requested: u32,
+    pub n_bytes_used: u32,
+    pub n_wasted_bytes: u32,
+    pub page_high_water: u32,
+    pub n_leaks: u32,
+}
+
+/// A page is an allocator that utilizes a large contiguous blocks of memory
 /// to perform smaller allocations. It is strictly increasing in it's offset for
 /// simplicity. This means a bounded number of allocations should occur since it does
-/// no garbage collection.
+/// no garbage collection within the page. If all allocations within a single page are
+/// freed it will also free the page.
 ///
 /// Page allocators wrap another allocator who is responsible for actually allocating
 /// each page. The page allocator will only call to this allocator once it can no longer
-/// fit the next allocation in any of it's currently allocated pages
+/// fit the next allocation in any of it's currently allocated pages.
+///
+/// This allocator supports a static number of pages and therefore can run out of memory
 pub struct PageAllocator<'a, const PAGE_SIZE: usize, const MAX_PAGES: usize> {
-    page_allocator: &'a dyn Allocator,
-    pages: core::cell::UnsafeCell<[Option<Page<PAGE_SIZE>>; MAX_PAGES]>,
+    inner: UnsafeCell<PageAllocatorInner<'a, PAGE_SIZE, MAX_PAGES>>,
 }
 
 impl<'a, const PAGE_SIZE: usize, const MAX_PAGES: usize> PageAllocator<'a, PAGE_SIZE, MAX_PAGES> {
-    pub const fn new(alloc: &'a dyn Allocator) -> PageAllocator<'a, PAGE_SIZE, MAX_PAGES> {
-        PageAllocator {
+    pub const fn new(alloc: &'a dyn Allocator) -> Self {
+        Self {
+            inner: UnsafeCell::new(PageAllocatorInner::new(alloc)),
+        }
+    }
+
+    pub fn finish(self) -> PageAllocatorStatistics {
+        unsafe { (*self.inner.get()).stats.clone() }
+    }
+}
+
+struct PageAllocatorInner<'a, const PAGE_SIZE: usize, const MAX_PAGES: usize> {
+    page_allocator: &'a dyn Allocator,
+    pages: [Option<Page<PAGE_SIZE>>; MAX_PAGES],
+    stats: PageAllocatorStatistics,
+}
+
+impl<'a, const PAGE_SIZE: usize, const MAX_PAGES: usize>
+    PageAllocatorInner<'a, PAGE_SIZE, MAX_PAGES>
+{
+    const fn new(alloc: &'a dyn Allocator) -> PageAllocatorInner<'a, PAGE_SIZE, MAX_PAGES> {
+        PageAllocatorInner {
             page_allocator: alloc,
-            pages: core::cell::UnsafeCell::new([None; MAX_PAGES]),
+            pages: [None; MAX_PAGES],
+            stats: PageAllocatorStatistics {
+                n_allocations: 0,
+                n_bytes_requested: 0,
+                n_bytes_used: 0,
+                n_wasted_bytes: 0,
+                page_high_water: 0,
+                n_leaks: 0,
+            },
         }
     }
 }
@@ -27,15 +68,28 @@ unsafe impl<'a, const PAGE_SIZE: usize, const MAX_PAGES: usize> Allocator
     for PageAllocator<'a, PAGE_SIZE, MAX_PAGES>
 {
     unsafe fn alloc(&self, layout: Layout) -> Result<*mut u8, AllocError> {
+        unsafe { (&mut *self.inner.get()).alloc(layout) }
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        unsafe { (&mut *self.inner.get()).dealloc(ptr, layout) }
+    }
+}
+
+impl<'a, const PAGE_SIZE: usize, const MAX_PAGES: usize>
+    PageAllocatorInner<'a, PAGE_SIZE, MAX_PAGES>
+{
+    unsafe fn alloc(&mut self, layout: Layout) -> Result<*mut u8, AllocError> {
         if layout.size() == 0 {
             return Err(AllocError::IllegalZeroSize);
         }
 
+        self.stats.n_allocations += 1;
+        self.stats.n_bytes_requested += layout.size() as u32;
+
         // Go through each page one-by-one and try to allocate
         // If we reach a 'None' page, allocate the page and allocate this request there
-        let pages = unsafe { self.pages.get().as_mut().unwrap() };
-
-        for bucket in pages.iter_mut() {
+        for (i, bucket) in self.pages.iter_mut().enumerate() {
             match bucket {
                 Some(page) => {
                     // Attempt to allocate to this page
@@ -69,6 +123,10 @@ unsafe impl<'a, const PAGE_SIZE: usize, const MAX_PAGES: usize> Allocator
 
                     // Place the new page in the bucket
                     bucket.replace(page);
+                    if (i + 1) as u32 > self.stats.page_high_water {
+                        self.stats.page_high_water = (i + 1) as u32;
+                    }
+
                     return Ok(ptr);
                 }
             }
@@ -78,10 +136,8 @@ unsafe impl<'a, const PAGE_SIZE: usize, const MAX_PAGES: usize> Allocator
         Err(AllocError::OutOfMemory)
     }
 
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        let pages = unsafe { self.pages.get().as_mut().unwrap() };
-
-        for bucket in pages.iter_mut() {
+    unsafe fn dealloc(&mut self, ptr: *mut u8, layout: Layout) {
+        for bucket in self.pages.iter_mut() {
             if let Some(page) = bucket {
                 match page.dealloc(ptr, layout) {
                     None => {
@@ -90,6 +146,8 @@ unsafe impl<'a, const PAGE_SIZE: usize, const MAX_PAGES: usize> Allocator
                     }
                     Some(drop_page) => {
                         if drop_page {
+                            self.stats.n_bytes_used += page.allocated as u32;
+                            self.stats.n_wasted_bytes += page.wasted as u32;
                             unsafe {
                                 self.page_allocator
                                     .dealloc(ptr, Layout::from_size_align(PAGE_SIZE, 128).unwrap());
@@ -107,15 +165,17 @@ unsafe impl<'a, const PAGE_SIZE: usize, const MAX_PAGES: usize> Allocator
 }
 
 impl<'a, const PAGE_SIZE: usize, const MAX_PAGES: usize> Drop
-    for PageAllocator<'a, PAGE_SIZE, MAX_PAGES>
+    for PageAllocatorInner<'a, PAGE_SIZE, MAX_PAGES>
 {
     fn drop(&mut self) {
-        let pages = unsafe { self.pages.get().as_mut().unwrap() };
-
-        for bucket in pages.iter_mut() {
+        for bucket in self.pages.iter_mut() {
             match bucket {
                 None => {}
                 Some(page) => {
+                    if page.n_allocations > 0 {
+                        self.stats.n_leaks += page.n_allocations as u32;
+                    }
+
                     unsafe {
                         self.page_allocator
                             .dealloc(page.ptr, Layout::from_size_align(PAGE_SIZE, 128).unwrap());

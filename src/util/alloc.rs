@@ -13,6 +13,9 @@ pub enum AllocError {
 
     /// A LayoutError occured
     InvalidLayout,
+
+    /// A generic allocation failure
+    AllocationFailed,
 }
 
 impl From<LayoutError> for AllocError {
