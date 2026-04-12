@@ -12,3 +12,4 @@ mod types;
 pub use types::*;
 
 mod code;
+pub use code::*;

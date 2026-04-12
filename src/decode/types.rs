@@ -2,6 +2,7 @@
 //!
 //! See: <https://webassembly.github.io/spec/core/binary/types.html>
 
+extern crate std;
 use crate::{DecodeError, Vec, WasmReader, WasmReaderState};
 
 /// An offset and length to select a subset of the WASM binary
@@ -11,16 +12,13 @@ pub struct Slice {
 }
 
 impl Slice {
-    pub(crate) fn read(wasm: &mut WasmReader, len: usize) -> Result<Slice, DecodeError> {
+    pub(crate) fn read(wasm: &mut WasmReader, len: u32) -> Result<Slice, DecodeError> {
         let start = wasm.save();
 
         // Make sure we can read the entire slice
-        let _ = wasm.read_n(len)?;
+        let _ = wasm.read_n(len as usize)?;
 
-        Ok(Slice {
-            start,
-            len: len as u32,
-        })
+        Ok(Slice { start, len })
     }
 
     /// Dereference the string name from the WASM binary
@@ -36,18 +34,18 @@ pub struct Name(Slice);
 
 impl Name {
     pub(crate) fn read(wasm: &mut WasmReader) -> Result<Name, DecodeError> {
-        let len = wasm.read_u32()? as usize;
+        let len = wasm.read_u32()?;
 
         // Read the string and validate the utf-8 characters
         let start = wasm.save();
-        let data = wasm.read_n(len)?;
+        let data = wasm.read_n(len as usize)?;
 
         match core::str::from_utf8(data) {
-            Ok(_) => Ok(Name(Slice {
-                start,
-                len: len as u32,
-            })),
-            Err(err) => Err(DecodeError::MalformedUtf8(err)),
+            Ok(_) => Ok(Name(Slice { start, len })),
+            Err(err) => {
+                std::eprintln!("{}", unsafe { core::str::from_utf8_unchecked(data) });
+                Err(DecodeError::MalformedUtf8(err))
+            }
         }
     }
 

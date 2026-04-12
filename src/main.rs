@@ -13,7 +13,7 @@ unsafe impl core::alloc::GlobalAlloc for GlobalAllocator {
 }
 
 fn main() {
-    let allocator: PageAllocator<4096, 1> = PageAllocator::new(&GlobalAllocator {});
+    let allocator: PageAllocator<4096, 2> = PageAllocator::new(&GlobalAllocator {});
     spacewasm::alloc::run(&allocator, || {
         std::env::args().skip(1).for_each(|path| {
             let data = std::fs::read(&path).expect("failed to read file");

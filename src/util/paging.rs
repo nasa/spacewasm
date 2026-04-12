@@ -9,7 +9,6 @@ pub struct PageAllocatorStatistics {
     pub n_bytes_used: u32,
     pub n_wasted_bytes: u32,
     pub page_high_water: u32,
-    pub n_leaks: u32,
 }
 
 /// A page is an allocator that utilizes a large contiguous blocks of memory
@@ -58,7 +57,6 @@ impl<'a, const PAGE_SIZE: usize, const MAX_PAGES: usize>
                 n_bytes_used: 0,
                 n_wasted_bytes: 0,
                 page_high_water: 0,
-                n_leaks: 0,
             },
         }
     }
@@ -149,8 +147,10 @@ impl<'a, const PAGE_SIZE: usize, const MAX_PAGES: usize>
                             self.stats.n_bytes_used += page.allocated as u32;
                             self.stats.n_wasted_bytes += page.wasted as u32;
                             unsafe {
-                                self.page_allocator
-                                    .dealloc(ptr, Layout::from_size_align(PAGE_SIZE, 128).unwrap());
+                                self.page_allocator.dealloc(
+                                    page.ptr,
+                                    Layout::from_size_align(PAGE_SIZE, 128).unwrap(),
+                                );
                             }
 
                             bucket.take();
@@ -172,10 +172,6 @@ impl<'a, const PAGE_SIZE: usize, const MAX_PAGES: usize> Drop
             match bucket {
                 None => {}
                 Some(page) => {
-                    if page.n_allocations > 0 {
-                        self.stats.n_leaks += page.n_allocations as u32;
-                    }
-
                     unsafe {
                         self.page_allocator
                             .dealloc(page.ptr, Layout::from_size_align(PAGE_SIZE, 128).unwrap());
