@@ -70,9 +70,7 @@ impl<'wasm> Module<'wasm> {
             use SectionKind::*;
             let section_ty = match SectionKind::read(wasm) {
                 Ok(section) => section,
-                Err(DecodeError::Eof) => {
-                    break;
-                }
+                Err(DecodeError::Eof) => break,
                 Err(e) => return Err(e.into()),
             };
 
@@ -165,9 +163,7 @@ impl<'wasm> Module<'wasm> {
             use SectionKind::*;
             let section_ty = match SectionKind::read(wasm) {
                 Ok(section) => section,
-                Err(DecodeError::Eof) => {
-                    break;
-                }
+                Err(DecodeError::Eof) => break,
                 Err(e) => return Err(e.into()),
             };
 
