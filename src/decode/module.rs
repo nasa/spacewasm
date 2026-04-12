@@ -49,24 +49,27 @@ impl<'wasm> Module<'wasm> {
         // First we need to traverse the sections
         let data_start = wasm.save();
 
-        let mut n_custom = 0u32;
-        let mut types: Vec<FuncType> = Vec::zero();
-        let mut functions: Vec<TypeIdx> = Vec::zero();
-        let mut tables: Vec<TableType> = Vec::zero();
-        let mut memories: Vec<MemType> = Vec::zero();
-        let mut globals: Vec<Global> = Vec::zero();
-        let mut imports: Vec<Import> = Vec::zero();
-        let mut exports: Vec<Export> = Vec::zero();
-        let mut elements: Vec<Element> = Vec::zero();
-        let mut code: Vec<Func> = Vec::zero();
-        let mut data: Vec<Data> = Vec::zero();
+        let mut module = Module {
+            custom: Vec::zero(),
+            types: Vec::zero(),
+            functions: Vec::zero(),
+            code: Vec::zero(),
+            tables: Vec::zero(),
+            memories: Vec::zero(),
+            globals: Vec::zero(),
+            imports: Vec::zero(),
+            exports: Vec::zero(),
+            elements: Vec::zero(),
+            data: Vec::zero(),
+            start: None,
+            _marker: Default::default(),
+        };
 
-        let mut start: Option<FuncIdx> = None;
+        let mut n_custom = 0u32;
 
         let mut last_section: SectionKind = SectionKind::Custom;
 
         loop {
-            use SectionKind::*;
             let section_ty = match SectionKind::read(wasm) {
                 Ok(section) => section,
                 Err(ValidationError::Eof) => break,
@@ -75,8 +78,8 @@ impl<'wasm> Module<'wasm> {
 
             // Validate the section ordering
             // Custom sections can be interspersed as needed
-            if section_ty != Custom {
-                if last_section > section_ty && last_section != Custom {
+            if section_ty != SectionKind::Custom {
+                if last_section > section_ty && last_section != SectionKind::Custom {
                     return Err(
                         ValidationError::InvalidSectionOrdering(last_section, section_ty).into(),
                     );
@@ -85,62 +88,18 @@ impl<'wasm> Module<'wasm> {
                 }
 
                 last_section = section_ty;
+            } else {
+                n_custom += 1;
             }
 
             let section_size = wasm.read_u32()?;
             let section_start = wasm.save();
 
-            match section_ty {
-                Custom => {
-                    // Count the custom section and skip over them for now
-                    // We have nowhere to store them
-                    wasm.skip(section_size as usize)
-                        .map_err(|e| e.with_section(section_ty))?;
-                    n_custom += 1;
-                }
-                Type => {
-                    types = TypeSection::read(wasm).map_err(|e| e.with_section(section_ty))?;
-                }
-                Import => {
-                    imports = ImportSection::read(wasm).map_err(|e| e.with_section(section_ty))?;
-                }
-                Function => {
-                    functions =
-                        FunctionSection::read(wasm).map_err(|e| e.with_section(section_ty))?;
-                }
-                Table => {
-                    tables = TableSection::read(wasm).map_err(|e| e.with_section(section_ty))?;
-                }
-                Memory => {
-                    memories = MemorySection::read(wasm).map_err(|e| e.with_section(section_ty))?;
-                }
-                Global => {
-                    // globals = GlobalSection::read(wasm).map_err(|e| e.with_section(section_ty))?;
-                    wasm.skip(section_size as usize)
-                        .map_err(|e| e.with_section(section_ty))?;
-                }
-                Export => {
-                    exports = ExportSection::read(wasm).map_err(|e| e.with_section(section_ty))?;
-                }
-                Start => {
-                    start.replace(FuncIdx::read(wasm).map_err(|e| e.with_section(section_ty))?);
-                }
-                Element => {
-                    // elements =
-                    //     ElementSection::read(wasm).map_err(|e| e.with_section(section_ty))?;
-                    wasm.skip(section_size as usize)
-                        .map_err(|e| e.with_section(section_ty))?;
-                }
-                Code => {
-                    code = CodeSection::read(wasm).map_err(|e| e.with_section(section_ty))?;
-                }
-                Data => {
-                    // data = DataSection::read(wasm).map_err(|e| e.with_section(section_ty))?;
-                    wasm.skip(section_size as usize)
-                        .map_err(|e| e.with_section(section_ty))?;
-                }
-            }
+            module
+                .read_section(wasm, section_size as usize, section_ty)
+                .map_err(|e| e.with_section(section_ty))?;
 
+            // Validate we actually read the entire section
             let section_end = wasm.save();
             let section_length = section_end - section_start;
             if section_length != section_size {
@@ -153,7 +112,6 @@ impl<'wasm> Module<'wasm> {
 
         wasm.restore(data_start);
         loop {
-            use SectionKind::*;
             let section_ty = match SectionKind::read(wasm) {
                 Ok(section) => section,
                 Err(ValidationError::Eof) => break,
@@ -161,7 +119,7 @@ impl<'wasm> Module<'wasm> {
             };
 
             let section_size = wasm.read_u32()?;
-            if section_ty == Custom {
+            if section_ty == SectionKind::Custom {
                 custom.push(
                     CustomSection::read(wasm, section_size)
                         .map_err(|e| e.with_section(section_ty))?,
@@ -174,21 +132,62 @@ impl<'wasm> Module<'wasm> {
             }
         }
 
-        Ok(Module {
-            custom,
-            types,
-            functions,
-            code,
-            tables,
-            memories,
-            globals,
-            imports,
-            exports,
-            elements,
-            data,
-            start,
-            _marker: Default::default(),
-        })
+        Ok(module)
+    }
+
+    fn read_section(
+        &mut self,
+        wasm: &mut WasmReader<'wasm>,
+        section_size: usize,
+        section_ty: SectionKind,
+    ) -> Result<(), ValidationError> {
+        use SectionKind::*;
+        match section_ty {
+            Custom => {
+                // Count the custom section and skip over them for now
+                // We have nowhere to store them
+                wasm.skip(section_size)?;
+            }
+            Type => {
+                self.types = TypeSection::read(wasm)?;
+            }
+            Import => {
+                self.imports = ImportSection::read(wasm)?;
+            }
+            Function => {
+                self.functions = FunctionSection::read(wasm)?;
+            }
+            Table => {
+                self.tables = TableSection::read(wasm)?;
+            }
+            Memory => {
+                self.memories = MemorySection::read(wasm)?;
+            }
+            Global => {
+                // globals = GlobalSection::read(wasm).map_err(|e| e.with_section(section_ty))?;
+                wasm.skip(section_size)?;
+            }
+            Export => {
+                self.exports = ExportSection::read(wasm)?;
+            }
+            Start => {
+                self.start.replace(FuncIdx::read(wasm)?);
+            }
+            Element => {
+                // elements =
+                //     ElementSection::read(wasm).map_err(|e| e.with_section(section_ty))?;
+                wasm.skip(section_size)?;
+            }
+            Code => {
+                self.code = CodeSection::read(wasm)?;
+            }
+            Data => {
+                // data = DataSection::read(wasm).map_err(|e| e.with_section(section_ty))?;
+                wasm.skip(section_size)?;
+            }
+        }
+
+        Ok(())
     }
 }
 

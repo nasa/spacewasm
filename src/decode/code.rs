@@ -125,6 +125,7 @@ impl<'wasm> WasmReader<'wasm> {
                     let default_ = LabelIdx::read(self)?;
                     visitor.br_table(self, lut, default_)?;
                 }
+                
                 _ => unimplemented!(),
             }
         }
