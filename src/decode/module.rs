@@ -1,20 +1,6 @@
 use crate::*;
 use core::marker::PhantomData;
 
-#[derive(Default)]
-#[repr(C)]
-pub struct Statistics {
-    pub custom: u32,
-    pub types: u32,
-    pub functions: u32,
-    pub tables: u32,
-    pub memories: u32,
-    pub globals: u32,
-    pub imports: u32,
-    pub exports: u32,
-    pub elements: u32,
-}
-
 pub struct Module<'wasm> {
     pub custom: Vec<CustomSection>,
     pub types: Vec<FuncType>,
@@ -60,7 +46,6 @@ impl<'wasm> Module<'wasm> {
         // First we need to traverse the sections
         let data_start = wasm.save();
 
-        // pub custom: Vec<CustomSection>,
         let mut n_custom = 0u32;
         let mut types: Vec<FuncType> = Vec::zero();
         let mut functions: Vec<TypeIdx> = Vec::zero();
@@ -202,7 +187,7 @@ impl<'wasm> Module<'wasm> {
 }
 
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq, Ord, PartialOrd)]
-#[repr(u32)]
+#[repr(u8)]
 pub enum SectionKind {
     Custom = 0,
     Type = 1,
@@ -243,7 +228,6 @@ impl SectionKind {
     }
 }
 
-#[repr(C)]
 pub struct CustomSection {
     pub name: Name,
     pub data: Slice,

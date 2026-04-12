@@ -13,6 +13,24 @@ pub struct Vec<T: Sized> {
     len: u32,
 }
 
+impl<T: core::fmt::Debug> core::fmt::Debug for Vec<T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_list().entries(self.iter()).finish()
+    }
+}
+
+impl<T: Clone> Clone for Vec<T> {
+    fn clone(&self) -> Self {
+        let mut n = Vec::new(self.capacity).unwrap();
+        if self.len() > 0 {
+            n[0..self.len()].clone_from_slice(self);
+            n.len = self.len;
+        }
+
+        n
+    }
+}
+
 impl<T: Sized> Vec<T> {
     pub fn new(capacity: u32) -> Result<Vec<T>, alloc::AllocError> {
         // We don't want to handle ZST
