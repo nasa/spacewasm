@@ -110,7 +110,7 @@ impl<'a, const MAX_PAGES: usize> PageAllocatorInner<'a, MAX_PAGES> {
                             // Drop the page and error
                             // FIXME(tumbar) This means that the page size is too small! What do we do?
                             unsafe { self.page_allocator.dealloc(addr, page_layout) }
-                            return Err(AllocError::PageTooSmall(layout.size()));
+                            return Err(AllocError::PageTooSmall);
                         }
                         Some(ptr) => ptr,
                     };
@@ -201,7 +201,7 @@ impl Page {
         if start_address % layout.align() > 0 {
             let alignment_offset = layout.align() - start_address % layout.align();
             self.wasted += alignment_offset;
-            start_address = start_address + alignment_offset;
+            start_address += alignment_offset;
         }
 
         // Make sure out buffer can fit in here

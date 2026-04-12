@@ -1,6 +1,5 @@
-use crate::alloc::AllocError;
 use crate::SectionKind;
-use core::str::Utf8Error;
+use crate::alloc::AllocError;
 
 #[derive(Debug, Clone)]
 pub struct ParseError {
@@ -17,64 +16,64 @@ impl ParseError {
 #[derive(Debug, Clone)]
 pub struct SectionDecodeError {
     pub section: Option<SectionKind>,
-    pub err: DecodeError,
+    pub err: ValidationError,
 }
 
 impl SectionDecodeError {
-    pub fn new_with_section(section: SectionKind, err: DecodeError) -> SectionDecodeError {
+    pub fn new_with_section(section: SectionKind, err: ValidationError) -> SectionDecodeError {
         SectionDecodeError {
             section: Some(section),
             err,
         }
     }
 
-    pub fn new(err: DecodeError) -> SectionDecodeError {
+    pub fn new(err: ValidationError) -> SectionDecodeError {
         SectionDecodeError { section: None, err }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DecodeError {
-    MalformedMagic([u8; 4]),
-    MalformedVersion([u8; 4]),
+pub enum ValidationError {
+    Eof,
     MalformedVariableLengthInteger,
     I33IsNegative,
-    MalformedUtf8(Utf8Error),
-    Eof,
+    AllocError(AllocError),
+    MalformedMagic,
+    MalformedVersion,
+    MalformedUtf8,
     MalformedSectionId(u8),
     MalformedValueType(u8),
     MalformedFunction(u8),
     MalformedLimit(u8),
     MalformedElemType(u8),
+    MalformedSectionSize,
     ExpectedConstOrVar(u8),
     MalformedImportExportDesc(u8),
-    InitVecTooLarge(u32),
     AllocationFailure(AllocError),
     InvalidSectionOrdering(SectionKind, SectionKind),
     DuplicateSection(SectionKind),
-    InvalidSectionSize { read: u32, expected: u32 },
     InvalidZeroMaxLimit,
 }
 
-impl From<AllocError> for DecodeError {
+impl From<AllocError> for ValidationError {
     fn from(value: AllocError) -> Self {
-        DecodeError::AllocationFailure(value)
+        ValidationError::AllocationFailure(value)
     }
 }
 
 impl From<AllocError> for SectionDecodeError {
     fn from(value: AllocError) -> Self {
-        Self::new(DecodeError::AllocationFailure(value))
+        Self::new(ValidationError::AllocationFailure(value))
     }
 }
 
-impl From<DecodeError> for SectionDecodeError {
-    fn from(value: DecodeError) -> Self {
+impl From<ValidationError> for SectionDecodeError {
+    fn from(value: ValidationError) -> Self {
         Self::new(value)
     }
 }
 
-impl DecodeError {
+impl ValidationError {
     pub fn with_section(self, section: SectionKind) -> SectionDecodeError {
         SectionDecodeError::new_with_section(section, self)
     }

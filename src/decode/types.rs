@@ -2,8 +2,7 @@
 //!
 //! See: <https://webassembly.github.io/spec/core/binary/types.html>
 
-extern crate std;
-use crate::{DecodeError, Vec, WasmReader, WasmReaderState};
+use crate::{ValidationError, Vec, WasmReader, WasmReaderState};
 
 /// An offset and length to select a subset of the WASM binary
 pub struct Slice<'wasm> {
@@ -15,7 +14,7 @@ impl<'wasm> Slice<'wasm> {
     pub(crate) fn read(
         wasm: &mut WasmReader<'wasm>,
         len: u32,
-    ) -> Result<Slice<'wasm>, DecodeError> {
+    ) -> Result<Slice<'wasm>, ValidationError> {
         let start = wasm.save();
 
         // Make sure we can read the entire slice
@@ -36,7 +35,7 @@ impl<'wasm> Slice<'wasm> {
 pub struct Name<'wasm>(Slice<'wasm>);
 
 impl<'wasm> Name<'wasm> {
-    pub(crate) fn read(wasm: &mut WasmReader<'wasm>) -> Result<Name<'wasm>, DecodeError> {
+    pub(crate) fn read(wasm: &mut WasmReader<'wasm>) -> Result<Name<'wasm>, ValidationError> {
         let len = wasm.read_u32()?;
 
         // Read the string and validate the utf-8 characters
@@ -45,10 +44,7 @@ impl<'wasm> Name<'wasm> {
 
         match core::str::from_utf8(data) {
             Ok(_) => Ok(Name(Slice { start, len })),
-            Err(err) => {
-                std::eprintln!("{}", unsafe { core::str::from_utf8_unchecked(data) });
-                Err(DecodeError::MalformedUtf8(err))
-            }
+            Err(_) => Err(ValidationError::MalformedUtf8),
         }
     }
 
@@ -74,7 +70,7 @@ pub enum ValType {
 }
 
 impl ValType {
-    fn convert(v: u8) -> Result<ValType, DecodeError> {
+    fn convert(v: u8) -> Result<ValType, ValidationError> {
         // Value types are encoded by a single byte.
         use ValType::*;
         match v {
@@ -82,11 +78,11 @@ impl ValType {
             0x7E => Ok(I64),
             0x7D => Ok(F32),
             0x7C => Ok(F64),
-            other => Err(DecodeError::MalformedValueType(other)),
+            other => Err(ValidationError::MalformedValueType(other)),
         }
     }
 
-    pub(crate) fn read(wasm: &mut WasmReader) -> Result<Self, DecodeError> {
+    pub(crate) fn read(wasm: &mut WasmReader) -> Result<Self, ValidationError> {
         ValType::convert(wasm.read_u8()?)
     }
 }
@@ -95,7 +91,7 @@ impl ValType {
 pub struct ResultType(pub Option<ValType>);
 
 impl ResultType {
-    pub(crate) fn read(wasm: &mut WasmReader) -> Result<Self, DecodeError> {
+    pub(crate) fn read(wasm: &mut WasmReader) -> Result<Self, ValidationError> {
         // The only result types occurring in the binary format are the types of blocks.
         // These are encoded in special compressed form, by either the byte 0x40 indicating
         // the empty type or as a single value type.
@@ -120,7 +116,7 @@ impl FuncType {
         &self.params_returns[self.n_params as usize..]
     }
 
-    pub(crate) fn read(wasm: &mut WasmReader) -> Result<Self, DecodeError> {
+    pub(crate) fn read(wasm: &mut WasmReader) -> Result<Self, ValidationError> {
         // Function types are encoded by the byte 0x60 followed by the respective vectors of parameter and result types.
         match wasm.read_u8()? {
             0x60 => {
@@ -146,7 +142,7 @@ impl FuncType {
                     n_params,
                 })
             }
-            c => Err(DecodeError::MalformedFunction(c)),
+            c => Err(ValidationError::MalformedFunction(c)),
         }
     }
 }
@@ -157,7 +153,7 @@ pub struct Limit {
 }
 
 impl Limit {
-    pub(crate) fn read(wasm: &mut WasmReader) -> Result<Self, DecodeError> {
+    pub(crate) fn read(wasm: &mut WasmReader) -> Result<Self, ValidationError> {
         // Limits are encoded with a preceding flag indicating whether a maximum is present.
         match wasm.read_u8()? {
             0x00 => Ok(Limit {
@@ -168,10 +164,10 @@ impl Limit {
                 min: wasm.read_u32()?,
                 max: Some(
                     core::num::NonZero::new(wasm.read_u32()?)
-                        .ok_or(DecodeError::InvalidZeroMaxLimit)?,
+                        .ok_or(ValidationError::InvalidZeroMaxLimit)?,
                 ),
             }),
-            c => Err(DecodeError::MalformedLimit(c)),
+            c => Err(ValidationError::MalformedLimit(c)),
         }
     }
 }
@@ -179,7 +175,7 @@ impl Limit {
 pub struct MemType(pub Limit);
 
 impl MemType {
-    pub(crate) fn read(wasm: &mut WasmReader) -> Result<Self, DecodeError> {
+    pub(crate) fn read(wasm: &mut WasmReader) -> Result<Self, ValidationError> {
         // Memory types are encoded with their limits.
         Ok(MemType(Limit::read(wasm)?))
     }
@@ -190,10 +186,10 @@ pub enum ElemType {
 }
 
 impl ElemType {
-    pub(crate) fn read(wasm: &mut WasmReader) -> Result<Self, DecodeError> {
+    pub(crate) fn read(wasm: &mut WasmReader) -> Result<Self, ValidationError> {
         match wasm.read_u8()? {
             0x70 => Ok(ElemType::FuncRef),
-            c => Err(DecodeError::MalformedElemType(c)),
+            c => Err(ValidationError::MalformedElemType(c)),
         }
     }
 }
@@ -204,7 +200,7 @@ pub struct TableType {
 }
 
 impl TableType {
-    pub(crate) fn read(wasm: &mut WasmReader) -> Result<Self, DecodeError> {
+    pub(crate) fn read(wasm: &mut WasmReader) -> Result<Self, ValidationError> {
         // Table types are encoded with their limits and a constant byte indicating their element type.
         Ok(TableType {
             elem_type: ElemType::read(wasm)?,
@@ -219,12 +215,12 @@ pub struct GlobalType {
 }
 
 impl GlobalType {
-    pub(crate) fn read(wasm: &mut WasmReader) -> Result<Self, DecodeError> {
+    pub(crate) fn read(wasm: &mut WasmReader) -> Result<Self, ValidationError> {
         let val_type = ValType::read(wasm)?;
         let mutable = match wasm.read_u8()? {
             0x00 => false, // const
             0x01 => true,  // mutable
-            c => return Err(DecodeError::ExpectedConstOrVar(c)),
+            c => return Err(ValidationError::ExpectedConstOrVar(c)),
         };
 
         Ok(GlobalType { val_type, mutable })

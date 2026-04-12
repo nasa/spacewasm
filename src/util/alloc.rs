@@ -6,16 +6,28 @@ pub enum AllocError {
     IllegalZeroSize,
 
     /// Page was too small to fit this allocation
-    PageTooSmall(usize),
+    PageTooSmall,
 
     /// Not enough pages could be allocated to accommodate this allocation
     OutOfMemory,
 
-    /// A LayoutError occured
+    /// A LayoutError occurred
     InvalidLayout,
 
     /// A generic allocation failure
     AllocationFailed,
+
+    /// Stack-based heap allocations only support up 128-bit alignment
+    InvalidAlignment,
+
+    /// Stack-based heap allocation surpassed the supported nested allocation count
+    StackAllocationTooDeep,
+
+    /// Stack-based heap requires allocation and deallocation to occur in reverse order.
+    /// This rule is checked during deallocation. If it is not held, this error will be thrown.
+    /// This error is also raised when attempting to free a stack address when there no more
+    /// allocations held by the StackAllocator
+    StackDeallocationInvariantViolation,
 }
 
 impl From<LayoutError> for AllocError {
@@ -32,13 +44,24 @@ pub unsafe trait Allocator {
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout);
 }
 
-unsafe impl<T: core::alloc::GlobalAlloc> Allocator for T {
+unsafe impl<T: Allocator> Allocator for &T {
     unsafe fn alloc(&self, layout: Layout) -> Result<*mut u8, AllocError> {
-        unsafe { Ok(core::alloc::GlobalAlloc::alloc(self, layout)) }
+        unsafe { (**self).alloc(layout) }
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        unsafe { core::alloc::GlobalAlloc::dealloc(self, ptr, layout) }
+        unsafe { (**self).dealloc(ptr, layout) }
+    }
+}
+
+pub struct GlobalAllocator;
+unsafe impl Allocator for GlobalAllocator {
+    unsafe fn alloc(&self, layout: Layout) -> Result<*mut u8, AllocError> {
+        unsafe { (*ALLOCATOR).alloc(layout) }
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        unsafe { (*ALLOCATOR).dealloc(ptr, layout) }
     }
 }
 
@@ -84,14 +107,4 @@ where
 {
     let _guard = AllocatorSetter::new(allocator);
     f()
-}
-
-/// Alloc some memory from the heap
-pub unsafe fn alloc(layout: Layout) -> Result<*mut u8, AllocError> {
-    unsafe { (*ALLOCATOR).alloc(layout) }
-}
-
-/// Free some memory from the heap
-pub unsafe fn dealloc(ptr: *mut u8, layout: Layout) {
-    unsafe { (*ALLOCATOR).dealloc(ptr, layout) }
 }

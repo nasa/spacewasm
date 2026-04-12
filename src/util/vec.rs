@@ -1,4 +1,4 @@
-use crate::alloc;
+use crate::alloc::{self, Allocator, GlobalAllocator};
 use core::alloc::Layout;
 use core::ops::{Deref, DerefMut};
 use core::ptr::NonNull;
@@ -7,19 +7,20 @@ use core::ptr::NonNull;
 /// The capacity is set on construction and cannot be changed.
 /// This is very similar to [::alloc::Vec] however it guarantees
 /// maximum memory efficiency.
-pub struct Vec<T: Sized> {
+pub struct Vec<T: Sized, A: Allocator = GlobalAllocator> {
     ptr: *mut T,
     capacity: u32,
     len: u32,
+    alloc: A,
 }
 
-impl<T: core::fmt::Debug> core::fmt::Debug for Vec<T> {
+impl<T: core::fmt::Debug, A: Allocator> core::fmt::Debug for Vec<T, A> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_list().entries(self.iter()).finish()
     }
 }
 
-impl<T: Clone> Clone for Vec<T> {
+impl<T: Clone> Clone for Vec<T, GlobalAllocator> {
     fn clone(&self) -> Self {
         let mut n = Vec::new(self.capacity).unwrap();
         if self.len() > 0 {
@@ -31,8 +32,14 @@ impl<T: Clone> Clone for Vec<T> {
     }
 }
 
-impl<T: Sized> Vec<T> {
+impl<T: Sized> Vec<T, GlobalAllocator> {
     pub fn new(capacity: u32) -> Result<Vec<T>, alloc::AllocError> {
+        Vec::new_in(GlobalAllocator, capacity)
+    }
+}
+
+impl<T: Sized, A: Allocator> Vec<T, A> {
+    pub fn new_in(alloc: A, capacity: u32) -> Result<Vec<T, A>, alloc::AllocError> {
         // We don't want to handle ZST
         const {
             assert!(size_of::<T>() != 0);
@@ -40,7 +47,7 @@ impl<T: Sized> Vec<T> {
 
         let ptr = if capacity > 0 {
             unsafe {
-                alloc::alloc(Layout::from_size_align(
+                alloc.alloc(Layout::from_size_align(
                     size_of::<T>() * capacity as usize,
                     align_of::<T>(),
                 )?)?
@@ -53,17 +60,23 @@ impl<T: Sized> Vec<T> {
             ptr: ptr as *mut T,
             capacity,
             len: 0,
+            alloc,
         })
     }
+}
 
+impl<T: Sized> Vec<T, GlobalAllocator> {
     pub fn zero() -> Vec<T> {
         Vec {
             ptr: core::ptr::null_mut(),
             capacity: 0,
             len: 0,
+            alloc: GlobalAllocator,
         }
     }
+}
 
+impl<T: Sized, A: Allocator> Vec<T, A> {
     pub fn len(&self) -> usize {
         self.len as usize
     }
@@ -98,7 +111,7 @@ impl<T: Sized> Vec<T> {
     }
 }
 
-impl<T> Deref for Vec<T> {
+impl<T, A: Allocator> Deref for Vec<T, A> {
     type Target = [T];
     fn deref(&self) -> &[T] {
         if self.ptr.is_null() {
@@ -109,7 +122,7 @@ impl<T> Deref for Vec<T> {
     }
 }
 
-impl<T> DerefMut for Vec<T> {
+impl<T, A: Allocator> DerefMut for Vec<T, A> {
     fn deref_mut(&mut self) -> &mut [T] {
         if self.ptr.is_null() {
             &mut []
@@ -119,12 +132,12 @@ impl<T> DerefMut for Vec<T> {
     }
 }
 
-impl<T: Sized> Drop for Vec<T> {
+impl<T: Sized, A: Allocator> Drop for Vec<T, A> {
     fn drop(&mut self) {
         if self.capacity != 0 {
             while let Some(_) = self.pop() {}
             unsafe {
-                alloc::dealloc(
+                self.alloc.dealloc(
                     self.ptr as *mut u8,
                     Layout::from_size_align(
                         size_of::<T>() * self.capacity as usize,
@@ -137,14 +150,15 @@ impl<T: Sized> Drop for Vec<T> {
     }
 }
 
-pub struct IntoIter<T> {
+pub struct IntoIter<T, A: Allocator = GlobalAllocator> {
     buf: *mut T,
     cap: usize,
     start: *const T,
     end: *const T,
+    alloc: A,
 }
 
-impl<T> Iterator for IntoIter<T> {
+impl<T, A: Allocator> Iterator for IntoIter<T, A> {
     type Item = T;
     fn next(&mut self) -> Option<T> {
         if self.start == self.end {
@@ -164,10 +178,10 @@ impl<T> Iterator for IntoIter<T> {
     }
 }
 
-impl<T> IntoIterator for Vec<T> {
+impl<T> IntoIterator for Vec<T, GlobalAllocator> {
     type Item = T;
-    type IntoIter = IntoIter<T>;
-    fn into_iter(self) -> IntoIter<T> {
+    type IntoIter = IntoIter<T, GlobalAllocator>;
+    fn into_iter(self) -> IntoIter<T, GlobalAllocator> {
         // Make sure not to drop Vec since that would free the buffer
         let vec = core::mem::ManuallyDrop::new(self);
 
@@ -186,6 +200,7 @@ impl<T> IntoIterator for Vec<T> {
             } else {
                 unsafe { ptr.add(len) }
             },
+            alloc: GlobalAllocator,
         }
     }
 }
@@ -252,14 +267,14 @@ impl<T> DoubleEndedIterator for IntoIter<T> {
     }
 }
 
-impl<T> Drop for IntoIter<T> {
+impl<T, A: Allocator> Drop for IntoIter<T, A> {
     fn drop(&mut self) {
         if self.cap != 0 {
             // drop any remaining elements
             for _ in &mut *self {}
             let layout = Layout::array::<T>(self.cap).unwrap();
             unsafe {
-                alloc::dealloc(self.buf as *mut u8, layout);
+                self.alloc.dealloc(self.buf as *mut u8, layout);
             }
         }
     }

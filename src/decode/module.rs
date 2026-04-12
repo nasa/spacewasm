@@ -1,4 +1,3 @@
-extern crate std;
 use crate::*;
 use core::marker::PhantomData;
 
@@ -37,13 +36,13 @@ impl<'wasm> Module<'wasm> {
     fn read(wasm: &mut WasmReader<'wasm>) -> Result<Module<'wasm>, SectionDecodeError> {
         let magic = wasm.strip_bytes::<4>()?;
         if magic != [0x00, 0x61, 0x73, 0x6D] {
-            return Err(DecodeError::MalformedMagic(magic).into());
+            return Err(ValidationError::MalformedMagic.into());
         }
 
         let version = wasm.strip_bytes::<4>()?;
 
         if version != [0x01, 0x00, 0x00, 0x00] {
-            return Err(DecodeError::MalformedVersion(version).into());
+            return Err(ValidationError::MalformedVersion.into());
         }
 
         // We need to do a single set of vector allocations per-section
@@ -70,7 +69,7 @@ impl<'wasm> Module<'wasm> {
             use SectionKind::*;
             let section_ty = match SectionKind::read(wasm) {
                 Ok(section) => section,
-                Err(DecodeError::Eof) => break,
+                Err(ValidationError::Eof) => break,
                 Err(e) => return Err(e.into()),
             };
 
@@ -79,10 +78,10 @@ impl<'wasm> Module<'wasm> {
             if section_ty != Custom {
                 if last_section > section_ty && last_section != Custom {
                     return Err(
-                        DecodeError::InvalidSectionOrdering(last_section, section_ty).into(),
+                        ValidationError::InvalidSectionOrdering(last_section, section_ty).into(),
                     );
                 } else if last_section == section_ty {
-                    return Err(DecodeError::DuplicateSection(section_ty).into());
+                    return Err(ValidationError::DuplicateSection(section_ty).into());
                 }
 
                 last_section = section_ty;
@@ -90,8 +89,6 @@ impl<'wasm> Module<'wasm> {
 
             let section_size = wasm.read_u32()?;
             let section_start = wasm.save();
-
-            std::eprintln!("reading section {:?}", section_ty);
 
             match section_ty {
                 Custom => {
@@ -147,11 +144,7 @@ impl<'wasm> Module<'wasm> {
             let section_end = wasm.save();
             let section_length = section_end - section_start;
             if section_length != section_size {
-                return Err(DecodeError::InvalidSectionSize {
-                    read: section_length,
-                    expected: section_size,
-                }
-                .with_section(section_ty));
+                return Err(ValidationError::MalformedSectionSize.with_section(section_ty));
             }
         }
 
@@ -163,7 +156,7 @@ impl<'wasm> Module<'wasm> {
             use SectionKind::*;
             let section_ty = match SectionKind::read(wasm) {
                 Ok(section) => section,
-                Err(DecodeError::Eof) => break,
+                Err(ValidationError::Eof) => break,
                 Err(e) => return Err(e.into()),
             };
 
@@ -218,7 +211,7 @@ pub enum SectionKind {
 }
 
 impl SectionKind {
-    pub fn read(wasm: &mut WasmReader) -> Result<Self, DecodeError> {
+    pub fn read(wasm: &mut WasmReader) -> Result<Self, ValidationError> {
         use SectionKind::*;
         let ty = match wasm.read_u8()? {
             0 => Custom,
@@ -233,7 +226,7 @@ impl SectionKind {
             9 => Element,
             10 => Code,
             11 => Data,
-            other => return Err(DecodeError::MalformedSectionId(other)),
+            other => return Err(ValidationError::MalformedSectionId(other)),
         };
 
         Ok(ty)
@@ -246,7 +239,7 @@ pub struct CustomSection<'wasm> {
 }
 
 impl<'wasm> CustomSection<'wasm> {
-    pub fn read(wasm: &mut WasmReader<'wasm>, size: u32) -> Result<Self, DecodeError> {
+    pub fn read(wasm: &mut WasmReader<'wasm>, size: u32) -> Result<Self, ValidationError> {
         let start = wasm.save();
         let name = Name::read(wasm)?;
         let name_length = wasm.save() - start;
@@ -260,7 +253,7 @@ impl<'wasm> CustomSection<'wasm> {
 pub struct TypeSection;
 
 impl TypeSection {
-    pub fn read(wasm: &mut WasmReader) -> Result<Vec<FuncType>, DecodeError> {
+    pub fn read(wasm: &mut WasmReader) -> Result<Vec<FuncType>, ValidationError> {
         wasm.read_vec(FuncType::read)
     }
 }
@@ -270,7 +263,7 @@ macro_rules! read_impl_u32 {
         #[derive(Debug, Clone)]
         pub struct $type_name(pub u32);
         impl $type_name {
-            pub fn read(wasm: &mut WasmReader) -> Result<Self, DecodeError> {
+            pub fn read(wasm: &mut WasmReader) -> Result<Self, ValidationError> {
                 Ok($type_name(wasm.read_u32()?))
             }
         }
@@ -293,13 +286,13 @@ pub enum ImportDesc {
 }
 
 impl ImportDesc {
-    pub fn read(wasm: &mut WasmReader) -> Result<Self, DecodeError> {
+    pub fn read(wasm: &mut WasmReader) -> Result<Self, ValidationError> {
         match wasm.read_u8()? {
             0x00 => Ok(ImportDesc::Func(TypeIdx::read(wasm)?)),
             0x01 => Ok(ImportDesc::Table(TableType::read(wasm)?)),
             0x02 => Ok(ImportDesc::Mem(MemType::read(wasm)?)),
             0x03 => Ok(ImportDesc::Global(GlobalType::read(wasm)?)),
-            c => Err(DecodeError::MalformedImportExportDesc(c)),
+            c => Err(ValidationError::MalformedImportExportDesc(c)),
         }
     }
 }
@@ -312,13 +305,13 @@ pub enum ExportDesc {
 }
 
 impl ExportDesc {
-    pub fn read(wasm: &mut WasmReader) -> Result<Self, DecodeError> {
+    pub fn read(wasm: &mut WasmReader) -> Result<Self, ValidationError> {
         match wasm.read_u8()? {
             0x00 => Ok(ExportDesc::Func(FuncIdx::read(wasm)?)),
             0x01 => Ok(ExportDesc::Table(TableIdx::read(wasm)?)),
             0x02 => Ok(ExportDesc::Mem(MemIdx::read(wasm)?)),
             0x03 => Ok(ExportDesc::Global(GlobalIdx::read(wasm)?)),
-            c => Err(DecodeError::MalformedImportExportDesc(c)),
+            c => Err(ValidationError::MalformedImportExportDesc(c)),
         }
     }
 }
@@ -330,7 +323,7 @@ pub struct Import<'wasm> {
 }
 
 impl<'wasm> Import<'wasm> {
-    pub fn read(wasm: &mut WasmReader<'wasm>) -> Result<Self, DecodeError> {
+    pub fn read(wasm: &mut WasmReader<'wasm>) -> Result<Self, ValidationError> {
         let module = Name::read(wasm)?;
         let name = Name::read(wasm)?;
         let desc = ImportDesc::read(wasm)?;
@@ -341,7 +334,9 @@ impl<'wasm> Import<'wasm> {
 pub struct ImportSection;
 
 impl ImportSection {
-    pub fn read<'wasm>(wasm: &mut WasmReader<'wasm>) -> Result<Vec<Import<'wasm>>, DecodeError> {
+    pub fn read<'wasm>(
+        wasm: &mut WasmReader<'wasm>,
+    ) -> Result<Vec<Import<'wasm>>, ValidationError> {
         wasm.read_vec(Import::read)
     }
 }
@@ -349,7 +344,7 @@ impl ImportSection {
 pub struct FunctionSection;
 
 impl FunctionSection {
-    pub fn read(wasm: &mut WasmReader) -> Result<Vec<TypeIdx>, DecodeError> {
+    pub fn read(wasm: &mut WasmReader) -> Result<Vec<TypeIdx>, ValidationError> {
         wasm.read_vec(TypeIdx::read)
     }
 }
@@ -357,27 +352,15 @@ impl FunctionSection {
 pub struct TableSection;
 
 impl TableSection {
-    pub fn read(wasm: &mut WasmReader) -> Result<Vec<TableType>, DecodeError> {
+    pub fn read(wasm: &mut WasmReader) -> Result<Vec<TableType>, ValidationError> {
         wasm.read_vec(TableType::read)
     }
 }
 
 pub struct MemorySection;
 impl MemorySection {
-    pub fn read(wasm: &mut WasmReader) -> Result<Vec<MemType>, DecodeError> {
+    pub fn read(wasm: &mut WasmReader) -> Result<Vec<MemType>, ValidationError> {
         wasm.read_vec(MemType::read)
-    }
-}
-
-pub struct Expr<'wasm> {
-    pub instructions: Slice<'wasm>,
-}
-impl<'wasm> Expr<'wasm> {
-    pub fn read(wasm: &mut WasmReader<'wasm>) -> Result<Self, DecodeError> {
-        // TODO(tumbar) Decode instructions
-        Ok(Expr {
-            instructions: Slice::read(wasm, 0)?,
-        })
     }
 }
 
@@ -387,7 +370,7 @@ pub struct Global<'wasm> {
 }
 
 impl<'wasm> Global<'wasm> {
-    pub fn read(wasm: &mut WasmReader<'wasm>) -> Result<Self, DecodeError> {
+    pub fn read(wasm: &mut WasmReader<'wasm>) -> Result<Self, ValidationError> {
         let type_ = GlobalType::read(wasm)?;
         let init = Expr::read(wasm)?;
         Ok(Global { type_, init })
@@ -396,7 +379,9 @@ impl<'wasm> Global<'wasm> {
 
 pub struct GlobalSection;
 impl GlobalSection {
-    pub fn read<'wasm>(wasm: &mut WasmReader<'wasm>) -> Result<Vec<Global<'wasm>>, DecodeError> {
+    pub fn read<'wasm>(
+        wasm: &mut WasmReader<'wasm>,
+    ) -> Result<Vec<Global<'wasm>>, ValidationError> {
         wasm.read_vec(Global::read)
     }
 }
@@ -407,7 +392,7 @@ pub struct Export<'wasm> {
 }
 
 impl<'wasm> Export<'wasm> {
-    pub fn read(wasm: &mut WasmReader<'wasm>) -> Result<Self, DecodeError> {
+    pub fn read(wasm: &mut WasmReader<'wasm>) -> Result<Self, ValidationError> {
         let name = Name::read(wasm)?;
         let desc = ExportDesc::read(wasm)?;
         Ok(Export { name, desc })
@@ -416,7 +401,9 @@ impl<'wasm> Export<'wasm> {
 
 pub struct ExportSection;
 impl ExportSection {
-    pub fn read<'wasm>(wasm: &mut WasmReader<'wasm>) -> Result<Vec<Export<'wasm>>, DecodeError> {
+    pub fn read<'wasm>(
+        wasm: &mut WasmReader<'wasm>,
+    ) -> Result<Vec<Export<'wasm>>, ValidationError> {
         wasm.read_vec(Export::read)
     }
 }
@@ -428,7 +415,7 @@ pub struct Element<'wasm> {
 }
 
 impl<'wasm> Element<'wasm> {
-    pub fn read(wasm: &mut WasmReader<'wasm>) -> Result<Self, DecodeError> {
+    pub fn read(wasm: &mut WasmReader<'wasm>) -> Result<Self, ValidationError> {
         let table = TableIdx::read(wasm)?;
         let offset = Expr::read(wasm)?;
         let init = wasm.read_vec(FuncIdx::read)?;
@@ -443,7 +430,9 @@ impl<'wasm> Element<'wasm> {
 
 pub struct ElementSection;
 impl ElementSection {
-    pub fn read<'wasm>(wasm: &mut WasmReader<'wasm>) -> Result<Vec<Element<'wasm>>, DecodeError> {
+    pub fn read<'wasm>(
+        wasm: &mut WasmReader<'wasm>,
+    ) -> Result<Vec<Element<'wasm>>, ValidationError> {
         wasm.read_vec(Element::read)
     }
 }
@@ -451,7 +440,7 @@ impl ElementSection {
 pub struct CodeSection;
 
 impl CodeSection {
-    pub fn read<'wasm>(wasm: &mut WasmReader<'wasm>) -> Result<Vec<Func<'wasm>>, DecodeError> {
+    pub fn read<'wasm>(wasm: &mut WasmReader<'wasm>) -> Result<Vec<Func<'wasm>>, ValidationError> {
         wasm.read_vec(Func::read)
     }
 }
@@ -463,7 +452,7 @@ pub struct Data<'wasm> {
 }
 
 impl<'wasm> Data<'wasm> {
-    pub fn read(wasm: &mut WasmReader<'wasm>) -> Result<Self, DecodeError> {
+    pub fn read(wasm: &mut WasmReader<'wasm>) -> Result<Self, ValidationError> {
         let mem = MemIdx::read(wasm)?;
         let offset = Expr::read(wasm)?;
 
@@ -476,7 +465,7 @@ impl<'wasm> Data<'wasm> {
 
 pub struct DataSection;
 impl DataSection {
-    pub fn read<'wasm>(wasm: &mut WasmReader<'wasm>) -> Result<Vec<Data<'wasm>>, DecodeError> {
+    pub fn read<'wasm>(wasm: &mut WasmReader<'wasm>) -> Result<Vec<Data<'wasm>>, ValidationError> {
         wasm.read_vec(Data::read)
     }
 }

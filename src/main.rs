@@ -1,10 +1,11 @@
+use spacewasm::alloc::{AllocError, Allocator};
 use spacewasm::PageAllocator;
 use std::alloc::Layout;
 
-struct GlobalAllocator;
-unsafe impl core::alloc::GlobalAlloc for GlobalAllocator {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        unsafe { std::alloc::alloc(layout) }
+struct RustSystemAllocator;
+unsafe impl Allocator for RustSystemAllocator {
+    unsafe fn alloc(&self, layout: Layout) -> Result<*mut u8, AllocError> {
+        unsafe { Ok(std::alloc::alloc(layout)) }
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
@@ -13,7 +14,7 @@ unsafe impl core::alloc::GlobalAlloc for GlobalAllocator {
 }
 
 fn main() {
-    let allocator: PageAllocator<2> = PageAllocator::new(&GlobalAllocator {}, 4096);
+    let allocator: PageAllocator<2> = PageAllocator::new(&RustSystemAllocator {}, 4096);
     spacewasm::alloc::run(&allocator, || {
         std::env::args().skip(1).for_each(|path| {
             let data = std::fs::read(&path).expect("failed to read file");

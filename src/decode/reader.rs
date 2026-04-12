@@ -4,7 +4,8 @@
 ///
 /// This implementation is heavily based off of DLR's WASM interpreter:
 /// <https://github.com/DLR-FT/wasm-interpreter>
-use crate::{DecodeError, Vec};
+use crate::alloc::{Allocator, GlobalAllocator};
+use crate::{ValidationError, Vec};
 use core::marker::PhantomData;
 
 
@@ -53,23 +54,23 @@ impl<'wasm> WasmReader<'wasm> {
         self.offset = state.0 as usize;
     }
 
-    pub fn peek_u8(&self) -> Result<u8, DecodeError> {
+    pub fn peek_u8(&self) -> Result<u8, ValidationError> {
         self.binary
             .get(self.offset)
             .copied()
-            .ok_or(DecodeError::Eof)
+            .ok_or(ValidationError::Eof)
     }
 
     /// Tries to read one byte and fails if the end of file is reached.
-    pub fn read_u8(&mut self) -> Result<u8, DecodeError> {
+    pub fn read_u8(&mut self) -> Result<u8, ValidationError> {
         let byte = self.peek_u8()?;
         self.offset += 1;
         Ok(byte)
     }
 
-    pub fn strip_bytes<const N: usize>(&mut self) -> Result<[u8; N], DecodeError> {
+    pub fn strip_bytes<const N: usize>(&mut self) -> Result<[u8; N], ValidationError> {
         if self.offset + N >= self.binary.len() {
-            Err(DecodeError::Eof)
+            Err(ValidationError::Eof)
         } else {
             let bytes = &self.binary[self.offset..self.offset + N];
             self.offset += N;
@@ -79,7 +80,7 @@ impl<'wasm> WasmReader<'wasm> {
 
     /// Parses a variable-length `u32` as specified by [LEB128](https://en.wikipedia.org/wiki/LEB128#Unsigned_LEB128).
     /// Note: If `Err`, the [WasmReader] object is no longer guaranteed to be in a valid state
-    pub fn read_u32(&mut self) -> Result<u32, DecodeError> {
+    pub fn read_u32(&mut self) -> Result<u32, ValidationError> {
         /// Because up to 5 bytes (each storing 7 bits) may be used to store 32 bits,
         /// some bits in the last byte will be left unused. This is a bitmask for
         /// exactly these bits in the last byte.
@@ -119,18 +120,18 @@ impl<'wasm> WasmReader<'wasm> {
         let padding_bits_are_not_zero = byte & PADDING_IN_LAST_BYTE_BIT_MASK > 0;
         if has_next_byte || padding_bits_are_not_zero {
             // TODO distinguish between both error variants
-            return Err(DecodeError::MalformedVariableLengthInteger);
+            return Err(ValidationError::MalformedVariableLengthInteger);
         }
 
         Ok(result)
     }
 
-    pub fn read_f64(&mut self) -> Result<u64, DecodeError> {
+    pub fn read_f64(&mut self) -> Result<u64, ValidationError> {
         let bytes = self.strip_bytes::<8>()?;
         Ok(u64::from_le_bytes(bytes))
     }
 
-    pub fn read_i32(&mut self) -> Result<i32, DecodeError> {
+    pub fn read_i32(&mut self) -> Result<i32, ValidationError> {
         /// Because up to 5 bytes (each storing 7 bits) may be used to store 32 bits,
         /// some bits in the last byte will be left unused. This is a bitmask for
         /// exactly these bits in the last byte.
@@ -184,7 +185,7 @@ impl<'wasm> WasmReader<'wasm> {
         let has_next_byte = byte & CONTINUATION_BIT > 0;
         if has_next_byte {
             // TODO distinguish between both error variants
-            return Err(DecodeError::MalformedVariableLengthInteger);
+            return Err(ValidationError::MalformedVariableLengthInteger);
         }
 
         // Verify that the padding and sign bits are either all ones or all
@@ -199,13 +200,13 @@ impl<'wasm> WasmReader<'wasm> {
             || number_of_ones_in_padding_and_sign_bits == 0;
         if !padding_bits_match_sign_bit {
             // TODO distinguish between both error variants
-            return Err(DecodeError::MalformedVariableLengthInteger);
+            return Err(ValidationError::MalformedVariableLengthInteger);
         }
 
         Ok(result)
     }
 
-    pub fn read_var_i33_as_u32(&mut self) -> Result<u32, DecodeError> {
+    pub fn read_var_i33_as_u32(&mut self) -> Result<u32, ValidationError> {
         /// Because up to 5 bytes (each storing 7 bits) may be used to store 32 bits,
         /// some bits in the last byte will be left unused. This is a bitmask for
         /// exactly these bits in the last byte.
@@ -225,7 +226,7 @@ impl<'wasm> WasmReader<'wasm> {
             /// before returning the result, we need to sign extend the unspecified bits
             const NUM_UNSPECIFIED_BITS: u32 = NUM_BITS - 7;
             let sign_extended_result = (result << NUM_UNSPECIFIED_BITS) >> NUM_UNSPECIFIED_BITS;
-            return u32::try_from(sign_extended_result).map_err(|_| DecodeError::I33IsNegative);
+            return u32::try_from(sign_extended_result).map_err(|_| ValidationError::I33IsNegative);
         }
 
         let byte = self.read_u8()?;
@@ -233,7 +234,7 @@ impl<'wasm> WasmReader<'wasm> {
         if byte & CONTINUATION_BIT == 0 {
             const NUM_UNSPECIFIED_BITS: u32 = NUM_BITS - 14;
             let sign_extended_result = (result << NUM_UNSPECIFIED_BITS) >> NUM_UNSPECIFIED_BITS;
-            return u32::try_from(sign_extended_result).map_err(|_| DecodeError::I33IsNegative);
+            return u32::try_from(sign_extended_result).map_err(|_| ValidationError::I33IsNegative);
         }
 
         let byte = self.read_u8()?;
@@ -241,7 +242,7 @@ impl<'wasm> WasmReader<'wasm> {
         if byte & CONTINUATION_BIT == 0 {
             const NUM_UNSPECIFIED_BITS: u32 = NUM_BITS - 21;
             let sign_extended_result = (result << NUM_UNSPECIFIED_BITS) >> NUM_UNSPECIFIED_BITS;
-            return u32::try_from(sign_extended_result).map_err(|_| DecodeError::I33IsNegative);
+            return u32::try_from(sign_extended_result).map_err(|_| ValidationError::I33IsNegative);
         }
 
         let byte = self.read_u8()?;
@@ -249,7 +250,7 @@ impl<'wasm> WasmReader<'wasm> {
         if byte & CONTINUATION_BIT == 0 {
             const NUM_UNSPECIFIED_BITS: u32 = NUM_BITS - 28;
             let sign_extended_result = (result << NUM_UNSPECIFIED_BITS) >> NUM_UNSPECIFIED_BITS;
-            return u32::try_from(sign_extended_result).map_err(|_| DecodeError::I33IsNegative);
+            return u32::try_from(sign_extended_result).map_err(|_| ValidationError::I33IsNegative);
         }
 
         let byte = self.read_u8()?;
@@ -259,7 +260,7 @@ impl<'wasm> WasmReader<'wasm> {
         let has_next_byte = byte & CONTINUATION_BIT > 0;
         if has_next_byte {
             // TODO distinguish between both error variants
-            return Err(DecodeError::MalformedVariableLengthInteger);
+            return Err(ValidationError::MalformedVariableLengthInteger);
         }
 
         // Verify that the padding and sign bits are either all ones or all
@@ -274,18 +275,18 @@ impl<'wasm> WasmReader<'wasm> {
             || number_of_ones_in_padding_and_sign_bits == 0;
         if !padding_bits_match_sign_bit {
             // TODO distinguish between both error variants
-            return Err(DecodeError::MalformedVariableLengthInteger);
+            return Err(ValidationError::MalformedVariableLengthInteger);
         }
 
-        u32::try_from(result).map_err(|_| DecodeError::I33IsNegative)
+        u32::try_from(result).map_err(|_| ValidationError::I33IsNegative)
     }
 
-    pub fn read_f32(&mut self) -> Result<u32, DecodeError> {
+    pub fn read_f32(&mut self) -> Result<u32, ValidationError> {
         let bytes = self.strip_bytes::<4>()?;
         Ok(u32::from_le_bytes(bytes))
     }
 
-    pub fn read_i64(&mut self) -> Result<i64, DecodeError> {
+    pub fn read_i64(&mut self) -> Result<i64, ValidationError> {
         /// Because up to 10 bytes (each storing 7 bits) may be used to store 64 bits,
         /// some bits in the last byte will be left unused. This is a bitmask for
         /// exactly these bits in the last byte.
@@ -379,7 +380,7 @@ impl<'wasm> WasmReader<'wasm> {
         let has_next_byte = byte & CONTINUATION_BIT > 0;
         if has_next_byte {
             // TODO distinguish between both error variants
-            return Err(DecodeError::MalformedVariableLengthInteger);
+            return Err(ValidationError::MalformedVariableLengthInteger);
         }
 
         // Verify that the padding and sign bits are either all ones or all
@@ -394,39 +395,52 @@ impl<'wasm> WasmReader<'wasm> {
             || number_of_ones_in_padding_and_sign_bits == 0;
         if !padding_bits_match_sign_bit {
             // TODO distinguish between both error variants
-            return Err(DecodeError::MalformedVariableLengthInteger);
+            return Err(ValidationError::MalformedVariableLengthInteger);
         }
 
         Ok(result)
     }
 
-    pub fn skip(&mut self, len: usize) -> Result<(), DecodeError> {
+    pub fn skip(&mut self, len: usize) -> Result<(), ValidationError> {
         if self.offset + len > self.binary.len() {
-            Err(DecodeError::Eof)
+            Err(ValidationError::Eof)
         } else {
             self.offset += len;
             Ok(())
         }
     }
 
-    pub fn read_n(&mut self, len: usize) -> Result<&'wasm [u8], DecodeError> {
+    pub fn read_n(&mut self, len: usize) -> Result<&'wasm [u8], ValidationError> {
         let out = self
             .binary
             .get(self.offset..(self.offset + len))
-            .ok_or(DecodeError::Eof)?;
+            .ok_or(ValidationError::Eof)?;
 
         self.offset += len;
         Ok(out)
     }
 
     /// Note: If `Err`, the [WasmReader] object is no longer guaranteed to be in a valid state
-    pub fn read_vec<T, F>(&mut self, mut read_element: F) -> Result<Vec<T>, DecodeError>
+    pub fn read_vec<T, F>(&mut self, read_element: F) -> Result<Vec<T>, ValidationError>
     where
         T: 'wasm,
-        F: FnMut(&mut WasmReader<'wasm>) -> Result<T, DecodeError>,
+        F: FnMut(&mut WasmReader<'wasm>) -> Result<T, ValidationError>,
+    {
+        self.read_vec_in(GlobalAllocator, read_element)
+    }
+
+    pub fn read_vec_in<T, F, A>(
+        &mut self,
+        alloc: A,
+        mut read_element: F,
+    ) -> Result<Vec<T, A>, ValidationError>
+    where
+        T: 'wasm,
+        F: FnMut(&mut WasmReader<'wasm>) -> Result<T, ValidationError>,
+        A: Allocator,
     {
         let len = self.read_u32()?;
-        let mut out = Vec::new(len)?;
+        let mut out = Vec::new_in(alloc, len)?;
         for _ in 0..len {
             out.push(read_element(self)?);
         }
