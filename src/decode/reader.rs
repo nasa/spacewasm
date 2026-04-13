@@ -4,8 +4,7 @@
 ///
 /// This implementation is heavily based off of DLR's WASM interpreter:
 /// <https://github.com/DLR-FT/wasm-interpreter>
-use crate::alloc::{Allocator, GlobalAllocator};
-use crate::{StackVec, ValidationError, Vec};
+use crate::{StackVec, ValidationError, Vec, Allocator, GlobalAllocator};
 use core::marker::PhantomData;
 
 
@@ -31,9 +30,9 @@ pub struct WasmReader<'wasm> {
 }
 
 #[derive(Clone, Copy)]
-pub struct WasmReaderState<'wasm>(u32, PhantomData<&'wasm ()>);
+pub struct WasmIndex<'wasm>(u32, PhantomData<&'wasm ()>);
 
-impl<'wasm> core::ops::Sub for WasmReaderState<'wasm> {
+impl<'wasm> core::ops::Sub for WasmIndex<'wasm> {
     type Output = u32;
 
     fn sub(self, rhs: Self) -> Self::Output {
@@ -46,11 +45,11 @@ impl<'wasm> WasmReader<'wasm> {
         Self { binary, offset: 0 }
     }
 
-    pub fn save(&self) -> WasmReaderState<'wasm> {
-        WasmReaderState(self.offset as u32, PhantomData::default())
+    pub fn save(&self) -> WasmIndex<'wasm> {
+        WasmIndex(self.offset as u32, PhantomData::default())
     }
 
-    pub fn restore(&mut self, state: WasmReaderState) {
+    pub fn restore(&mut self, state: WasmIndex) {
         self.offset = state.0 as usize;
     }
 
@@ -447,7 +446,7 @@ impl<'wasm> WasmReader<'wasm> {
 
         let mut out = StackVec::new();
         for _ in 0..len {
-            out.push(read_element(self)?);
+            out.push(read_element(self)?)?;
         }
 
         Ok(out)

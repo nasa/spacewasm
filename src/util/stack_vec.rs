@@ -1,3 +1,4 @@
+use crate::alloc::AllocError;
 use core::ops::{Deref, DerefMut};
 
 pub struct StackVec<T: Sized, const N: usize> {
@@ -5,22 +6,31 @@ pub struct StackVec<T: Sized, const N: usize> {
     len: usize,
 }
 
-impl<T, const N: usize> StackVec<T, N> {
-    pub fn new() -> Self {
+impl<T: Sized, const N: usize> Default for StackVec<T, N> {
+    fn default() -> Self {
         Self {
             data: unsafe { core::mem::zeroed() },
             len: 0,
         }
     }
+}
 
-    pub fn push(&mut self, value: T) {
-        assert!(self.len < N);
+impl<T, const N: usize> StackVec<T, N> {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn push(&mut self, value: T) -> Result<(), AllocError> {
+        if self.len >= N {
+            return Err(AllocError::OutOfMemory);
+        }
 
         unsafe {
             core::ptr::write(&mut self.data[self.len], value);
         }
 
         self.len += 1;
+        Ok(())
     }
 
     pub fn pop(&mut self) -> Option<T> {

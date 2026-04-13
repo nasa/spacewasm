@@ -1,4 +1,4 @@
-use crate::alloc::{self, Allocator, GlobalAllocator};
+use crate::alloc::{AllocError, Allocator, GlobalAllocator};
 use core::alloc::Layout;
 use core::ops::{Deref, DerefMut};
 use core::ptr::NonNull;
@@ -33,25 +33,20 @@ impl<T: Clone> Clone for Vec<T, GlobalAllocator> {
 }
 
 impl<T: Sized> Vec<T, GlobalAllocator> {
-    pub fn new(capacity: u32) -> Result<Vec<T>, alloc::AllocError> {
+    pub fn new(capacity: u32) -> Result<Vec<T>, AllocError> {
         Vec::new_in(GlobalAllocator, capacity)
     }
 }
 
 impl<T: Sized, A: Allocator> Vec<T, A> {
-    pub fn new_in(alloc: A, capacity: u32) -> Result<Vec<T, A>, alloc::AllocError> {
+    pub fn new_in(alloc: A, capacity: u32) -> Result<Vec<T, A>, AllocError> {
         // We don't want to handle ZST
         const {
             assert!(size_of::<T>() != 0);
         }
 
         let ptr = if capacity > 0 {
-            unsafe {
-                alloc.alloc(Layout::from_size_align(
-                    size_of::<T>() * capacity as usize,
-                    align_of::<T>(),
-                )?)?
-            }
+            unsafe { alloc.alloc(Layout::array::<T>(capacity as usize)?)? }
         } else {
             core::ptr::null_mut()
         };

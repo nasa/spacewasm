@@ -13,3 +13,6 @@ pub use types::*;
 
 mod code;
 pub use code::*;
+
+mod index;
+pub use index::*;

@@ -2,11 +2,11 @@
 //!
 //! See: <https://webassembly.github.io/spec/core/binary/types.html>
 
-use crate::{ValidationError, Vec, WasmReader, WasmReaderState};
+use crate::{ValidationError, Vec, WasmReader, WasmIndex};
 
 /// An offset and length to select a subset of the WASM binary
 pub struct Slice<'wasm> {
-    pub start: WasmReaderState<'wasm>,
+    pub start: WasmIndex<'wasm>,
     pub len: u32,
 }
 
