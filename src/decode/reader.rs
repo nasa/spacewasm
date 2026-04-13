@@ -8,7 +8,6 @@ use crate::alloc::{Allocator, GlobalAllocator};
 use crate::{ValidationError, Vec};
 use core::marker::PhantomData;
 
-
 /// Wasm encodes integers according to the LEB128 format, which specifies that
 /// only 7 bits of every byte are used to store the integer's bits. The 8th bit
 /// is always used as a bitflag for whether the next byte shall also be read as
@@ -66,6 +65,16 @@ impl<'wasm> WasmReader<'wasm> {
         let byte = self.peek_u8()?;
         self.offset += 1;
         Ok(byte)
+    }
+
+    pub fn expect_u8(&mut self, expected: u8) -> Result<(), ValidationError> {
+        let byte = self.peek_u8()?;
+        if byte == expected {
+            self.offset += 1;
+            Ok(())
+        } else {
+            Err(ValidationError::ExpectedTerminal(expected))
+        }
     }
 
     pub fn strip_bytes<const N: usize>(&mut self) -> Result<[u8; N], ValidationError> {

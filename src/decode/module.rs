@@ -164,8 +164,7 @@ impl<'wasm> Module<'wasm> {
                 self.memories = MemorySection::read(wasm)?;
             }
             Global => {
-                // globals = GlobalSection::read(wasm).map_err(|e| e.with_section(section_ty))?;
-                wasm.skip(section_size)?;
+                self.globals = GlobalSection::read(wasm)?;
             }
             Export => {
                 self.exports = ExportSection::read(wasm)?;
@@ -174,16 +173,13 @@ impl<'wasm> Module<'wasm> {
                 self.start.replace(FuncIdx::read(wasm)?);
             }
             Element => {
-                // elements =
-                //     ElementSection::read(wasm).map_err(|e| e.with_section(section_ty))?;
-                wasm.skip(section_size)?;
+                self.elements = ElementSection::read(wasm)?;
             }
             Code => {
                 self.code = CodeSection::read(wasm)?;
             }
             Data => {
-                // data = DataSection::read(wasm).map_err(|e| e.with_section(section_ty))?;
-                wasm.skip(section_size)?;
+                self.data = DataSection::read(wasm)?;
             }
         }
 

@@ -1,5 +1,5 @@
-use crate::SectionKind;
 use crate::alloc::AllocError;
+use crate::SectionKind;
 
 #[derive(Debug, Clone)]
 pub struct ParseError {
@@ -53,6 +53,9 @@ pub enum ValidationError {
     InvalidSectionOrdering(SectionKind, SectionKind),
     DuplicateSection(SectionKind),
     InvalidZeroMaxLimit,
+    ExpectedTerminal(u8),
+    InvalidOpcode(u8),
+    MalformedCodeSize,
 }
 
 impl From<AllocError> for ValidationError {

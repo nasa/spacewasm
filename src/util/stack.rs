@@ -74,7 +74,9 @@ impl<const SIZE: usize, const DEPTH: usize> StackAllocatorInner<SIZE, DEPTH> {
         if self.n_allocations > 0 {
             self.n_allocations -= 1;
             let expected_address = self.allocations[self.n_allocations];
-            if ptr as usize != expected_address {
+            let ptr_offset = ptr as usize - &raw const self.data[0] as usize;
+
+            if ptr_offset != expected_address {
                 Err(AllocError::StackDeallocationInvariantViolation)
             } else {
                 // FIXME(tumbar)

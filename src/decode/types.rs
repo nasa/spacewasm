@@ -87,7 +87,7 @@ impl ValType {
     }
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct ResultType(pub Option<ValType>);
 
 impl ResultType {
