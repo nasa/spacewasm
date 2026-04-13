@@ -5,8 +5,9 @@
 /// This implementation is heavily based off of DLR's WASM interpreter:
 /// <https://github.com/DLR-FT/wasm-interpreter>
 use crate::alloc::{Allocator, GlobalAllocator};
-use crate::{ValidationError, Vec};
+use crate::{StackVec, ValidationError, Vec};
 use core::marker::PhantomData;
+
 
 /// Wasm encodes integers according to the LEB128 format, which specifies that
 /// only 7 bits of every byte are used to store the integer's bits. The 8th bit
@@ -128,7 +129,6 @@ impl<'wasm> WasmReader<'wasm> {
         let has_next_byte = byte & CONTINUATION_BIT > 0;
         let padding_bits_are_not_zero = byte & PADDING_IN_LAST_BYTE_BIT_MASK > 0;
         if has_next_byte || padding_bits_are_not_zero {
-            // TODO distinguish between both error variants
             return Err(ValidationError::MalformedVariableLengthInteger);
         }
 
@@ -193,7 +193,6 @@ impl<'wasm> WasmReader<'wasm> {
         // there can only be a maximum number of 5 bytes for a 32-bit integer
         let has_next_byte = byte & CONTINUATION_BIT > 0;
         if has_next_byte {
-            // TODO distinguish between both error variants
             return Err(ValidationError::MalformedVariableLengthInteger);
         }
 
@@ -208,7 +207,6 @@ impl<'wasm> WasmReader<'wasm> {
             == PADDING_AND_SIGN_BITMASK.count_ones()
             || number_of_ones_in_padding_and_sign_bits == 0;
         if !padding_bits_match_sign_bit {
-            // TODO distinguish between both error variants
             return Err(ValidationError::MalformedVariableLengthInteger);
         }
 
@@ -268,7 +266,6 @@ impl<'wasm> WasmReader<'wasm> {
         // there can only be a maximum number of 5 bytes for a 33-bit integer
         let has_next_byte = byte & CONTINUATION_BIT > 0;
         if has_next_byte {
-            // TODO distinguish between both error variants
             return Err(ValidationError::MalformedVariableLengthInteger);
         }
 
@@ -283,7 +280,6 @@ impl<'wasm> WasmReader<'wasm> {
             == PADDING_AND_SIGN_BITMASK.count_ones()
             || number_of_ones_in_padding_and_sign_bits == 0;
         if !padding_bits_match_sign_bit {
-            // TODO distinguish between both error variants
             return Err(ValidationError::MalformedVariableLengthInteger);
         }
 
@@ -388,7 +384,6 @@ impl<'wasm> WasmReader<'wasm> {
         // there can only be a maximum number of 10 bytes for a 64-bit integer
         let has_next_byte = byte & CONTINUATION_BIT > 0;
         if has_next_byte {
-            // TODO distinguish between both error variants
             return Err(ValidationError::MalformedVariableLengthInteger);
         }
 
@@ -403,7 +398,6 @@ impl<'wasm> WasmReader<'wasm> {
             == PADDING_AND_SIGN_BITMASK.count_ones()
             || number_of_ones_in_padding_and_sign_bits == 0;
         if !padding_bits_match_sign_bit {
-            // TODO distinguish between both error variants
             return Err(ValidationError::MalformedVariableLengthInteger);
         }
 
@@ -436,6 +430,27 @@ impl<'wasm> WasmReader<'wasm> {
         F: FnMut(&mut WasmReader<'wasm>) -> Result<T, ValidationError>,
     {
         self.read_vec_in(GlobalAllocator, read_element)
+    }
+
+    pub fn read_vec_stack<T, F, const SIZE: usize>(
+        &mut self,
+        mut read_element: F,
+    ) -> Result<StackVec<T, SIZE>, ValidationError>
+    where
+        T: 'wasm,
+        F: FnMut(&mut WasmReader<'wasm>) -> Result<T, ValidationError>,
+    {
+        let len = self.read_u32()?;
+        if len as usize > SIZE {
+            return Err(ValidationError::VecTooLong);
+        }
+
+        let mut out = StackVec::new();
+        for _ in 0..len {
+            out.push(read_element(self)?);
+        }
+
+        Ok(out)
     }
 
     pub fn read_vec_in<T, F, A>(

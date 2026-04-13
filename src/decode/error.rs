@@ -56,6 +56,7 @@ pub enum ValidationError {
     ExpectedTerminal(u8),
     InvalidOpcode(u8),
     MalformedCodeSize,
+    VecTooLong,
 }
 
 impl From<AllocError> for ValidationError {

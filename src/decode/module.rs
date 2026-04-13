@@ -1,5 +1,4 @@
 use crate::*;
-use core::marker::PhantomData;
 
 pub struct Module<'wasm> {
     pub custom: Vec<CustomSection<'wasm>>,
@@ -15,11 +14,6 @@ pub struct Module<'wasm> {
     pub elements: Vec<Element<'wasm>>,
     pub data: Vec<Data<'wasm>>,
     pub start: Option<FuncIdx>,
-
-    // We need to keep this lifetime since we are tracking offsets as `u32` rather
-    // than platform dependent `&'wasm` references. This will keep the same outer
-    // borrow checking guarentees that we'd get if we tracked true references.
-    _marker: PhantomData<&'wasm ()>,
 }
 
 impl<'wasm> Module<'wasm> {
@@ -62,7 +56,6 @@ impl<'wasm> Module<'wasm> {
             elements: Vec::zero(),
             data: Vec::zero(),
             start: None,
-            _marker: Default::default(),
         };
 
         let mut n_custom = 0u32;

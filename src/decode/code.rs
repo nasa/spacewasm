@@ -5,7 +5,7 @@ pub struct Expr<'wasm>(WasmReaderState<'wasm>);
 impl<'wasm> Expr<'wasm> {
     pub fn read(wasm: &mut WasmReader<'wasm>) -> Result<Self, ValidationError> {
         let e = Expr(wasm.save());
-        wasm.visit_code(&mut EmptyVisitor {})?;
+        wasm.visit_code(&mut EmptyVisitor)?;
         Ok(e)
     }
 
@@ -62,9 +62,6 @@ impl<'wasm> Func<'wasm> {
     }
 }
 
-type CodeAllocator = StackAllocator<64, 4>;
-type CodeVec<'a, T> = Vec<T, &'a CodeAllocator>;
-
 pub struct MemArg {
     pub align: u32,
     pub offset: u32,
@@ -96,7 +93,6 @@ impl<'wasm> WasmReader<'wasm> {
         visitor: &mut V,
     ) -> Result<(), B> {
         let mut blocks: StackVec<ResultType, 64> = StackVec::new();
-        let stack_allocator: CodeAllocator = StackAllocator::new();
 
         use crate::decode::opcode::*;
         loop {
@@ -132,9 +128,11 @@ impl<'wasm> WasmReader<'wasm> {
                 BR => instruction!(self, visitor, br, LabelIdx),
                 BR_IF => instruction!(self, visitor, br_if, LabelIdx),
                 BR_TABLE => {
-                    let lut = self.read_vec_in(&stack_allocator, LabelIdx::read)?;
+                    // TODO(tumbar) How do we expose maximum switch cases?
+                    //              I definitely don't want to support 2^32-1...
+                    let lut: StackVec<_, 64> = self.read_vec_stack(LabelIdx::read)?;
                     let default_ = LabelIdx::read(self)?;
-                    visitor.br_table(self, lut, default_)?;
+                    visitor.br_table(self, &lut, default_)?;
                 }
                 RETURN => instruction!(self, visitor, return_),
                 CALL => instruction!(self, visitor, call, FuncIdx),
@@ -385,7 +383,7 @@ pub trait CodeVisitor {
     visitor_default_impl!(else_);
     visitor_default_impl!(br, l: LabelIdx);
     visitor_default_impl!(br_if, l: LabelIdx);
-    visitor_default_impl!(br_table, lut: CodeVec<LabelIdx>, default_: LabelIdx);
+    visitor_default_impl!(br_table, lut: &[LabelIdx], default_: LabelIdx);
     visitor_default_impl!(return_);
     visitor_default_impl!(call, x: FuncIdx);
     visitor_default_impl!(call_indirect, x: TypeIdx);
