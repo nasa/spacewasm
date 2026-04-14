@@ -8,6 +8,12 @@ pub struct CodeIndexer<'wasm> {
     indexes: StackVec<(WasmIndex<'wasm>, ResultType), 32>,
 }
 
+impl<'wasm> CodeIndexer<'wasm> {
+    pub fn new() -> CodeIndexer<'wasm> {
+        
+    }
+}
+
 impl<'wasm> CodeVisitor<'wasm> for CodeIndexer<'wasm> {
     type Error = ValidationError;
 

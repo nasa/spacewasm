@@ -3,6 +3,13 @@ use crate::{
     WasmReader,
 };
 
+/// A convenience macro for defining the the visitor function for a decoded
+/// WebAssembly instruction from any intermediate representation.
+/// FIXME(tumbar) This visitor currently depends on [WasmReader] which is
+///               incorrect since the we should not be dependent on the IR type.
+///               It is likely we can use a generic to represent the PC just pass in [&mut PC]
+///               but I'll need to revisit this once we have more than one instruction
+///               representation.
 macro_rules! visitor_default_impl {
     // No additional parameters
     ($name:ident) => {
@@ -24,7 +31,9 @@ macro_rules! visitor_default_impl {
 
 /// An abstraction over WASM IR and internal IR.
 /// This trait can be used to index, compile and execute either form of IR
-/// with the same common implementation.
+/// with the same common implementation. The decoding and traversal code will
+/// call into this visitor and is IR specific. This trait is purely for operating
+/// on decoded WebAssembly instructions.
 pub trait CodeVisitor<'wasm> {
     type Error: From<ValidationError>;
 

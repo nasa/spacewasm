@@ -5,7 +5,7 @@ pub struct Expr<'wasm>(WasmIndex<'wasm>);
 impl<'wasm> Expr<'wasm> {
     pub fn read(wasm: &mut WasmReader<'wasm>) -> Result<Self, ValidationError> {
         let e = Expr(wasm.save());
-        let mut indexer = CodeIndexer::default();
+        let mut indexer = CodeIndexer::new();
         wasm.visit_code(&mut indexer)?;
         Ok(e)
     }
