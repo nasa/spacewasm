@@ -1,5 +1,5 @@
 use spacewasm::alloc::{AllocError, Allocator};
-use spacewasm::PageAllocator;
+use spacewasm::{MemoryStatistics, PageAllocator, SectionKind};
 use std::alloc::Layout;
 
 struct RustSystemAllocator;
@@ -11,6 +11,10 @@ unsafe impl Allocator for RustSystemAllocator {
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         unsafe { std::alloc::dealloc(ptr, layout) }
     }
+
+    fn memory_statistics(&self) -> MemoryStatistics {
+        panic!("The page allocator should be tracking it's own memory statistics.")
+    }
 }
 
 fn main() {
@@ -21,7 +25,15 @@ fn main() {
 
             match spacewasm::Module::new(&data) {
                 Ok(module) => {
-                    eprintln!("{:#?}", allocator.stats());
+                    eprintln!(
+                        "{:#?}",
+                        module
+                            .memory_usage
+                            .iter()
+                            .enumerate()
+                            .map(|(i, v)| { (SectionKind::convert(i as u8).unwrap(), v) })
+                            .collect::<Vec<_>>()
+                    );
                     eprintln!("{:?}", module.functions);
 
                     println!("Found {} imports", module.imports.len());

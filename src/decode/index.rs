@@ -1,16 +1,20 @@
-use crate::{CodeVisitor, ResultType, StackVec, ValidationError, WasmIndex, WasmReader};
+use crate::{CodeVisitor, ResultType, ValidationError, WasmReader};
+use core::marker::PhantomData;
 
 pub struct CodeIndexer<'wasm> {
-    /// Keeps track of nested blocks with a static cap
-    block_starts: StackVec<WasmIndex<'wasm>, 64>,
+    // Keeps track of nested blocks with a static cap
+    // block_starts: StackVec<WasmIndex<'wasm>, 64>,
 
-    /// Keeps track of block sizes
-    indexes: StackVec<(WasmIndex<'wasm>, ResultType), 32>,
+    // Keeps track of block sizes
+    // indexes: StackVec<(WasmIndex<'wasm>, ResultType), 32>,
+    phantom: PhantomData<&'wasm ()>,
 }
 
 impl<'wasm> CodeIndexer<'wasm> {
     pub fn new() -> CodeIndexer<'wasm> {
-        
+        CodeIndexer {
+            phantom: Default::default(),
+        }
     }
 }
 
@@ -22,7 +26,7 @@ impl<'wasm> CodeVisitor<'wasm> for CodeIndexer<'wasm> {
         pc: &mut WasmReader<'wasm>,
         _: ResultType,
     ) -> Result<(), Self::Error> {
-        self.block_starts.push(pc.save())?;
+        // self.block_starts.push(pc.save())?;
         Ok(())
     }
 
@@ -31,8 +35,8 @@ impl<'wasm> CodeVisitor<'wasm> for CodeIndexer<'wasm> {
         pc: &mut WasmReader<'wasm>,
         block_type: ResultType,
     ) -> Result<(), Self::Error> {
-        self.block_starts.push(pc.save())?;
-        self.block_types.push(block_type)?;
+        // self.block_starts.push(pc.save())?;
+        // self.block_types.push(block_type)?;
         Ok(())
     }
 
@@ -41,8 +45,8 @@ impl<'wasm> CodeVisitor<'wasm> for CodeIndexer<'wasm> {
         pc: &mut WasmReader<'wasm>,
         block_type: ResultType,
     ) -> Result<(), Self::Error> {
-        self.block_starts.push(pc.save())?;
-        self.block_types.push(block_type)?;
+        // self.block_starts.push(pc.save())?;
+        // self.block_types.push(block_type)?;
         Ok(())
     }
 
@@ -51,10 +55,10 @@ impl<'wasm> CodeVisitor<'wasm> for CodeIndexer<'wasm> {
     }
 
     fn exit_block(&mut self, _pc: &mut WasmReader<'wasm>) -> Result<(), Self::Error> {
-        let (_block_start, _block_type) = (
-            self.block_starts.pop().unwrap(),
-            self.block_types.pop().unwrap(),
-        );
+        // let (_block_start, _block_type) = (
+        // self.block_starts.pop().unwrap(),
+        // self.block_types.pop().unwrap(),
+        // );
 
         Ok(())
     }

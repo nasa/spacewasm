@@ -3,7 +3,7 @@ use crate::{
     WasmReader,
 };
 
-/// A convenience macro for defining the the visitor function for a decoded
+/// A convenience macro for defining the visitor function for a decoded
 /// WebAssembly instruction from any intermediate representation.
 /// FIXME(tumbar) This visitor currently depends on [WasmReader] which is
 ///               incorrect since the we should not be dependent on the IR type.

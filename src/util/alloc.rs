@@ -36,12 +36,38 @@ impl From<LayoutError> for AllocError {
     }
 }
 
+#[derive(Debug, Default, Clone)]
+pub struct MemoryStatistics {
+    pub total_bytes: i32,
+    pub pad_bytes: i32,
+}
+
+/// Computes the delta between two different statistic samples
+impl core::ops::Sub for MemoryStatistics {
+    type Output = MemoryStatistics;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        MemoryStatistics {
+            total_bytes: self.total_bytes - rhs.total_bytes,
+            pad_bytes: self.pad_bytes - rhs.pad_bytes,
+        }
+    }
+}
+
+impl core::ops::AddAssign for MemoryStatistics {
+    fn add_assign(&mut self, rhs: Self) {
+        self.total_bytes += rhs.total_bytes;
+        self.pad_bytes += rhs.pad_bytes;
+    }
+}
+
 /// Our allocator trait. This is very similar to [core::alloc::GlobalAlloc].
 /// We are not using that trait since it doesn't return Result<...> it just panics
 /// if an allocation fails. An adaptor is automatically implemented
 pub unsafe trait Allocator {
     unsafe fn alloc(&self, layout: Layout) -> Result<*mut u8, AllocError>;
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout);
+    fn memory_statistics(&self) -> MemoryStatistics;
 }
 
 unsafe impl<T: Allocator> Allocator for &T {
@@ -51,6 +77,10 @@ unsafe impl<T: Allocator> Allocator for &T {
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         unsafe { (**self).dealloc(ptr, layout) }
+    }
+
+    fn memory_statistics(&self) -> MemoryStatistics {
+        (**self).memory_statistics()
     }
 }
 
@@ -63,6 +93,10 @@ unsafe impl Allocator for GlobalAllocator {
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         unsafe { (*ALLOCATOR).dealloc(ptr, layout) }
     }
+
+    fn memory_statistics(&self) -> MemoryStatistics {
+        unsafe { (*ALLOCATOR).memory_statistics() }
+    }
 }
 
 struct UnimplementedAllocator;
@@ -72,6 +106,10 @@ unsafe impl Allocator for UnimplementedAllocator {
     }
 
     unsafe fn dealloc(&self, _ptr: *mut u8, _layout: Layout) {
+        unimplemented!()
+    }
+
+    fn memory_statistics(&self) -> MemoryStatistics {
         unimplemented!()
     }
 }

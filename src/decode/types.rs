@@ -2,7 +2,7 @@
 //!
 //! See: <https://webassembly.github.io/spec/core/binary/types.html>
 
-use crate::{ValidationError, Vec, WasmReader, WasmIndex};
+use crate::{ValidationError, Vec, WasmIndex, WasmReader};
 
 /// An offset and length to select a subset of the WASM binary
 pub struct Slice<'wasm> {
@@ -117,7 +117,8 @@ impl FuncType {
     }
 
     pub(crate) fn read(wasm: &mut WasmReader) -> Result<Self, ValidationError> {
-        // Function types are encoded by the byte 0x60 followed by the respective vectors of parameter and result types.
+        // Function types are encoded by the byte 0x60 followed by the respective
+        // vectors of parameter and result types.
         match wasm.read_u8()? {
             0x60 => {
                 let n_params = wasm.read_u32()?;
@@ -149,7 +150,8 @@ impl FuncType {
 
 pub struct Limit {
     pub min: u32,
-    pub max: Option<core::num::NonZeroU32>,
+    // Note: We are disabling `max` memory size since we don't support memory.grow
+    // pub max: Option<core::num::NonZeroU32>,
 }
 
 impl Limit {
@@ -158,15 +160,22 @@ impl Limit {
         match wasm.read_u8()? {
             0x00 => Ok(Limit {
                 min: wasm.read_u32()?,
-                max: None,
+                // max: None,
             }),
-            0x01 => Ok(Limit {
-                min: wasm.read_u32()?,
-                max: Some(
-                    core::num::NonZero::new(wasm.read_u32()?)
-                        .ok_or(ValidationError::InvalidZeroMaxLimit)?,
-                ),
-            }),
+            0x01 => {
+                let min = wasm.read_u32()?;
+
+                // Note: We are disabling `max` memory size since we don't support memory.grow
+                let _: core::num::NonZero<u32> = core::num::NonZero::new(wasm.read_u32()?)
+                    .ok_or(ValidationError::InvalidZeroMaxLimit)?;
+
+                Ok(Limit {
+                    min,
+                    // max: Some(
+                    //     max,
+                    // ),
+                })
+            }
             c => Err(ValidationError::MalformedLimit(c)),
         }
     }

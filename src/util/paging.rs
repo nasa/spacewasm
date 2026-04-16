@@ -1,4 +1,5 @@
 use crate::alloc::{AllocError, Allocator};
+use crate::MemoryStatistics;
 use core::alloc::Layout;
 use core::cell::UnsafeCell;
 
@@ -7,6 +8,15 @@ pub struct PageAllocatorStatistics {
     pub total_bytes: u32,
     pub pad_bytes: u32,
     pub pages: u32,
+}
+
+impl From<PageAllocatorStatistics> for MemoryStatistics {
+    fn from(stats: PageAllocatorStatistics) -> MemoryStatistics {
+        MemoryStatistics {
+            total_bytes: stats.total_bytes as i32,
+            pad_bytes: stats.pad_bytes as i32,
+        }
+    }
 }
 
 /// A page is an allocator that utilizes a large contiguous blocks of memory
@@ -72,6 +82,10 @@ unsafe impl<'a, const MAX_PAGES: usize> Allocator for PageAllocator<'a, MAX_PAGE
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         unsafe { (&mut *self.inner.get()).dealloc(ptr, layout) }
+    }
+
+    fn memory_statistics(&self) -> MemoryStatistics {
+        self.stats().into()
     }
 }
 
@@ -181,6 +195,7 @@ struct Page {
     allocated: usize,
     n_allocations: usize,
     wasted: usize,
+    has_deallocated: bool,
 }
 
 impl Page {
@@ -191,6 +206,7 @@ impl Page {
             allocated: 0,
             n_allocations: 0,
             wasted: 0,
+            has_deallocated: false,
         }
     }
 
@@ -207,6 +223,8 @@ impl Page {
         // Make sure out buffer can fit in here
         let final_offset = (start_address - self.ptr as usize) + layout.size();
         if final_offset <= self.size {
+            assert!(!self.has_deallocated);
+
             self.allocated = final_offset;
             self.n_allocations += 1;
             Some(start_address as *mut u8)
@@ -223,7 +241,9 @@ impl Page {
         if page_ptr <= dealloc_ptr && dealloc_ptr <= page_ptr + self.size {
             // This is out pointer, 'free' it
             // FIXME(tumbar) We may want to track used regions of the pages
+            assert!(self.n_allocations > 0);
             self.n_allocations -= 1;
+            self.has_deallocated = true;
             Some(self.n_allocations == 0)
         } else {
             None

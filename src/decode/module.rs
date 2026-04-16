@@ -14,6 +14,8 @@ pub struct Module<'wasm> {
     pub elements: Vec<Element<'wasm>>,
     pub data: Vec<Data<'wasm>>,
     pub start: Option<FuncIdx>,
+
+    pub memory_usage: [MemoryStatistics; SectionKind::N as usize],
 }
 
 impl<'wasm> Module<'wasm> {
@@ -56,6 +58,7 @@ impl<'wasm> Module<'wasm> {
             elements: Vec::zero(),
             data: Vec::zero(),
             start: None,
+            memory_usage: Default::default(),
         };
 
         let mut n_custom = 0u32;
@@ -88,9 +91,15 @@ impl<'wasm> Module<'wasm> {
             let section_size = wasm.read_u32()?;
             let section_start = wasm.save();
 
+            let before = GlobalAllocator.memory_statistics();
+
             module
                 .read_section(wasm, section_size as usize, section_ty)
                 .map_err(|e| e.with_section(section_ty))?;
+
+            let after = GlobalAllocator.memory_statistics();
+
+            module.memory_usage[section_ty as usize] += after - before;
 
             // Validate we actually read the entire section
             let section_end = wasm.save();
@@ -174,6 +183,7 @@ impl<'wasm> Module<'wasm> {
             Data => {
                 self.data = DataSection::read(wasm)?;
             }
+            _ => unreachable!(),
         }
 
         Ok(())
@@ -196,12 +206,14 @@ pub enum SectionKind {
     Element,
     Code,
     Data,
+
+    N,
 }
 
 impl SectionKind {
-    pub fn read(wasm: &mut WasmReader) -> Result<Self, ValidationError> {
+    pub fn convert(value: u8) -> Result<SectionKind, ValidationError> {
         use SectionKind::*;
-        let ty = match wasm.read_u8()? {
+        let ty = match value {
             0 => Custom,
             1 => Type,
             2 => Import,
@@ -218,6 +230,10 @@ impl SectionKind {
         };
 
         Ok(ty)
+    }
+
+    pub fn read(wasm: &mut WasmReader) -> Result<Self, ValidationError> {
+        SectionKind::convert(wasm.read_u8()?)
     }
 }
 
@@ -280,25 +296,6 @@ impl ImportDesc {
             0x01 => Ok(ImportDesc::Table(TableType::read(wasm)?)),
             0x02 => Ok(ImportDesc::Mem(MemType::read(wasm)?)),
             0x03 => Ok(ImportDesc::Global(GlobalType::read(wasm)?)),
-            c => Err(ValidationError::MalformedImportExportDesc(c)),
-        }
-    }
-}
-
-pub enum ExportDesc {
-    Func(FuncIdx),
-    Table(TableIdx),
-    Mem(MemIdx),
-    Global(GlobalIdx),
-}
-
-impl ExportDesc {
-    pub fn read(wasm: &mut WasmReader) -> Result<Self, ValidationError> {
-        match wasm.read_u8()? {
-            0x00 => Ok(ExportDesc::Func(FuncIdx::read(wasm)?)),
-            0x01 => Ok(ExportDesc::Table(TableIdx::read(wasm)?)),
-            0x02 => Ok(ExportDesc::Mem(MemIdx::read(wasm)?)),
-            0x03 => Ok(ExportDesc::Global(GlobalIdx::read(wasm)?)),
             c => Err(ValidationError::MalformedImportExportDesc(c)),
         }
     }
@@ -371,6 +368,25 @@ impl GlobalSection {
         wasm: &mut WasmReader<'wasm>,
     ) -> Result<Vec<Global<'wasm>>, ValidationError> {
         wasm.read_vec(Global::read)
+    }
+}
+
+pub enum ExportDesc {
+    Func(FuncIdx),
+    Table(TableIdx),
+    Mem(MemIdx),
+    Global(GlobalIdx),
+}
+
+impl ExportDesc {
+    pub fn read(wasm: &mut WasmReader) -> Result<Self, ValidationError> {
+        match wasm.read_u8()? {
+            0x00 => Ok(ExportDesc::Func(FuncIdx::read(wasm)?)),
+            0x01 => Ok(ExportDesc::Table(TableIdx::read(wasm)?)),
+            0x02 => Ok(ExportDesc::Mem(MemIdx::read(wasm)?)),
+            0x03 => Ok(ExportDesc::Global(GlobalIdx::read(wasm)?)),
+            c => Err(ValidationError::MalformedImportExportDesc(c)),
+        }
     }
 }
 
