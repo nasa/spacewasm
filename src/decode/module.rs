@@ -91,15 +91,16 @@ impl<'wasm> Module<'wasm> {
             let section_size = wasm.read_u32()?;
             let section_start = wasm.save();
 
-            let before = GlobalAllocator.memory_statistics();
+            let memory_before = GlobalAllocator.memory_statistics();
 
             module
                 .read_section(wasm, section_size as usize, section_ty)
                 .map_err(|e| e.with_section(section_ty))?;
 
-            let after = GlobalAllocator.memory_statistics();
+            let memory_after = GlobalAllocator.memory_statistics();
 
-            module.memory_usage[section_ty as usize] += after - before;
+            // Compute the memory usage delta to track per-section usage
+            module.memory_usage[section_ty as usize] += memory_after - memory_before;
 
             // Validate we actually read the entire section
             let section_end = wasm.save();
