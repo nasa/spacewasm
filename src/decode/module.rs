@@ -238,10 +238,12 @@ impl CustomSection {
         handler: &mut dyn CustomSectionHandler,
     ) -> Result<(), ValidationError> {
         let start = wasm.offset();
-        let name = Name::read(wasm)?;
+        let name: StaticVec<u8, 32> = wasm.read_vec_stack(|w| w.read_u8())?;
+        let name_str = core::str::from_utf8(&name).map_err(|_| ValidationError::MalformedUtf8)?;
+
         let name_length = wasm.offset() - start;
 
-        handler.custom_section(&name, size - name_length, wasm)
+        handler.custom_section(name_str, size - name_length, wasm)
     }
 }
 

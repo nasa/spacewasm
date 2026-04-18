@@ -5,7 +5,7 @@ pub struct Expr;
 impl Expr {
     pub fn read(wasm: &mut Reader) -> Result<Self, ValidationError> {
         let e = Expr;
-        wasm.visit_code(&CodeIndexer, &mut ())?;
+        wasm.read_code(&CodeIndexer, &mut ())?;
         Ok(e)
     }
 }
@@ -21,7 +21,9 @@ impl Func {
         let start = wasm.offset();
 
         let mut locals = [0u32; 4];
-        for _ in 0..wasm.read_u32()? {
+
+        let num_locals = wasm.read_u32()?;
+        for _ in 0..num_locals {
             let n = wasm.read_u32()?;
             let t = ValType::read(wasm)?;
             let i = t as usize;
@@ -68,7 +70,7 @@ impl<'wasm> Reader<'wasm> {
     /// This function will decode WASM instructions and pass them to
     /// the visitor to handle. This is the primary entrypoint for reading
     /// WASM encoded code.
-    pub fn visit_code<S, B: From<ValidationError>, V: CodeVisitor<State = S, Error = B>>(
+    pub fn read_code<S, B: From<ValidationError>, V: CodeVisitor<State = S, Error = B>>(
         &mut self,
         visitor: &V,
         state: &mut S,

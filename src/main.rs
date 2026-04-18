@@ -3,7 +3,7 @@ use spacewasm::{
     Stream,
 };
 use std::alloc::Layout;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::io::Read;
 
 struct RustSystemAllocator;
@@ -23,22 +23,30 @@ unsafe impl Allocator for RustSystemAllocator {
 
 struct FileStream {
     file: std::fs::File,
-    pen: HashMap<*mut u8, Vec<u8>>,
+    ready: VecDeque<Vec<u8>>,
+    used: HashMap<*mut u8, Vec<u8>>,
 }
 
 impl FileStream {
     fn new(file: std::fs::File) -> FileStream {
+        let mut ready = VecDeque::new();
+        for _ in 0..8 {
+            ready.push_back(vec![0u8; 1024]);
+        }
+
         FileStream {
             file,
-            pen: Default::default(),
+            ready,
+            used: Default::default(),
         }
     }
 }
 
 impl Stream for FileStream {
     fn read(&mut self) -> Result<Option<InnerVec<u8>>, ReaderError> {
-        let mut v = Vec::with_capacity(4096);
-        let n = self.file.read(&mut v).map_err(|err| {
+        let mut buf = self.ready.pop_front().expect("no more buffers");
+
+        let n = self.file.read(&mut buf).map_err(|err| {
             eprintln!("Failed to read file: {}", err);
             ReaderError
         })?;
@@ -47,37 +55,34 @@ impl Stream for FileStream {
             Ok(None)
         } else {
             let m = InnerVec {
-                ptr: v.as_mut_ptr(),
+                ptr: buf.as_mut_ptr(),
                 capacity: 4096,
                 len: n as u32,
             };
 
-            self.pen.insert(m.ptr, v);
+            self.used.insert(buf.as_mut_ptr(), buf);
             Ok(Some(m))
         }
     }
 
     fn return_(&mut self, chunk: InnerVec<u8>) {
-        self.pen.remove(&chunk.ptr);
+        let buf = self.used.remove(&chunk.ptr).unwrap();
+        self.ready.push_back(buf);
     }
 }
 
 fn main() {
-    let allocator: PageAllocator<2> = PageAllocator::new(&RustSystemAllocator {}, 4096);
+    let allocator: PageAllocator<2> = PageAllocator::new(&RustSystemAllocator {}, 8192);
     spacewasm::alloc::run(&allocator, || {
         std::env::args().skip(1).for_each(|path| {
             let file = std::fs::File::open(path).expect("failed to open file");
             match spacewasm::Module::new(&mut FileStream::new(file)) {
                 Ok(module) => {
-                    eprintln!(
-                        "{:#?}",
-                        module
-                            .memory_usage
-                            .iter()
-                            .enumerate()
-                            .map(|(i, v)| { (SectionKind::convert(i as u8).unwrap(), v) })
-                            .collect::<Vec<_>>()
-                    );
+                    for (i, section) in module.memory_usage.iter().enumerate() {
+                        let section_kind = SectionKind::convert(i as u8).unwrap();
+                        eprintln!("{:?} {} bytes", section_kind, section.total_bytes);
+                    }
+
                     eprintln!("{:?}", module.functions);
 
                     println!("Found {} imports", module.imports.len());
