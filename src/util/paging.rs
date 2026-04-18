@@ -255,11 +255,11 @@ impl Page {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::StackAllocator;
+    use crate::StaticAllocator;
 
     #[test]
     fn test_page_allocator_basic() {
-        let stack_alloc = StackAllocator::<4096, 8>::new();
+        let stack_alloc = StaticAllocator::<4096, 8>::new();
         let page_alloc = PageAllocator::<4>::new(&stack_alloc, 512);
 
         unsafe {
@@ -274,7 +274,7 @@ mod tests {
 
     #[test]
     fn test_page_allocator_stats() {
-        let stack_alloc = StackAllocator::<4096, 8>::new();
+        let stack_alloc = StaticAllocator::<4096, 8>::new();
         let page_alloc = PageAllocator::<4>::new(&stack_alloc, 512);
 
         unsafe {
@@ -289,7 +289,7 @@ mod tests {
 
     #[test]
     fn test_page_allocator_multiple_pages() {
-        let stack_alloc = StackAllocator::<4096, 8>::new();
+        let stack_alloc = StaticAllocator::<4096, 8>::new();
         let page_alloc = PageAllocator::<4>::new(&stack_alloc, 128);
 
         unsafe {
@@ -304,7 +304,7 @@ mod tests {
 
     #[test]
     fn test_page_allocator_out_of_pages() {
-        let stack_alloc = StackAllocator::<4096, 8>::new();
+        let stack_alloc = StaticAllocator::<4096, 8>::new();
         let page_alloc = PageAllocator::<2>::new(&stack_alloc, 128);
 
         unsafe {
@@ -318,7 +318,7 @@ mod tests {
 
     #[test]
     fn test_page_too_small() {
-        let stack_alloc = StackAllocator::<4096, 8>::new();
+        let stack_alloc = StaticAllocator::<4096, 8>::new();
         let page_alloc = PageAllocator::<4>::new(&stack_alloc, 64);
 
         unsafe {
@@ -330,7 +330,7 @@ mod tests {
 
     #[test]
     fn test_zero_size_alloc() {
-        let stack_alloc = StackAllocator::<4096, 8>::new();
+        let stack_alloc = StaticAllocator::<4096, 8>::new();
         let page_alloc = PageAllocator::<4>::new(&stack_alloc, 512);
 
         unsafe {

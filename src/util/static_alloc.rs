@@ -3,7 +3,7 @@ use core::alloc::Layout;
 use core::cell::UnsafeCell;
 
 #[repr(align(128))]
-pub struct StackAllocator<const SIZE: usize, const DEPTH: usize = 8> {
+pub struct StaticAllocator<const SIZE: usize, const DEPTH: usize = 8> {
     inner: UnsafeCell<StackAllocatorInner<SIZE, DEPTH>>,
 }
 
@@ -14,9 +14,9 @@ struct StackAllocatorInner<const SIZE: usize, const DEPTH: usize> {
     n_allocations: usize,
 }
 
-impl<const SIZE: usize, const DEPTH: usize> StackAllocator<SIZE, DEPTH> {
-    pub fn new() -> Self {
-        StackAllocator {
+impl<const SIZE: usize, const DEPTH: usize> StaticAllocator<SIZE, DEPTH> {
+    pub const fn new() -> Self {
+        StaticAllocator {
             inner: UnsafeCell::new(StackAllocatorInner {
                 data: [0; SIZE],
                 allocated: 0,
@@ -27,7 +27,7 @@ impl<const SIZE: usize, const DEPTH: usize> StackAllocator<SIZE, DEPTH> {
     }
 }
 
-unsafe impl<const SIZE: usize, const DEPTH: usize> Allocator for StackAllocator<SIZE, DEPTH> {
+unsafe impl<const SIZE: usize, const DEPTH: usize> Allocator for StaticAllocator<SIZE, DEPTH> {
     unsafe fn alloc(&self, layout: Layout) -> Result<*mut u8, AllocError> {
         unsafe { (*self.inner.get()).alloc(layout) }
     }
@@ -112,7 +112,7 @@ mod tests {
 
     #[test]
     fn test_alloc_dealloc() {
-        let alloc = StackAllocator::<1024, 8>::new();
+        let alloc = StaticAllocator::<1024, 8>::new();
         unsafe {
             let layout = Layout::from_size_align(16, 8).unwrap();
             let ptr1 = alloc.alloc(layout).unwrap();
@@ -125,7 +125,7 @@ mod tests {
 
     #[test]
     fn test_out_of_memory() {
-        let alloc = StackAllocator::<128, 8>::new();
+        let alloc = StaticAllocator::<128, 8>::new();
         unsafe {
             let layout = Layout::from_size_align(100, 8).unwrap();
             let _ptr1 = alloc.alloc(layout).unwrap();
@@ -136,7 +136,7 @@ mod tests {
 
     #[test]
     fn test_too_deep() {
-        let alloc = StackAllocator::<1024, 2>::new();
+        let alloc = StaticAllocator::<1024, 2>::new();
         unsafe {
             let layout = Layout::from_size_align(16, 8).unwrap();
             let _ptr1 = alloc.alloc(layout).unwrap();
@@ -148,7 +148,7 @@ mod tests {
 
     #[test]
     fn test_invalid_alignment() {
-        let alloc = StackAllocator::<1024, 8>::new();
+        let alloc = StaticAllocator::<1024, 8>::new();
         unsafe {
             let layout = Layout::from_size_align(16, 256).unwrap();
             let result = alloc.alloc(layout);
@@ -158,7 +158,7 @@ mod tests {
 
     #[test]
     fn test_dealloc_wrong_order() {
-        let alloc = StackAllocator::<1024, 8>::new();
+        let alloc = StaticAllocator::<1024, 8>::new();
         unsafe {
             let layout = Layout::from_size_align(16, 8).unwrap();
             let ptr1 = alloc.alloc(layout).unwrap();
@@ -174,7 +174,7 @@ mod tests {
 
     #[test]
     fn test_dealloc_empty() {
-        let alloc = StackAllocator::<1024, 8>::new();
+        let alloc = StaticAllocator::<1024, 8>::new();
         unsafe {
             let layout = Layout::from_size_align(16, 8).unwrap();
             let ptr = core::ptr::null_mut();

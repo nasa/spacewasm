@@ -50,51 +50,37 @@ impl<A: Allocator> Deref for String<A> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::alloc::run;
-    use crate::StackAllocator;
 
     #[test]
     fn test_from_str() {
-        let alloc = StackAllocator::<1024, 8>::new();
-        run(&alloc, || {
-            let s = String::try_from("hello").unwrap();
-            assert_eq!(&*s, "hello");
-        });
+        let s = String::try_from("hello").unwrap();
+        assert_eq!(&*s, "hello");
     }
 
     #[test]
     fn test_from_bytes_valid() {
-        let alloc = StackAllocator::<1024, 8>::new();
-        run(&alloc, || {
-            let bytes = b"world";
-            let s = String::try_from(&bytes[..]).unwrap();
-            assert_eq!(&*s, "world");
-        });
+        let bytes = b"world";
+        let s = String::try_from(&bytes[..]).unwrap();
+        assert_eq!(&*s, "world");
     }
 
     #[test]
     fn test_from_bytes_invalid() {
-        let alloc = StackAllocator::<1024, 8>::new();
-        run(&alloc, || {
-            let invalid_bytes = &[0xFF, 0xFE, 0xFD];
-            let result = String::try_from(&invalid_bytes[..]);
-            assert!(matches!(result, Err(ValidationError::MalformedUtf8)));
-        });
+        let invalid_bytes = &[0xFF, 0xFE, 0xFD];
+        let result = String::try_from(&invalid_bytes[..]);
+        assert!(matches!(result, Err(ValidationError::MalformedUtf8)));
     }
 
     #[test]
     fn test_from_vec() {
-        let alloc = StackAllocator::<1024, 8>::new();
-        run(&alloc, || {
-            let mut vec = Vec::new(5).unwrap();
-            vec.push(b'h');
-            vec.push(b'e');
-            vec.push(b'l');
-            vec.push(b'l');
-            vec.push(b'o');
+        let mut vec = Vec::new(5).unwrap();
+        vec.push(b'h');
+        vec.push(b'e');
+        vec.push(b'l');
+        vec.push(b'l');
+        vec.push(b'o');
 
-            let s = String::try_from(vec).unwrap();
-            assert_eq!(&*s, "hello");
-        });
+        let s = String::try_from(vec).unwrap();
+        assert_eq!(&*s, "hello");
     }
 }

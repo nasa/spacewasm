@@ -1,3 +1,4 @@
+use spacewasm::global_allocator;
 use spacewasm::{
     AllocError, Allocator, InnerVec, MemoryStatistics, PageAllocator, ReaderError, SectionKind,
     Stream,
@@ -20,6 +21,11 @@ unsafe impl Allocator for RustSystemAllocator {
         panic!("The page allocator should be tracking it's own memory statistics.")
     }
 }
+
+global_allocator!(
+    PageAllocator<2>,
+    PageAllocator::new(&RustSystemAllocator {}, 8192)
+);
 
 struct FileStream {
     file: std::fs::File,
@@ -72,26 +78,22 @@ impl Stream for FileStream {
 }
 
 fn main() {
-    let allocator: PageAllocator<2> = PageAllocator::new(&RustSystemAllocator {}, 8192);
-    spacewasm::alloc::run(&allocator, || {
-        std::env::args().skip(1).for_each(|path| {
-            let file = std::fs::File::open(path).expect("failed to open file");
-            match spacewasm::Module::new(&mut FileStream::new(file)) {
-                Ok(module) => {
-                    for (i, section) in module.memory_usage.iter().enumerate() {
-                        let section_kind = SectionKind::convert(i as u8).unwrap();
-                        eprintln!("{:?} {} bytes", section_kind, section.total_bytes);
-                    }
-
-                    eprintln!("{:?}", module.functions);
-
-                    println!("Found {} imports", module.imports.len());
+    std::env::args().skip(1).for_each(|path| {
+        let file = std::fs::File::open(path).expect("failed to open file");
+        match spacewasm::Module::new(&mut FileStream::new(file)) {
+            Ok(module) => {
+                for (i, section) in module.memory_usage.iter().enumerate() {
+                    let section_kind = SectionKind::convert(i as u8).unwrap();
+                    eprintln!("{:?} {} bytes", section_kind, section.total_bytes);
                 }
-                Err(err) => {
-                    eprintln!("{:#?}", allocator.stats());
-                    eprintln!("Failed to parse: {:?}", err)
-                }
+
+                eprintln!("{:?}", module.functions);
+
+                println!("Found {} imports", module.imports.len());
             }
-        });
+            Err(err) => {
+                eprintln!("Failed to parse: {:?}", err)
+            }
+        }
     });
 }

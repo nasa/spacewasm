@@ -2,14 +2,14 @@ use core::alloc::{Layout, LayoutError};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AllocError {
+    /// Not enough pages could be allocated to accommodate this allocation
+    OutOfMemory,
+
     /// Zero sized allocations are undefined and disallowed
     IllegalZeroSize,
 
     /// Page was too small to fit this allocation
     PageTooSmall,
-
-    /// Not enough pages could be allocated to accommodate this allocation
-    OutOfMemory,
 
     /// A LayoutError occurred
     InvalidLayout,
@@ -25,9 +25,34 @@ pub enum AllocError {
 
     /// Stack-based heap requires allocation and deallocation to occur in reverse order.
     /// This rule is checked during deallocation. If it is not held, this error will be thrown.
-    /// This error is also raised when attempting to free a stack address when there no more
+    /// This error is also raised when attempting to free a stack address when there are no more
     /// allocations held by the StackAllocator
     StackDeallocationInvariantViolation,
+
+    /// The allocator returned an unknown error code
+    Unknown,
+}
+
+impl From<u32> for AllocError {
+    fn from(value: u32) -> Self {
+        match value {
+            0 => AllocError::OutOfMemory,
+            1 => AllocError::IllegalZeroSize,
+            2 => AllocError::PageTooSmall,
+            3 => AllocError::InvalidLayout,
+            4 => AllocError::AllocationFailed,
+            5 => AllocError::InvalidAlignment,
+            6 => AllocError::StackAllocationTooDeep,
+            7 => AllocError::StackDeallocationInvariantViolation,
+            _ => AllocError::Unknown,
+        }
+    }
+}
+
+impl From<AllocError> for u32 {
+    fn from(value: AllocError) -> Self {
+        value as u32
+    }
 }
 
 impl From<LayoutError> for AllocError {
@@ -37,6 +62,7 @@ impl From<LayoutError> for AllocError {
 }
 
 #[derive(Debug, Default, Clone)]
+#[repr(C)]
 pub struct MemoryStatistics {
     pub total_bytes: i32,
     pub pad_bytes: i32,
@@ -59,6 +85,56 @@ impl core::ops::AddAssign for MemoryStatistics {
         self.total_bytes += rhs.total_bytes;
         self.pad_bytes += rhs.pad_bytes;
     }
+}
+
+unsafe extern "C" {
+    /// Allocate a pointer on the heap (or wherever) given a size and alignment.
+    /// If allocation could not succeed, write the error code corresponding
+    /// to [AllocError] into [err] and return NULL.
+    fn __spacewasm_alloc(size: usize, align: usize, err: *mut u32) -> *mut u8;
+
+    /// Deallocate a pointer given it's size and alignment
+    fn __spacewasm_dealloc(ptr: *mut u8, size: usize, align: usize);
+
+    /// Get basic information about the allocation statistics
+    fn __spacewasm_memory_statistics() -> MemoryStatistics;
+}
+
+#[macro_export]
+macro_rules! global_allocator {
+    ($ty: ty, $val:expr) => {
+        static mut ALLOC_IMPL: $ty = $val;
+
+        #[allow(unused_unsafe)]
+        static mut GLOBAL_ALLOCATOR: *mut $ty = unsafe { &raw mut ALLOC_IMPL };
+
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn __spacewasm_alloc(size: usize, align: usize, err: *mut u32) -> *mut u8 {
+            let Ok(layout) = core::alloc::Layout::from_size_align(size, align) else {
+                unsafe { *err = crate::AllocError::InvalidLayout.into(); }
+                return core::ptr::null_mut();
+            };
+
+            match unsafe { (*GLOBAL_ALLOCATOR).alloc(layout) } {
+                Ok(ptr) => ptr,
+                Err(alloc_err) => {
+                    unsafe { *err = alloc_err.into(); }
+                    core::ptr::null_mut()
+                }
+            }
+        }
+
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn __spacewasm_dealloc(ptr: *mut u8, size: usize, align: usize) {
+            let layout = core::alloc::Layout::from_size_align(size, align).unwrap();
+            unsafe { (*GLOBAL_ALLOCATOR).dealloc(ptr, layout) }
+        }
+
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn __spacewasm_memory_statistics() -> crate::MemoryStatistics {
+            unsafe { (*GLOBAL_ALLOCATOR).memory_statistics() }
+        }
+    };
 }
 
 /// Our allocator trait. This is very similar to [core::alloc::GlobalAlloc].
@@ -88,65 +164,23 @@ unsafe impl<T: Allocator> Allocator for &T {
 pub struct GlobalAllocator;
 unsafe impl Allocator for GlobalAllocator {
     unsafe fn alloc(&self, layout: Layout) -> Result<*mut u8, AllocError> {
-        unsafe { (*ALLOCATOR).alloc(layout) }
+        let mut err: u32 = 0;
+        let ptr = unsafe { __spacewasm_alloc(layout.size(), layout.align(), &mut err) };
+
+        if ptr.is_null() {
+            Err(err.into())
+        } else {
+            Ok(ptr)
+        }
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        unsafe { (*ALLOCATOR).dealloc(ptr, layout) }
+        unsafe { __spacewasm_dealloc(ptr, layout.size(), layout.align()) }
     }
 
     fn memory_statistics(&self) -> MemoryStatistics {
-        unsafe { (*ALLOCATOR).memory_statistics() }
+        unsafe { __spacewasm_memory_statistics().into() }
     }
-}
-
-#[derive(Clone, Copy)]
-struct UnimplementedAllocator;
-unsafe impl Allocator for UnimplementedAllocator {
-    unsafe fn alloc(&self, _layout: Layout) -> Result<*mut u8, AllocError> {
-        unimplemented!()
-    }
-
-    unsafe fn dealloc(&self, _ptr: *mut u8, _layout: Layout) {
-        // We drop the dealloc here so that panic can gracefully continue
-    }
-
-    fn memory_statistics(&self) -> MemoryStatistics {
-        unimplemented!()
-    }
-}
-
-static UNIMPLEMENTED: UnimplementedAllocator = UnimplementedAllocator;
-static mut ALLOCATOR: *const dyn Allocator = &raw const UNIMPLEMENTED;
-
-struct AllocatorSetter<'a> {
-    _marker: &'a dyn Allocator,
-}
-
-impl<'a> AllocatorSetter<'a> {
-    fn new(allocator: &'a dyn Allocator) -> Self {
-        unsafe {
-            ALLOCATOR = core::mem::transmute(allocator);
-        }
-        AllocatorSetter { _marker: allocator }
-    }
-}
-
-impl<'a> Drop for AllocatorSetter<'a> {
-    fn drop(&mut self) {
-        unsafe {
-            ALLOCATOR = &raw const UNIMPLEMENTED;
-        }
-    }
-}
-
-pub fn run<A, F, T>(allocator: &A, f: F) -> T
-where
-    A: Allocator,
-    F: FnOnce() -> T,
-{
-    let _guard = AllocatorSetter::new(allocator);
-    f()
 }
 
 #[cfg(test)]

@@ -201,7 +201,6 @@ impl<T, A: Allocator> Drop for IntoIter<T, A> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{run, StackAllocator};
 
     #[test]
     fn test_zero() {
@@ -212,75 +211,59 @@ mod tests {
 
     #[test]
     fn test_push_pop() {
-        let alloc = StackAllocator::<1024, 8>::new();
-        run(&alloc, || {
-            let mut vec = Vec::new(5).unwrap();
+        let mut vec = Vec::new(5).unwrap();
 
-            vec.push(10);
-            vec.push(20);
-            vec.push(30);
-            assert_eq!(vec.len(), 3);
+        vec.push(10);
+        vec.push(20);
+        vec.push(30);
+        assert_eq!(vec.len(), 3);
 
-            assert_eq!(vec.pop(), Some(30));
-            assert_eq!(vec.pop(), Some(20));
-            assert_eq!(vec.pop(), Some(10));
-            assert_eq!(vec.pop(), None);
-        });
+        assert_eq!(vec.pop(), Some(30));
+        assert_eq!(vec.pop(), Some(20));
+        assert_eq!(vec.pop(), Some(10));
+        assert_eq!(vec.pop(), None);
     }
 
     #[test]
     #[should_panic]
     fn test_push_exceeds_capacity() {
-        extern crate std;
-        let alloc = StackAllocator::<1024, 8>::new();
-        run(&alloc, || {
-            let mut vec = Vec::new(2).unwrap();
-            vec.push(1);
-            vec.push(2);
-            vec.push(3);
-        });
+        let mut vec = Vec::new(2).unwrap();
+        vec.push(1);
+        vec.push(2);
+        vec.push(3);
     }
 
     #[test]
     fn test_deref() {
-        let alloc = StackAllocator::<1024, 8>::new();
-        run(&alloc, || {
-            let mut vec = Vec::new(3).unwrap();
-            vec.push(1);
-            vec.push(2);
-            vec.push(3);
+        let mut vec = Vec::new(3).unwrap();
+        vec.push(1);
+        vec.push(2);
+        vec.push(3);
 
-            let slice: &[i32] = &*vec;
-            assert_eq!(slice, &[1, 2, 3]);
-        });
+        let slice: &[i32] = &*vec;
+        assert_eq!(slice, &[1, 2, 3]);
     }
 
     #[test]
     fn test_deref_mut() {
-        let alloc = StackAllocator::<1024, 8>::new();
-        run(&alloc, || {
-            let mut vec = Vec::new(3).unwrap();
-            vec.push(1);
-            vec.push(2);
-            vec.push(3);
+        let mut vec = Vec::new(3).unwrap();
+        vec.push(1);
+        vec.push(2);
+        vec.push(3);
 
-            vec[0] = 10;
-            assert_eq!(vec[0], 10);
-        });
+        vec[0] = 10;
+        assert_eq!(vec[0], 10);
     }
 
     #[test]
     fn test_clone() {
-        let alloc = StackAllocator::<1024, 8>::new();
-        run(&alloc, || {
-            let mut vec = Vec::new(3).unwrap();
-            vec.push(1);
-            vec.push(2);
-            vec.push(3);
+        let mut vec = Vec::new(3).unwrap();
+        vec.push(1);
+        vec.push(2);
+        vec.push(3);
 
-            let cloned = vec.clone();
-            assert_eq!(vec.len(), cloned.len());
-            assert_eq!(&vec[..], &cloned[..]);
-        });
+        let cloned = vec.clone();
+        assert_eq!(vec.len(), cloned.len());
+        assert_eq!(&vec[..], &cloned[..]);
     }
 }
