@@ -1,7 +1,7 @@
 /// WASM Reader
 /// This file implements some basic WASM reading capabilities such
 /// as LEB128 (variable width integer encoding).
-use crate::{AllocError, Allocator, GlobalAllocator, ReaderError, StaticVec, ValidationError, Vec, WasmChunk, WasmStreamer};
+use crate::{Allocator, CircularBuffer, GlobalAllocator, StaticVec, ValidationError, Vec, Chunk, Stream};
 
 
 /// Wasm encodes integers according to the LEB128 format, which specifies that
@@ -14,69 +14,141 @@ const CONTINUATION_BIT: u8 = 0b10000000;
 const INTEGER_BIT_FLAG: u8 = !CONTINUATION_BIT;
 
 /// A struct for managing and reading WASM bytecode
-/// Its purpose is to abstract parsing basic WASM values from the bytecode.
-pub(crate) struct WasmReader<'wasm> {
-    stream: &'wasm dyn WasmStreamer,
+/// Its purpose is to abstract parsing basic WASM values from the bytecode
+/// and managing the chunks from a stream as they are read.
+///
+/// This reader cannot backtrack. The code that calls into the reader must
+/// allocate and copy data that should be retained as it is read.
+pub struct Reader<'wasm> {
+    stream: &'wasm mut dyn Stream,
+    /// Number of bytes we've already extracted from the next chunk and
+    /// placed in the circular buffer
+    chunk_used: usize,
+    /// A holding pen for the next chunk given to us by the streamer.
+    /// We use this to feed the buffer
+    next: Option<Chunk>,
 
-    /// All the currently loaded chunks of the WASM binary
-    frames: Vec<WasmChunk<'wasm>>,
+    /// A fixed size circular buffer meant to hold as much WASM data as it can.
+    /// WASM chunks may be of variable length, we may need to span multiple which is
+    /// Data will be copied into this circular buffer and the processing will be done here.
+    buffer: CircularBuffer<u8, 64>,
 
-    /// Read offset pointer in the current frame
-    offset: usize,
-
-    /// A counter keeping track of the byte offset of
-    /// the current chunk of the WASM binary. This will be incremented
-    /// whenever a new chunk is received
-    frame_offset: usize,
+    /// A counter keeping track of the total number of bytes we've processed in the WASM binary
+    /// This is useful for generating error messages with an absolute location in the binary.
+    full_offset: usize,
 }
 
-impl<'wasm> WasmReader<'wasm> {
-    pub fn new(stream: &'wasm dyn WasmStreamer, max_concurrent_chunks: u32) -> Result<Self, AllocError> {
-        Ok(Self {
+impl<'wasm> Reader<'wasm> {
+    pub fn new(stream: &'wasm mut dyn Stream) -> Self {
+        Self {
             stream,
-            frames: Vec::new(max_concurrent_chunks)?,
-            offset: 0,
-            frame_offset: 0,
-        })
+            chunk_used: 0,
+            next: None,
+            buffer: CircularBuffer::new(),
+            full_offset: 0,
+        }
     }
 
     pub fn offset(&self) -> usize {
-        self.offset + self.frame_offset
+        self.full_offset
+    }
+
+    /// Fills the circular buffer from the stream chunks.
+    /// This method tries to fill the buffer as much as possible from the current chunk,
+    /// and fetches a new chunk from the stream if the current one is exhausted.
+    fn fill_buffer(&mut self) -> Result<(), ValidationError> {
+        // If buffer already has data, we're done
+        if !self.buffer.is_empty() {
+            return Ok(());
+        }
+
+        // Try to fill from current chunk if it has remaining bytes
+        if let Some(ref chunk) = self.next {
+            let remaining = chunk.len() - self.chunk_used;
+            if remaining > 0 {
+                // Copy bytes from chunk into buffer
+                let to_copy = remaining.min(self.buffer.capacity());
+                for i in 0..to_copy {
+                    self.buffer.push(chunk[self.chunk_used + i]);
+                }
+                self.chunk_used += to_copy;
+                return Ok(());
+            }
+        }
+
+        // Current chunk is exhausted or None, return it and get next chunk
+        if let Some(mut chunk) = self.next.take() {
+            chunk.return_(self.stream);
+        }
+
+        // Fetch next chunk from stream
+        self.next = self.stream.read()
+            .map_err(|e| ValidationError::ReaderError(e))?
+            .map(|inner| inner.into());
+        self.chunk_used = 0;
+
+        // Try to fill buffer from new chunk
+        if let Some(ref chunk) = self.next {
+            if chunk.is_empty() {
+                // Empty chunk means EOF
+                return Err(ValidationError::Eof);
+            }
+            let to_copy = chunk.len().min(self.buffer.capacity());
+            for i in 0..to_copy {
+                self.buffer.push(chunk[i]);
+            }
+            self.chunk_used = to_copy;
+            Ok(())
+        } else {
+            // No more chunks, EOF
+            Err(ValidationError::Eof)
+        }
     }
 
     fn peek_u8(&mut self) -> Result<u8, ValidationError> {
-        self.ensure(1).map_err(|_| ValidationError::Eof)?;
-        let frame = self.frames.last().ok_or(ValidationError::Eof)?;
-        frame.get(self.offset).copied().ok_or(ValidationError::Eof)
+        // Try to get a byte from the buffer
+        if let Some(&byte) = self.buffer.front() {
+            return Ok(byte);
+        }
+
+        // Buffer is empty, need to fill it
+        self.fill_buffer()?;
+
+        // Try again
+        self.buffer.front()
+            .copied()
+            .ok_or(ValidationError::Eof)
     }
 
     /// Tries to read one byte and fails if the end of file is reached.
     pub fn read_u8(&mut self) -> Result<u8, ValidationError> {
         let byte = self.peek_u8()?;
-        self.offset += 1;
+        self.buffer.pop_front();
+        self.full_offset += 1;
         Ok(byte)
     }
 
     pub fn expect_u8(&mut self, expected: u8) -> Result<(), ValidationError> {
         let byte = self.peek_u8()?;
         if byte == expected {
-            self.offset += 1;
+            self.read_u8()?;
             Ok(())
         } else {
             Err(ValidationError::ExpectedTerminal(expected))
         }
     }
 
+    /// Read a constant number of bytes into an array
     pub fn strip_bytes<const N: usize>(&mut self) -> Result<[u8; N], ValidationError> {
-        self.ensure(N).map_err(|_| ValidationError::Eof)?;
-        let frame = self.frames.last().ok_or(ValidationError::Eof)?;
-        let bytes = &frame[self.offset..self.offset + N];
-        self.offset += N;
-        Ok(bytes.try_into().unwrap())
+        let mut result = [0u8; N];
+        for i in 0..N {
+            result[i] = self.read_u8()?;
+        }
+        Ok(result)
     }
 
     /// Parses a variable-length `u32` as specified by [LEB128](https://en.wikipedia.org/wiki/LEB128#Unsigned_LEB128).
-    /// Note: If `Err`, the [WasmReader] object is no longer guaranteed to be in a valid state
+    /// Note: If `Err`, the [Reader] object is no longer guaranteed to be in a valid state
     /// This implementation is heavily based off of DLR's WASM interpreter:
     /// <https://github.com/DLR-FT/wasm-interpreter>
     pub fn read_u32(&mut self) -> Result<u32, ValidationError> {
@@ -395,13 +467,15 @@ impl<'wasm> WasmReader<'wasm> {
         Ok(result)
     }
 
+    /// Skip over a fixed set of bytes and ignore them
     pub fn skip(&mut self, len: usize) -> Result<(), ValidationError> {
-        self.ensure(len).map_err(|_| ValidationError::Eof)?;
-        self.offset += len;
+        for _ in 0..len {
+            self.read_u8()?;
+        }
         Ok(())
     }
 
-    /// Note: If `Err`, the [WasmReader] object is no longer guaranteed to be in a valid state
+    /// Note: If `Err`, the [Reader] object is no longer guaranteed to be in a valid state
     pub fn read_vec<T, F>(&mut self, read_element: F) -> Result<Vec<T>, ValidationError>
     where
         T: 'wasm,
@@ -451,13 +525,21 @@ impl<'wasm> WasmReader<'wasm> {
     }
 }
 
+impl<'wasm> Drop for Reader<'wasm> {
+    fn drop(&mut self) {
+        // Return the current chunk to the stream if one exists
+        if let Some(mut chunk) = self.next.take() {
+            chunk.return_(self.stream);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::{InnerVec, WasmReader, WasmStreamer, ReaderError, Vec};
-    use core::cell::RefCell;
+    use crate::{alloc::run, InnerVec, ReaderError, StackAllocator, Vec, Reader, Stream};
 
     struct TestStreamer {
-        data: RefCell<Option<InnerVec<u8>>>,
+        data: Option<InnerVec<u8>>,
     }
 
     impl TestStreamer {
@@ -469,27 +551,30 @@ mod tests {
             }
             let inner = unsafe { vec.take_inner() };
             Self {
-                data: RefCell::new(Some(inner)),
+                data: Some(inner),
             }
         }
     }
 
-    impl WasmStreamer for TestStreamer {
-        fn read(&self) -> Result<Option<InnerVec<u8>>, ReaderError> {
-            Ok(self.data.borrow_mut().take())
+    impl Stream for TestStreamer {
+        fn read(&mut self) -> Result<Option<InnerVec<u8>>, ReaderError> {
+            Ok(self.data.take())
         }
 
-        fn return_(&self, _chunk: InnerVec<u8>) {
+        fn return_(&mut self, _chunk: InnerVec<u8>) {
             // For tests, we don't need to reuse buffers
         }
     }
 
     #[test]
     fn test_var_i32() {
-        let bytes = [0xC0, 0xBB, 0x78];
-        let streamer = TestStreamer::new(&bytes);
-        let mut wasm = WasmReader::new(&streamer, 4).unwrap();
+        let alloc = StackAllocator::<1024, 8>::new();
+        run(&alloc, || {
+            let bytes = [0xC0, 0xBB, 0x78];
+            let mut streamer = TestStreamer::new(&bytes);
+            let mut wasm = Reader::new(&mut streamer);
 
-        assert_eq!(wasm.read_i32(), Ok(-123456));
+            assert_eq!(wasm.read_i32(), Ok(-123456));
+        });
     }
 }

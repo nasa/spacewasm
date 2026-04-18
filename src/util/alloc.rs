@@ -146,3 +146,45 @@ where
     let _guard = AllocatorSetter::new(allocator);
     f()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_memory_statistics_sub() {
+        let s1 = MemoryStatistics {
+            total_bytes: 100,
+            pad_bytes: 20,
+        };
+        let s2 = MemoryStatistics {
+            total_bytes: 60,
+            pad_bytes: 10,
+        };
+        let diff = s1 - s2;
+        assert_eq!(diff.total_bytes, 40);
+        assert_eq!(diff.pad_bytes, 10);
+    }
+
+    #[test]
+    fn test_memory_statistics_add_assign() {
+        let mut s1 = MemoryStatistics {
+            total_bytes: 100,
+            pad_bytes: 20,
+        };
+        let s2 = MemoryStatistics {
+            total_bytes: 50,
+            pad_bytes: 5,
+        };
+        s1 += s2;
+        assert_eq!(s1.total_bytes, 150);
+        assert_eq!(s1.pad_bytes, 25);
+    }
+
+    #[test]
+    fn test_alloc_error_from_layout_error() {
+        let layout_err = Layout::from_size_align(usize::MAX, 1).unwrap_err();
+        let alloc_err: AllocError = layout_err.into();
+        assert!(matches!(alloc_err, AllocError::InvalidLayout));
+    }
+}

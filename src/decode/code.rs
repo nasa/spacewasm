@@ -3,7 +3,7 @@ use crate::*;
 pub struct Expr;
 
 impl Expr {
-    pub fn read(wasm: &mut WasmReader) -> Result<Self, ValidationError> {
+    pub fn read(wasm: &mut Reader) -> Result<Self, ValidationError> {
         let e = Expr;
         wasm.visit_code(&CodeIndexer, &mut ())?;
         Ok(e)
@@ -16,7 +16,7 @@ pub struct Func {
 }
 
 impl Func {
-    pub fn read(wasm: &mut WasmReader) -> Result<Self, ValidationError> {
+    pub fn read(wasm: &mut Reader) -> Result<Self, ValidationError> {
         let size = wasm.read_u32()?;
         let start = wasm.offset();
 
@@ -45,7 +45,7 @@ pub struct MemArg {
 }
 
 impl MemArg {
-    pub fn read(wasm: &mut WasmReader) -> Result<Self, ValidationError> {
+    pub fn read(wasm: &mut Reader) -> Result<Self, ValidationError> {
         let align = wasm.read_u32()?;
         let offset = wasm.read_u32()?;
         Ok(MemArg { align, offset })
@@ -64,7 +64,7 @@ macro_rules! instruction {
     }};
 }
 
-impl<'wasm> WasmReader<'wasm> {
+impl<'wasm> Reader<'wasm> {
     /// This function will decode WASM instructions and pass them to
     /// the visitor to handle. This is the primary entrypoint for reading
     /// WASM encoded code.

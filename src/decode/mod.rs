@@ -1,8 +1,8 @@
 mod reader;
-pub(crate) use reader::*;
+pub use reader::*;
 
 mod stream;
-pub(crate) use stream::*;
+pub use stream::*;
 
 pub mod error;
 pub use error::*;

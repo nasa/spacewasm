@@ -125,3 +125,30 @@ impl<T> Iterator for RawValIter<T> {
         (len, Some(len))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_zero() {
+        let vec: InnerVec<i32> = InnerVec::zero();
+        assert_eq!(vec.len(), 0);
+        assert_eq!(vec.capacity(), 0);
+        assert!(vec.ptr.is_null());
+    }
+
+    #[test]
+    fn test_deref_empty() {
+        let vec: InnerVec<i32> = InnerVec::zero();
+        let slice: &[i32] = &*vec;
+        assert_eq!(slice.len(), 0);
+    }
+
+    #[test]
+    fn test_deref_mut_empty() {
+        let mut vec: InnerVec<i32> = InnerVec::zero();
+        let slice: &mut [i32] = &mut *vec;
+        assert_eq!(slice.len(), 0);
+    }
+}

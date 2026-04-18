@@ -12,6 +12,12 @@ pub struct Vec<T: Sized, A: Allocator = GlobalAllocator> {
     alloc: A,
 }
 
+impl<A: Allocator, T: core::fmt::Debug> core::fmt::Debug for Vec<T, A> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        self.inner.fmt(f)
+    }
+}
+
 impl<T: Clone> Clone for Vec<T, GlobalAllocator> {
     fn clone(&self) -> Self {
         let mut n = Vec::new(self.inner.capacity).unwrap();
@@ -89,6 +95,20 @@ impl<T: Sized, A: Allocator> Vec<T, A> {
     pub fn iter(&self) -> impl Iterator<Item = T> {
         self.inner.iter()
     }
+
+    /// Takes the inner vec, leaving this Vec in a zero state.
+    /// This is unsafe because the caller must ensure the inner vec is properly managed.
+    /// The Vec will not deallocate the inner vec after this call.
+    pub unsafe fn take_inner(&mut self) -> InnerVec<T> {
+        core::mem::replace(
+            &mut self.inner,
+            InnerVec {
+                ptr: core::ptr::null_mut(),
+                capacity: 0,
+                len: 0,
+            },
+        )
+    }
 }
 
 impl<T, A: Allocator> Deref for Vec<T, A> {
@@ -160,5 +180,92 @@ impl<T, A: Allocator> Drop for IntoIter<T, A> {
                 self.alloc.dealloc(self.buf as *mut u8, layout);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::alloc::run;
+    use crate::StackAllocator;
+
+    #[test]
+    fn test_zero() {
+        let vec: Vec<i32> = Vec::zero();
+        assert_eq!(vec.len(), 0);
+        assert_eq!(vec.capacity(), 0);
+    }
+
+    #[test]
+    fn test_push_pop() {
+        let alloc = StackAllocator::<1024, 8>::new();
+        run(&alloc, || {
+            let mut vec = Vec::new(5).unwrap();
+
+            vec.push(10);
+            vec.push(20);
+            vec.push(30);
+            assert_eq!(vec.len(), 3);
+
+            assert_eq!(vec.pop(), Some(30));
+            assert_eq!(vec.pop(), Some(20));
+            assert_eq!(vec.pop(), Some(10));
+            assert_eq!(vec.pop(), None);
+        });
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_push_exceeds_capacity() {
+        let alloc = StackAllocator::<1024, 8>::new();
+        run(&alloc, || {
+            let mut vec = Vec::new(2).unwrap();
+            vec.push(1);
+            vec.push(2);
+            vec.push(3);
+        });
+    }
+
+    #[test]
+    fn test_deref() {
+        let alloc = StackAllocator::<1024, 8>::new();
+        run(&alloc, || {
+            let mut vec = Vec::new(3).unwrap();
+            vec.push(1);
+            vec.push(2);
+            vec.push(3);
+
+            let slice: &[i32] = &*vec;
+            assert_eq!(slice, &[1, 2, 3]);
+        });
+    }
+
+    #[test]
+    fn test_deref_mut() {
+        let alloc = StackAllocator::<1024, 8>::new();
+        run(&alloc, || {
+            let mut vec = Vec::new(3).unwrap();
+            vec.push(1);
+            vec.push(2);
+            vec.push(3);
+
+            vec[0] = 10;
+            assert_eq!(vec[0], 10);
+        });
+    }
+
+    #[test]
+    fn test_clone() {
+        let alloc = StackAllocator::<1024, 8>::new();
+        run(&alloc, || {
+            let mut vec = Vec::new(3).unwrap();
+            vec.push(1);
+            vec.push(2);
+            vec.push(3);
+
+            let cloned = vec.clone();
+            assert_eq!(vec.len(), cloned.len());
+            assert_eq!(&vec[..], &cloned[..]);
+        });
     }
 }

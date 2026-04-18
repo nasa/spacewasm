@@ -61,3 +61,49 @@ impl<T, const N: usize> DerefMut for StaticVec<T, N> {
         &mut self.data
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_new() {
+        let vec: StaticVec<i32, 10> = StaticVec::new();
+        assert_eq!(vec.len, 0);
+    }
+
+    #[test]
+    fn test_push_pop() {
+        let mut vec: StaticVec<i32, 5> = StaticVec::new();
+
+        assert!(vec.push(1).is_ok());
+        assert!(vec.push(2).is_ok());
+        assert!(vec.push(3).is_ok());
+        assert_eq!(vec.len, 3);
+
+        assert_eq!(vec.pop(), Some(3));
+        assert_eq!(vec.pop(), Some(2));
+        assert_eq!(vec.pop(), Some(1));
+        assert_eq!(vec.pop(), None);
+    }
+
+    #[test]
+    fn test_capacity_exceeded() {
+        let mut vec: StaticVec<i32, 2> = StaticVec::new();
+
+        assert!(vec.push(1).is_ok());
+        assert!(vec.push(2).is_ok());
+        assert!(matches!(vec.push(3), Err(AllocError::OutOfMemory)));
+    }
+
+    #[test]
+    fn test_deref() {
+        let mut vec: StaticVec<i32, 5> = StaticVec::new();
+        vec.push(10).unwrap();
+        vec.push(20).unwrap();
+        vec.push(30).unwrap();
+
+        let slice: &[i32] = &*vec;
+        assert_eq!(slice.len(), 5);
+    }
+}

@@ -250,3 +250,92 @@ impl Page {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::StackAllocator;
+
+    #[test]
+    fn test_page_allocator_basic() {
+        let stack_alloc = StackAllocator::<4096, 8>::new();
+        let page_alloc = PageAllocator::<4>::new(&stack_alloc, 512);
+
+        unsafe {
+            let layout = Layout::from_size_align(64, 8).unwrap();
+            let ptr1 = page_alloc.alloc(layout).unwrap();
+            let ptr2 = page_alloc.alloc(layout).unwrap();
+
+            page_alloc.dealloc(ptr1, layout);
+            page_alloc.dealloc(ptr2, layout);
+        }
+    }
+
+    #[test]
+    fn test_page_allocator_stats() {
+        let stack_alloc = StackAllocator::<4096, 8>::new();
+        let page_alloc = PageAllocator::<4>::new(&stack_alloc, 512);
+
+        unsafe {
+            let layout = Layout::from_size_align(64, 8).unwrap();
+            let _ptr = page_alloc.alloc(layout).unwrap();
+
+            let stats = page_alloc.stats();
+            assert_eq!(stats.pages, 1);
+            assert!(stats.total_bytes >= 64);
+        }
+    }
+
+    #[test]
+    fn test_page_allocator_multiple_pages() {
+        let stack_alloc = StackAllocator::<4096, 8>::new();
+        let page_alloc = PageAllocator::<4>::new(&stack_alloc, 128);
+
+        unsafe {
+            let layout = Layout::from_size_align(100, 8).unwrap();
+            let _ptr1 = page_alloc.alloc(layout).unwrap();
+            let _ptr2 = page_alloc.alloc(layout).unwrap();
+
+            let stats = page_alloc.stats();
+            assert_eq!(stats.pages, 2);
+        }
+    }
+
+    #[test]
+    fn test_page_allocator_out_of_pages() {
+        let stack_alloc = StackAllocator::<4096, 8>::new();
+        let page_alloc = PageAllocator::<2>::new(&stack_alloc, 128);
+
+        unsafe {
+            let layout = Layout::from_size_align(100, 8).unwrap();
+            let _ptr1 = page_alloc.alloc(layout).unwrap();
+            let _ptr2 = page_alloc.alloc(layout).unwrap();
+            let result = page_alloc.alloc(layout);
+            assert!(matches!(result, Err(AllocError::OutOfMemory)));
+        }
+    }
+
+    #[test]
+    fn test_page_too_small() {
+        let stack_alloc = StackAllocator::<4096, 8>::new();
+        let page_alloc = PageAllocator::<4>::new(&stack_alloc, 64);
+
+        unsafe {
+            let layout = Layout::from_size_align(100, 8).unwrap();
+            let result = page_alloc.alloc(layout);
+            assert!(matches!(result, Err(AllocError::PageTooSmall)));
+        }
+    }
+
+    #[test]
+    fn test_zero_size_alloc() {
+        let stack_alloc = StackAllocator::<4096, 8>::new();
+        let page_alloc = PageAllocator::<4>::new(&stack_alloc, 512);
+
+        unsafe {
+            let layout = Layout::from_size_align(0, 1).unwrap();
+            let result = page_alloc.alloc(layout);
+            assert!(matches!(result, Err(AllocError::IllegalZeroSize)));
+        }
+    }
+}

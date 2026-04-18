@@ -35,6 +35,14 @@ unsafe impl<const SIZE: usize, const DEPTH: usize> Allocator for StackAllocator<
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         unsafe { (*self.inner.get()).dealloc(ptr, layout) }.unwrap()
     }
+
+    fn memory_statistics(&self) -> crate::MemoryStatistics {
+        let inner = unsafe { &*self.inner.get() };
+        crate::MemoryStatistics {
+            total_bytes: inner.allocated as i32,
+            pad_bytes: 0,
+        }
+    }
 }
 
 impl<const SIZE: usize, const DEPTH: usize> StackAllocatorInner<SIZE, DEPTH> {
@@ -89,6 +97,81 @@ impl<const SIZE: usize, const DEPTH: usize> StackAllocatorInner<SIZE, DEPTH> {
             }
         } else {
             Err(AllocError::StackDeallocationInvariantViolation)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_alloc_dealloc() {
+        let alloc = StackAllocator::<1024, 8>::new();
+        unsafe {
+            let layout = Layout::from_size_align(16, 8).unwrap();
+            let ptr1 = alloc.alloc(layout).unwrap();
+            let ptr2 = alloc.alloc(layout).unwrap();
+
+            alloc.dealloc(ptr2, layout);
+            alloc.dealloc(ptr1, layout);
+        }
+    }
+
+    #[test]
+    fn test_out_of_memory() {
+        let alloc = StackAllocator::<128, 8>::new();
+        unsafe {
+            let layout = Layout::from_size_align(100, 8).unwrap();
+            let _ptr1 = alloc.alloc(layout).unwrap();
+            let result = alloc.alloc(layout);
+            assert!(matches!(result, Err(AllocError::OutOfMemory)));
+        }
+    }
+
+    #[test]
+    fn test_too_deep() {
+        let alloc = StackAllocator::<1024, 2>::new();
+        unsafe {
+            let layout = Layout::from_size_align(16, 8).unwrap();
+            let _ptr1 = alloc.alloc(layout).unwrap();
+            let _ptr2 = alloc.alloc(layout).unwrap();
+            let result = alloc.alloc(layout);
+            assert!(matches!(result, Err(AllocError::StackAllocationTooDeep)));
+        }
+    }
+
+    #[test]
+    fn test_invalid_alignment() {
+        let alloc = StackAllocator::<1024, 8>::new();
+        unsafe {
+            let layout = Layout::from_size_align(16, 256).unwrap();
+            let result = alloc.alloc(layout);
+            assert!(matches!(result, Err(AllocError::InvalidAlignment)));
+        }
+    }
+
+    #[test]
+    fn test_dealloc_wrong_order() {
+        let alloc = StackAllocator::<1024, 8>::new();
+        unsafe {
+            let layout = Layout::from_size_align(16, 8).unwrap();
+            let ptr1 = alloc.alloc(layout).unwrap();
+            let _ptr2 = alloc.alloc(layout).unwrap();
+
+            let result = (*alloc.inner.get()).dealloc(ptr1, layout);
+            assert!(matches!(result, Err(AllocError::StackDeallocationInvariantViolation)));
+        }
+    }
+
+    #[test]
+    fn test_dealloc_empty() {
+        let alloc = StackAllocator::<1024, 8>::new();
+        unsafe {
+            let layout = Layout::from_size_align(16, 8).unwrap();
+            let ptr = core::ptr::null_mut();
+            let result = (*alloc.inner.get()).dealloc(ptr, layout);
+            assert!(matches!(result, Err(AllocError::StackDeallocationInvariantViolation)));
         }
     }
 }
