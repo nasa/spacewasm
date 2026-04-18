@@ -1,11 +1,7 @@
 /// WASM Reader
 /// This file implements some basic WASM reading capabilities such
 /// as LEB128 (variable width integer encoding).
-///
-/// This implementation is heavily based off of DLR's WASM interpreter:
-/// <https://github.com/DLR-FT/wasm-interpreter>
-use crate::{StackVec, ValidationError, Vec, Allocator, GlobalAllocator};
-use core::marker::PhantomData;
+use crate::{AllocError, Allocator, GlobalAllocator, ReaderError, StaticVec, ValidationError, Vec, WasmChunk, WasmStreamer};
 
 
 /// Wasm encodes integers according to the LEB128 format, which specifies that
@@ -18,46 +14,40 @@ const CONTINUATION_BIT: u8 = 0b10000000;
 const INTEGER_BIT_FLAG: u8 = !CONTINUATION_BIT;
 
 /// A struct for managing and reading WASM bytecode
-///
 /// Its purpose is to abstract parsing basic WASM values from the bytecode.
-#[derive(Clone)]
-pub struct WasmReader<'wasm> {
-    /// Entire WASM binary
-    binary: &'wasm [u8],
+pub(crate) struct WasmReader<'wasm> {
+    stream: &'wasm dyn WasmStreamer,
 
-    /// Read offset pointer
+    /// All the currently loaded chunks of the WASM binary
+    frames: Vec<WasmChunk<'wasm>>,
+
+    /// Read offset pointer in the current frame
     offset: usize,
-}
 
-#[derive(Clone, Copy)]
-pub struct WasmIndex<'wasm>(u32, PhantomData<&'wasm ()>);
-
-impl<'wasm> core::ops::Sub for WasmIndex<'wasm> {
-    type Output = u32;
-
-    fn sub(self, rhs: Self) -> Self::Output {
-        self.0 - rhs.0
-    }
+    /// A counter keeping track of the byte offset of
+    /// the current chunk of the WASM binary. This will be incremented
+    /// whenever a new chunk is received
+    frame_offset: usize,
 }
 
 impl<'wasm> WasmReader<'wasm> {
-    pub fn new(binary: &'wasm [u8]) -> Self {
-        Self { binary, offset: 0 }
+    pub fn new(stream: &'wasm dyn WasmStreamer, max_concurrent_chunks: u32) -> Result<Self, AllocError> {
+        Ok(Self {
+            stream,
+            frames: Vec::new(max_concurrent_chunks)?,
+            offset: 0,
+            frame_offset: 0,
+        })
     }
 
-    pub fn save(&self) -> WasmIndex<'wasm> {
-        WasmIndex(self.offset as u32, PhantomData::default())
+    pub fn offset(&self) -> usize {
+        self.offset + self.frame_offset
     }
 
-    pub fn restore(&mut self, state: WasmIndex) {
-        self.offset = state.0 as usize;
-    }
-
-    pub fn peek_u8(&self) -> Result<u8, ValidationError> {
-        self.binary
-            .get(self.offset)
-            .copied()
-            .ok_or(ValidationError::Eof)
+    fn peek_u8(&mut self) -> Result<u8, ValidationError> {
+        self.ensure(1).map_err(|_| ValidationError::Eof)?;
+        let frame = self.frames.last().ok_or(ValidationError::Eof)?;
+        frame.get(self.offset).copied().ok_or(ValidationError::Eof)
     }
 
     /// Tries to read one byte and fails if the end of file is reached.
@@ -78,17 +68,17 @@ impl<'wasm> WasmReader<'wasm> {
     }
 
     pub fn strip_bytes<const N: usize>(&mut self) -> Result<[u8; N], ValidationError> {
-        if self.offset + N >= self.binary.len() {
-            Err(ValidationError::Eof)
-        } else {
-            let bytes = &self.binary[self.offset..self.offset + N];
-            self.offset += N;
-            Ok(bytes.try_into().unwrap())
-        }
+        self.ensure(N).map_err(|_| ValidationError::Eof)?;
+        let frame = self.frames.last().ok_or(ValidationError::Eof)?;
+        let bytes = &frame[self.offset..self.offset + N];
+        self.offset += N;
+        Ok(bytes.try_into().unwrap())
     }
 
     /// Parses a variable-length `u32` as specified by [LEB128](https://en.wikipedia.org/wiki/LEB128#Unsigned_LEB128).
     /// Note: If `Err`, the [WasmReader] object is no longer guaranteed to be in a valid state
+    /// This implementation is heavily based off of DLR's WASM interpreter:
+    /// <https://github.com/DLR-FT/wasm-interpreter>
     pub fn read_u32(&mut self) -> Result<u32, ValidationError> {
         /// Because up to 5 bytes (each storing 7 bits) may be used to store 32 bits,
         /// some bits in the last byte will be left unused. This is a bitmask for
@@ -139,6 +129,8 @@ impl<'wasm> WasmReader<'wasm> {
         Ok(u64::from_le_bytes(bytes))
     }
 
+    /// This implementation is heavily based off of DLR's WASM interpreter:
+    /// <https://github.com/DLR-FT/wasm-interpreter>
     pub fn read_i32(&mut self) -> Result<i32, ValidationError> {
         /// Because up to 5 bytes (each storing 7 bits) may be used to store 32 bits,
         /// some bits in the last byte will be left unused. This is a bitmask for
@@ -404,29 +396,16 @@ impl<'wasm> WasmReader<'wasm> {
     }
 
     pub fn skip(&mut self, len: usize) -> Result<(), ValidationError> {
-        if self.offset + len > self.binary.len() {
-            Err(ValidationError::Eof)
-        } else {
-            self.offset += len;
-            Ok(())
-        }
-    }
-
-    pub fn read_n(&mut self, len: usize) -> Result<&'wasm [u8], ValidationError> {
-        let out = self
-            .binary
-            .get(self.offset..(self.offset + len))
-            .ok_or(ValidationError::Eof)?;
-
+        self.ensure(len).map_err(|_| ValidationError::Eof)?;
         self.offset += len;
-        Ok(out)
+        Ok(())
     }
 
     /// Note: If `Err`, the [WasmReader] object is no longer guaranteed to be in a valid state
     pub fn read_vec<T, F>(&mut self, read_element: F) -> Result<Vec<T>, ValidationError>
     where
         T: 'wasm,
-        F: FnMut(&mut WasmReader<'wasm>) -> Result<T, ValidationError>,
+        F: FnMut(&mut Self) -> Result<T, ValidationError>,
     {
         self.read_vec_in(GlobalAllocator, read_element)
     }
@@ -434,17 +413,17 @@ impl<'wasm> WasmReader<'wasm> {
     pub fn read_vec_stack<T, F, const SIZE: usize>(
         &mut self,
         mut read_element: F,
-    ) -> Result<StackVec<T, SIZE>, ValidationError>
+    ) -> Result<StaticVec<T, SIZE>, ValidationError>
     where
         T: 'wasm,
-        F: FnMut(&mut WasmReader<'wasm>) -> Result<T, ValidationError>,
+        F: FnMut(&mut Self) -> Result<T, ValidationError>,
     {
         let len = self.read_u32()?;
         if len as usize > SIZE {
             return Err(ValidationError::VecTooLong);
         }
 
-        let mut out = StackVec::new();
+        let mut out = StaticVec::new();
         for _ in 0..len {
             out.push(read_element(self)?)?;
         }
@@ -452,15 +431,15 @@ impl<'wasm> WasmReader<'wasm> {
         Ok(out)
     }
 
-    pub fn read_vec_in<T, F, A>(
+    pub fn read_vec_in<T, F, VA>(
         &mut self,
-        alloc: A,
+        alloc: VA,
         mut read_element: F,
-    ) -> Result<Vec<T, A>, ValidationError>
+    ) -> Result<Vec<T, VA>, ValidationError>
     where
         T: 'wasm,
-        F: FnMut(&mut WasmReader<'wasm>) -> Result<T, ValidationError>,
-        A: Allocator,
+        F: FnMut(&mut Self) -> Result<T, ValidationError>,
+        VA: Allocator,
     {
         let len = self.read_u32()?;
         let mut out = Vec::new_in(alloc, len)?;
@@ -474,12 +453,42 @@ impl<'wasm> WasmReader<'wasm> {
 
 #[cfg(test)]
 mod tests {
-    use crate::WasmReader;
+    use crate::{InnerVec, WasmReader, WasmStreamer, ReaderError, Vec};
+    use core::cell::RefCell;
+
+    struct TestStreamer {
+        data: RefCell<Option<InnerVec<u8>>>,
+    }
+
+    impl TestStreamer {
+        fn new(bytes: &[u8]) -> Self {
+            // Create a Vec and extract its InnerVec
+            let mut vec = Vec::new(bytes.len() as u32).unwrap();
+            for &byte in bytes {
+                vec.push(byte);
+            }
+            let inner = unsafe { vec.take_inner() };
+            Self {
+                data: RefCell::new(Some(inner)),
+            }
+        }
+    }
+
+    impl WasmStreamer for TestStreamer {
+        fn read(&self) -> Result<Option<InnerVec<u8>>, ReaderError> {
+            Ok(self.data.borrow_mut().take())
+        }
+
+        fn return_(&self, _chunk: InnerVec<u8>) {
+            // For tests, we don't need to reuse buffers
+        }
+    }
 
     #[test]
     fn test_var_i32() {
         let bytes = [0xC0, 0xBB, 0x78];
-        let mut wasm = WasmReader::new(&bytes);
+        let streamer = TestStreamer::new(&bytes);
+        let mut wasm = WasmReader::new(&streamer, 4).unwrap();
 
         assert_eq!(wasm.read_i32(), Ok(-123456));
     }

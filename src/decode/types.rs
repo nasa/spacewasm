@@ -2,58 +2,15 @@
 //!
 //! See: <https://webassembly.github.io/spec/core/binary/types.html>
 
-use crate::{ValidationError, Vec, WasmIndex, WasmReader};
-
-/// An offset and length to select a subset of the WASM binary
-pub struct Slice<'wasm> {
-    pub start: WasmIndex<'wasm>,
-    pub len: u32,
-}
-
-impl<'wasm> Slice<'wasm> {
-    pub(crate) fn read(
-        wasm: &mut WasmReader<'wasm>,
-        len: u32,
-    ) -> Result<Slice<'wasm>, ValidationError> {
-        let start = wasm.save();
-
-        // Make sure we can read the entire slice
-        wasm.skip(len as usize)?;
-
-        Ok(Slice { start, len })
-    }
-
-    /// Dereference the string name from the WASM binary
-    /// Safety note: `wasm` MUST point to the same memory that was used to construct this name
-    pub fn deref(&self, mut wasm: WasmReader<'wasm>) -> &'wasm [u8] {
-        wasm.restore(self.start);
-        wasm.read_n(self.len as usize).unwrap()
-    }
-}
+use crate::util::String;
+use crate::{ValidationError, Vec, WasmReader};
 
 /// A pointer and length into a UTF-8 string on the original WASM
-pub struct Name<'wasm>(Slice<'wasm>);
+pub struct Name;
 
-impl<'wasm> Name<'wasm> {
-    pub(crate) fn read(wasm: &mut WasmReader<'wasm>) -> Result<Name<'wasm>, ValidationError> {
-        let len = wasm.read_u32()?;
-
-        // Read the string and validate the utf-8 characters
-        let start = wasm.save();
-        let data = wasm.read_n(len as usize)?;
-
-        match core::str::from_utf8(data) {
-            Ok(_) => Ok(Name(Slice { start, len })),
-            Err(_) => Err(ValidationError::MalformedUtf8),
-        }
-    }
-
-    /// Dereference the string name from the WASM binary
-    /// Safety note: `wasm` MUST point to the same memory that was used to construct this name
-    pub fn deref(&self, wasm: WasmReader<'wasm>) -> &'wasm str {
-        // This has already been checked for validity ahead of time
-        // We could just unwrap here though it's unnecessary.
-        unsafe { core::str::from_utf8_unchecked(self.0.deref(wasm)) }
+impl Name {
+    pub(crate) fn read(wasm: &mut WasmReader) -> Result<String, ValidationError> {
+        wasm.read_vec(|r| r.read_u8())?.try_into()
     }
 }
 
@@ -103,45 +60,20 @@ impl ResultType {
 }
 
 pub struct FuncType {
-    params_returns: Vec<ValType>,
-    n_params: u32,
+    pub params: Vec<ValType>,
+    pub returns: Vec<ValType>,
 }
 
 impl FuncType {
-    pub fn params(&self) -> &[ValType] {
-        &self.params_returns[0..self.n_params as usize]
-    }
-
-    pub fn returns(&self) -> &[ValType] {
-        &self.params_returns[self.n_params as usize..]
-    }
-
     pub(crate) fn read(wasm: &mut WasmReader) -> Result<Self, ValidationError> {
         // Function types are encoded by the byte 0x60 followed by the respective
         // vectors of parameter and result types.
         match wasm.read_u8()? {
             0x60 => {
-                let n_params = wasm.read_u32()?;
-                let params = wasm.read_n(n_params as usize)?;
+                let params = wasm.read_vec(ValType::read)?;
+                let returns = wasm.read_vec(ValType::read)?;
 
-                let n_returns = wasm.read_u32()?;
-                let returns = wasm.read_n(n_returns as usize)?;
-
-                // Allocate a single vector to represent both params and returns
-                // This reduces allocation size. FuncType is the most prone to explode in size
-                let mut params_returns = Vec::new(n_params + n_returns)?;
-                for param in params {
-                    params_returns.push(ValType::convert(*param)?)
-                }
-
-                for param in returns {
-                    params_returns.push(ValType::convert(*param)?)
-                }
-
-                Ok(FuncType {
-                    params_returns,
-                    n_params,
-                })
+                Ok(FuncType { params, returns })
             }
             c => Err(ValidationError::MalformedFunction(c)),
         }

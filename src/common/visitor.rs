@@ -1,7 +1,4 @@
-use crate::{
-    FuncIdx, GlobalIdx, LabelIdx, LocalIdx, MemArg, ResultType, TypeIdx, ValidationError,
-    WasmReader,
-};
+use crate::{FuncIdx, GlobalIdx, LabelIdx, LocalIdx, MemArg, ResultType, TypeIdx, ValidationError};
 
 /// A convenience macro for defining the visitor function for a decoded
 /// WebAssembly instruction from any intermediate representation.
@@ -13,16 +10,16 @@ use crate::{
 macro_rules! visitor_default_impl {
     // No additional parameters
     ($name:ident) => {
-        fn $name(&mut self, pc: &mut WasmReader<'wasm>) -> Result<(), Self::Error> {
-            let _ = pc;
+        fn $name(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+            let _ = state;
             Ok(())
         }
     };
 
     // With additional parameters
     ($name:ident, $($param:ident : $ty:ty),+) => {
-        fn $name(&mut self, pc: &mut WasmReader<'wasm>, $($param: $ty),+) -> Result<(), Self::Error> {
-            let _ = pc;
+        fn $name(&self, $($param: $ty),+, state: &mut Self::State) -> Result<(), Self::Error> {
+            let _ = state;
             $(let _ = $param;)+
             Ok(())
         }
@@ -34,8 +31,9 @@ macro_rules! visitor_default_impl {
 /// with the same common implementation. The decoding and traversal code will
 /// call into this visitor and is IR specific. This trait is purely for operating
 /// on decoded WebAssembly instructions.
-pub trait CodeVisitor<'wasm> {
+pub trait CodeVisitor {
     type Error: From<ValidationError>;
+    type State;
 
     // Control instructions
     visitor_default_impl!(unreachable);

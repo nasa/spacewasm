@@ -1,6 +1,9 @@
 mod reader;
 pub(crate) use reader::*;
 
+mod stream;
+pub(crate) use stream::*;
+
 pub mod error;
 pub use error::*;
 
@@ -8,6 +11,8 @@ pub mod module;
 pub use module::*;
 
 mod opcode;
+pub use opcode::*;
+
 mod types;
 pub use types::*;
 

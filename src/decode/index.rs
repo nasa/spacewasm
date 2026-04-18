@@ -1,65 +1,40 @@
-use crate::{CodeVisitor, ResultType, ValidationError, WasmReader};
-use core::marker::PhantomData;
+use crate::{CodeVisitor, ResultType, ValidationError};
 
-pub struct CodeIndexer<'wasm> {
-    // Keeps track of nested blocks with a static cap
-    // block_starts: StackVec<WasmIndex<'wasm>, 64>,
+pub struct CodeIndexer;
 
-    // Keeps track of block sizes
-    // indexes: StackVec<(WasmIndex<'wasm>, ResultType), 32>,
-    phantom: PhantomData<&'wasm ()>,
-}
-
-impl<'wasm> CodeIndexer<'wasm> {
-    pub fn new() -> CodeIndexer<'wasm> {
-        CodeIndexer {
-            phantom: Default::default(),
-        }
-    }
-}
-
-impl<'wasm> CodeVisitor<'wasm> for CodeIndexer<'wasm> {
+impl CodeVisitor for CodeIndexer {
     type Error = ValidationError;
+    type State = ();
 
     fn enter_block(
-        &mut self,
-        pc: &mut WasmReader<'wasm>,
-        _: ResultType,
-    ) -> Result<(), Self::Error> {
-        // self.block_starts.push(pc.save())?;
-        Ok(())
-    }
-
-    fn loop_(
-        &mut self,
-        pc: &mut WasmReader<'wasm>,
+        &self,
         block_type: ResultType,
+        state: &mut Self::State,
     ) -> Result<(), Self::Error> {
-        // self.block_starts.push(pc.save())?;
-        // self.block_types.push(block_type)?;
+        let _ = block_type;
+        let _ = state;
         Ok(())
     }
 
-    fn if_(
-        &mut self,
-        pc: &mut WasmReader<'wasm>,
-        block_type: ResultType,
-    ) -> Result<(), Self::Error> {
-        // self.block_starts.push(pc.save())?;
-        // self.block_types.push(block_type)?;
+    fn loop_(&self, block_type: ResultType, state: &mut Self::State) -> Result<(), Self::Error> {
+        let _ = block_type;
+        let _ = state;
         Ok(())
     }
 
-    fn else_(&mut self, _pc: &mut WasmReader<'wasm>) -> Result<(), Self::Error> {
+    fn if_(&self, block_type: ResultType, state: &mut Self::State) -> Result<(), Self::Error> {
+        let _ = block_type;
+        let _ = state;
         Ok(())
     }
 
-    fn exit_block(&mut self, _pc: &mut WasmReader<'wasm>) -> Result<(), Self::Error> {
-        // let (_block_start, _block_type) = (
-        // self.block_starts.pop().unwrap(),
-        // self.block_types.pop().unwrap(),
-        // );
+    fn else_(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        let _ = state;
+        Ok(())
+    }
 
+    fn exit_block(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        let _ = state;
         Ok(())
     }
 }

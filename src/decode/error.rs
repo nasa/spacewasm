@@ -1,4 +1,5 @@
 use crate::alloc::AllocError;
+use crate::decode::ReaderError;
 use crate::SectionKind;
 
 #[derive(Debug, Clone)]
@@ -57,6 +58,7 @@ pub enum ValidationError {
     InvalidOpcode(u8),
     MalformedCodeSize,
     VecTooLong,
+    ReaderError(ReaderError),
 }
 
 impl From<AllocError> for ValidationError {

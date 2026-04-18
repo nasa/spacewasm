@@ -1,12 +1,12 @@
 use crate::alloc::AllocError;
 use core::ops::{Deref, DerefMut};
 
-pub struct StackVec<T: Sized, const N: usize> {
+pub struct StaticVec<T: Sized, const N: usize> {
     data: [T; N],
     len: usize,
 }
 
-impl<T: Sized, const N: usize> Default for StackVec<T, N> {
+impl<T: Sized, const N: usize> Default for StaticVec<T, N> {
     fn default() -> Self {
         Self {
             data: unsafe { core::mem::zeroed() },
@@ -15,7 +15,7 @@ impl<T: Sized, const N: usize> Default for StackVec<T, N> {
     }
 }
 
-impl<T, const N: usize> StackVec<T, N> {
+impl<T, const N: usize> StaticVec<T, N> {
     pub fn new() -> Self {
         Self::default()
     }
@@ -43,20 +43,20 @@ impl<T, const N: usize> StackVec<T, N> {
     }
 }
 
-impl<T: core::fmt::Debug, const N: usize> core::fmt::Debug for StackVec<T, N> {
+impl<T: core::fmt::Debug, const N: usize> core::fmt::Debug for StaticVec<T, N> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_list().entries(self.iter()).finish()
     }
 }
 
-impl<T, const N: usize> Deref for StackVec<T, N> {
+impl<T, const N: usize> Deref for StaticVec<T, N> {
     type Target = [T];
     fn deref(&self) -> &[T] {
         &self.data
     }
 }
 
-impl<T, const N: usize> DerefMut for StackVec<T, N> {
+impl<T, const N: usize> DerefMut for StaticVec<T, N> {
     fn deref_mut(&mut self) -> &mut [T] {
         &mut self.data
     }
