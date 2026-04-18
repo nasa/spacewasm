@@ -18,12 +18,14 @@ impl<A: Allocator, T: core::fmt::Debug> core::fmt::Debug for Vec<T, A> {
     }
 }
 
-impl<T: Clone> Clone for Vec<T, GlobalAllocator> {
+impl<T: Clone, A: Allocator + Clone> Clone for Vec<T, A> {
     fn clone(&self) -> Self {
-        let mut n = Vec::new(self.inner.capacity).unwrap();
+        let mut n = Vec::new_in(self.alloc.clone(), self.inner.capacity).unwrap();
+        n.inner.len = self.inner.len;
+        n.inner.capacity = self.inner.capacity;
+
         if self.len() > 0 {
             n[0..self.len()].clone_from_slice(self);
-            n.inner.len = self.inner.len;
         }
 
         n
@@ -95,20 +97,6 @@ impl<T: Sized, A: Allocator> Vec<T, A> {
     pub fn iter(&self) -> impl Iterator<Item = T> {
         self.inner.iter()
     }
-
-    /// Takes the inner vec, leaving this Vec in a zero state.
-    /// This is unsafe because the caller must ensure the inner vec is properly managed.
-    /// The Vec will not deallocate the inner vec after this call.
-    pub unsafe fn take_inner(&mut self) -> InnerVec<T> {
-        core::mem::replace(
-            &mut self.inner,
-            InnerVec {
-                ptr: core::ptr::null_mut(),
-                capacity: 0,
-                len: 0,
-            },
-        )
-    }
 }
 
 impl<T, A: Allocator> Deref for Vec<T, A> {
@@ -138,6 +126,33 @@ impl<T: Sized, A: Allocator> Drop for Vec<T, A> {
                     .unwrap(),
                 );
             }
+        }
+    }
+}
+
+impl<T> IntoIterator for Vec<T, GlobalAllocator> {
+    type Item = T;
+    type IntoIter = IntoIter<T, GlobalAllocator>;
+    fn into_iter(self) -> IntoIter<T, GlobalAllocator> {
+        // Make sure not to drop Vec since that would free the buffer
+        let vec = core::mem::ManuallyDrop::new(self);
+
+        // Can't destructure Vec since it's Drop
+        let ptr = vec.inner.ptr;
+        let cap = vec.inner.capacity as usize;
+        let len = vec.inner.len as usize;
+
+        IntoIter {
+            buf: ptr,
+            cap,
+            start: ptr,
+            end: if cap == 0 {
+                // can't offset off this pointer, it's not allocated!
+                ptr
+            } else {
+                unsafe { ptr.add(len) }
+            },
+            alloc: GlobalAllocator,
         }
     }
 }
@@ -186,8 +201,7 @@ impl<T, A: Allocator> Drop for IntoIter<T, A> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::alloc::run;
-    use crate::StackAllocator;
+    use crate::{run, StackAllocator};
 
     #[test]
     fn test_zero() {
@@ -217,6 +231,7 @@ mod tests {
     #[test]
     #[should_panic]
     fn test_push_exceeds_capacity() {
+        extern crate std;
         let alloc = StackAllocator::<1024, 8>::new();
         run(&alloc, || {
             let mut vec = Vec::new(2).unwrap();

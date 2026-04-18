@@ -20,7 +20,9 @@ impl TryFrom<&str> for String<GlobalAllocator> {
 
     fn try_from(value: &str) -> Result<Self, ValidationError> {
         let mut v = Vec::new(value.len() as u32)?;
-        let _ = &v.copy_from_slice(value.as_bytes());
+        for byte in value.as_bytes() {
+            v.push(*byte);
+        }
         Ok(String(v))
     }
 }

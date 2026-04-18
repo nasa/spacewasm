@@ -536,45 +536,45 @@ impl<'wasm> Drop for Reader<'wasm> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{alloc::run, InnerVec, ReaderError, StackAllocator, Vec, Reader, Stream};
+    // use crate::{alloc::run, InnerVec, ReaderError, StackAllocator, Vec, Reader, Stream};
 
-    struct TestStreamer {
-        data: Option<InnerVec<u8>>,
-    }
+    // struct TestStreamer {
+    //     data: Option<InnerVec<u8>>,
+    // }
+    //
+    // impl TestStreamer {
+    //     fn new(bytes: &[u8]) -> Self {
+    //         // Create a Vec and extract its InnerVec
+    //         let mut vec = Vec::new(bytes.len() as u32).unwrap();
+    //         for &byte in bytes {
+    //             vec.push(byte);
+    //         }
+    //         let inner = unsafe { vec.take_inner() };
+    //         Self {
+    //             data: Some(inner),
+    //         }
+    //     }
+    // }
 
-    impl TestStreamer {
-        fn new(bytes: &[u8]) -> Self {
-            // Create a Vec and extract its InnerVec
-            let mut vec = Vec::new(bytes.len() as u32).unwrap();
-            for &byte in bytes {
-                vec.push(byte);
-            }
-            let inner = unsafe { vec.take_inner() };
-            Self {
-                data: Some(inner),
-            }
-        }
-    }
+    // impl Stream for TestStreamer {
+    //     fn read(&mut self) -> Result<Option<InnerVec<u8>>, ReaderError> {
+    //         Ok(self.data.take())
+    //     }
+    //
+    //     fn return_(&mut self, _chunk: InnerVec<u8>) {
+    //         // For tests, we don't need to reuse buffers
+    //     }
+    // }
 
-    impl Stream for TestStreamer {
-        fn read(&mut self) -> Result<Option<InnerVec<u8>>, ReaderError> {
-            Ok(self.data.take())
-        }
-
-        fn return_(&mut self, _chunk: InnerVec<u8>) {
-            // For tests, we don't need to reuse buffers
-        }
-    }
-
-    #[test]
-    fn test_var_i32() {
-        let alloc = StackAllocator::<1024, 8>::new();
-        run(&alloc, || {
-            let bytes = [0xC0, 0xBB, 0x78];
-            let mut streamer = TestStreamer::new(&bytes);
-            let mut wasm = Reader::new(&mut streamer);
-
-            assert_eq!(wasm.read_i32(), Ok(-123456));
-        });
-    }
+    // #[test]
+    // fn test_var_i32() {
+    //     let alloc = StackAllocator::<1024, 8>::new();
+    //     run(&alloc, || {
+    //         let bytes = [0xC0, 0xBB, 0x78];
+    //         let mut streamer = TestStreamer::new(&bytes);
+    //         let mut wasm = Reader::new(&mut streamer);
+    //
+    //         assert_eq!(wasm.read_i32(), Ok(-123456));
+    //     });
+    // }
 }

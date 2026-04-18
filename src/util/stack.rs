@@ -82,7 +82,12 @@ impl<const SIZE: usize, const DEPTH: usize> StackAllocatorInner<SIZE, DEPTH> {
         if self.n_allocations > 0 {
             self.n_allocations -= 1;
             let expected_address = self.allocations[self.n_allocations];
-            let ptr_offset = ptr as usize - &raw const self.data[0] as usize;
+            let base_address = &raw const self.data[0] as usize;
+            if base_address > ptr as usize {
+                return Err(AllocError::StackDeallocationInvariantViolation);
+            }
+
+            let ptr_offset = ptr as usize - base_address;
 
             if ptr_offset != expected_address {
                 Err(AllocError::StackDeallocationInvariantViolation)
@@ -160,7 +165,10 @@ mod tests {
             let _ptr2 = alloc.alloc(layout).unwrap();
 
             let result = (*alloc.inner.get()).dealloc(ptr1, layout);
-            assert!(matches!(result, Err(AllocError::StackDeallocationInvariantViolation)));
+            assert!(matches!(
+                result,
+                Err(AllocError::StackDeallocationInvariantViolation)
+            ));
         }
     }
 
@@ -171,7 +179,10 @@ mod tests {
             let layout = Layout::from_size_align(16, 8).unwrap();
             let ptr = core::ptr::null_mut();
             let result = (*alloc.inner.get()).dealloc(ptr, layout);
-            assert!(matches!(result, Err(AllocError::StackDeallocationInvariantViolation)));
+            assert!(matches!(
+                result,
+                Err(AllocError::StackDeallocationInvariantViolation)
+            ));
         }
     }
 }

@@ -84,6 +84,7 @@ unsafe impl<T: Allocator> Allocator for &T {
     }
 }
 
+#[derive(Clone, Copy)]
 pub struct GlobalAllocator;
 unsafe impl Allocator for GlobalAllocator {
     unsafe fn alloc(&self, layout: Layout) -> Result<*mut u8, AllocError> {
@@ -99,6 +100,7 @@ unsafe impl Allocator for GlobalAllocator {
     }
 }
 
+#[derive(Clone, Copy)]
 struct UnimplementedAllocator;
 unsafe impl Allocator for UnimplementedAllocator {
     unsafe fn alloc(&self, _layout: Layout) -> Result<*mut u8, AllocError> {
@@ -106,7 +108,7 @@ unsafe impl Allocator for UnimplementedAllocator {
     }
 
     unsafe fn dealloc(&self, _ptr: *mut u8, _layout: Layout) {
-        unimplemented!()
+        // We drop the dealloc here so that panic can gracefully continue
     }
 
     fn memory_statistics(&self) -> MemoryStatistics {

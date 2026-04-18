@@ -591,15 +591,18 @@ mod tests {
         buffer.push(4);
         buffer.push(5);
 
-        assert_eq!(buffer.len(), 3);
-        assert_eq!(buffer.get(0), Some(&3));
-        assert_eq!(buffer.get(1), Some(&4));
-        assert_eq!(buffer.get(2), Some(&5));
+        // After pop_front, we had 1 element, then pushed 3 more = 4 total (buffer is now full)
+        assert_eq!(buffer.len(), 4);
+        assert_eq!(buffer.get(0), Some(&2));
+        assert_eq!(buffer.get(1), Some(&3));
+        assert_eq!(buffer.get(2), Some(&4));
+        assert_eq!(buffer.get(3), Some(&5));
 
         assert_eq!(buffer.pop_back(), Some(5));
         buffer.push(6);
 
         let mut iter = buffer.iter();
+        assert_eq!(iter.next(), Some(&2));
         assert_eq!(iter.next(), Some(&3));
         assert_eq!(iter.next(), Some(&4));
         assert_eq!(iter.next(), Some(&6));

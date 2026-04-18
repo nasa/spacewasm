@@ -170,7 +170,8 @@ impl<'a, const MAX_PAGES: usize> PageAllocatorInner<'a, MAX_PAGES> {
 
 impl<'a, const MAX_PAGES: usize> Drop for PageAllocatorInner<'a, MAX_PAGES> {
     fn drop(&mut self) {
-        for bucket in self.pages.iter_mut() {
+        // Deallocate pages in reverse order to satisfy LIFO allocators like StackAllocator
+        for bucket in self.pages.iter_mut().rev() {
             match bucket {
                 None => {}
                 Some(page) => {
