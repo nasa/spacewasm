@@ -1,6 +1,9 @@
 pub mod alloc;
 pub use alloc::*;
 
+mod box_;
+pub use box_::*;
+
 mod circular_buffer;
 pub use circular_buffer::*;
 

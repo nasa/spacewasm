@@ -23,7 +23,7 @@ unsafe impl Allocator for RustSystemAllocator {
 }
 
 global_allocator!(
-    PageAllocator<2>,
+    PageAllocator<16>,
     PageAllocator::new(&RustSystemAllocator {}, 8192)
 );
 
@@ -80,12 +80,20 @@ impl Stream for FileStream {
 fn main() {
     std::env::args().skip(1).for_each(|path| {
         let file = std::fs::File::open(path).expect("failed to open file");
-        match spacewasm::Module::new(&mut FileStream::new(file)) {
+        match spacewasm::Module::new::<256>(&mut FileStream::new(file)) {
             Ok(module) => {
+                let mut total: usize = 0;
                 for (i, section) in module.memory_usage.iter().enumerate() {
                     let section_kind = SectionKind::convert(i as u8).unwrap();
-                    eprintln!("{:?} {} bytes", section_kind, section.total_bytes);
+                    eprintln!("{:?}: {} bytes", section_kind, section.total_bytes);
+                    total += section.total_bytes as usize;
                 }
+
+                eprintln!("Total: {}", total);
+                eprintln!(
+                    "Compilation Ratio: {:.2}x",
+                    (total as f64) / (module.wasm_size as f64)
+                );
 
                 eprintln!("{:?}", module.functions);
 

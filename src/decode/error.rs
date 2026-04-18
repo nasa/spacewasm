@@ -38,7 +38,6 @@ pub enum ValidationError {
     Eof,
     MalformedVariableLengthInteger,
     I33IsNegative,
-    AllocError(AllocError),
     MalformedMagic,
     MalformedVersion,
     MalformedUtf8,
@@ -50,7 +49,6 @@ pub enum ValidationError {
     MalformedSectionSize,
     ExpectedConstOrVar(u8),
     MalformedImportExportDesc(u8),
-    AllocationFailure(AllocError),
     InvalidSectionOrdering(SectionKind, SectionKind),
     DuplicateSection(SectionKind),
     InvalidZeroMaxLimit,
@@ -58,18 +56,22 @@ pub enum ValidationError {
     InvalidOpcode(u8),
     MalformedCodeSize,
     VecTooLong,
+    IdxTooLarge,
+    MemAlignTooLarge,
+    IllegalMemoryGrow,
+    AllocError(AllocError),
     ReaderError(ReaderError),
 }
 
 impl From<AllocError> for ValidationError {
     fn from(value: AllocError) -> Self {
-        ValidationError::AllocationFailure(value)
+        ValidationError::AllocError(value)
     }
 }
 
 impl From<AllocError> for SectionDecodeError {
     fn from(value: AllocError) -> Self {
-        Self::new(ValidationError::AllocationFailure(value))
+        Self::new(ValidationError::AllocError(value))
     }
 }
 

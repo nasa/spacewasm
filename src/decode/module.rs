@@ -4,6 +4,7 @@ pub struct Module {
     pub types: Vec<FuncType>,
     pub functions: Vec<TypeIdx>,
     pub code: Vec<Func>,
+    pub text: Vec<Box<TextPage>>,
 
     pub tables: Vec<TableType>,
     pub memories: Vec<MemType>,
@@ -14,6 +15,7 @@ pub struct Module {
     pub data: Vec<Data>,
     pub start: Option<FuncIdx>,
 
+    pub wasm_size: usize,
     pub memory_usage: [MemoryStatistics; SectionKind::N as usize],
 }
 
@@ -43,16 +45,16 @@ impl CustomSectionHandler for DefaultCustomSectionHandler {
 }
 
 impl Module {
-    pub fn new(stream: &mut dyn Stream) -> Result<Module, ParseError> {
+    pub fn new<const N: usize>(stream: &mut dyn Stream) -> Result<Module, ParseError> {
         let mut wasm = Reader::new(stream);
 
-        Module::read(&mut wasm, &mut DefaultCustomSectionHandler).map_err(|err| ParseError {
+        Module::read::<N>(&mut wasm, &mut DefaultCustomSectionHandler).map_err(|err| ParseError {
             offset: wasm.offset() as u32,
             err: err.into(),
         })
     }
 
-    fn read(
+    fn read<const N: usize>(
         wasm: &mut Reader,
         custom_handler: &mut dyn CustomSectionHandler,
     ) -> Result<Module, SectionDecodeError> {
@@ -71,6 +73,7 @@ impl Module {
             types: Vec::zero(),
             functions: Vec::zero(),
             code: Vec::zero(),
+            text: Vec::zero(),
             tables: Vec::zero(),
             memories: Vec::zero(),
             globals: Vec::zero(),
@@ -79,10 +82,12 @@ impl Module {
             elements: Vec::zero(),
             data: Vec::zero(),
             start: None,
+            wasm_size: 0,
             memory_usage: Default::default(),
         };
 
         let mut last_section: SectionKind = SectionKind::Custom;
+        let mut builder = TextBuilder::<N>::new()?;
 
         loop {
             let section_ty = match SectionKind::read(wasm) {
@@ -111,7 +116,7 @@ impl Module {
             let memory_before = GlobalAllocator.memory_statistics();
 
             module
-                .read_section(wasm, section_size, section_ty, custom_handler)
+                .read_section(wasm, section_size, section_ty, custom_handler, &mut builder)
                 .map_err(|e| e.with_section(section_ty))?;
 
             let memory_after = GlobalAllocator.memory_statistics();
@@ -127,15 +132,17 @@ impl Module {
             }
         }
 
+        module.wasm_size = wasm.offset();
         Ok(module)
     }
 
-    fn read_section(
+    fn read_section<const PN: usize>(
         &mut self,
         wasm: &mut Reader,
         section_size: usize,
         section_ty: SectionKind,
         custom_handler: &mut dyn CustomSectionHandler,
+        text_builder: &mut TextBuilder<PN>,
     ) -> Result<(), ValidationError> {
         use SectionKind::*;
         match section_ty {
@@ -158,7 +165,7 @@ impl Module {
                 self.memories = MemorySection::read(wasm)?;
             }
             Global => {
-                self.globals = GlobalSection::read(wasm)?;
+                self.globals = GlobalSection::read::<PN>(wasm, text_builder)?;
             }
             Export => {
                 self.exports = ExportSection::read(wasm)?;
@@ -167,13 +174,13 @@ impl Module {
                 self.start.replace(FuncIdx::read(wasm)?);
             }
             Element => {
-                self.elements = ElementSection::read(wasm)?;
+                self.elements = ElementSection::read::<PN>(wasm, text_builder)?;
             }
             Code => {
-                self.code = CodeSection::read(wasm)?;
+                self.code = CodeSection::read::<PN>(wasm, text_builder)?;
             }
             Data => {
-                self.data = DataSection::read(wasm)?;
+                self.data = DataSection::read::<PN>(wasm, text_builder)?;
             }
             _ => unreachable!(),
         }
@@ -346,17 +353,23 @@ pub struct Global {
 }
 
 impl Global {
-    pub fn read(wasm: &mut Reader) -> Result<Self, ValidationError> {
+    pub fn read<const N: usize>(
+        wasm: &mut Reader,
+        builder: &mut TextBuilder<N>,
+    ) -> Result<Self, ValidationError> {
         let type_ = GlobalType::read(wasm)?;
-        let init = Expr::read(wasm)?;
+        let init = Expr::read(wasm, builder)?;
         Ok(Global { type_, init })
     }
 }
 
 pub struct GlobalSection;
 impl GlobalSection {
-    pub fn read(wasm: &mut Reader) -> Result<Vec<Global>, ValidationError> {
-        wasm.read_vec(Global::read)
+    pub fn read<const N: usize>(
+        wasm: &mut Reader,
+        builder: &mut TextBuilder<N>,
+    ) -> Result<Vec<Global>, ValidationError> {
+        wasm.read_vec(|r| Global::read(r, builder))
     }
 }
 
@@ -406,9 +419,12 @@ pub struct Element {
 }
 
 impl Element {
-    pub fn read(wasm: &mut Reader) -> Result<Self, ValidationError> {
+    pub fn read<const N: usize>(
+        wasm: &mut Reader,
+        builder: &mut TextBuilder<N>,
+    ) -> Result<Self, ValidationError> {
         let table = TableIdx::read(wasm)?;
-        let offset = Expr::read(wasm)?;
+        let offset = Expr::read(wasm, builder)?;
         let init = wasm.read_vec(FuncIdx::read)?;
 
         Ok(Element {
@@ -421,16 +437,22 @@ impl Element {
 
 pub struct ElementSection;
 impl ElementSection {
-    pub fn read(wasm: &mut Reader) -> Result<Vec<Element>, ValidationError> {
-        wasm.read_vec(Element::read)
+    pub fn read<const N: usize>(
+        wasm: &mut Reader,
+        builder: &mut TextBuilder<N>,
+    ) -> Result<Vec<Element>, ValidationError> {
+        wasm.read_vec(|r| Element::read(r, builder))
     }
 }
 
 pub struct CodeSection;
 
 impl CodeSection {
-    pub fn read(wasm: &mut Reader) -> Result<Vec<Func>, ValidationError> {
-        wasm.read_vec(Func::read)
+    pub fn read<const N: usize>(
+        wasm: &mut Reader,
+        builder: &mut TextBuilder<N>,
+    ) -> Result<Vec<Func>, ValidationError> {
+        wasm.read_vec(|r| Func::read(r, builder))
     }
 }
 
@@ -441,9 +463,12 @@ pub struct Data {
 }
 
 impl Data {
-    pub fn read(wasm: &mut Reader) -> Result<Self, ValidationError> {
+    pub fn read<const N: usize>(
+        wasm: &mut Reader,
+        builder: &mut TextBuilder<N>,
+    ) -> Result<Self, ValidationError> {
         let mem = MemIdx::read(wasm)?;
-        let offset = Expr::read(wasm)?;
+        let offset = Expr::read(wasm, builder)?;
         let init = wasm.read_vec(|w| w.read_u8())?;
 
         Ok(Data { mem, offset, init })
@@ -452,7 +477,10 @@ impl Data {
 
 pub struct DataSection;
 impl DataSection {
-    pub fn read(wasm: &mut Reader) -> Result<Vec<Data>, ValidationError> {
-        wasm.read_vec(Data::read)
+    pub fn read<const N: usize>(
+        wasm: &mut Reader,
+        builder: &mut TextBuilder<N>,
+    ) -> Result<Vec<Data>, ValidationError> {
+        wasm.read_vec(|r| Data::read(r, builder))
     }
 }

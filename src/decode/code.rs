@@ -1,11 +1,14 @@
 use crate::*;
 
-pub struct Expr;
+pub struct Expr(JumpTarget);
 
 impl Expr {
-    pub fn read(wasm: &mut Reader) -> Result<Self, ValidationError> {
-        let e = Expr;
-        wasm.read_code(&CodeIndexer, &mut ())?;
+    pub fn read<const N: usize>(
+        wasm: &mut Reader,
+        builder: &mut TextBuilder<N>,
+    ) -> Result<Self, ValidationError> {
+        let e = Expr(builder.pc());
+        wasm.read_code(&Compiler, builder)?;
         Ok(e)
     }
 }
@@ -16,7 +19,10 @@ pub struct Func {
 }
 
 impl Func {
-    pub fn read(wasm: &mut Reader) -> Result<Self, ValidationError> {
+    pub fn read<const N: usize>(
+        wasm: &mut Reader,
+        builder: &mut TextBuilder<N>,
+    ) -> Result<Self, ValidationError> {
         let size = wasm.read_u32()?;
         let start = wasm.offset();
 
@@ -30,7 +36,7 @@ impl Func {
             locals[i] += n;
         }
 
-        let expr = Expr::read(wasm)?;
+        let expr = Expr::read(wasm, builder)?;
 
         let end = wasm.offset();
         if (end - start) as u32 != size {
@@ -70,11 +76,11 @@ impl<'wasm> Reader<'wasm> {
     /// This function will decode WASM instructions and pass them to
     /// the visitor to handle. This is the primary entrypoint for reading
     /// WASM encoded code.
-    pub fn read_code<S, B: From<ValidationError>, V: CodeVisitor<State = S, Error = B>>(
-        &mut self,
-        visitor: &V,
-        state: &mut S,
-    ) -> Result<(), B> {
+    pub fn read_code<S, B, V>(&mut self, visitor: &V, state: &mut S) -> Result<(), ValidationError>
+    where
+        V: CodeVisitor<State = S, Error = B>,
+        ValidationError: From<B>,
+    {
         // Keep track of the block depth so that we know when we are done decoding
         let mut block_depth = 0;
 

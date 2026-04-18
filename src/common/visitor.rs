@@ -32,7 +32,7 @@ macro_rules! visitor_default_impl {
 /// call into this visitor and is IR specific. This trait is purely for operating
 /// on decoded WebAssembly instructions.
 pub trait CodeVisitor {
-    type Error: From<ValidationError>;
+    type Error: Into<ValidationError>;
     type State;
 
     // Control instructions

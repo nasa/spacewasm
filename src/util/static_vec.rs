@@ -33,6 +33,10 @@ impl<T, const N: usize> StaticVec<T, N> {
         Ok(())
     }
 
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
     pub fn pop(&mut self) -> Option<T> {
         if self.len == 0 {
             None
