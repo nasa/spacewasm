@@ -1,5 +1,5 @@
 [package]
-name = "spacewasm-memory"
+name = "spacewasm-wasi"
 
 version.workspace = true
 authors.workspace = true
