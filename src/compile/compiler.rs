@@ -19,18 +19,18 @@ macro_rules! compile_impl {
         }
     };
 
-    // Compile an instruction with a 7-bit or 32-bit parameter
+    // Compile an instruction with an 8-bit or 32-bit parameter
     ($name:ident, $opcode:expr, 32, $n:ident: $ty:ty, $e:expr) => {
         fn $name(&self, $n: $ty, state: &mut Self::State) -> Result<(), Self::Error> {
-            state.push_32($opcode, $e)?;
+            state.push_8_or_32($opcode, $e)?;
             Ok(())
         }
     };
 
-    // Compile an instruction with a 7-bit or 64-bit parameter
+    // Compile an instruction with an 8-bit or 64-bit parameter
     ($name:ident, $opcode:expr, 64, $n:ident: $ty:ty, $e:expr) => {
         fn $name(&self, $n: $ty, state: &mut Self::State) -> Result<(), Self::Error> {
-            state.push_64($opcode, $e)?;
+            state.push_8_or_64($opcode, $e)?;
             Ok(())
         }
     };
