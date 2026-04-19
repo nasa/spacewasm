@@ -198,6 +198,22 @@ impl<T, A: Allocator> Drop for IntoIter<T, A> {
     }
 }
 
+#[kani::proof]
+fn proof_zero() {
+    let vec: Vec<i32> = Vec::zero();
+    assert_eq!(vec.len(), 0);
+    assert_eq!(vec.capacity(), 0);
+}
+
+#[kani::proof]
+fn proof_push_pop() {
+    let x: i32 = kani::any();
+    let mut vec = Vec::new(3).unwrap();
+
+    vec.push(x);
+    assert_eq!(vec.len(), 1);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
