@@ -264,7 +264,7 @@ impl TypeSection {
 
 macro_rules! read_impl_u32 {
     ($type_name:ident) => {
-        #[derive(Debug, Clone)]
+        #[derive(Debug, Clone, Copy)]
         pub struct $type_name(pub u32);
         impl $type_name {
             pub fn read(wasm: &mut Reader) -> Result<Self, ValidationError> {

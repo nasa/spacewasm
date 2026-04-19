@@ -18,9 +18,3 @@ pub use types::*;
 
 mod code;
 pub use code::*;
-
-mod compiler;
-pub use compiler::*;
-
-mod text;
-pub use text::*;

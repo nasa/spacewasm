@@ -59,6 +59,11 @@ pub enum ValidationError {
     IdxTooLarge,
     MemAlignTooLarge,
     IllegalMemoryGrow,
+    InvalidLabelIndex,
+    InvalidElseBlock,
+    InvalidEndBlock,
+    PossibleBackpatchCycle,
+    PageFault,
     AllocError(AllocError),
     ReaderError(ReaderError),
 }

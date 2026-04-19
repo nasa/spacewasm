@@ -55,38 +55,54 @@ impl<const N: usize> CodeVisitor for Compiler<N> {
         block_type: ResultType,
         state: &mut Self::State,
     ) -> Result<(), Self::Error> {
-        // todo!()
+        // TODO(tumbar) Verify the block type
+        let _ = block_type;
+
+        state.enter_forward_block()?;
         Ok(())
     }
 
     fn exit_block(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        // todo!()
-        Ok(())
+        state.exit_block()
     }
 
     fn loop_(&self, block_type: ResultType, state: &mut Self::State) -> Result<(), Self::Error> {
-        // todo!()
+        // TODO(tumbar) Verify the block type
+        let _ = block_type;
+
+        state.enter_backward_block()?;
         Ok(())
     }
 
     fn if_(&self, block_type: ResultType, state: &mut Self::State) -> Result<(), Self::Error> {
-        // todo!()
+        // TODO(tumbar) Verify the block type
+        let _ = block_type;
+
+        state.push_no_operand(IF)?;
+        state.start_else()?;
+        state.enter_forward_block()?;
         Ok(())
     }
 
     fn else_(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        // todo!()
+        // Perform an unconditional branch to the end of the 'if'
+        state.push_no_operand(BR)?;
+        state.push_jump_target(LabelIdx(0))?;
+
+        // Fill in the else branch target
+        state.finish_else()?;
+
         Ok(())
     }
 
     fn br(&self, l: LabelIdx, state: &mut Self::State) -> Result<(), Self::Error> {
-        // todo!()
-        Ok(())
+        state.push_no_operand(BR)?;
+        state.push_jump_target(l)
     }
 
     fn br_if(&self, l: LabelIdx, state: &mut Self::State) -> Result<(), Self::Error> {
-        // todo!()
-        Ok(())
+        state.push_no_operand(BR_IF)?;
+        state.push_jump_target(l)
     }
 
     fn br_table(
@@ -95,7 +111,12 @@ impl<const N: usize> CodeVisitor for Compiler<N> {
         default_: LabelIdx,
         state: &mut Self::State,
     ) -> Result<(), Self::Error> {
-        // todo!()
+        state.push_23(BR_TABLE, lut.len() as u32)?;
+        state.push_jump_target(default_)?;
+        for l in lut {
+            state.push_jump_target(*l)?;
+        }
+
         Ok(())
     }
 

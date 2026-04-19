@@ -13,6 +13,12 @@ impl Expr {
     }
 }
 
+impl From<Expr> for JumpTarget {
+    fn from(value: Expr) -> Self {
+        value.0
+    }
+}
+
 pub struct Func {
     pub locals: [u32; 4],
     pub expr: Expr,
