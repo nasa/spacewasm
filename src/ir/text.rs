@@ -395,31 +395,22 @@ impl<const N: usize> TextBuilder<N> {
         self.code.push((op as u16) << 8)
     }
 
-    /// Emit an instruction with a 7-bit or 23-bit index operand.
+    /// Emit an instruction with an 8-bit or 16-bit index operand.
     ///
     /// Encoding:
-    /// - If index fits in 7 bits: `[opcode:8][idx:7|0:1]` (1 word)
-    /// - Otherwise: `[opcode:8][idx_lo:7|1:1]` `[idx_hi:16]` (2 words)
-    ///
-    /// The continuation bit (bit 7 of the operand) signals whether a second word follows.
-    pub(crate) fn push_23(&mut self, op: u8, idx: u32) -> Result<(), ValidationError> {
-        // We support up to 7 + 16 bits
-        if idx >= 1 << 23 {
+    /// - If the index is between 0-254, the index will be encoded in 8-bits
+    /// - Otherwise: `[opcode:8][255:8]` `[index:16]` (2 words)
+    pub(crate) fn push_8_or_16(&mut self, op: u8, idx: u32) -> Result<(), ValidationError> {
+        // We support up to 16-bit indexes
+        if idx > 0xFFFF {
             Err(ValidationError::IdxTooLarge)
+        } else if idx < 0xFF {
+            // Encode in a single 16-bit word
+            self.code.push((op as u16) << 8 | (idx as u16))?;
+            Ok(())
         } else {
-            // Encode the lowest 7-bits into the first 16-bit word
-            let mut idx_first = (idx & 0x7F) as u16;
-            if idx >= 1 << 7 {
-                idx_first |= 0x80;
-            }
-
-            self.code.push((op as u16) << 8 | idx_first)?;
-
-            // Encode the other 16-bits in the second word
-            if idx >= 1 << 7 {
-                self.code.push((idx >> 7) as u16)?;
-            }
-
+            self.code.push((op as u16) << 8 | 0xFF)?;
+            self.code.push(idx as u16)?;
             Ok(())
         }
     }

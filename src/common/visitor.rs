@@ -1,4 +1,4 @@
-use crate::{FuncIdx, GlobalIdx, LabelIdx, LocalIdx, MemArg, ResultType, TypeIdx, ValidationError};
+use crate::{FuncIdx, GlobalIdx, JumpTarget, LabelIdx, LocalIdx, MemArg, ResultType, TypeIdx};
 
 /// A convenience macro for defining the visitor function for a decoded
 /// WebAssembly instruction from any intermediate representation.
@@ -31,21 +31,22 @@ macro_rules! visitor_default_impl {
 /// with the same common implementation. The decoding and traversal code will
 /// call into this visitor and is IR specific. This trait is purely for operating
 /// on decoded WebAssembly instructions.
-pub trait CodeVisitor {
-    type Error: Into<ValidationError>;
+///
+/// Note: This visitor does not handle the control-flow instructions since those are
+///       IR-specific. See [WasmVisitor] and [IrVisitor]
+pub trait BaseVisitor {
+    type Error;
     type State;
+
+    // Exit the expression
+    visitor_default_impl!(finish);
 
     // Control instructions
     visitor_default_impl!(unreachable);
     visitor_default_impl!(nop);
-    visitor_default_impl!(enter_block, block_type: ResultType);
-    visitor_default_impl!(exit_block);
-    visitor_default_impl!(loop_, block_type: ResultType);
-    visitor_default_impl!(if_, block_type: ResultType);
-    visitor_default_impl!(else_);
-    visitor_default_impl!(br, l: LabelIdx);
-    visitor_default_impl!(br_if, l: LabelIdx);
-    visitor_default_impl!(br_table, lut: &[LabelIdx], default_: LabelIdx);
+
+    // Any jumps or blocks are not handled in the base visitor
+
     visitor_default_impl!(return_);
     visitor_default_impl!(call, x: FuncIdx);
     visitor_default_impl!(call_indirect, x: TypeIdx);
@@ -238,4 +239,26 @@ pub trait CodeVisitor {
     visitor_default_impl!(i64_reinterpret_f64);
     visitor_default_impl!(f32_reinterpret_i32);
     visitor_default_impl!(f64_reinterpret_i64);
+}
+
+/// An abstraction over WASM Bytecode.
+/// Used to implement validation and compilation of WASM bytecode.
+pub trait WasmVisitor: BaseVisitor {
+    visitor_default_impl!(enter_block, block_type: ResultType);
+    visitor_default_impl!(exit_block);
+    visitor_default_impl!(loop_, block_type: ResultType);
+    visitor_default_impl!(if_, block_type: ResultType);
+    visitor_default_impl!(else_);
+    visitor_default_impl!(br, l: LabelIdx);
+    visitor_default_impl!(br_if, l: LabelIdx);
+    visitor_default_impl!(br_table, lut: &[LabelIdx], default_: LabelIdx);
+}
+
+/// An abstraction over IR Bytecode.
+/// Used to implement the interpreter.
+pub trait IrVisitor: BaseVisitor {
+    visitor_default_impl!(if_, false_address: JumpTarget);
+    visitor_default_impl!(br, addr: JumpTarget);
+    visitor_default_impl!(br_if, true_address: JumpTarget);
+    visitor_default_impl!(br_table, cases: &[JumpTarget], default_: JumpTarget);
 }

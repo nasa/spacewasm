@@ -82,10 +82,10 @@ impl<'wasm> Reader<'wasm> {
     /// This function will decode WASM instructions and pass them to
     /// the visitor to handle. This is the primary entrypoint for reading
     /// WASM encoded code.
-    pub fn read_code<S, B, V>(&mut self, visitor: &V, state: &mut S) -> Result<(), ValidationError>
+    pub fn read_code<S, E, V>(&mut self, visitor: &V, state: &mut S) -> Result<(), ValidationError>
     where
-        V: CodeVisitor<State = S, Error = B>,
-        ValidationError: From<B>,
+        V: WasmVisitor<State = S, Error = E>,
+        ValidationError: From<E>,
     {
         // Keep track of the block depth so that we know when we are done decoding
         let mut block_depth = 0;
@@ -118,6 +118,7 @@ impl<'wasm> Reader<'wasm> {
                         visitor.exit_block(state)?
                     } else {
                         // This is the final END opcode at the end of the code expression
+                        visitor.finish(state)?;
                         return Ok(());
                     }
                 }
