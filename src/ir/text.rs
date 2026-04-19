@@ -18,8 +18,7 @@ use crate::{AllocError, Box, LabelIdx, MemArg, StaticVec, ValidationError};
 ///
 /// ## Operand Encoding
 /// - **No operand**: `[opcode:8][0x00:8]`
-/// - **7-bit index**: `[opcode:8][idx:7|cont:1]` - if cont=1, next word has upper 16 bits
-/// - **23-bit index**: `[opcode:8][idx_lo:7|1]` `[idx_hi:16]`
+/// - **8-bit or 16-bit index**: `[opcode:8][idx:8]` for 0-254, or `[opcode:8][0xFF]` `[idx:16]` for larger values
 /// - **8-bit inline**: `[opcode:8][value:8]` - for values 0-254
 /// - **32-bit extended**: `[opcode:8][0xFF]` `[lo:16]` `[hi:16]`
 /// - **64-bit extended**: `[opcode:8][0xFF]` `[w0:16]` `[w1:16]` `[w2:16]` `[w3:16]`
