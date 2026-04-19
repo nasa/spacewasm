@@ -159,6 +159,7 @@ mod tests {
 
         static DROPPED: AtomicBool = AtomicBool::new(false);
 
+        #[allow(unused)]
         struct DropChecker(u32);
         impl Drop for DropChecker {
             fn drop(&mut self) {
