@@ -51,8 +51,9 @@ impl core::ops::Add<u32> for JumpTarget {
 
 impl JumpTarget {
     /// Sentinel value used to mark the end of a linked list of jump addresses.
-    /// Uses 0x7FFF_FFFF so it never conflicts with the MSB used for forward/backward distinction.
-    const SENTINEL: JumpTarget = JumpTarget(0x7FFF_FFFFu32);
+    /// Uses 0x3FFF_FFFF (all 1s in the 30-bit address space) so it never conflicts
+    /// with the control bits (bits 30-31) or valid addresses (24-bit page index).
+    const SENTINEL: JumpTarget = JumpTarget(0x3FFF_FFFFu32);
 
     /// Extract the page index (upper 24 bits).
     pub fn page(&self) -> usize {
@@ -67,9 +68,10 @@ impl JumpTarget {
 
 /// A control flow frame tracking jump targets for blocks, loops, and if-else statements.
 ///
-/// Uses the MSB to distinguish between forward and backward jumps:
-/// - Forward jumps (MSB=0): jump target is unknown, will be back-patched later
-/// - Backward jumps (MSB=1): jump target is known (start of loop)
+/// Bit layout in the JumpTarget:
+/// - Bit 31 (MSB): forward (0) vs backward (1) jump
+/// - Bit 30: is_if flag (1 if this is an if block)
+/// - Bits 0-29: jump target address
 ///
 /// For forward jumps, the address field maintains a linked list of all locations
 /// that need to be back-patched when the block ends.
@@ -77,15 +79,16 @@ impl JumpTarget {
 struct ControlFrame(JumpTarget);
 
 impl ControlFrame {
-    /// Create a forward control frame (block/if statement).
-    ///
-    /// The jump target will be resolved when the block exits. For forward jumps,
-    /// the frame initially holds either:
-    /// - SENTINEL (0x7FFF_FFFF): no jumps to back-patch yet
-    /// - An address: head of linked list of jump locations to back-patch
+    /// Create a forward control frame (block statement).
     fn forward(jt: JumpTarget) -> ControlFrame {
-        assert!(jt.0 < 0x8000_0000);
+        assert!(jt.0 < 0x4000_0000); // 30-bit address space
         ControlFrame(jt)
+    }
+
+    /// Create a forward control frame for an if statement.
+    fn forward_if(jt: JumpTarget) -> ControlFrame {
+        assert!(jt.0 < 0x4000_0000); // 30-bit address space
+        ControlFrame(JumpTarget(jt.0 | 0x4000_0000)) // Set is_if bit
     }
 
     /// Create a backward control frame (loop statement).
@@ -93,7 +96,7 @@ impl ControlFrame {
     /// The jump target is already known (the start of the loop), so no back-patching
     /// is needed. Sets the MSB to mark this as a backward jump.
     fn backward(jt: JumpTarget) -> ControlFrame {
-        assert!(jt.0 < 0x8000_0000);
+        assert!(jt.0 < 0x4000_0000); // 30-bit address space
         ControlFrame(JumpTarget(jt.0 | 0x8000_0000))
     }
 
@@ -102,18 +105,23 @@ impl ControlFrame {
         (self.0.0 & 0x8000_0000) == 0
     }
 
-    /// Get the jump target address, stripping the forward/backward bit.
+    /// Check if this is an if block.
+    fn is_if(&self) -> bool {
+        (self.0.0 & 0x4000_0000) != 0
+    }
+
+    /// Get the jump target address, stripping the control bits.
     fn address(&self) -> JumpTarget {
-        JumpTarget(self.0.0 & 0x7FFF_FFFF)
+        JumpTarget(self.0.0 & 0x3FFF_FFFF)
     }
 
     /// Update the address for a forward control frame (used to maintain the linked list).
     ///
-    /// Preserves the forward/backward bit while updating the address.
+    /// Preserves the control bits while updating the address.
     fn set_address(&mut self, addr: JumpTarget) {
         assert!(self.is_forward()); // Cannot set address on backward branch
-        assert!(addr.0 < 0x8000_0000); // Address exceeds 31-bit limit
-        self.0.0 = addr.0 | (self.0.0 & 0x8000_0000);
+        assert!(addr.0 < 0x4000_0000); // Address exceeds 30-bit limit
+        self.0.0 = addr.0 | (self.0.0 & 0xC000_0000); // Preserve both control bits
     }
 }
 
@@ -229,10 +237,18 @@ impl<const N: usize> TextBuilder<N> {
         self.code.pc()
     }
 
-    /// Enter a forward control block (block/if statement).
+    /// Enter a forward control block (block statement).
     pub(crate) fn enter_forward_block(&mut self) -> Result<(), AllocError> {
         self.control_frames
             .push(ControlFrame::forward(JumpTarget::SENTINEL).into())
+    }
+
+    /// Enter a forward control block for an if statement.
+    ///
+    /// This is tracked separately to handle if-without-else cases properly.
+    pub(crate) fn enter_forward_if_block(&mut self) -> Result<(), AllocError> {
+        self.control_frames
+            .push(ControlFrame::forward_if(JumpTarget::SENTINEL).into())
     }
 
     /// Enter a backward control block (loop statement).
@@ -287,6 +303,17 @@ impl<const N: usize> TextBuilder<N> {
                 self.code.write(address, pc.0 as u16)?;
                 self.code.write(address + 1, (pc.0 >> 16) as u16)?;
             }
+
+            // Handle if-without-else case: if this is an if block and else_frames has an entry,
+            // it means no else_() was called, so we need to back-patch the IF sentinel here
+            if last.is_if() && !self.else_frames.is_empty() {
+                let Some(else_addr) = self.else_frames.pop() else {
+                    return Err(ValidationError::InvalidElseBlock);
+                };
+                // Back-patch the IF instruction's jump target to point to end of block (current PC)
+                self.code.write(else_addr, pc.0 as u16)?;
+                self.code.write(else_addr + 1, (pc.0 >> 16) as u16)?;
+            }
         } else {
             // We don't need to do any back-patching here
             // Backward control frames already knew their start address
@@ -297,7 +324,7 @@ impl<const N: usize> TextBuilder<N> {
 
     /// Mark the start of an else block for an if statement.
     ///
-    /// Emits placeholder words (0x7FFF_FFFF sentinel) that will be back-patched
+    /// Emits placeholder words (0x3FFF_FFFF sentinel) that will be back-patched
     /// with the else branch target address when `finish_else` is called.
     /// The current PC is saved so we know where to back-patch.
     pub(crate) fn start_else(&mut self) -> Result<(), AllocError> {
@@ -305,7 +332,7 @@ impl<const N: usize> TextBuilder<N> {
 
         // Write the sentinel placeholder (will be back-patched with else target)
         self.code.push(0xFFFF)?;
-        self.code.push(0x7FFF)?;
+        self.code.push(0x3FFF)?;
         Ok(())
     }
 
@@ -382,14 +409,14 @@ impl<const N: usize> TextBuilder<N> {
         } else {
             // Encode the lowest 7-bits into the first 16-bit word
             let mut idx_first = (idx & 0x7F) as u16;
-            if idx > 1 << 7 {
+            if idx >= 1 << 7 {
                 idx_first |= 0x80;
             }
 
             self.code.push((op as u16) << 8 | idx_first)?;
 
             // Encode the other 16-bits in the second word
-            if idx > 1 << 7 {
+            if idx >= 1 << 7 {
                 self.code.push((idx >> 7) as u16)?;
             }
 

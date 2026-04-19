@@ -80,7 +80,7 @@ impl<const N: usize> CodeVisitor for Compiler<N> {
 
         state.push_no_operand(IF)?;
         state.start_else()?;
-        state.enter_forward_block()?;
+        state.enter_forward_if_block()?;
         Ok(())
     }
 

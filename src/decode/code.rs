@@ -177,8 +177,14 @@ impl<'wasm> Reader<'wasm> {
                 I64_STORE32 => instruction!(self, visitor, i64_store32, MemArg, state),
 
                 // Memory instructions - size/grow
-                MEMORY_SIZE => instruction!(self, visitor, memory_size, state),
-                MEMORY_GROW => instruction!(self, visitor, memory_grow, state),
+                MEMORY_SIZE => {
+                    self.expect_u8(0x00)?;
+                    visitor.memory_size(state)?;
+                },
+                MEMORY_GROW => {
+                    self.expect_u8(0x00)?;
+                    visitor.memory_grow(state)?;
+                },
 
                 // Numeric instructions - const
                 I32_CONST => {
