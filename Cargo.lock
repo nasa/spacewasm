@@ -4,4 +4,11 @@ version = 4
 
 [[package]]
 name = "spacewasm"
-version = "0.1.0"
+version = "0.1.0-a1"
+
+[[package]]
+name = "spacewasm-memory"
+version = "0.1.0-a1"
+dependencies = [
+ "spacewasm",
+]
