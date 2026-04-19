@@ -52,7 +52,7 @@ impl<'wasm> Code<'wasm> {
         let first = self.read(pc)?;
         let opcode = ((first >> 8) & 0xFF) as u8;
 
-        #[allow(unused)]
+        #[allow(unused)] // RustRover false positive
         let imm = first & 0xFF;
 
         macro_rules! instruction {
