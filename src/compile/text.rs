@@ -178,7 +178,6 @@ impl<const N: usize> TextBuilder<N> {
             // All the other addresses are written as placeholders in the code text
             let mut n = 0;
             while next != JumpTarget::SENTINEL {
-
                 // Bound our loops to not go into an infinite cycle
                 n += 1;
                 if n > 100 {
@@ -256,6 +255,7 @@ impl<const N: usize> TextBuilder<N> {
         if idx >= 1 << 23 {
             Err(ValidationError::IdxTooLarge)
         } else {
+            // Encode the lowest 7-bits into the first 16-bit word
             let mut idx_first = (idx & 0x7F) as u16;
             if idx > 1 << 7 {
                 idx_first |= 0x80;
@@ -263,8 +263,9 @@ impl<const N: usize> TextBuilder<N> {
 
             self.code.push((op as u16) << 8 | idx_first)?;
 
+            // Encode the other 16-bits in the second word
             if idx > 1 << 7 {
-                self.code.push((idx - (idx_first as u32)) as u16)?;
+                self.code.push((idx >> 7) as u16)?;
             }
 
             Ok(())
