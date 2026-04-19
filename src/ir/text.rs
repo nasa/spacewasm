@@ -39,7 +39,7 @@ impl Default for TextPage {
 /// - `page_index`: which page (0-8M pages supported)
 /// - `offset`: word index within the page (0-255)
 #[derive(PartialEq, Eq, Clone, Copy)]
-pub struct JumpTarget(u32);
+pub struct JumpTarget(pub u32);
 
 impl core::ops::Add<u32> for JumpTarget {
     type Output = JumpTarget;

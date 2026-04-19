@@ -260,5 +260,5 @@ pub trait IrVisitor: BaseVisitor {
     visitor_default_impl!(if_, false_address: JumpTarget);
     visitor_default_impl!(br, addr: JumpTarget);
     visitor_default_impl!(br_if, true_address: JumpTarget);
-    visitor_default_impl!(br_table, cases: &[JumpTarget], default_: JumpTarget);
+    visitor_default_impl!(br_table, cases: impl FnOnce(u16) -> Result<JumpTarget, ()>);
 }

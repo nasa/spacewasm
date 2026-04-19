@@ -78,10 +78,13 @@ impl<'wasm> Code<'wasm> {
             ($name:ident, MemArg) => {{
                 let align = imm;
                 let offset = self.read_u32(pc + 1)?;
-                visitor.$name(MemArg {
-                    align: align as u32,
-                    offset,
-                }, state)?;
+                visitor.$name(
+                    MemArg {
+                        align: align as u32,
+                        offset,
+                    },
+                    state,
+                )?;
                 Ok(3)
             }};
         }
@@ -92,6 +95,52 @@ impl<'wasm> Code<'wasm> {
             UNREACHABLE => instruction!(unreachable),
             NOP => instruction!(nop),
 
+            IF => {
+                let false_address = self.read_u32(pc + 1)?;
+                visitor.if_(JumpTarget(false_address), state)?;
+                Ok(3)
+            }
+
+            BR => {
+                let address = self.read_u32(pc + 1)?;
+                visitor.br(JumpTarget(address), state)?;
+                Ok(3)
+            }
+
+            BR_IF => {
+                let true_address = self.read_u32(pc + 1)?;
+                visitor.br_if(JumpTarget(true_address), state)?;
+                Ok(3)
+            }
+
+            BR_TABLE => {
+                let (n, offset) = if imm == 0xFF {
+                    (self.read(pc + 1)?, 2)
+                } else {
+                    (imm, 1)
+                };
+
+                let default_ = self.read_u32(pc + offset)?;
+
+                visitor.br_table(
+                    |case_| {
+                        if case_ < n {
+                            let Ok(addr) = self.read_u32(pc + offset + 2 + (case_ as u32 * 2))
+                            else {
+                                return Err(());
+                            };
+
+                            Ok(JumpTarget(addr))
+                        } else {
+                            Ok(JumpTarget(default_))
+                        }
+                    },
+                    state,
+                )?;
+
+                Ok(offset + 2 + (n as u32 * 2))
+            }
+
             RETURN => instruction!(return_),
             CALL => instruction!(call, idx, FuncIdx),
             CALL_INDIRECT => instruction!(call_indirect, idx, TypeIdx),
@@ -101,7 +150,6 @@ impl<'wasm> Code<'wasm> {
             SELECT => instruction!(select),
 
             // Variable instructions
-
             LOCAL_GET => instruction!(local_get, idx, LocalIdx),
             LOCAL_SET => instruction!(local_set, idx, LocalIdx),
             LOCAL_TEE => instruction!(local_tee, idx, LocalIdx),
