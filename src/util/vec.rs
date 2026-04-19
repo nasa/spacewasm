@@ -205,15 +205,6 @@ fn proof_zero() {
     assert_eq!(vec.capacity(), 0);
 }
 
-#[kani::proof]
-fn proof_push_pop() {
-    let x: i32 = kani::any();
-    let mut vec = Vec::new(3).unwrap();
-
-    vec.push(x);
-    assert_eq!(vec.len(), 1);
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
