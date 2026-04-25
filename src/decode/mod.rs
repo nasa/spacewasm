@@ -10,7 +10,7 @@ pub use error::*;
 pub mod module;
 pub use module::*;
 
-mod opcode;
+pub(crate) mod opcode;
 pub use opcode::*;
 
 mod types;

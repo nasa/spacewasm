@@ -271,6 +271,12 @@ macro_rules! read_impl_u32 {
                 Ok($type_name(wasm.read_u32()?))
             }
         }
+
+        impl From<u32> for $type_name {
+            fn from(v: u32) -> Self {
+                $type_name(v)
+            }
+        }
     };
 }
 

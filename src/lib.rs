@@ -3,8 +3,8 @@
 pub mod decode;
 pub use decode::*;
 
-pub mod compile;
-pub use compile::*;
+pub mod ir;
+pub use ir::*;
 
 pub mod util;
 pub use util::*;

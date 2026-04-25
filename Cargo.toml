@@ -1,15 +1,21 @@
-[package]
-name = "spacewasm"
+[workspace]
+
+members = ["crates/*"]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
+authors = ["Andrei Tumbar"]
+
+[package]
+name = "spacewasm"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
 
 [lib]
 name = "spacewasm"
 path = "src/lib.rs"
-
-[[bin]]
-name = "spacewasm-wasi"
-path = "src/main.rs"
 
 [dependencies]
 
