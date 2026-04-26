@@ -1,10 +1,11 @@
 use crate::alloc::{AllocError, Allocator, GlobalAllocator};
+use crate::util::Vec;
 use core::alloc::Layout;
 use core::ops::{Deref, DerefMut};
 
 /// A heap-allocated value with a configurable allocator.
 /// Similar to [::alloc::boxed::Box] but allows specifying a custom allocator.
-pub struct Box<T: Sized, A: Allocator = GlobalAllocator> {
+pub struct Box<T: ?Sized, A: Allocator = GlobalAllocator> {
     ptr: *mut T,
     alloc: A,
 }
@@ -46,6 +47,12 @@ impl<T: Sized, A: Allocator> Box<T, A> {
 
         Ok(Box { ptr, alloc })
     }
+}
+
+impl<T: ?Sized, A: Allocator> Box<T, A> {
+    pub(crate) unsafe fn from_raw(alloc: A, ptr: *mut T) -> Box<T, A> {
+        Box { ptr, alloc }
+    }
 
     /// Get a raw pointer to the boxed value
     pub fn as_ptr(&self) -> *const T {
@@ -58,20 +65,20 @@ impl<T: Sized, A: Allocator> Box<T, A> {
     }
 }
 
-impl<T, A: Allocator> Deref for Box<T, A> {
+impl<T: ?Sized, A: Allocator> Deref for Box<T, A> {
     type Target = T;
     fn deref(&self) -> &T {
         unsafe { &*self.ptr }
     }
 }
 
-impl<T, A: Allocator> DerefMut for Box<T, A> {
+impl<T: ?Sized, A: Allocator> DerefMut for Box<T, A> {
     fn deref_mut(&mut self) -> &mut T {
         unsafe { &mut *self.ptr }
     }
 }
 
-impl<T: Sized, A: Allocator> Drop for Box<T, A> {
+impl<T: ?Sized, A: Allocator> Drop for Box<T, A> {
     fn drop(&mut self) {
         // Drop the contained value
         unsafe {
@@ -80,7 +87,8 @@ impl<T: Sized, A: Allocator> Drop for Box<T, A> {
 
         // Deallocate the memory
         unsafe {
-            self.alloc.dealloc(self.ptr as *mut u8, Layout::new::<T>());
+            let layout = Layout::for_value(&self.ptr);
+            self.alloc.dealloc(self.ptr as *mut u8, layout);
         }
     }
 }
@@ -102,6 +110,12 @@ impl<T: PartialOrd, A: Allocator> PartialOrd for Box<T, A> {
 impl<T: Ord, A: Allocator> Ord for Box<T, A> {
     fn cmp(&self, other: &Self) -> core::cmp::Ordering {
         (**self).cmp(&**other)
+    }
+}
+
+impl<T, A: Allocator> From<Vec<T, A>> for Box<[T], A> {
+    fn from(v: Vec<T, A>) -> Self {
+        v.into_boxed_slice()
     }
 }
 

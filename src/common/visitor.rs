@@ -2,27 +2,15 @@ use crate::{FuncIdx, GlobalIdx, JumpTarget, LabelIdx, LocalIdx, MemArg, ResultTy
 
 /// A convenience macro for defining the visitor function for a decoded
 /// WebAssembly instruction from any intermediate representation.
-/// FIXME(tumbar) This visitor currently depends on [WasmReader] which is
-///               incorrect since the we should not be dependent on the IR type.
-///               It is likely we can use a generic to represent the PC just pass in [&mut PC]
-///               but I'll need to revisit this once we have more than one instruction
-///               representation.
 macro_rules! visitor_default_impl {
     // No additional parameters
     ($name:ident) => {
-        fn $name(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-            let _ = state;
-            Ok(())
-        }
+        fn $name(&self, state: &mut Self::State) -> Result<(), Self::Error>;
     };
 
     // With additional parameters
     ($name:ident, $($param:ident : $ty:ty),+) => {
-        fn $name(&self, $($param: $ty),+, state: &mut Self::State) -> Result<(), Self::Error> {
-            let _ = state;
-            $(let _ = $param;)+
-            Ok(())
-        }
+        fn $name(&self, $($param: $ty),+, state: &mut Self::State) -> Result<(), Self::Error>;
     };
 }
 

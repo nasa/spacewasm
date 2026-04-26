@@ -1,5 +1,6 @@
 use crate::alloc::{AllocError, Allocator, GlobalAllocator};
 use crate::util::InnerVec;
+use crate::Box;
 use core::alloc::Layout;
 use core::ops::{Deref, DerefMut};
 
@@ -96,6 +97,27 @@ impl<T: Sized, A: Allocator> Vec<T, A> {
 
     pub fn iter(&self) -> impl Iterator<Item = T> {
         self.inner.iter()
+    }
+
+    pub unsafe fn assume_init(mut self) -> Self {
+        self.inner.len = self.inner.capacity;
+        self
+    }
+
+    pub fn into_boxed_slice(self) -> Box<[T], A> {
+        assert_eq!(self.capacity(), self.len());
+
+        unsafe {
+            let ptr = self.inner.ptr;
+            let cap = self.inner.capacity;
+            let alloc = core::ptr::read(&self.alloc);
+
+            core::mem::forget(self);
+
+            let slice_ptr: *mut [T] = core::ptr::slice_from_raw_parts_mut(ptr, cap as usize);
+
+            Box::from_raw(alloc, slice_ptr)
+        }
     }
 }
 

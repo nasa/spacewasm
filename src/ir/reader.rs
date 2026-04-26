@@ -1,6 +1,6 @@
 use crate::*;
 
-pub enum InterpreterError {
+pub enum IrReaderError {
     InvalidAddress,
     InvalidOpcode(u8),
 }
@@ -8,24 +8,24 @@ pub enum InterpreterError {
 pub struct Code<'wasm>(&'wasm Vec<Box<TextPage>>);
 
 impl<'wasm> Code<'wasm> {
-    fn read(&self, address: JumpTarget) -> Result<u16, InterpreterError> {
+    fn read(&self, address: JumpTarget) -> Result<u16, IrReaderError> {
         let page = address.page();
         let offset = address.offset();
         if page >= self.0.len() || offset >= 256 {
-            Err(InterpreterError::InvalidAddress)
+            Err(IrReaderError::InvalidAddress)
         } else {
             Ok(self.0[page].0[offset])
         }
     }
 
-    fn read_u32(&self, address: JumpTarget) -> Result<u32, InterpreterError> {
+    fn read_u32(&self, address: JumpTarget) -> Result<u32, IrReaderError> {
         let w1 = self.read(address)?;
         let w2 = self.read(address + 1)?;
 
         Ok((w1 as u32) | ((w2 as u32) << 16))
     }
 
-    fn read_u64(&self, address: JumpTarget) -> Result<u64, InterpreterError> {
+    fn read_u64(&self, address: JumpTarget) -> Result<u64, IrReaderError> {
         let w1 = self.read(address)?;
         let w2 = self.read(address + 1)?;
         let w3 = self.read(address + 2)?;
@@ -39,15 +39,15 @@ impl<'wasm> Code<'wasm> {
         Ok(o)
     }
 
-    pub fn read_code<S, E, V>(
+    pub fn read_instruction<S, E, V>(
         &self,
         state: &mut S,
         pc: JumpTarget,
         visitor: V,
-    ) -> Result<u32, InterpreterError>
+    ) -> Result<u32, IrReaderError>
     where
         V: IrVisitor<State = S, Error = E>,
-        InterpreterError: From<E>,
+        IrReaderError: From<E>,
     {
         let first = self.read(pc)?;
         let opcode = ((first >> 8) & 0xFF) as u8;
@@ -352,7 +352,7 @@ impl<'wasm> Code<'wasm> {
             F32_REINTERPRET_I32 => instruction!(f32_reinterpret_i32),
             F64_REINTERPRET_I64 => instruction!(f64_reinterpret_i64),
 
-            _ => Err(InterpreterError::InvalidOpcode(opcode)),
+            _ => Err(IrReaderError::InvalidOpcode(opcode)),
         }
     }
 }
