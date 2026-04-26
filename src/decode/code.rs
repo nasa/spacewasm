@@ -20,7 +20,7 @@ impl From<Expr> for JumpTarget {
 }
 
 pub struct Func {
-    pub locals: [u32; 4],
+    pub locals: Vec<(u32, ValType)>,
     pub expr: Expr,
 }
 
@@ -32,15 +32,11 @@ impl Func {
         let size = wasm.read_u32()?;
         let start = wasm.offset();
 
-        let mut locals = [0u32; 4];
-
-        let num_locals = wasm.read_u32()?;
-        for _ in 0..num_locals {
-            let n = wasm.read_u32()?;
-            let t = ValType::read(wasm)?;
-            let i = t as usize;
-            locals[i] += n;
-        }
+        let locals = wasm.read_vec(|w| {
+            let n = w.read_u32()?;
+            let t = ValType::read(w)?;
+            Ok((n, t))
+        })?;
 
         let expr = Expr::read(wasm, builder)?;
 

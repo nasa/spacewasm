@@ -18,6 +18,7 @@ name = "spacewasm"
 path = "src/lib.rs"
 
 [dependencies]
+libm = "0.2.16"
 
 [profile.release]
 opt-level = 3

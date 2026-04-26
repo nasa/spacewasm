@@ -302,8 +302,28 @@ impl<const N: usize> BaseVisitor for Compiler<N> {
     instruction!(f64_convert_i64_s, F64_CONVERT_I64_S);
     instruction!(f64_convert_i64_u, F64_CONVERT_I64_U);
     instruction!(f64_promote_f32, F64_PROMOTE_F32);
-    instruction!(i32_reinterpret_f32, I32_REINTERPRET_F32);
-    instruction!(i64_reinterpret_f64, I64_REINTERPRET_F64);
-    instruction!(f32_reinterpret_i32, F32_REINTERPRET_I32);
-    instruction!(f64_reinterpret_i64, F64_REINTERPRET_I64);
+
+    fn i32_reinterpret_f32(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        // TODO(tumbar) Update the validator
+        // This is a bitwise transmute and therefore we don't need this in the IR
+        Ok(())
+    }
+
+    fn f64_reinterpret_i64(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        // TODO(tumbar) Update the validator
+        // This is a bitwise transmute and therefore we don't need this in the IR
+        Ok(())
+    }
+
+    fn f32_reinterpret_i32(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        // TODO(tumbar) Update the validator
+        // This is a bitwise transmute and therefore we don't need this in the IR
+        Ok(())
+    }
+
+    fn i64_reinterpret_f64(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        // TODO(tumbar) Update the validator
+        // This is a bitwise transmute and therefore we don't need this in the IR
+        Ok(())
+    }
 }

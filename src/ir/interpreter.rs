@@ -39,7 +39,7 @@ impl<'wasm> Code<'wasm> {
         Ok(o)
     }
 
-    pub fn read_code<S, E, V>(
+    pub fn read_instruction<S, E, V>(
         &self,
         state: &mut S,
         pc: JumpTarget,
