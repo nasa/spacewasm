@@ -106,27 +106,32 @@ impl<const SIZE: usize, const DEPTH: usize> StackAllocatorInner<SIZE, DEPTH> {
     }
 }
 
-#[kani::proof]
-fn proof_alloc() {
-    let alloc = StaticAllocator::<1024, 8>::new();
-    unsafe {
-        let layout = Layout::from_size_align(16, 8).unwrap();
-        let ptr1 = alloc.alloc(layout).unwrap();
-        let ptr2 = alloc.alloc(layout).unwrap();
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
 
-        alloc.dealloc(ptr2, layout);
-        alloc.dealloc(ptr1, layout);
+    #[kani::proof]
+    fn proof_alloc() {
+        let alloc = StaticAllocator::<1024, 8>::new();
+        unsafe {
+            let layout = Layout::from_size_align(16, 8).unwrap();
+            let ptr1 = alloc.alloc(layout).unwrap();
+            let ptr2 = alloc.alloc(layout).unwrap();
+
+            alloc.dealloc(ptr2, layout);
+            alloc.dealloc(ptr1, layout);
+        }
     }
-}
 
-#[kani::proof]
-fn test_out_of_memory() {
-    let alloc = StaticAllocator::<128, 8>::new();
-    unsafe {
-        let layout = Layout::from_size_align(100, 8).unwrap();
-        let _ptr1 = alloc.alloc(layout).unwrap();
-        let result = alloc.alloc(layout);
-        assert!(matches!(result, Err(AllocError::OutOfMemory)));
+    #[kani::proof]
+    fn proof_out_of_memory() {
+        let alloc = StaticAllocator::<128, 8>::new();
+        unsafe {
+            let layout = Layout::from_size_align(100, 8).unwrap();
+            let _ptr1 = alloc.alloc(layout).unwrap();
+            let result = alloc.alloc(layout);
+            assert!(matches!(result, Err(AllocError::OutOfMemory)));
+        }
     }
 }
 

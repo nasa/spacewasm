@@ -220,11 +220,16 @@ impl<T, A: Allocator> Drop for IntoIter<T, A> {
     }
 }
 
-#[kani::proof]
-fn proof_zero() {
-    let vec: Vec<i32> = Vec::zero();
-    assert_eq!(vec.len(), 0);
-    assert_eq!(vec.capacity(), 0);
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+
+    #[kani::proof]
+    fn proof_zero() {
+        let vec: Vec<i32> = Vec::zero();
+        assert_eq!(vec.len(), 0);
+        assert_eq!(vec.capacity(), 0);
+    }
 }
 
 #[cfg(test)]
