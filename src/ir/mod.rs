@@ -4,5 +4,5 @@ pub use compiler::*;
 mod text;
 pub use text::*;
 
-mod interpreter;
-pub use interpreter::*;
+mod reader;
+pub use reader::*;

@@ -1,11 +1,5 @@
 use crate::*;
 
-struct InterpreterState {
-    pc: JumpTarget,
-    sp: usize,
-    stack: Box<[u32]>,
-}
-
 macro_rules! instruction {
     ($name:ident, f32 -> f32, $f:ident, $( $t:tt )*) => {
         fn $name(&self, state: &mut Self::State) -> Result<(), Self::Error> {
@@ -153,6 +147,12 @@ macro_rules! instruction {
     };
 }
 
+pub struct InterpreterState {
+    pc: JumpTarget,
+    sp: usize,
+    stack: Box<[u32]>,
+}
+
 impl InterpreterState {
     pub fn new(stack_size: usize) -> Self {
         InterpreterState {
@@ -186,7 +186,7 @@ impl InterpreterState {
     }
 }
 
-struct Interpreter<'wasm> {
+pub struct Interpreter<'wasm> {
     code: Code<'wasm>,
 }
 
@@ -357,7 +357,9 @@ impl<'wasm> BaseVisitor for Interpreter<'wasm> {
     }
 
     fn memory_grow(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        todo!()
+        // This instruction should be disabled
+        let _ = state;
+        unreachable!()
     }
 
     fn i32_const(&self, n: i32, state: &mut Self::State) -> Result<(), Self::Error> {
@@ -488,9 +490,9 @@ impl<'wasm> BaseVisitor for Interpreter<'wasm> {
     instruction!(f64_copysign, f64, f64 -> f64, a, b, libm::copysign(a, b));
 
     fn i32_wrap_i64(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        // i64 low word is at [sp-2], high word at [sp-1]
+        // After decrement, low word is at [sp-1] (where we want the i32)
         state.sp -= 1;
-        let lo = state.stack[state.sp - 1];
-        state.stack[state.sp - 1] = lo;
         Ok(())
     }
 

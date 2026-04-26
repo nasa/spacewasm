@@ -306,24 +306,28 @@ impl<const N: usize> BaseVisitor for Compiler<N> {
     fn i32_reinterpret_f32(&self, state: &mut Self::State) -> Result<(), Self::Error> {
         // TODO(tumbar) Update the validator
         // This is a bitwise transmute and therefore we don't need this in the IR
+        let _ = state;
         Ok(())
     }
 
     fn f64_reinterpret_i64(&self, state: &mut Self::State) -> Result<(), Self::Error> {
         // TODO(tumbar) Update the validator
         // This is a bitwise transmute and therefore we don't need this in the IR
+        let _ = state;
         Ok(())
     }
 
     fn f32_reinterpret_i32(&self, state: &mut Self::State) -> Result<(), Self::Error> {
         // TODO(tumbar) Update the validator
         // This is a bitwise transmute and therefore we don't need this in the IR
+        let _ = state;
         Ok(())
     }
 
     fn i64_reinterpret_f64(&self, state: &mut Self::State) -> Result<(), Self::Error> {
         // TODO(tumbar) Update the validator
         // This is a bitwise transmute and therefore we don't need this in the IR
+        let _ = state;
         Ok(())
     }
 }
