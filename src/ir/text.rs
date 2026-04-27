@@ -141,6 +141,15 @@ impl<const N: usize> CodeBuilder<N> {
         }
     }
 
+    pub fn finish(self) -> Result<(Vec<Box<TextPage>>, usize), AllocError> {
+        let mut v = Vec::new(self.pages.len() as u32)?;
+        for i in self.pages {
+            v.push(i);
+        }
+
+        Ok((v, self.offset))
+    }
+
     /// Get the current program counter (address of the next word to be written)
     pub fn pc(&self) -> JumpTarget {
         let (page_index, offset) = {

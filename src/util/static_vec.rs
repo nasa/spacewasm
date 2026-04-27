@@ -75,6 +75,47 @@ impl<T, const N: usize> DerefMut for StaticVec<T, N> {
     }
 }
 
+pub struct StaticVecIntoIter<T, const N: usize> {
+    vec: core::mem::ManuallyDrop<StaticVec<T, N>>,
+    pos: usize,
+}
+
+impl<T, const N: usize> Iterator for StaticVecIntoIter<T, N> {
+    type Item = T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.pos < self.vec.len {
+            let item = unsafe { core::ptr::read(&self.vec.data[self.pos]) };
+            self.pos += 1;
+            Some(item)
+        } else {
+            None
+        }
+    }
+}
+
+impl<T, const N: usize> Drop for StaticVecIntoIter<T, N> {
+    fn drop(&mut self) {
+        // Drop remaining elements that haven't been yielded yet
+        while self.pos < self.vec.len {
+            unsafe { core::ptr::drop_in_place(&mut self.vec.data[self.pos] as *mut T) };
+            self.pos += 1;
+        }
+    }
+}
+
+impl<T, const N: usize> IntoIterator for StaticVec<T, N> {
+    type Item = T;
+    type IntoIter = StaticVecIntoIter<T, N>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        StaticVecIntoIter {
+            vec: core::mem::ManuallyDrop::new(self),
+            pos: 0,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -118,5 +159,19 @@ mod tests {
 
         let slice: &[i32] = &*vec;
         assert_eq!(slice.len(), 5);
+    }
+
+    #[test]
+    fn test_into_iter() {
+        let mut vec: StaticVec<i32, 5> = StaticVec::new();
+        vec.push(10).unwrap();
+        vec.push(20).unwrap();
+        vec.push(30).unwrap();
+
+        let mut iter = vec.into_iter();
+        assert_eq!(iter.next(), Some(10));
+        assert_eq!(iter.next(), Some(20));
+        assert_eq!(iter.next(), Some(30));
+        assert_eq!(iter.next(), None);
     }
 }

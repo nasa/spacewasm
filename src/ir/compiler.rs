@@ -148,11 +148,12 @@ impl<'a, const N: usize> BaseVisitor for Compiler<'a, N> {
     instruction!(return_, RETURN);
 
     fn call(&self, x: FuncIdx, state: &mut Self::State) -> Result<(), Self::Error> {
-        todo!()
+        state.push_8_or_16(CALL, x.0)
     }
 
     fn call_indirect(&self, x: TypeIdx, state: &mut Self::State) -> Result<(), Self::Error> {
-        todo!()
+        // FIXME(tumbar) How do I implement this?
+        state.push_8_or_16(CALL_INDIRECT, x.0)
     }
 
     instruction!(drop, DROP);

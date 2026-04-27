@@ -156,9 +156,25 @@ fn main() {
                     (total as f64) / (module.wasm_size as f64)
                 );
 
-                eprintln!("{:?}", module.functions);
+                let full_page_usage = if module.text.len() > 1 {
+                    (module.text.len() - 1) * 256
+                } else {
+                    0
+                };
 
-                println!("Found {} imports", module.imports.len());
+                eprintln!("Code pages: {}", module.text.len());
+                eprintln!(
+                    "Code word usage (16-bits): {} / {} ({:.2}%)",
+                    full_page_usage + module.final_page_offset,
+                    module.text.len() * 256,
+                    100.0 * ((full_page_usage + module.final_page_offset) as f64)
+                        / (module.text.len() * 256) as f64
+                );
+                eprintln!(
+                    "Final page: {} / 256 ({:.2}%)",
+                    module.final_page_offset,
+                    100.0 * (module.final_page_offset as f64 / 256.0)
+                );
             }
             Err(err) => {
                 eprintln!("Failed to parse: {:?}", err)

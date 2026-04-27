@@ -17,6 +17,7 @@ pub struct Module<'imports> {
     pub start: Option<FuncIdx>,
 
     pub wasm_size: usize,
+    pub final_page_offset: usize,
     pub memory_usage: [MemoryStatistics; SectionKind::N as usize],
 }
 
@@ -91,6 +92,7 @@ impl<'imports> Module<'imports> {
             data: Vec::zero(),
             start: None,
             wasm_size: 0,
+            final_page_offset: 0,
             memory_usage: Default::default(),
         };
 
@@ -140,7 +142,10 @@ impl<'imports> Module<'imports> {
             }
         }
 
+        let (text, text_offset) = builder.finish()?;
+        module.text = text;
         module.wasm_size = wasm.offset();
+        module.final_page_offset = text_offset;
         Ok(module)
     }
 
