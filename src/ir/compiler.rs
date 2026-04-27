@@ -1,20 +1,23 @@
 use crate::*;
+use core::marker::PhantomData;
 
-pub struct Compiler<const N: usize>;
+pub struct Compiler<'a, const N: usize> {
+    _marker: PhantomData<&'a ()>,
+}
+
+impl<'a, const N: usize> Compiler<'a, N> {
+    pub fn new() -> Compiler<'a, N> {
+        Compiler {
+            _marker: PhantomData,
+        }
+    }
+}
 
 macro_rules! instruction {
     // No additional operands
     ($name:ident, $opcode:expr) => {
         fn $name(&self, state: &mut Self::State) -> Result<(), Self::Error> {
             state.push_no_operand($opcode)?;
-            Ok(())
-        }
-    };
-
-    // An instruction with an 8-bit or 16-bit index operand
-    ($name:ident, $opcode:expr, idx, $ty:ty) => {
-        fn $name(&self, x: $ty, state: &mut Self::State) -> Result<(), Self::Error> {
-            state.push_8_or_16($opcode, x.0)?;
             Ok(())
         }
     };
@@ -28,7 +31,7 @@ macro_rules! instruction {
     };
 }
 
-impl<const N: usize> WasmVisitor for Compiler<N> {
+impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
     fn enter_block(
         &self,
         block_type: ResultType,
@@ -98,28 +101,62 @@ impl<const N: usize> WasmVisitor for Compiler<N> {
 
         Ok(())
     }
+
+    fn local_get(&self, x: LocalIdx, state: &mut Self::State) -> Result<(), Self::Error> {
+        let l = state.get_local(x)?;
+        state.push_local(LOCAL_GET, l)?;
+        Ok(())
+    }
+
+    fn local_set(&self, x: LocalIdx, state: &mut Self::State) -> Result<(), Self::Error> {
+        let l = state.get_local(x)?;
+        state.push_local(LOCAL_SET, l)?;
+        Ok(())
+    }
+
+    fn local_tee(&self, x: LocalIdx, state: &mut Self::State) -> Result<(), Self::Error> {
+        let l = state.get_local(x)?;
+        state.push_local(LOCAL_TEE, l)?;
+        Ok(())
+    }
+
+    fn global_get(&self, x: GlobalIdx, state: &mut Self::State) -> Result<(), Self::Error> {
+        let g = state.get_global(x)?;
+        state.push_global(GLOBAL_GET, g)?;
+        Ok(())
+    }
+
+    fn global_set(&self, x: GlobalIdx, state: &mut Self::State) -> Result<(), Self::Error> {
+        let g = state.get_global(x)?;
+        if !g.mutable {
+            Err(ValidationError::GlobalIsNotMutable)
+        } else {
+            state.push_global(GLOBAL_SET, g)?;
+            Ok(())
+        }
+    }
 }
 
-impl<const N: usize> BaseVisitor for Compiler<N> {
+impl<'a, const N: usize> BaseVisitor for Compiler<'a, N> {
     type Error = ValidationError;
-    type State = TextBuilder<N>;
+    type State = TextBuilder<'a, 'a, N>;
 
     instruction!(finish, END);
     instruction!(unreachable, UNREACHABLE);
     instruction!(nop, NOP);
 
     instruction!(return_, RETURN);
-    instruction!(call, CALL, idx, FuncIdx);
-    instruction!(call_indirect, CALL_INDIRECT, idx, TypeIdx);
+
+    fn call(&self, x: FuncIdx, state: &mut Self::State) -> Result<(), Self::Error> {
+        todo!()
+    }
+
+    fn call_indirect(&self, x: TypeIdx, state: &mut Self::State) -> Result<(), Self::Error> {
+        todo!()
+    }
 
     instruction!(drop, DROP);
     instruction!(select, SELECT);
-
-    instruction!(local_get, LOCAL_GET, idx, LocalIdx);
-    instruction!(local_set, LOCAL_SET, idx, LocalIdx);
-    instruction!(local_tee, LOCAL_TEE, idx, LocalIdx);
-    instruction!(global_get, GLOBAL_GET, idx, GlobalIdx);
-    instruction!(global_set, GLOBAL_SET, idx, GlobalIdx);
 
     instruction!(i32_load, I32_LOAD, mem);
     instruction!(i64_load, I64_LOAD, mem);

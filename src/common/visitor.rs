@@ -1,8 +1,31 @@
-use crate::{FuncIdx, GlobalIdx, JumpTarget, LabelIdx, LocalIdx, MemArg, ResultType, TypeIdx};
+use crate::{
+    FuncIdx, GlobalIdx, JumpTarget, LabelIdx, LocalIdx, MemArg, ResultType, TypeIdx,
+    ValType,
+};
+
+pub struct LocalVariable {
+    // Offset of the local variable in 32-bit words
+    pub frame_offset: u32,
+
+    // Variable's type
+    pub ty: ValType,
+}
+
+pub enum GlobalVariableRef {
+    Imported(u32),
+    Internal(u32),
+}
+
+pub struct GlobalVariable {
+    // The index of the global variable
+    pub reference: GlobalVariableRef,
+    pub ty: ValType,
+    pub mutable: bool,
+}
 
 /// A convenience macro for defining the visitor function for a decoded
 /// WebAssembly instruction from any intermediate representation.
-macro_rules! visitor_default_impl {
+macro_rules! visit_fn {
     // No additional parameters
     ($name:ident) => {
         fn $name(&self, state: &mut Self::State) -> Result<(), Self::Error>;
@@ -27,226 +50,233 @@ pub trait BaseVisitor {
     type State;
 
     // Exit the expression
-    visitor_default_impl!(finish);
+    visit_fn!(finish);
 
     // Control instructions
-    visitor_default_impl!(unreachable);
-    visitor_default_impl!(nop);
+    visit_fn!(unreachable);
+    visit_fn!(nop);
 
     // Any jumps or blocks are not handled in the base visitor
 
-    visitor_default_impl!(return_);
-    visitor_default_impl!(call, x: FuncIdx);
-    visitor_default_impl!(call_indirect, x: TypeIdx);
+    visit_fn!(return_);
+    visit_fn!(call, x: FuncIdx);
+    visit_fn!(call_indirect, x: TypeIdx);
 
     // Parametric instructions
-    visitor_default_impl!(drop);
-    visitor_default_impl!(select);
-
-    // Variable instructions
-    visitor_default_impl!(local_get, x: LocalIdx);
-    visitor_default_impl!(local_set, x: LocalIdx);
-    visitor_default_impl!(local_tee, x: LocalIdx);
-    visitor_default_impl!(global_get, x: GlobalIdx);
-    visitor_default_impl!(global_set, x: GlobalIdx);
+    visit_fn!(drop);
+    visit_fn!(select);
 
     // Memory instructions - loads
-    visitor_default_impl!(i32_load, m: MemArg);
-    visitor_default_impl!(i64_load, m: MemArg);
-    visitor_default_impl!(f32_load, m: MemArg);
-    visitor_default_impl!(f64_load, m: MemArg);
-    visitor_default_impl!(i32_load8_s, m: MemArg);
-    visitor_default_impl!(i32_load8_u, m: MemArg);
-    visitor_default_impl!(i32_load16_s, m: MemArg);
-    visitor_default_impl!(i32_load16_u, m: MemArg);
-    visitor_default_impl!(i64_load8_s, m: MemArg);
-    visitor_default_impl!(i64_load8_u, m: MemArg);
-    visitor_default_impl!(i64_load16_s, m: MemArg);
-    visitor_default_impl!(i64_load16_u, m: MemArg);
-    visitor_default_impl!(i64_load32_s, m: MemArg);
-    visitor_default_impl!(i64_load32_u, m: MemArg);
+    visit_fn!(i32_load, m: MemArg);
+    visit_fn!(i64_load, m: MemArg);
+    visit_fn!(f32_load, m: MemArg);
+    visit_fn!(f64_load, m: MemArg);
+    visit_fn!(i32_load8_s, m: MemArg);
+    visit_fn!(i32_load8_u, m: MemArg);
+    visit_fn!(i32_load16_s, m: MemArg);
+    visit_fn!(i32_load16_u, m: MemArg);
+    visit_fn!(i64_load8_s, m: MemArg);
+    visit_fn!(i64_load8_u, m: MemArg);
+    visit_fn!(i64_load16_s, m: MemArg);
+    visit_fn!(i64_load16_u, m: MemArg);
+    visit_fn!(i64_load32_s, m: MemArg);
+    visit_fn!(i64_load32_u, m: MemArg);
 
     // Memory instructions - stores
-    visitor_default_impl!(i32_store, m: MemArg);
-    visitor_default_impl!(i64_store, m: MemArg);
-    visitor_default_impl!(f32_store, m: MemArg);
-    visitor_default_impl!(f64_store, m: MemArg);
-    visitor_default_impl!(i32_store8, m: MemArg);
-    visitor_default_impl!(i32_store16, m: MemArg);
-    visitor_default_impl!(i64_store8, m: MemArg);
-    visitor_default_impl!(i64_store16, m: MemArg);
-    visitor_default_impl!(i64_store32, m: MemArg);
+    visit_fn!(i32_store, m: MemArg);
+    visit_fn!(i64_store, m: MemArg);
+    visit_fn!(f32_store, m: MemArg);
+    visit_fn!(f64_store, m: MemArg);
+    visit_fn!(i32_store8, m: MemArg);
+    visit_fn!(i32_store16, m: MemArg);
+    visit_fn!(i64_store8, m: MemArg);
+    visit_fn!(i64_store16, m: MemArg);
+    visit_fn!(i64_store32, m: MemArg);
 
     // Memory instructions - size/grow
-    visitor_default_impl!(memory_size);
-    visitor_default_impl!(memory_grow);
+    visit_fn!(memory_size);
+    visit_fn!(memory_grow);
 
     // Numeric instructions - const
-    visitor_default_impl!(i32_const, n: i32);
-    visitor_default_impl!(i64_const, n: i64);
-    visitor_default_impl!(f32_const, z: f32);
-    visitor_default_impl!(f64_const, z: f64);
+    visit_fn!(i32_const, n: i32);
+    visit_fn!(i64_const, n: i64);
+    visit_fn!(f32_const, z: f32);
+    visit_fn!(f64_const, z: f64);
 
     // Numeric instructions - i32 test/rel
-    visitor_default_impl!(i32_eqz);
-    visitor_default_impl!(i32_eq);
-    visitor_default_impl!(i32_ne);
-    visitor_default_impl!(i32_lt_s);
-    visitor_default_impl!(i32_lt_u);
-    visitor_default_impl!(i32_gt_s);
-    visitor_default_impl!(i32_gt_u);
-    visitor_default_impl!(i32_le_s);
-    visitor_default_impl!(i32_le_u);
-    visitor_default_impl!(i32_ge_s);
-    visitor_default_impl!(i32_ge_u);
+    visit_fn!(i32_eqz);
+    visit_fn!(i32_eq);
+    visit_fn!(i32_ne);
+    visit_fn!(i32_lt_s);
+    visit_fn!(i32_lt_u);
+    visit_fn!(i32_gt_s);
+    visit_fn!(i32_gt_u);
+    visit_fn!(i32_le_s);
+    visit_fn!(i32_le_u);
+    visit_fn!(i32_ge_s);
+    visit_fn!(i32_ge_u);
 
     // Numeric instructions - i64 test/rel
-    visitor_default_impl!(i64_eqz);
-    visitor_default_impl!(i64_eq);
-    visitor_default_impl!(i64_ne);
-    visitor_default_impl!(i64_lt_s);
-    visitor_default_impl!(i64_lt_u);
-    visitor_default_impl!(i64_gt_s);
-    visitor_default_impl!(i64_gt_u);
-    visitor_default_impl!(i64_le_s);
-    visitor_default_impl!(i64_le_u);
-    visitor_default_impl!(i64_ge_s);
-    visitor_default_impl!(i64_ge_u);
+    visit_fn!(i64_eqz);
+    visit_fn!(i64_eq);
+    visit_fn!(i64_ne);
+    visit_fn!(i64_lt_s);
+    visit_fn!(i64_lt_u);
+    visit_fn!(i64_gt_s);
+    visit_fn!(i64_gt_u);
+    visit_fn!(i64_le_s);
+    visit_fn!(i64_le_u);
+    visit_fn!(i64_ge_s);
+    visit_fn!(i64_ge_u);
 
     // Numeric instructions - f32 rel
-    visitor_default_impl!(f32_eq);
-    visitor_default_impl!(f32_ne);
-    visitor_default_impl!(f32_lt);
-    visitor_default_impl!(f32_gt);
-    visitor_default_impl!(f32_le);
-    visitor_default_impl!(f32_ge);
+    visit_fn!(f32_eq);
+    visit_fn!(f32_ne);
+    visit_fn!(f32_lt);
+    visit_fn!(f32_gt);
+    visit_fn!(f32_le);
+    visit_fn!(f32_ge);
 
     // Numeric instructions - f64 rel
-    visitor_default_impl!(f64_eq);
-    visitor_default_impl!(f64_ne);
-    visitor_default_impl!(f64_lt);
-    visitor_default_impl!(f64_gt);
-    visitor_default_impl!(f64_le);
-    visitor_default_impl!(f64_ge);
+    visit_fn!(f64_eq);
+    visit_fn!(f64_ne);
+    visit_fn!(f64_lt);
+    visit_fn!(f64_gt);
+    visit_fn!(f64_le);
+    visit_fn!(f64_ge);
 
     // Numeric instructions - i32 unary/binary
-    visitor_default_impl!(i32_clz);
-    visitor_default_impl!(i32_ctz);
-    visitor_default_impl!(i32_popcnt);
-    visitor_default_impl!(i32_add);
-    visitor_default_impl!(i32_sub);
-    visitor_default_impl!(i32_mul);
-    visitor_default_impl!(i32_div_s);
-    visitor_default_impl!(i32_div_u);
-    visitor_default_impl!(i32_rem_s);
-    visitor_default_impl!(i32_rem_u);
-    visitor_default_impl!(i32_and);
-    visitor_default_impl!(i32_or);
-    visitor_default_impl!(i32_xor);
-    visitor_default_impl!(i32_shl);
-    visitor_default_impl!(i32_shr_s);
-    visitor_default_impl!(i32_shr_u);
-    visitor_default_impl!(i32_rotl);
-    visitor_default_impl!(i32_rotr);
+    visit_fn!(i32_clz);
+    visit_fn!(i32_ctz);
+    visit_fn!(i32_popcnt);
+    visit_fn!(i32_add);
+    visit_fn!(i32_sub);
+    visit_fn!(i32_mul);
+    visit_fn!(i32_div_s);
+    visit_fn!(i32_div_u);
+    visit_fn!(i32_rem_s);
+    visit_fn!(i32_rem_u);
+    visit_fn!(i32_and);
+    visit_fn!(i32_or);
+    visit_fn!(i32_xor);
+    visit_fn!(i32_shl);
+    visit_fn!(i32_shr_s);
+    visit_fn!(i32_shr_u);
+    visit_fn!(i32_rotl);
+    visit_fn!(i32_rotr);
 
     // Numeric instructions - i64 unary/binary
-    visitor_default_impl!(i64_clz);
-    visitor_default_impl!(i64_ctz);
-    visitor_default_impl!(i64_popcnt);
-    visitor_default_impl!(i64_add);
-    visitor_default_impl!(i64_sub);
-    visitor_default_impl!(i64_mul);
-    visitor_default_impl!(i64_div_s);
-    visitor_default_impl!(i64_div_u);
-    visitor_default_impl!(i64_rem_s);
-    visitor_default_impl!(i64_rem_u);
-    visitor_default_impl!(i64_and);
-    visitor_default_impl!(i64_or);
-    visitor_default_impl!(i64_xor);
-    visitor_default_impl!(i64_shl);
-    visitor_default_impl!(i64_shr_s);
-    visitor_default_impl!(i64_shr_u);
-    visitor_default_impl!(i64_rotl);
-    visitor_default_impl!(i64_rotr);
+    visit_fn!(i64_clz);
+    visit_fn!(i64_ctz);
+    visit_fn!(i64_popcnt);
+    visit_fn!(i64_add);
+    visit_fn!(i64_sub);
+    visit_fn!(i64_mul);
+    visit_fn!(i64_div_s);
+    visit_fn!(i64_div_u);
+    visit_fn!(i64_rem_s);
+    visit_fn!(i64_rem_u);
+    visit_fn!(i64_and);
+    visit_fn!(i64_or);
+    visit_fn!(i64_xor);
+    visit_fn!(i64_shl);
+    visit_fn!(i64_shr_s);
+    visit_fn!(i64_shr_u);
+    visit_fn!(i64_rotl);
+    visit_fn!(i64_rotr);
 
     // Numeric instructions - f32 unary/binary
-    visitor_default_impl!(f32_abs);
-    visitor_default_impl!(f32_neg);
-    visitor_default_impl!(f32_ceil);
-    visitor_default_impl!(f32_floor);
-    visitor_default_impl!(f32_trunc);
-    visitor_default_impl!(f32_nearest);
-    visitor_default_impl!(f32_sqrt);
-    visitor_default_impl!(f32_add);
-    visitor_default_impl!(f32_sub);
-    visitor_default_impl!(f32_mul);
-    visitor_default_impl!(f32_div);
-    visitor_default_impl!(f32_min);
-    visitor_default_impl!(f32_max);
-    visitor_default_impl!(f32_copysign);
+    visit_fn!(f32_abs);
+    visit_fn!(f32_neg);
+    visit_fn!(f32_ceil);
+    visit_fn!(f32_floor);
+    visit_fn!(f32_trunc);
+    visit_fn!(f32_nearest);
+    visit_fn!(f32_sqrt);
+    visit_fn!(f32_add);
+    visit_fn!(f32_sub);
+    visit_fn!(f32_mul);
+    visit_fn!(f32_div);
+    visit_fn!(f32_min);
+    visit_fn!(f32_max);
+    visit_fn!(f32_copysign);
 
     // Numeric instructions - f64 unary/binary
-    visitor_default_impl!(f64_abs);
-    visitor_default_impl!(f64_neg);
-    visitor_default_impl!(f64_ceil);
-    visitor_default_impl!(f64_floor);
-    visitor_default_impl!(f64_trunc);
-    visitor_default_impl!(f64_nearest);
-    visitor_default_impl!(f64_sqrt);
-    visitor_default_impl!(f64_add);
-    visitor_default_impl!(f64_sub);
-    visitor_default_impl!(f64_mul);
-    visitor_default_impl!(f64_div);
-    visitor_default_impl!(f64_min);
-    visitor_default_impl!(f64_max);
-    visitor_default_impl!(f64_copysign);
+    visit_fn!(f64_abs);
+    visit_fn!(f64_neg);
+    visit_fn!(f64_ceil);
+    visit_fn!(f64_floor);
+    visit_fn!(f64_trunc);
+    visit_fn!(f64_nearest);
+    visit_fn!(f64_sqrt);
+    visit_fn!(f64_add);
+    visit_fn!(f64_sub);
+    visit_fn!(f64_mul);
+    visit_fn!(f64_div);
+    visit_fn!(f64_min);
+    visit_fn!(f64_max);
+    visit_fn!(f64_copysign);
 
     // Numeric instructions - conversions
-    visitor_default_impl!(i32_wrap_i64);
-    visitor_default_impl!(i32_trunc_f32_s);
-    visitor_default_impl!(i32_trunc_f32_u);
-    visitor_default_impl!(i32_trunc_f64_s);
-    visitor_default_impl!(i32_trunc_f64_u);
-    visitor_default_impl!(i64_extend_i32_s);
-    visitor_default_impl!(i64_extend_i32_u);
-    visitor_default_impl!(i64_trunc_f32_s);
-    visitor_default_impl!(i64_trunc_f32_u);
-    visitor_default_impl!(i64_trunc_f64_s);
-    visitor_default_impl!(i64_trunc_f64_u);
-    visitor_default_impl!(f32_convert_i32_s);
-    visitor_default_impl!(f32_convert_i32_u);
-    visitor_default_impl!(f32_convert_i64_s);
-    visitor_default_impl!(f32_convert_i64_u);
-    visitor_default_impl!(f32_demote_f64);
-    visitor_default_impl!(f64_convert_i32_s);
-    visitor_default_impl!(f64_convert_i32_u);
-    visitor_default_impl!(f64_convert_i64_s);
-    visitor_default_impl!(f64_convert_i64_u);
-    visitor_default_impl!(f64_promote_f32);
-    visitor_default_impl!(i32_reinterpret_f32);
-    visitor_default_impl!(i64_reinterpret_f64);
-    visitor_default_impl!(f32_reinterpret_i32);
-    visitor_default_impl!(f64_reinterpret_i64);
+    visit_fn!(i32_wrap_i64);
+    visit_fn!(i32_trunc_f32_s);
+    visit_fn!(i32_trunc_f32_u);
+    visit_fn!(i32_trunc_f64_s);
+    visit_fn!(i32_trunc_f64_u);
+    visit_fn!(i64_extend_i32_s);
+    visit_fn!(i64_extend_i32_u);
+    visit_fn!(i64_trunc_f32_s);
+    visit_fn!(i64_trunc_f32_u);
+    visit_fn!(i64_trunc_f64_s);
+    visit_fn!(i64_trunc_f64_u);
+    visit_fn!(f32_convert_i32_s);
+    visit_fn!(f32_convert_i32_u);
+    visit_fn!(f32_convert_i64_s);
+    visit_fn!(f32_convert_i64_u);
+    visit_fn!(f32_demote_f64);
+    visit_fn!(f64_convert_i32_s);
+    visit_fn!(f64_convert_i32_u);
+    visit_fn!(f64_convert_i64_s);
+    visit_fn!(f64_convert_i64_u);
+    visit_fn!(f64_promote_f32);
+    visit_fn!(i32_reinterpret_f32);
+    visit_fn!(i64_reinterpret_f64);
+    visit_fn!(f32_reinterpret_i32);
+    visit_fn!(f64_reinterpret_i64);
 }
 
 /// An abstraction over WASM Bytecode.
 /// Used to implement validation and compilation of WASM bytecode.
 pub trait WasmVisitor: BaseVisitor {
-    visitor_default_impl!(enter_block, block_type: ResultType);
-    visitor_default_impl!(exit_block);
-    visitor_default_impl!(loop_, block_type: ResultType);
-    visitor_default_impl!(if_, block_type: ResultType);
-    visitor_default_impl!(else_);
-    visitor_default_impl!(br, l: LabelIdx);
-    visitor_default_impl!(br_if, l: LabelIdx);
-    visitor_default_impl!(br_table, lut: &[LabelIdx], default_: LabelIdx);
+    visit_fn!(enter_block, block_type: ResultType);
+    visit_fn!(exit_block);
+    visit_fn!(loop_, block_type: ResultType);
+    visit_fn!(if_, block_type: ResultType);
+    visit_fn!(else_);
+    visit_fn!(br, l: LabelIdx);
+    visit_fn!(br_if, l: LabelIdx);
+    visit_fn!(br_table, lut: &[LabelIdx], default_: LabelIdx);
+
+    // Variable instructions
+    visit_fn!(local_get, x: LocalIdx);
+    visit_fn!(local_set, x: LocalIdx);
+    visit_fn!(local_tee, x: LocalIdx);
+    visit_fn!(global_get, x: GlobalIdx);
+    visit_fn!(global_set, x: GlobalIdx);
 }
 
 /// An abstraction over IR Bytecode.
 /// Used to implement the interpreter.
 pub trait IrVisitor: BaseVisitor {
-    visitor_default_impl!(if_, false_address: JumpTarget);
-    visitor_default_impl!(br, addr: JumpTarget);
-    visitor_default_impl!(br_if, true_address: JumpTarget);
-    visitor_default_impl!(br_table, cases: impl FnOnce(u16) -> Result<JumpTarget, ()>);
+    visit_fn!(if_, false_address: JumpTarget);
+    visit_fn!(br, addr: JumpTarget);
+    visit_fn!(br_if, true_address: JumpTarget);
+    visit_fn!(br_table, cases: impl FnOnce(u16) -> Result<JumpTarget, ()>);
+
+    // Variable instructions
+    visit_fn!(local_get, l: LocalVariable);
+    visit_fn!(local_set, l: LocalVariable);
+    visit_fn!(local_tee, l: LocalVariable);
+    visit_fn!(global_get, g: GlobalVariable);
+    visit_fn!(global_set, g: GlobalVariable);
 }

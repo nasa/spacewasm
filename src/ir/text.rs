@@ -1,4 +1,4 @@
-use crate::{AllocError, Box, LabelIdx, MemArg, StaticVec, ValidationError};
+use crate::*;
 
 /// # SpaceWASM IR Encoding
 ///
@@ -35,8 +35,8 @@ impl Default for TextPage {
 
 /// A 32-bit address into the paged IR code.
 ///
-/// Format: `[reserved:1][page_index:23][offset:8]`
-/// - `page_index`: which page (0-8M pages supported)
+/// Format: `[reserved:2][page_index:22][offset:8]`
+/// - `page_index`: which page (0-4M pages supported)
 /// - `offset`: word index within the page (0-255)
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub struct JumpTarget(pub u32);
@@ -128,14 +128,21 @@ impl ControlFrame {
 ///
 /// Manages allocation of pages and writing 16-bit words to the current position.
 /// The `N` generic parameter limits the maximum number of pages that can be allocated.
-struct CodeBuilder<const N: usize> {
+pub struct CodeBuilder<const N: usize> {
     pages: StaticVec<Box<TextPage>, N>,
     offset: usize,
 }
 
 impl<const N: usize> CodeBuilder<N> {
+    pub fn new() -> CodeBuilder<N> {
+        CodeBuilder {
+            pages: Default::default(),
+            offset: 0,
+        }
+    }
+
     /// Get the current program counter (address of the next word to be written)
-    fn pc(&self) -> JumpTarget {
+    pub fn pc(&self) -> JumpTarget {
         let (page_index, offset) = {
             if self.offset == 256 {
                 // We are at the start of the next page, we have not allocated it yet
@@ -167,7 +174,10 @@ impl<const N: usize> CodeBuilder<N> {
     ///
     /// Automatically allocates a new page if we've reached the end of the current one.
     fn push(&mut self, c: u16) -> Result<(), AllocError> {
-        if self.offset >= 256 {
+        if self.offset == 0 && self.pages.len() == 0 {
+            // No pages have been allocated yet
+            self.add_page()?;
+        } else if self.offset >= 256 {
             self.add_page()?;
         }
 
@@ -202,6 +212,16 @@ impl<const N: usize> CodeBuilder<N> {
     }
 }
 
+pub struct FunctionContext<'ctx> {
+    pub idx: FuncIdx,
+    pub locals: &'ctx Vec<(u32, ValType)>,
+}
+
+pub enum TextContext<'f> {
+    Constant,
+    Function(FunctionContext<'f>),
+}
+
 /// High-level builder for compiled IR that handles control flow and instruction encoding.
 ///
 /// This builder manages:
@@ -211,25 +231,154 @@ impl<const N: usize> CodeBuilder<N> {
 /// - Managing a stack of control frames for nested blocks
 ///
 /// The `N` generic parameter limits the maximum number of code pages.
-pub struct TextBuilder<const N: usize> {
-    code: CodeBuilder<N>,
+pub struct TextBuilder<'module, 'ctx, const N: usize> {
+    code: &'module mut CodeBuilder<N>,
+    module: &'module Module<'module>,
+    ctx: TextContext<'ctx>,
     control_frames: StaticVec<ControlFrame, 64>,
     else_frames: StaticVec<JumpTarget, 64>,
 }
 
-impl<const N: usize> TextBuilder<N> {
-    pub fn new() -> Result<TextBuilder<N>, AllocError> {
-        let mut o = TextBuilder {
-            code: CodeBuilder {
-                pages: Default::default(),
-                offset: 0,
-            },
+impl<'module, 'ctx, const N: usize> TextBuilder<'module, 'ctx, N> {
+    pub fn new(
+        code: &'module mut CodeBuilder<N>,
+        module: &'module Module,
+        ctx: TextContext<'ctx>,
+    ) -> TextBuilder<'module, 'ctx, N> {
+        TextBuilder {
+            code,
+            module,
+            ctx,
             control_frames: Default::default(),
             else_frames: Default::default(),
+        }
+    }
+
+    /// Compute the offset in 32-bit words of a local variable given its index
+    pub fn get_local(&self, x: LocalIdx) -> Result<LocalVariable, ValidationError> {
+        let TextContext::Function(func) = &self.ctx else {
+            return Err(ValidationError::InstructionOutsideOfFunction);
         };
 
-        o.code.add_page()?;
-        Ok(o)
+        // Look up the function signature from the module
+        let type_idx = self
+            .module
+            .functions
+            .get(func.idx.0 as usize)
+            .ok_or(ValidationError::FunctionIdxOutOfRange)?;
+
+        let signature = self
+            .module
+            .types
+            .get(type_idx.0 as usize)
+            .ok_or(ValidationError::TypeIdxOutOfRange)?;
+
+        // Search for the variable and compute it's offset
+        let mut current_offset = 0;
+        let mut current_index = 0;
+
+        let params = &signature.params[..];
+        let locals = &func.locals[..];
+
+        // Check the parameters first
+        for (i, p_ty) in params.iter().enumerate() {
+            if x.0 == i as u32 {
+                return Ok(LocalVariable {
+                    frame_offset: (current_offset / 4) as u32,
+                    ty: *p_ty,
+                });
+            }
+
+            current_offset += p_ty.size();
+            current_index += 1;
+        }
+
+        // Now check the local variables
+        for (n, ty) in locals {
+            if current_index + n > x.0 {
+                // This bucket has the local variable
+                // Compute it's offset as a word index from the frame
+                let offset = current_offset + ty.size() * (x.0 - current_index) as usize;
+                return Ok(LocalVariable {
+                    frame_offset: (offset / 4) as u32,
+                    ty: *ty,
+                });
+            }
+
+            let section_size = *n as usize * ty.size();
+            current_offset += section_size;
+            current_index += n;
+        }
+
+        // No more locals
+        Err(ValidationError::LocalIdxOutOfRange)
+    }
+
+    /// Look up a global variable given its index
+    /// If we are computing a constant expression, globals can only refer to imported globals
+    pub fn get_global(&self, x: GlobalIdx) -> Result<GlobalVariable, ValidationError> {
+        let imported_idx = self
+            .module
+            .imports
+            .iter()
+            .filter_map(|i| match &i {
+                Import::Global(g) => Some(*g),
+                _ => None,
+            })
+            .skip(x.0 as usize)
+            .next();
+
+        match self.ctx {
+            // Constant global references must be to imported values
+            TextContext::Constant => {
+                let idx = imported_idx.ok_or(ValidationError::GlobalIdxOutOfRange)?;
+                let g = self
+                    .module
+                    .module_imports
+                    .globals
+                    .get(idx as usize)
+                    .unwrap();
+
+                Ok(GlobalVariable {
+                    reference: GlobalVariableRef::Imported(idx as u32),
+                    ty: g.value.ty(),
+                    mutable: g.value.mutable(),
+                })
+            }
+
+            TextContext::Function(_) => match imported_idx {
+                // This index is one of the WASM defined globals
+                None => {
+                    let idx = x.0 as usize - self.module.module_imports.globals.len();
+                    let g = self
+                        .module
+                        .globals
+                        .get(idx)
+                        .ok_or(ValidationError::GlobalIdxOutOfRange)?;
+
+                    Ok(GlobalVariable {
+                        reference: GlobalVariableRef::Internal(idx as u32),
+                        ty: g.type_.ty,
+                        mutable: g.type_.mutable,
+                    })
+                }
+                // This index refers to an imported global
+                Some(idx) => {
+                    let g = self
+                        .module
+                        .module_imports
+                        .globals
+                        .get(idx as usize)
+                        .unwrap();
+
+                    Ok(GlobalVariable {
+                        reference: GlobalVariableRef::Imported(idx as u32),
+                        ty: g.value.ty(),
+                        mutable: g.value.mutable(),
+                    })
+                }
+            },
+        }
     }
 
     pub fn pc(&self) -> JumpTarget {
@@ -392,6 +541,36 @@ impl<const N: usize> TextBuilder<N> {
     /// Format: `[opcode:8][0x00:8]`
     pub(crate) fn push_no_operand(&mut self, op: u8) -> Result<(), AllocError> {
         self.code.push((op as u16) << 8)
+    }
+
+    pub(crate) fn push_local(&mut self, op: u8, l: LocalVariable) -> Result<(), ValidationError> {
+        self.code
+            .push(((op as u16) << 8) | (l.ty.size() as u8 as u16))?;
+
+        if l.frame_offset > 0xFFFF {
+            Err(ValidationError::IdxTooLarge)
+        } else {
+            self.code.push(l.frame_offset as u16)?;
+            Ok(())
+        }
+    }
+
+    pub(crate) fn push_global(&mut self, op: u8, g: GlobalVariable) -> Result<(), ValidationError> {
+        let ty_enc = g.ty as u8;
+        let (index_ty, idx) = match &g.reference {
+            GlobalVariableRef::Imported(i) => (1u8 << 7, *i),
+            GlobalVariableRef::Internal(i) => (0u8, *i),
+        };
+
+        self.code
+            .push(((op as u16) << 8) | index_ty as u16 | ty_enc as u16)?;
+
+        if idx > 0xFFFF {
+            Err(ValidationError::IdxTooLarge)
+        } else {
+            self.code.push(idx as u16)?;
+            Ok(())
+        }
     }
 
     /// Emit an instruction with an 8-bit or 16-bit index operand.

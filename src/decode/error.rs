@@ -64,6 +64,20 @@ pub enum ValidationError {
     InvalidEndBlock,
     PossibleBackpatchCycle,
     PageFault,
+    InstructionOutsideOfFunction,
+    LocalIdxOutOfRange,
+    FunctionIdxOutOfRange,
+    TypeIdxOutOfRange,
+    FunctionTextOutOfRange,
+    GlobalIdxOutOfRange,
+    FunctionImportNotFound,
+    GlobalImportNotFound,
+    FunctionImportOutOfRange,
+    FunctionImportTypeMismatch,
+    GlobalIsNotMutable,
+    GlobalImportTypeMismatch,
+    TableImportsNotSupportedYet, // TODO(tumbar) Implement dynamic linking
+    MemoryImportsNotSupportedYet, // TODO(tumbar) Implement implement shared memory
     AllocError(AllocError),
     ReaderError(ReaderError),
 }

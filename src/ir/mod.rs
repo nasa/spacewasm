@@ -5,4 +5,6 @@ mod text;
 pub use text::*;
 
 mod reader;
+mod opcode;
+
 pub use reader::*;

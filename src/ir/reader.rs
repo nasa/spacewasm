@@ -3,6 +3,7 @@ use crate::*;
 pub enum IrReaderError {
     InvalidAddress,
     InvalidOpcode(u8),
+    InvalidType,
 }
 
 pub struct Code<'wasm>(&'wasm Vec<Box<TextPage>>);
@@ -52,7 +53,6 @@ impl<'wasm> Code<'wasm> {
         let first = self.read(pc)?;
         let opcode = ((first >> 8) & 0xFF) as u8;
 
-        #[allow(unused)] // RustRover false positive
         let imm = first & 0xFF;
 
         macro_rules! instruction {
@@ -62,16 +62,49 @@ impl<'wasm> Code<'wasm> {
                 Ok(1)
             }};
 
-            // An instruction with an 8-bit or 16-bit index operand
-            ($name:ident, idx, $ty:ty) => {{
-                let (idx, len) = if imm == 0xFF {
-                    (self.read(pc + 1)? as u32, 2)
-                } else {
-                    (imm as u32, 1)
+            // An instruction with a local variable reference immediate
+            ($name:ident, local) => {{
+                let ty = match imm {
+                    0 => ValType::I32,
+                    1 => ValType::I64,
+                    2 => ValType::F32,
+                    3 => ValType::F64,
+                    _ => return Err(IrReaderError::InvalidType),
                 };
 
-                visitor.$name(idx.into(), state)?;
-                Ok(len)
+                let frame_offset = self.read(pc + 1)? as u32;
+
+                visitor.$name(LocalVariable { frame_offset, ty }, state)?;
+                Ok(2)
+            }};
+
+            // An instruction with a global variable reference immediate
+            ($name:ident, global) => {{
+                let ty = match (imm & 0x0F) {
+                    0 => ValType::I32,
+                    1 => ValType::I64,
+                    2 => ValType::F32,
+                    3 => ValType::F64,
+                    _ => return Err(IrReaderError::InvalidType),
+                };
+
+                let is_imported = (imm & 0xF0) != 0;
+                let index = self.read(pc + 1)? as u32;
+
+                visitor.$name(
+                    GlobalVariable {
+                        reference: if is_imported {
+                            GlobalVariableRef::Imported(index)
+                        } else {
+                            GlobalVariableRef::Internal(index)
+                        },
+                        ty,
+                        mutable: true,
+                    },
+                    state
+                )?;
+
+                Ok(2)
             }};
 
             // An instruction with a MemArg operand
@@ -142,19 +175,19 @@ impl<'wasm> Code<'wasm> {
             }
 
             RETURN => instruction!(return_),
-            CALL => instruction!(call, idx, FuncIdx),
-            CALL_INDIRECT => instruction!(call_indirect, idx, TypeIdx),
+            // CALL => instruction!(call, idx, FuncIdx),
+            // CALL_INDIRECT => instruction!(call_indirect, idx, TypeIdx),
 
             // Parametric instructions
             DROP => instruction!(drop),
             SELECT => instruction!(select),
 
             // Variable instructions
-            LOCAL_GET => instruction!(local_get, idx, LocalIdx),
-            LOCAL_SET => instruction!(local_set, idx, LocalIdx),
-            LOCAL_TEE => instruction!(local_tee, idx, LocalIdx),
-            GLOBAL_GET => instruction!(global_get, idx, GlobalIdx),
-            GLOBAL_SET => instruction!(global_set, idx, GlobalIdx),
+            LOCAL_GET => instruction!(local_get, local),
+            LOCAL_SET => instruction!(local_set, local),
+            LOCAL_TEE => instruction!(local_tee, local),
+            GLOBAL_GET => instruction!(global_get, global),
+            GLOBAL_SET => instruction!(global_set, global),
 
             // Memory instructions - loads
             I32_LOAD => instruction!(i32_load, MemArg),

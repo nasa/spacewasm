@@ -484,13 +484,12 @@ impl<'wasm> Reader<'wasm> {
         self.read_vec_in(GlobalAllocator, read_element)
     }
 
-    pub fn read_vec_stack<T, F, const SIZE: usize>(
+    pub fn read_vec_stack<const SIZE: usize, T>(
         &mut self,
-        mut read_element: F,
+        mut read_element: impl FnMut(&mut Self) -> Result<T, ValidationError>,
     ) -> Result<StaticVec<T, SIZE>, ValidationError>
     where
         T: 'wasm,
-        F: FnMut(&mut Self) -> Result<T, ValidationError>,
     {
         let len = self.read_u32()?;
         if len as usize > SIZE {

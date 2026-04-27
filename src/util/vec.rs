@@ -33,6 +33,14 @@ impl<T: Clone, A: Allocator + Clone> Clone for Vec<T, A> {
     }
 }
 
+impl<T: PartialEq, A: Allocator> PartialEq for Vec<T, A> {
+    fn eq(&self, other: &Self) -> bool {
+        self.len() == other.len() && self.iter().zip(other.iter()).all(|(a, b)| a == b)
+    }
+}
+
+impl<T: Eq, A: Allocator> Eq for Vec<T, A> {}
+
 impl<T: Sized> Vec<T, GlobalAllocator> {
     pub fn new(capacity: u32) -> Result<Vec<T>, AllocError> {
         Vec::new_in(GlobalAllocator, capacity)

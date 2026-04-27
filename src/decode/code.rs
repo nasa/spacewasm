@@ -5,10 +5,15 @@ pub struct Expr(JumpTarget);
 impl Expr {
     pub fn read<const N: usize>(
         wasm: &mut Reader,
-        builder: &mut TextBuilder<N>,
+        builder: &mut CodeBuilder<N>,
+        module: &Module,
+        ctx: TextContext<'_>,
     ) -> Result<Self, ValidationError> {
         let e = Expr(builder.pc());
-        wasm.read_code(&Compiler, builder)?;
+        wasm.read_code(
+            &Compiler::<'_, N>::new(),
+            &mut TextBuilder::new(builder, module, ctx),
+        )?;
         Ok(e)
     }
 }
@@ -27,7 +32,9 @@ pub struct Func {
 impl Func {
     pub fn read<const N: usize>(
         wasm: &mut Reader,
-        builder: &mut TextBuilder<N>,
+        builder: &mut CodeBuilder<N>,
+        idx: FuncIdx,
+        module: &Module,
     ) -> Result<Self, ValidationError> {
         let size = wasm.read_u32()?;
         let start = wasm.offset();
@@ -38,7 +45,15 @@ impl Func {
             Ok((n, t))
         })?;
 
-        let expr = Expr::read(wasm, builder)?;
+        let expr = Expr::read(
+            wasm,
+            builder,
+            module,
+            TextContext::Function(FunctionContext {
+                idx,
+                locals: &locals,
+            }),
+        )?;
 
         let end = wasm.offset();
         if (end - start) as u32 != size {
@@ -177,11 +192,11 @@ impl<'wasm> Reader<'wasm> {
                 MEMORY_SIZE => {
                     self.expect_u8(0x00)?;
                     visitor.memory_size(state)?;
-                },
+                }
                 MEMORY_GROW => {
                     self.expect_u8(0x00)?;
                     visitor.memory_grow(state)?;
-                },
+                }
 
                 // Numeric instructions - const
                 I32_CONST => {

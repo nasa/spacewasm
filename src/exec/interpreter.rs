@@ -1,4 +1,5 @@
 use crate::*;
+use core::marker::PhantomData;
 
 macro_rules! instruction {
     ($name:ident, f32 -> f32, $f:ident, $( $t:tt )*) => {
@@ -147,18 +148,24 @@ macro_rules! instruction {
     };
 }
 
-pub struct InterpreterState {
+pub struct InterpreterState<'imports> {
     pc: JumpTarget,
     sp: usize,
+    fp: usize,
     stack: Box<[u32]>,
+    globals: Box<[u64]>,
+    imports: &'imports ModuleImports<'imports>,
 }
 
-impl InterpreterState {
-    pub fn new(stack_size: usize) -> Self {
+impl<'imports> InterpreterState<'imports> {
+    pub fn new(imports: &'imports ModuleImports<'imports>, stack_size: usize) -> Self {
         InterpreterState {
             pc: JumpTarget(0x0),
             sp: stack_size,
+            fp: stack_size,
             stack: unsafe { Vec::new(1024).unwrap().assume_init() }.into_boxed_slice(),
+            globals: Vec::new(10).unwrap().into_boxed_slice(),
+            imports,
         }
     }
 
@@ -186,21 +193,22 @@ impl InterpreterState {
     }
 }
 
-pub struct Interpreter<'wasm> {
+pub struct Interpreter<'wasm, 'imports> {
     code: Code<'wasm>,
+    phantom: PhantomData<&'imports ()>,
 }
-
-impl<'wasm> Interpreter<'wasm> {}
 
 pub enum InterpreterError {
     Trap,
     Finished,
     TableLookupFailed,
+    GlobalGetFailed,
+    GlobalSetFailed,
 }
 
-impl<'wasm> BaseVisitor for Interpreter<'wasm> {
+impl<'wasm, 'imports> BaseVisitor for Interpreter<'wasm, 'imports> {
     type Error = InterpreterError;
-    type State = InterpreterState;
+    type State = InterpreterState<'imports>;
 
     fn finish(&self, _: &mut Self::State) -> Result<(), Self::Error> {
         Ok(())
@@ -238,26 +246,6 @@ impl<'wasm> BaseVisitor for Interpreter<'wasm> {
         let val1 = state.stack[state.sp - 1];
         state.stack[state.sp - 1] = if c != 0 { val1 } else { val2 };
         Ok(())
-    }
-
-    fn local_get(&self, x: LocalIdx, state: &mut Self::State) -> Result<(), Self::Error> {
-        todo!()
-    }
-
-    fn local_set(&self, x: LocalIdx, state: &mut Self::State) -> Result<(), Self::Error> {
-        todo!()
-    }
-
-    fn local_tee(&self, x: LocalIdx, state: &mut Self::State) -> Result<(), Self::Error> {
-        todo!()
-    }
-
-    fn global_get(&self, x: GlobalIdx, state: &mut Self::State) -> Result<(), Self::Error> {
-        todo!()
-    }
-
-    fn global_set(&self, x: GlobalIdx, state: &mut Self::State) -> Result<(), Self::Error> {
-        todo!()
     }
 
     fn i32_load(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
@@ -692,7 +680,7 @@ impl<'wasm> BaseVisitor for Interpreter<'wasm> {
     }
 }
 
-impl<'wasm> IrVisitor for Interpreter<'wasm> {
+impl<'wasm, 'imports> IrVisitor for Interpreter<'wasm, 'imports> {
     fn if_(&self, false_address: JumpTarget, state: &mut Self::State) -> Result<(), Self::Error> {
         let v = state.pop_i32();
         if v == 0 {
@@ -722,11 +710,169 @@ impl<'wasm> IrVisitor for Interpreter<'wasm> {
         state: &mut Self::State,
     ) -> Result<(), Self::Error> {
         let v = state.pop_i32();
-        let Ok(addr) = cases(v as u16) else {
-            return Err(InterpreterError::TableLookupFailed);
-        };
+        let addr = cases(v as u16).map_err(|_| InterpreterError::TableLookupFailed)?;
 
         state.pc = addr;
+        Ok(())
+    }
+
+    fn local_get(&self, l: LocalVariable, state: &mut Self::State) -> Result<(), Self::Error> {
+        let local_addr = state.fp + (l.frame_offset as usize);
+
+        match l.ty {
+            ValType::I32 | ValType::F32 => {
+                // Read/write a single word
+                state.stack[state.sp] = state.stack[local_addr];
+                state.sp += 1;
+            }
+            ValType::I64 | ValType::F64 => {
+                // Read/write two words
+                state.stack[state.sp] = state.stack[local_addr];
+                state.stack[state.sp + 1] = state.stack[local_addr + 1];
+                state.sp += 2;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn local_set(&self, l: LocalVariable, state: &mut Self::State) -> Result<(), Self::Error> {
+        let local_addr = state.fp + (l.frame_offset as usize);
+        match l.ty {
+            ValType::I32 | ValType::F32 => {
+                // Read/write a single word
+                state.sp -= 1;
+                state.stack[local_addr] = state.stack[state.sp];
+            }
+            ValType::I64 | ValType::F64 => {
+                // Read/write two words
+                state.sp -= 2;
+                state.stack[local_addr] = state.stack[state.sp];
+                state.stack[local_addr + 1] = state.stack[state.sp + 1];
+            }
+        }
+
+        Ok(())
+    }
+
+    fn local_tee(&self, l: LocalVariable, state: &mut Self::State) -> Result<(), Self::Error> {
+        let local_addr = state.fp + (l.frame_offset as usize);
+        match l.ty {
+            ValType::I32 | ValType::F32 => {
+                // Read/write a single word
+                state.stack[local_addr] = state.stack[state.sp - 1];
+            }
+            ValType::I64 | ValType::F64 => {
+                // Read/write two words
+                state.stack[local_addr] = state.stack[state.sp - 2];
+                state.stack[local_addr + 1] = state.stack[state.sp - 1];
+            }
+        }
+
+        Ok(())
+    }
+
+    fn global_get(&self, g: GlobalVariable, state: &mut Self::State) -> Result<(), Self::Error> {
+        match g.reference {
+            GlobalVariableRef::Imported(i) => {
+                let gi = &state.imports.globals[i as usize];
+                match gi.value.read().or(Err(InterpreterError::GlobalGetFailed))? {
+                    Value::I32(i) => {
+                        state.stack[state.sp] = i as u32;
+                        state.sp += 1;
+                    }
+                    Value::I64(i) => {
+                        let lo = i as u32;
+                        let hi = (i >> 32) as u32;
+                        state.stack[state.sp] = lo;
+                        state.stack[state.sp + 1] = hi;
+                        state.sp += 2;
+                    }
+                    Value::F32(f) => {
+                        state.stack[state.sp] = f.to_bits();
+                        state.sp += 1;
+                    }
+                    Value::F64(f) => {
+                        let raw = f.to_bits();
+                        let lo = raw as u32;
+                        let hi = (raw >> 32) as u32;
+                        state.stack[state.sp] = lo;
+                        state.stack[state.sp + 1] = hi;
+                        state.sp += 2;
+                    }
+                };
+            }
+            GlobalVariableRef::Internal(i) => {
+                let raw = state.globals[i as usize];
+                let lo = raw as u32;
+                let hi = (raw >> 32) as u32;
+                match g.ty {
+                    ValType::I32 | ValType::F32 => {
+                        state.stack[state.sp] = lo;
+                        state.sp += 1;
+                    }
+                    ValType::I64 | ValType::F64 => {
+                        state.stack[state.sp] = lo;
+                        state.stack[state.sp + 1] = hi;
+                        state.sp += 2;
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn global_set(&self, g: GlobalVariable, state: &mut Self::State) -> Result<(), Self::Error> {
+        match g.reference {
+            GlobalVariableRef::Imported(i) => {
+                let gi = &state.imports.globals[i as usize];
+                match g.ty {
+                    ValType::I32 => {
+                        state.sp -= 1;
+                        gi.value.write(Value::I32(state.stack[state.sp] as i32))
+                    }
+                    ValType::I64 => {
+                        state.sp -= 2;
+                        let lo = state.stack[state.sp];
+                        let hi = state.stack[state.sp + 1];
+                        let raw = lo as u64 | ((hi as u64) << 32);
+                        gi.value.write(Value::I64(raw as i64))
+                    }
+                    ValType::F32 => {
+                        state.sp -= 1;
+                        let f = f32::from_bits(state.stack[state.sp]);
+                        gi.value.write(Value::F32(f))
+                    }
+                    ValType::F64 => {
+                        state.sp -= 2;
+                        let lo = state.stack[state.sp];
+                        let hi = state.stack[state.sp + 1];
+                        let raw = lo as u64 | ((hi as u64) << 32);
+                        let f = f64::from_bits(raw);
+                        gi.value.write(Value::F64(f))
+                    }
+                }
+                .or(Err(InterpreterError::GlobalSetFailed))?;
+            }
+            GlobalVariableRef::Internal(i) => {
+                let gv = &mut state.globals[i as usize];
+                match g.ty {
+                    ValType::I32 | ValType::F32 => {
+                        state.sp -= 1;
+                        *gv = state.stack[state.sp] as u64;
+                    }
+                    ValType::I64 | ValType::F64 => {
+                        state.sp -= 2;
+                        let lo = state.stack[state.sp];
+                        let hi = state.stack[state.sp + 1];
+                        let raw = lo as u64 | ((hi as u64) << 32);
+                        *gv = raw;
+                    }
+                }
+            }
+        }
+
         Ok(())
     }
 }

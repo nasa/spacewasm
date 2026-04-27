@@ -1,4 +1,5 @@
 use crate::alloc::AllocError;
+use crate::ValidationError;
 use core::ops::{Deref, DerefMut};
 
 pub struct StaticVec<T: Sized, const N: usize> {
@@ -12,6 +13,14 @@ impl<T: Sized, const N: usize> Default for StaticVec<T, N> {
             data: unsafe { core::mem::zeroed() },
             len: 0,
         }
+    }
+}
+
+impl<'a, const N: usize> TryInto<&'a str> for &'a StaticVec<u8, N> {
+    type Error = ValidationError;
+
+    fn try_into(self) -> Result<&'a str, Self::Error> {
+        core::str::from_utf8(&self[0..self.len]).map_err(|_| ValidationError::MalformedUtf8)
     }
 }
 

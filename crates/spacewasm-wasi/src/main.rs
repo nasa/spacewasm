@@ -1,4 +1,4 @@
-use spacewasm::global_allocator;
+use spacewasm::{global_allocator, FunctionImport, ModuleImports, ValType};
 use spacewasm::{
     AllocError, Allocator, InnerVec, MemoryStatistics, PageAllocator, ReaderError, SectionKind,
     Stream,
@@ -80,7 +80,68 @@ impl Stream for FileStream {
 fn main() {
     std::env::args().skip(1).for_each(|path| {
         let file = std::fs::File::open(path).expect("failed to open file");
-        match spacewasm::Module::new::<256>(&mut FileStream::new(file)) {
+        match spacewasm::Module::new::<256>(
+            &mut FileStream::new(file),
+            ModuleImports {
+                globals: &[],
+                functions: &[
+                    FunctionImport {
+                        module: "fprime_core",
+                        name: "panic",
+                        params: &[ValType::I32, ValType::I32],
+                        returns: &[],
+                        f: |a| {
+                            eprintln!("PANIC {:?} {:?}", a.get(0), a.get(1));
+                            None
+                        },
+                    },
+                    FunctionImport {
+                        module: "fprime_core",
+                        name: "rsleep",
+                        params: &[ValType::I64],
+                        returns: &[],
+                        f: |a| {
+                            eprintln!("RSLEEP {:?}", a.get(0));
+                            None
+                        },
+                    },
+                    FunctionImport {
+                        module: "fprime_core",
+                        name: "command",
+                        params: &[ValType::I32, ValType::I32],
+                        returns: &[ValType::I32],
+                        f: |a| {
+                            eprintln!("COMMAND {:?} {:?}", a.get(0), a.get(1));
+                            Some(spacewasm::Value::I32(0))
+                        },
+                    },
+                    FunctionImport {
+                        module: "fprime_core",
+                        name: "telemetry",
+                        params: &[
+                            ValType::I32,
+                            ValType::I32,
+                            ValType::I32,
+                            ValType::I32,
+                            ValType::I32,
+                        ],
+                        returns: &[ValType::I32],
+                        f: |a| {
+                            eprintln!(
+                                "TELEMETRY {:?} {:?} {:?} {:?} {:?}",
+                                a.get(0),
+                                a.get(1),
+                                a.get(2),
+                                a.get(3),
+                                a.get(4),
+                            );
+                            Some(spacewasm::Value::I32(0))
+                        },
+                    },
+                ],
+                memories: &[],
+            },
+        ) {
             Ok(module) => {
                 let mut total: usize = 0;
                 for (i, section) in module.memory_usage.iter().enumerate() {
