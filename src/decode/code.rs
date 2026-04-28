@@ -33,14 +33,13 @@ pub struct Func {
     pub ty: TypeIdx,
 
     /// Maximum shallow stack usage by this function (not including inner function calls)
+    /// (determined from analysis)
     pub stack_usage: u32,
 
     /// Parameter size in bytes
-    /// (determined from analysis)
     pub parameter_size: u16,
 
     /// Return value size in bytes
-    /// (determined from analysis)
     pub return_size: u16,
 
     /// Local variables allocated in this functions frame
