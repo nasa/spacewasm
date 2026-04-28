@@ -79,6 +79,7 @@ pub enum ValidationError {
     GlobalImportTypeMismatch,
     FunctionParametersTooLarge,
     FunctionReturnsTooLarge,
+    BrTableHasTooManyCases,
     TableImportsNotSupportedYet, // TODO(tumbar) Implement dynamic linking
     MemoryImportsNotSupportedYet, // TODO(tumbar) Implement implement shared memory
     AllocError(AllocError),
