@@ -155,11 +155,6 @@ macro_rules! instruction {
     };
 }
 
-struct Frame {
-    pub fp: u32,
-    pub pc: u32,
-}
-
 pub struct InterpreterState<'imports> {
     pc: JumpTarget,
     fp: u32,

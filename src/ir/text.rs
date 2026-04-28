@@ -271,15 +271,19 @@ impl<'module, 'ctx, const N: usize> TextBuilder<'module, 'ctx, N> {
             .ok_or(ValidationError::TypeIdxOutOfRange)?;
 
         // Search for the variable and compute it's offset
-        let mut current_offset = 0;
+        let mut current_offset = 0usize;
         let mut current_index = 0;
 
         // Check the parameters first
-        // Frame offsets are negative
         for (i, p_ty) in signature.params.iter().enumerate() {
             if x.0 == i as u32 {
+                // This offset is the offset from the start of the parameters list
+                // We need to convert this offset to be relative to the frame pointer
+                // which is immediately after the final parameter
+                let frame_offset = ((current_offset / 4) as i32) - (func.parameter_size as i32);
+
                 return Ok(LocalVariable {
-                    frame_offset: (current_offset / 4) as i32,
+                    frame_offset,
                     ty: *p_ty,
                 });
             }
@@ -289,7 +293,7 @@ impl<'module, 'ctx, const N: usize> TextBuilder<'module, 'ctx, N> {
         }
 
         // Skip over the fp/lr on the stack
-        current_offset += 8;
+        current_offset = 0;
 
         // Now check the local variables
         for (n, ty) in &func.locals {
@@ -298,7 +302,8 @@ impl<'module, 'ctx, const N: usize> TextBuilder<'module, 'ctx, N> {
                 // Compute it's offset as a word index from the frame
                 let offset = current_offset + ty.size() * (x.0 - current_index) as usize;
                 return Ok(LocalVariable {
-                    frame_offset: (offset / 4) as i32,
+                    // Add 2 to skip over fp and lr
+                    frame_offset: ((offset / 4) as i32) + 2,
                     ty: *ty,
                 });
             }
