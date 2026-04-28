@@ -3,28 +3,6 @@ use crate::{
     ValType,
 };
 
-pub struct LocalVariable {
-    // Offset of the local variable in 32-bit words
-    // Function parameters are negative relative to the FP
-    // Locals are positive relative to FP + 2
-    pub frame_offset: i32,
-
-    // Variable's type
-    pub ty: ValType,
-}
-
-pub enum GlobalVariableRef {
-    Imported(u32),
-    Internal(u32),
-}
-
-pub struct GlobalVariable {
-    // The index of the global variable
-    pub reference: GlobalVariableRef,
-    pub ty: ValType,
-    pub mutable: bool,
-}
-
 /// A convenience macro for defining the visitor function for a decoded
 /// WebAssembly instruction from any intermediate representation.
 macro_rules! visit_fn {
@@ -58,11 +36,7 @@ pub trait BaseVisitor {
     visit_fn!(unreachable);
     visit_fn!(nop);
 
-    // Any jumps or blocks are not handled in the base visitor
-
-    visit_fn!(return_);
-    visit_fn!(call, x: FuncIdx);
-    visit_fn!(call_indirect, x: TypeIdx);
+    // Control flow is not handled by the base visitor
 
     // Parametric instructions
     visit_fn!(drop);
@@ -259,12 +233,38 @@ pub trait WasmVisitor: BaseVisitor {
     visit_fn!(br_if, l: LabelIdx);
     visit_fn!(br_table, lut: &[LabelIdx], default_: LabelIdx);
 
+    visit_fn!(return_);
+    visit_fn!(call, x: FuncIdx);
+    visit_fn!(call_indirect, x: TypeIdx);
+
     // Variable instructions
     visit_fn!(local_get, x: LocalIdx);
     visit_fn!(local_set, x: LocalIdx);
     visit_fn!(local_tee, x: LocalIdx);
     visit_fn!(global_get, x: GlobalIdx);
     visit_fn!(global_set, x: GlobalIdx);
+}
+
+pub struct LocalVariable {
+    // Offset of the local variable in 32-bit words
+    // Function parameters are negative relative to the FP
+    // Locals are positive relative to FP + 2
+    pub frame_offset: i32,
+
+    // Variable's type
+    pub ty: ValType,
+}
+
+pub enum GlobalVariableRef {
+    Imported(u32),
+    Internal(u32),
+}
+
+pub struct GlobalVariable {
+    // The index of the global variable
+    pub reference: GlobalVariableRef,
+    pub ty: ValType,
+    pub mutable: bool,
 }
 
 /// An abstraction over IR Bytecode.
@@ -274,6 +274,10 @@ pub trait IrVisitor: BaseVisitor {
     visit_fn!(br, addr: JumpTarget);
     visit_fn!(br_if, true_address: JumpTarget);
     visit_fn!(br_table, cases: impl FnOnce(u16) -> Result<JumpTarget, ()>);
+
+    visit_fn!(return_, return_size: u8);
+    visit_fn!(call, x: FuncIdx);
+    visit_fn!(call_indirect, x: TypeIdx);
 
     // Variable instructions
     visit_fn!(local_get, l: LocalVariable);

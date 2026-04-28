@@ -258,8 +258,18 @@ impl<'module, 'ctx, const N: usize> TextBuilder<'module, 'ctx, N> {
         }
     }
 
+    pub fn context(&self) -> TextContext<'ctx> {
+        self.ctx
+    }
+
     /// Compute the offset in 32-bit words of a local variable given its index
     pub fn get_local(&self, x: LocalIdx) -> Result<LocalVariable, ValidationError> {
+        if x.0 > 0xFFFF {
+            return Err(ValidationError::LocalIdxOutOfRange);
+        }
+
+        let x = x.0 as u16;
+
         let TextContext::Function(func) = self.ctx else {
             return Err(ValidationError::InstructionOutsideOfFunction);
         };
@@ -276,7 +286,7 @@ impl<'module, 'ctx, const N: usize> TextBuilder<'module, 'ctx, N> {
 
         // Check the parameters first
         for (i, p_ty) in signature.params.iter().enumerate() {
-            if x.0 == i as u32 {
+            if x == i as u16 {
                 // This offset is the offset from the start of the parameters list
                 // We need to convert this offset to be relative to the frame pointer
                 // which is immediately after the final parameter
@@ -297,10 +307,10 @@ impl<'module, 'ctx, const N: usize> TextBuilder<'module, 'ctx, N> {
 
         // Now check the local variables
         for (n, ty) in &func.locals {
-            if current_index + n > x.0 {
+            if current_index + n > x {
                 // This bucket has the local variable
                 // Compute it's offset as a word index from the frame
-                let offset = current_offset + ty.size() * (x.0 - current_index) as usize;
+                let offset = current_offset + ty.size() * (x - current_index) as usize;
                 return Ok(LocalVariable {
                     // Add 2 to skip over fp and lr
                     frame_offset: ((offset / 4) as i32) + 2,
@@ -544,6 +554,11 @@ impl<'module, 'ctx, const N: usize> TextBuilder<'module, 'ctx, N> {
     /// Format: `[opcode:8][0x00:8]`
     pub(crate) fn push_no_operand(&mut self, op: u8) -> Result<(), AllocError> {
         self.code.push((op as u16) << 8)
+    }
+
+    /// Emit an instruction with an 8-bit operand
+    pub(crate) fn push_with_operand(&mut self, op: u8, operand: u8) -> Result<(), AllocError> {
+        self.code.push((op as u16) << 8 | (operand as u16))
     }
 
     pub(crate) fn push_local(&mut self, op: u8, l: LocalVariable) -> Result<(), ValidationError> {

@@ -102,6 +102,26 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
         Ok(())
     }
 
+    fn return_(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        match state.context() {
+            TextContext::Constant => Err(ValidationError::InvalidConstInstruction),
+            TextContext::Function(f) => {
+                // Return instructions also encode the return size from their function's context
+                state.push_with_operand(RETURN, f.return_size)?;
+                Ok(())
+            }
+        }
+    }
+
+    fn call(&self, x: FuncIdx, state: &mut Self::State) -> Result<(), Self::Error> {
+        state.push_8_or_16(CALL, x.0)
+    }
+
+    fn call_indirect(&self, x: TypeIdx, state: &mut Self::State) -> Result<(), Self::Error> {
+        // FIXME(tumbar) How do I implement this?
+        state.push_8_or_16(CALL_INDIRECT, x.0)
+    }
+
     fn local_get(&self, x: LocalIdx, state: &mut Self::State) -> Result<(), Self::Error> {
         let l = state.get_local(x)?;
         state.push_local(LOCAL_GET, l)?;
@@ -144,17 +164,6 @@ impl<'a, const N: usize> BaseVisitor for Compiler<'a, N> {
     instruction!(finish, END);
     instruction!(unreachable, UNREACHABLE);
     instruction!(nop, NOP);
-
-    instruction!(return_, RETURN);
-
-    fn call(&self, x: FuncIdx, state: &mut Self::State) -> Result<(), Self::Error> {
-        state.push_8_or_16(CALL, x.0)
-    }
-
-    fn call_indirect(&self, x: TypeIdx, state: &mut Self::State) -> Result<(), Self::Error> {
-        // FIXME(tumbar) How do I implement this?
-        state.push_8_or_16(CALL_INDIRECT, x.0)
-    }
 
     instruction!(drop, DROP);
     instruction!(select, SELECT);

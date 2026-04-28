@@ -40,7 +40,7 @@ impl<'wasm> Code<'wasm> {
         Ok(o)
     }
 
-    pub fn read_instruction<S, E, V>(
+    pub fn visit_instruction<S, E, V>(
         &self,
         state: &mut S,
         pc: JumpTarget,
@@ -53,7 +53,7 @@ impl<'wasm> Code<'wasm> {
         let first = self.read(pc)?;
         let opcode = ((first >> 8) & 0xFF) as u8;
 
-        let imm = first & 0xFF;
+        let imm = (first & 0xFF) as u8;
 
         macro_rules! instruction {
             // Instruction with no operands
@@ -101,7 +101,7 @@ impl<'wasm> Code<'wasm> {
                         ty,
                         mutable: true,
                     },
-                    state
+                    state,
                 )?;
 
                 Ok(2)
@@ -150,7 +150,7 @@ impl<'wasm> Code<'wasm> {
                 let (n, offset) = if imm == 0xFF {
                     (self.read(pc + 1)?, 2)
                 } else {
-                    (imm, 1)
+                    (imm as u16, 1)
                 };
 
                 let default_ = self.read_u32(pc + offset)?;
@@ -174,9 +174,12 @@ impl<'wasm> Code<'wasm> {
                 Ok(offset + 2 + (n as u32 * 2))
             }
 
-            RETURN => instruction!(return_),
-            // CALL => instruction!(call, idx, FuncIdx),
-            // CALL_INDIRECT => instruction!(call_indirect, idx, TypeIdx),
+            RETURN => {
+                visitor.return_(imm, state)?;
+                Ok(1)
+            }
+            CALL => instruction!(call, idx, FuncIdx),
+            CALL_INDIRECT => instruction!(call_indirect, idx, TypeIdx),
 
             // Parametric instructions
             DROP => instruction!(drop),

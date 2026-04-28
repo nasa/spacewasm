@@ -333,22 +333,23 @@ impl Func {
             .get(ty_idx.0 as usize)
             .ok_or(ValidationError::TypeIdxOutOfRange)?;
 
-        let parameter_size = ty.params.iter().fold(0, |sum, a_ty| sum + a_ty.size());
-        let return_size = ty.returns.iter().fold(0, |sum, a_ty| sum + a_ty.size());
+        let parameter_size = ty.params.iter().fold(0, |sum, a_ty| sum + a_ty.size()) / 4;
+        let return_size = ty.returns.iter().fold(0, |sum, a_ty| sum + a_ty.size()) / 4;
 
         if parameter_size > 0xFFFF {
             return Err(ValidationError::FunctionParametersTooLarge);
         }
 
-        if return_size > 0xFFFF {
+        if return_size > 0xFF {
             return Err(ValidationError::FunctionReturnsTooLarge);
         }
 
         Ok(Func {
             ty: ty_idx,
             stack_usage: 0,
+            local_size: 0,
             parameter_size: parameter_size as u16,
-            return_size: return_size as u16,
+            return_size: return_size as u8,
             locals: Vec::zero(),
             expr: Expr::zero(),
         })

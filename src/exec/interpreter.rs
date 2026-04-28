@@ -155,13 +155,13 @@ macro_rules! instruction {
     };
 }
 
-pub struct InterpreterState<'imports> {
+pub struct InterpreterState<'module> {
     pc: JumpTarget,
     fp: u32,
     sp: usize,
     stack: Box<[u32]>,
     globals: Box<[u64]>,
-    module: Module<'imports>,
+    module: &'module Module<'module>,
 }
 
 impl LocalVariable {
@@ -170,13 +170,13 @@ impl LocalVariable {
     }
 }
 
-impl<'imports> InterpreterState<'imports> {
-    pub fn new(module: Module<'imports>, stack_size: usize) -> Self {
+impl<'module> InterpreterState<'module> {
+    pub fn new(module: &'module Module<'module>, stack_size: usize) -> Self {
         InterpreterState {
             pc: JumpTarget(0x0),
             sp: 0x0,
             fp: 0x0,
-            stack: unsafe { Vec::new(1024).unwrap().assume_init() }.into_boxed_slice(),
+            stack: unsafe { Vec::new(stack_size as u32).unwrap().assume_init() }.into_boxed_slice(),
             globals: Vec::new(10).unwrap().into_boxed_slice(),
             module,
         }
@@ -206,9 +206,9 @@ impl<'imports> InterpreterState<'imports> {
     }
 }
 
-pub struct Interpreter<'wasm, 'imports> {
+pub struct Interpreter<'wasm, 'module> {
     code: Code<'wasm>,
-    phantom: PhantomData<&'imports ()>,
+    phantom: PhantomData<&'module ()>,
 }
 
 pub enum InterpreterError {
@@ -219,9 +219,9 @@ pub enum InterpreterError {
     GlobalSetFailed,
 }
 
-impl<'wasm, 'imports> BaseVisitor for Interpreter<'wasm, 'imports> {
+impl<'wasm, 'module> BaseVisitor for Interpreter<'wasm, 'module> {
     type Error = InterpreterError;
-    type State = InterpreterState<'imports>;
+    type State = InterpreterState<'module>;
 
     fn finish(&self, _: &mut Self::State) -> Result<(), Self::Error> {
         Ok(())
@@ -233,18 +233,6 @@ impl<'wasm, 'imports> BaseVisitor for Interpreter<'wasm, 'imports> {
 
     fn nop(&self, _: &mut Self::State) -> Result<(), Self::Error> {
         Ok(())
-    }
-
-    fn return_(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        todo!()
-    }
-
-    fn call(&self, x: FuncIdx, state: &mut Self::State) -> Result<(), Self::Error> {
-        todo!()
-    }
-
-    fn call_indirect(&self, x: TypeIdx, state: &mut Self::State) -> Result<(), Self::Error> {
-        todo!()
     }
 
     fn drop(&self, state: &mut Self::State) -> Result<(), Self::Error> {
@@ -670,7 +658,7 @@ impl<'wasm, 'imports> BaseVisitor for Interpreter<'wasm, 'imports> {
     instruction!(f64_reinterpret_i64, unreachable);
 }
 
-impl<'wasm, 'imports> IrVisitor for Interpreter<'wasm, 'imports> {
+impl<'wasm, 'module> IrVisitor for Interpreter<'wasm, 'module> {
     fn if_(&self, false_address: JumpTarget, state: &mut Self::State) -> Result<(), Self::Error> {
         let v = state.pop_i32();
         if v == 0 {
@@ -704,6 +692,66 @@ impl<'wasm, 'imports> IrVisitor for Interpreter<'wasm, 'imports> {
 
         state.pc = addr;
         Ok(())
+    }
+
+    fn return_(&self, return_size: u8, state: &mut Self::State) -> Result<(), Self::Error> {
+        let return_size = return_size as usize;
+
+        let fp = state.fp as usize;
+        let return_pc = state.stack[state.fp as usize + 1];
+
+        // The frame pointer on the stack actually encodes ((sp - fp) << 16) | prm_size
+        let frame_length_and_prm_size = state.stack[state.fp as usize];
+        let frame_length = (frame_length_and_prm_size >> 16) as u16;
+        let parameter_size = (frame_length_and_prm_size as u16) as usize;
+        let return_fp = (fp as u32) - (frame_length as u32);
+
+        let parameter_start = fp - parameter_size;
+
+        // Copy the return value over the parameters/frame information
+        for i in 0..return_size {
+            state.stack[parameter_start + i] = state.stack[state.sp - return_size + i]
+        }
+
+        state.sp = parameter_start + return_size;
+        state.fp = return_fp;
+        state.pc = JumpTarget(return_pc);
+
+        Ok(())
+    }
+
+    fn call(&self, x: FuncIdx, state: &mut Self::State) -> Result<(), Self::Error> {
+        // TODO(tumbar) Check stack usage
+        // TODO(tumbar) Figure out host functions
+        let f = &state.module.functions[x.0 as usize];
+
+        // The arguments are already at the top of the stack
+        // We need to push the frame pointer and the return instruction pointer to the stack
+        // We also encode the parameter size into the stack frame so that the return can unwind the stack
+        let frame_length = (state.sp - state.fp as usize) as u32;
+        assert!(frame_length <= 0xFFFFF);
+
+        let frame_length = frame_length << 16;
+
+        state.stack[state.sp] = frame_length | (f.parameter_size as u32);
+        state.stack[state.sp + 1] = state.pc.0;
+        state.fp = state.sp as u32;
+
+        // Zero out the local variables
+        for i in 0..(f.local_size as usize) {
+            state.stack[state.sp + 2 + i] = 0;
+        }
+
+        // Allocate space for frame and the local variables
+        state.sp += 2 + f.local_size as usize;
+
+        // Jump to the function's execution point
+        state.pc = f.expr.0;
+        Ok(())
+    }
+
+    fn call_indirect(&self, x: TypeIdx, state: &mut Self::State) -> Result<(), Self::Error> {
+        todo!()
     }
 
     fn local_get(&self, l: LocalVariable, state: &mut Self::State) -> Result<(), Self::Error> {

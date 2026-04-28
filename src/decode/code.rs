@@ -1,6 +1,6 @@
 use crate::*;
 
-pub struct Expr(JumpTarget);
+pub struct Expr(pub JumpTarget);
 
 impl Expr {
     pub fn zero() -> Expr {
@@ -34,17 +34,20 @@ pub struct Func {
 
     /// Maximum shallow stack usage by this function (not including inner function calls)
     /// (determined from analysis)
-    pub stack_usage: u32,
+    pub stack_usage: u16,
 
-    /// Parameter size in bytes
+    /// Size of the local variables
+    pub local_size: u16,
+
+    /// Parameter size in 32-bit words
     pub parameter_size: u16,
 
-    /// Return value size in bytes
-    pub return_size: u16,
+    /// Return value size in 32-bit words
+    pub return_size: u8,
 
     /// Local variables allocated in this functions frame
     /// Read in the code section
-    pub locals: Vec<(u32, ValType)>,
+    pub locals: Vec<(u16, ValType)>,
 
     /// Functions entry point
     pub expr: Expr,
@@ -63,8 +66,24 @@ impl Func {
         self.locals = wasm.read_vec(|w| {
             let n = w.read_u32()?;
             let t = ValType::read(w)?;
-            Ok((n, t))
+
+            if n > 0xFFFF {
+                return Err(ValidationError::TooManyLocals);
+            }
+
+            Ok((n as u16, t))
         })?;
+
+        // Compute the local size in words
+        let size_in_words = self
+            .locals
+            .iter()
+            .fold(0, |sum, (n, ty)| sum + (*n as usize) * ty.size())
+            / 4;
+
+        if size_in_words > 0xFFFF {
+            return Err(ValidationError::TooManyLocals);
+        }
 
         self.expr = Expr::read(wasm, builder, module, TextContext::Function(self))?;
 
