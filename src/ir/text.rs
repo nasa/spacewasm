@@ -290,7 +290,8 @@ impl<'module, 'ctx, const N: usize> TextBuilder<'module, 'ctx, N> {
                 // This offset is the offset from the start of the parameters list
                 // We need to convert this offset to be relative to the frame pointer
                 // which is immediately after the final parameter
-                let frame_offset = ((current_offset / 4) as i32) - (func.parameter_size as i32);
+                let frame_offset =
+                    (((current_offset / 4) as i32) - (func.parameter_size as i32)) as i16;
 
                 return Ok(LocalVariable {
                     frame_offset,
@@ -313,7 +314,7 @@ impl<'module, 'ctx, const N: usize> TextBuilder<'module, 'ctx, N> {
                 let offset = current_offset + ty.size() * (x - current_index) as usize;
                 return Ok(LocalVariable {
                     // Add 2 to skip over fp and lr
-                    frame_offset: ((offset / 4) as i32) + 2,
+                    frame_offset: ((offset / 4) as i16) + 2,
                     ty: *ty,
                 });
             }
@@ -562,15 +563,9 @@ impl<'module, 'ctx, const N: usize> TextBuilder<'module, 'ctx, N> {
     }
 
     pub(crate) fn push_local(&mut self, op: u8, l: LocalVariable) -> Result<(), ValidationError> {
-        self.code
-            .push(((op as u16) << 8) | (l.ty.size() as u8 as u16))?;
-
-        if l.frame_offset > 0xFFFF {
-            Err(ValidationError::IdxTooLarge)
-        } else {
-            self.code.push(l.frame_offset as u16)?;
-            Ok(())
-        }
+        self.code.push(((op as u16) << 8) | (l.ty as u8 as u16))?;
+        self.code.push(l.frame_offset as u16)?;
+        Ok(())
     }
 
     pub(crate) fn push_global(&mut self, op: u8, g: GlobalVariable) -> Result<(), ValidationError> {
@@ -630,6 +625,20 @@ impl<'module, 'ctx, const N: usize> TextBuilder<'module, 'ctx, N> {
         }
     }
 
+    pub(crate) fn push_32(&mut self, i: u32) -> Result<(), AllocError> {
+        self.code.push(i as u16)?;
+        self.code.push((i >> 16) as u16)?;
+        Ok(())
+    }
+
+    pub(crate) fn push_64(&mut self, i: u64) -> Result<(), AllocError> {
+        self.code.push(i as u16)?;
+        self.code.push((i >> 16) as u16)?;
+        self.code.push((i >> 32) as u16)?;
+        self.code.push((i >> 48) as u16)?;
+        Ok(())
+    }
+
     /// Push an operation with an 8-bit inline or 32-bit extended operand.
     ///
     /// Encoding:
@@ -643,8 +652,7 @@ impl<'module, 'ctx, const N: usize> TextBuilder<'module, 'ctx, N> {
         } else {
             // Extended encoding: 0xFF is sentinel, read full 32-bit value from next 2 words
             self.code.push(((op as u16) << 8) | 0xFF)?;
-            self.code.push(i as u16)?;
-            self.code.push((i >> 16) as u16)?;
+            self.push_32(i)?;
         }
 
         Ok(())
@@ -663,10 +671,7 @@ impl<'module, 'ctx, const N: usize> TextBuilder<'module, 'ctx, N> {
         } else {
             // Extended encoding: 0xFF is sentinel, read full 64-bit value from next 4 words
             self.code.push(((op as u16) << 8) | 0xFF)?;
-            self.code.push(i as u16)?;
-            self.code.push((i >> 16) as u16)?;
-            self.code.push((i >> 32) as u16)?;
-            self.code.push((i >> 48) as u16)?;
+            self.push_64(i)?;
         }
 
         Ok(())

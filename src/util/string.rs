@@ -2,6 +2,7 @@ use crate::util::Vec;
 use crate::{Allocator, GlobalAllocator, ValidationError};
 use core::ops::Deref;
 
+#[derive(PartialEq, Eq)]
 pub struct String<A: Allocator = GlobalAllocator>(Vec<u8, A>);
 
 impl TryFrom<&[u8]> for String<GlobalAllocator> {
@@ -26,6 +27,42 @@ impl TryFrom<&str> for String<GlobalAllocator> {
         Ok(String(v))
     }
 }
+
+impl<A: Allocator> AsRef<str> for String<A> {
+    #[inline]
+    fn as_ref(&self) -> &str {
+        self
+    }
+}
+
+macro_rules! impl_eq {
+    ($lhs:ty, $rhs: ty) => {
+        impl PartialEq<$rhs> for $lhs {
+            #[inline]
+            fn eq(&self, other: &$rhs) -> bool {
+                PartialEq::eq(&self[..], &other[..])
+            }
+            #[inline]
+            fn ne(&self, other: &$rhs) -> bool {
+                PartialEq::ne(&self[..], &other[..])
+            }
+        }
+
+        impl PartialEq<$lhs> for $rhs {
+            #[inline]
+            fn eq(&self, other: &$lhs) -> bool {
+                PartialEq::eq(&self[..], &other[..])
+            }
+            #[inline]
+            fn ne(&self, other: &$lhs) -> bool {
+                PartialEq::ne(&self[..], &other[..])
+            }
+        }
+    };
+}
+
+impl_eq! { String, str }
+impl_eq! { String, &str }
 
 impl<A: Allocator> TryFrom<Vec<u8, A>> for String<A> {
     type Error = ValidationError;

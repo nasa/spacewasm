@@ -1,4 +1,4 @@
-use spacewasm::{global_allocator, FunctionImport, ModuleImports, ValType};
+use spacewasm::{global_allocator, ExportDesc, FunctionImport, ModuleImports, ValType, Value};
 use spacewasm::{
     AllocError, Allocator, InnerVec, MemoryStatistics, PageAllocator, ReaderError, SectionKind,
     Stream,
@@ -177,6 +177,25 @@ fn main() {
                 );
 
                 let mut state = spacewasm::InterpreterState::new(1024);
+                match module.start {
+                    None => {
+                        let f= module.exports.iter().find(|f| &f.name == "main").unwrap();
+                        match f.desc {
+                            ExportDesc::Func(fi) => {
+                                let f = module.functions.get(fi.0 as usize).unwrap();
+                                std::eprintln!("fn main => {:?}", module.types.get(f.ty.0 as usize).unwrap());
+                                state.invoke(f, &[Value::I32(0)]);
+                            }
+                            ExportDesc::Table(_) => {}
+                            ExportDesc::Mem(_) => {}
+                            ExportDesc::Global(_) => {}
+                        }
+                    }
+                    Some(fi) => {
+                        let f = module.functions.get(fi.0 as usize).unwrap();
+                        state.invoke(f, &[Value::I32(0)]);
+                    }
+                }
 
                 let interpreter =
                     spacewasm::Interpreter::new(module.functions, module.module_imports);

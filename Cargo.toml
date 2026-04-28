@@ -23,6 +23,5 @@ libm = "0.2.16"
 [profile.release]
 opt-level = 3
 lto = true
-debug = "none"
-panic = "abort"
-strip = true
+debug = "full"
+panic = "unwind"

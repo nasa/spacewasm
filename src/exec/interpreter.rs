@@ -165,42 +165,64 @@ pub struct InterpreterState {
 
 impl LocalVariable {
     fn addr(&self, fp: u32) -> usize {
-        (fp as i32 + self.frame_offset) as usize
+        (fp as i32 + self.frame_offset as i32) as usize
     }
 }
 
 impl InterpreterState {
     pub fn new(stack_size: usize) -> Self {
         InterpreterState {
-            pc: JumpTarget(0x0),
+            pc: JumpTarget(0xFFFFFFFFu32),
             sp: 0x0,
             fp: 0x0,
             stack: unsafe { Vec::new(stack_size as u32).unwrap().assume_init() }.into_boxed_slice(),
-            globals: Vec::new(10).unwrap().into_boxed_slice(),
+            globals: unsafe { Vec::new(10).unwrap().assume_init() }.into_boxed_slice(),
         }
     }
 
-    pub fn pop_i32(&mut self) -> i32 {
-        self.sp -= 1;
-        self.stack[self.sp] as i32
-    }
+    /// Invoke a function with some parameters
+    /// Warning! If this is being used as an interrupt rather than an entry point,
+    /// make sure that the function does not return any values as that will cause stack pollution!
+    pub fn invoke(&mut self, f: &Func, params: &[Value]) {
+        for p in params {
+            // TODO(tumbar) Validate input parameters
+            match p {
+                Value::I32(i) => {
+                    self.stack[self.sp] = *i as u32;
+                    self.sp += 1;
+                }
+                Value::I64(i) => {
+                    let lo = *i as u32;
+                    let hi = (*i >> 32) as u32;
+                    self.stack[self.sp] = lo;
+                    self.stack[self.sp + 1] = hi;
+                    self.sp += 2;
+                }
+                Value::F32(z) => {
+                    self.stack[self.sp] = z.to_bits();
+                    self.sp += 1;
+                }
+                Value::F64(z) => {
+                    let i = z.to_bits();
+                    let lo = i as u32;
+                    let hi = (i >> 32) as u32;
+                    self.stack[self.sp] = lo;
+                    self.stack[self.sp + 1] = hi;
+                    self.sp += 2;
+                }
+            }
+        }
 
-    pub fn pop_i64(&mut self) -> i64 {
-        self.sp -= 2;
-        let lo = self.stack[self.sp];
-        let hi = self.stack[self.sp + 1];
-        ((lo as u64) | ((hi as u64) << 32)) as i64
-    }
-    pub fn pop_f32(&mut self) -> f32 {
-        self.sp -= 1;
-        f32::from_bits(self.stack[self.sp])
-    }
+        // Push the frame information
+        let frame_length = (self.sp - self.fp as usize) as u32;
+        assert!(frame_length <= 0xFFFFF);
 
-    pub fn pop_f64(&mut self) -> f64 {
-        self.sp -= 2;
-        let lo = self.stack[self.sp];
-        let hi = self.stack[self.sp + 1];
-        f64::from_bits((lo as u64) | ((hi as u64) << 32))
+        let frame_length = frame_length << 16;
+        self.stack[self.sp] = frame_length | (f.parameter_size as u32);
+        self.stack[self.sp + 1] = self.pc.0;
+        self.fp = self.sp as u32;
+        self.sp += 2;
+        self.pc = f.expr.0;
     }
 }
 
@@ -243,15 +265,16 @@ pub enum InterpreterError {
     TableLookupFailed,
     GlobalGetFailed,
     GlobalSetFailed,
-    ReaderError(IrReaderError),
+    ReaderError(CodeReaderStopCondition),
 }
 
-impl From<IrReaderError> for InterpreterError {
-    fn from(err: IrReaderError) -> Self {
+impl From<CodeReaderStopCondition> for InterpreterError {
+    fn from(err: CodeReaderStopCondition) -> Self {
         InterpreterError::ReaderError(err)
     }
 }
 
+#[allow(unused_variables)]
 impl<'module> BaseVisitor for &'module Interpreter<'module> {
     type Error = InterpreterError;
     type State = InterpreterState;
@@ -269,17 +292,17 @@ impl<'module> BaseVisitor for &'module Interpreter<'module> {
     }
 
     fn drop(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        state.sp -= 1;
-        Ok(())
+        todo!()
     }
 
     fn select(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        let c = state.pop_i32();
-        state.sp -= 1;
-        let val2 = state.stack[state.sp];
-        let val1 = state.stack[state.sp - 1];
-        state.stack[state.sp - 1] = if c != 0 { val1 } else { val2 };
-        Ok(())
+        // state.sp -= 1;
+        // let c = stack.;
+        // let val2 = state.stack[state.sp];
+        // let val1 = state.stack[state.sp - 1];
+        // state.stack[state.sp - 1] = if c != 0 { val1 } else { val2 };
+        // Ok(())
+        todo!()
     }
 
     fn i32_load(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
@@ -693,7 +716,8 @@ impl<'module> BaseVisitor for &'module Interpreter<'module> {
 
 impl<'module> IrVisitor for &'module Interpreter<'module> {
     fn if_(&self, false_address: JumpTarget, state: &mut Self::State) -> Result<(), Self::Error> {
-        let v = state.pop_i32();
+        state.sp -= 1;
+        let v = state.stack[state.sp];
         if v == 0 {
             state.pc = false_address;
         }
@@ -707,7 +731,8 @@ impl<'module> IrVisitor for &'module Interpreter<'module> {
     }
 
     fn br_if(&self, true_address: JumpTarget, state: &mut Self::State) -> Result<(), Self::Error> {
-        let v = state.pop_i32();
+        state.sp -= 1;
+        let v = state.stack[state.sp];
         if v != 0 {
             state.pc = true_address;
         }
@@ -720,7 +745,8 @@ impl<'module> IrVisitor for &'module Interpreter<'module> {
         cases: impl FnOnce(u16) -> Result<JumpTarget, ()>,
         state: &mut Self::State,
     ) -> Result<(), Self::Error> {
-        let v = state.pop_i32();
+        state.sp -= 1;
+        let v = state.stack[state.sp];
         let addr = cases(v as u16).map_err(|_| InterpreterError::TableLookupFailed)?;
 
         state.pc = addr;
@@ -783,6 +809,7 @@ impl<'module> IrVisitor for &'module Interpreter<'module> {
         Ok(())
     }
 
+    #[allow(unused_variables)]
     fn call_indirect(&self, x: TypeIdx, state: &mut Self::State) -> Result<(), Self::Error> {
         todo!()
     }

@@ -249,7 +249,7 @@ pub struct LocalVariable {
     // Offset of the local variable in 32-bit words
     // Function parameters are negative relative to the FP
     // Locals are positive relative to FP + 2
-    pub frame_offset: i32,
+    pub frame_offset: i16,
 
     // Variable's type
     pub ty: ValType,

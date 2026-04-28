@@ -1,10 +1,12 @@
+extern crate std;
 use crate::*;
 
 #[derive(Debug, Clone)]
-pub enum IrReaderError {
+pub enum CodeReaderStopCondition {
     InvalidAddress,
     InvalidOpcode(u8),
     InvalidType,
+    Finished,
 }
 
 pub struct Code(Vec<Box<TextPage>>);
@@ -14,24 +16,24 @@ impl Code {
         Code(code)
     }
 
-    fn read(&self, address: JumpTarget) -> Result<u16, IrReaderError> {
+    fn read(&self, address: JumpTarget) -> Result<u16, CodeReaderStopCondition> {
         let page = address.page();
         let offset = address.offset();
         if page >= self.0.len() || offset >= 256 {
-            Err(IrReaderError::InvalidAddress)
+            Err(CodeReaderStopCondition::InvalidAddress)
         } else {
             Ok(self.0[page].0[offset])
         }
     }
 
-    fn read_u32(&self, address: JumpTarget) -> Result<u32, IrReaderError> {
+    fn read_u32(&self, address: JumpTarget) -> Result<u32, CodeReaderStopCondition> {
         let w1 = self.read(address)?;
         let w2 = self.read(address + 1)?;
 
         Ok((w1 as u32) | ((w2 as u32) << 16))
     }
 
-    fn read_u64(&self, address: JumpTarget) -> Result<u64, IrReaderError> {
+    fn read_u64(&self, address: JumpTarget) -> Result<u64, CodeReaderStopCondition> {
         let w1 = self.read(address)?;
         let w2 = self.read(address + 1)?;
         let w3 = self.read(address + 2)?;
@@ -53,12 +55,14 @@ impl Code {
     ) -> Result<u32, E>
     where
         V: IrVisitor<State = S, Error = E>,
-        E: From<IrReaderError>,
+        E: From<CodeReaderStopCondition>,
     {
         let first = self.read(pc)?;
-        let opcode = ((first >> 8) & 0xFF) as u8;
-
+        let opcode = (first >> 8) as u8;
         let imm = (first & 0xFF) as u8;
+
+        let opcode_name = opcode_to_string(opcode);
+        std::eprintln!("{opcode_name} {imm}");
 
         macro_rules! instruction {
             // Instruction with no operands
@@ -74,10 +78,10 @@ impl Code {
                     1 => ValType::I64,
                     2 => ValType::F32,
                     3 => ValType::F64,
-                    _ => return Err(IrReaderError::InvalidType.into()),
+                    _ => return Err(CodeReaderStopCondition::InvalidType.into()),
                 };
 
-                let frame_offset = self.read(pc + 1)? as i32;
+                let frame_offset = self.read(pc + 1)? as i16;
 
                 visitor.$name(LocalVariable { frame_offset, ty }, state)?;
                 Ok(2)
@@ -90,7 +94,7 @@ impl Code {
                     1 => ValType::I64,
                     2 => ValType::F32,
                     3 => ValType::F64,
-                    _ => return Err(IrReaderError::InvalidType.into()),
+                    _ => return Err(CodeReaderStopCondition::InvalidType.into()),
                 };
 
                 let is_imported = (imm & 0xF0) != 0;
@@ -250,14 +254,22 @@ impl Code {
 
             // Numeric instructions - const
             I32_CONST => {
-                let n = self.read_u32(pc + 1)?;
+                let (n, size) = if imm == 0xFF {
+                    (self.read_u32(pc + 1)?, 3)
+                } else {
+                    (imm as u32, 1)
+                };
                 visitor.i32_const(n as i32, state)?;
-                Ok(3)
+                Ok(size)
             }
             I64_CONST => {
-                let n = self.read_u64(pc + 1)?;
+                let (n, size) = if imm == 0xFF {
+                    (self.read_u64(pc + 1)?, 5)
+                } else {
+                    (imm as u64, 1)
+                };
                 visitor.i64_const(n as i64, state)?;
-                Ok(5)
+                Ok(size)
             }
             F32_CONST => {
                 let z = self.read_u32(pc + 1)?;
@@ -410,8 +422,8 @@ impl Code {
             I64_REINTERPRET_F64 => instruction!(i64_reinterpret_f64),
             F32_REINTERPRET_I32 => instruction!(f32_reinterpret_i32),
             F64_REINTERPRET_I64 => instruction!(f64_reinterpret_i64),
-
-            _ => Err(IrReaderError::InvalidOpcode(opcode).into()),
+            END => Err(CodeReaderStopCondition::Finished.into()),
+            _ => Err(CodeReaderStopCondition::InvalidOpcode(opcode).into()),
         }
     }
 }
