@@ -3,6 +3,10 @@ use crate::*;
 pub struct Expr(JumpTarget);
 
 impl Expr {
+    pub fn zero() -> Expr {
+        Expr(JumpTarget(0))
+    }
+
     pub fn read<const N: usize>(
         wasm: &mut Reader,
         builder: &mut CodeBuilder<N>,
@@ -25,41 +29,51 @@ impl From<Expr> for JumpTarget {
 }
 
 pub struct Func {
+    /// Function signature.
+    pub ty: TypeIdx,
+
+    /// Maximum shallow stack usage by this function (not including inner function calls)
+    pub stack_usage: u32,
+
+    /// Parameter size in bytes
+    /// (determined from analysis)
+    pub parameter_size: u16,
+
+    /// Return value size in bytes
+    /// (determined from analysis)
+    pub return_size: u16,
+
+    /// Local variables allocated in this functions frame
+    /// Read in the code section
     pub locals: Vec<(u32, ValType)>,
+
+    /// Functions entry point
     pub expr: Expr,
 }
 
 impl Func {
-    pub fn read<const N: usize>(
+    pub fn read_from_code<const N: usize>(
+        &mut self,
         wasm: &mut Reader,
-        builder: &mut CodeBuilder<N>,
-        idx: FuncIdx,
         module: &Module,
-    ) -> Result<Self, ValidationError> {
+        builder: &mut CodeBuilder<N>,
+    ) -> Result<(), ValidationError> {
         let size = wasm.read_u32()?;
         let start = wasm.offset();
 
-        let locals = wasm.read_vec(|w| {
+        self.locals = wasm.read_vec(|w| {
             let n = w.read_u32()?;
             let t = ValType::read(w)?;
             Ok((n, t))
         })?;
 
-        let expr = Expr::read(
-            wasm,
-            builder,
-            module,
-            TextContext::Function(FunctionContext {
-                idx,
-                locals: &locals,
-            }),
-        )?;
+        self.expr = Expr::read(wasm, builder, module, TextContext::Function(self))?;
 
         let end = wasm.offset();
         if (end - start) as u32 != size {
             Err(ValidationError::MalformedCodeSize)
         } else {
-            Ok(Func { locals, expr })
+            Ok(())
         }
     }
 }

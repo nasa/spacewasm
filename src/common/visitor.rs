@@ -5,7 +5,9 @@ use crate::{
 
 pub struct LocalVariable {
     // Offset of the local variable in 32-bit words
-    pub frame_offset: u32,
+    // Function parameters are negative relative to the FP
+    // Locals are positive relative to FP + 2
+    pub frame_offset: i32,
 
     // Variable's type
     pub ty: ValType,

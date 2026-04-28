@@ -72,7 +72,7 @@ impl<'wasm> Code<'wasm> {
                     _ => return Err(IrReaderError::InvalidType),
                 };
 
-                let frame_offset = self.read(pc + 1)? as u32;
+                let frame_offset = self.read(pc + 1)? as i32;
 
                 visitor.$name(LocalVariable { frame_offset, ty }, state)?;
                 Ok(2)

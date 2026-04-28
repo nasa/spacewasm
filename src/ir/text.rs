@@ -221,14 +221,9 @@ impl<const N: usize> CodeBuilder<N> {
     }
 }
 
-pub struct FunctionContext<'ctx> {
-    pub idx: FuncIdx,
-    pub locals: &'ctx Vec<(u32, ValType)>,
-}
-
 pub enum TextContext<'f> {
     Constant,
-    Function(FunctionContext<'f>),
+    Function(&'f Func),
 }
 
 /// High-level builder for compiled IR that handles control flow and instruction encoding.
@@ -265,21 +260,14 @@ impl<'module, 'ctx, const N: usize> TextBuilder<'module, 'ctx, N> {
 
     /// Compute the offset in 32-bit words of a local variable given its index
     pub fn get_local(&self, x: LocalIdx) -> Result<LocalVariable, ValidationError> {
-        let TextContext::Function(func) = &self.ctx else {
+        let TextContext::Function(func) = self.ctx else {
             return Err(ValidationError::InstructionOutsideOfFunction);
         };
-
-        // Look up the function signature from the module
-        let type_idx = self
-            .module
-            .functions
-            .get(func.idx.0 as usize)
-            .ok_or(ValidationError::FunctionIdxOutOfRange)?;
 
         let signature = self
             .module
             .types
-            .get(type_idx.0 as usize)
+            .get(func.ty.0 as usize)
             .ok_or(ValidationError::TypeIdxOutOfRange)?;
 
         // Search for the variable and compute it's offset
@@ -290,10 +278,11 @@ impl<'module, 'ctx, const N: usize> TextBuilder<'module, 'ctx, N> {
         let locals = &func.locals[..];
 
         // Check the parameters first
+        // Frame offsets are negative
         for (i, p_ty) in params.iter().enumerate() {
             if x.0 == i as u32 {
                 return Ok(LocalVariable {
-                    frame_offset: (current_offset / 4) as u32,
+                    frame_offset: (current_offset / 4) as i32,
                     ty: *p_ty,
                 });
             }
@@ -302,6 +291,9 @@ impl<'module, 'ctx, const N: usize> TextBuilder<'module, 'ctx, N> {
             current_index += 1;
         }
 
+        // Skip over the fp/lr on the stack
+        current_offset += 8;
+
         // Now check the local variables
         for (n, ty) in locals {
             if current_index + n > x.0 {
@@ -309,7 +301,7 @@ impl<'module, 'ctx, const N: usize> TextBuilder<'module, 'ctx, N> {
                 // Compute it's offset as a word index from the frame
                 let offset = current_offset + ty.size() * (x.0 - current_index) as usize;
                 return Ok(LocalVariable {
-                    frame_offset: (offset / 4) as u32,
+                    frame_offset: (offset / 4) as i32,
                     ty: *ty,
                 });
             }

@@ -55,6 +55,7 @@ pub enum ValidationError {
     ExpectedTerminal(u8),
     InvalidOpcode(u8),
     MalformedCodeSize,
+    InvalidCodeSectionFunctionCount,
     VecTooLong,
     IdxTooLarge,
     MemAlignTooLarge,
@@ -76,6 +77,8 @@ pub enum ValidationError {
     FunctionImportTypeMismatch,
     GlobalIsNotMutable,
     GlobalImportTypeMismatch,
+    FunctionParametersTooLarge,
+    FunctionReturnsTooLarge,
     TableImportsNotSupportedYet, // TODO(tumbar) Implement dynamic linking
     MemoryImportsNotSupportedYet, // TODO(tumbar) Implement implement shared memory
     AllocError(AllocError),

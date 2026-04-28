@@ -2,10 +2,7 @@ use crate::*;
 
 pub struct Module<'imports> {
     pub types: Vec<FuncType>,
-    pub functions: Vec<TypeIdx>,
-    pub code: Vec<Func>,
-    pub text: Vec<Box<TextPage>>,
-
+    pub functions: Vec<Func>,
     pub tables: Vec<TableType>,
     pub memories: Vec<MemType>,
     pub globals: Vec<Global>,
@@ -16,6 +13,7 @@ pub struct Module<'imports> {
     pub data: Vec<Data>,
     pub start: Option<FuncIdx>,
 
+    pub text: Vec<Box<TextPage>>,
     pub wasm_size: usize,
     pub final_page_offset: usize,
     pub memory_usage: [MemoryStatistics; SectionKind::N as usize],
@@ -80,7 +78,6 @@ impl<'imports> Module<'imports> {
         let mut module = Module {
             types: Vec::zero(),
             functions: Vec::zero(),
-            code: Vec::zero(),
             text: Vec::zero(),
             tables: Vec::zero(),
             memories: Vec::zero(),
@@ -169,7 +166,7 @@ impl<'imports> Module<'imports> {
                 self.imports = ImportSection::read(wasm, self)?;
             }
             Function => {
-                self.functions = FunctionSection::read(wasm)?;
+                self.functions = FunctionSection::read(wasm, self)?;
             }
             Table => {
                 self.tables = TableSection::read(wasm)?;
@@ -190,7 +187,7 @@ impl<'imports> Module<'imports> {
                 self.elements = ElementSection::read::<PN>(wasm, code_builder, self)?;
             }
             Code => {
-                self.code = CodeSection::read::<PN>(wasm, code_builder, self)?;
+                CodeSection::read::<PN>(wasm, code_builder, self)?;
             }
             Data => {
                 self.data = DataSection::read::<PN>(wasm, code_builder, self)?;
@@ -328,11 +325,41 @@ impl ImportSection {
     }
 }
 
-pub struct FunctionSection;
+impl Func {
+    pub fn read_func_section(wasm: &mut Reader, module: &Module) -> Result<Func, ValidationError> {
+        let ty_idx = TypeIdx::read(wasm)?;
 
+        let ty = module
+            .types
+            .get(ty_idx.0 as usize)
+            .ok_or(ValidationError::TypeIdxOutOfRange)?;
+
+        let parameter_size = ty.params.iter().fold(0, |sum, a_ty| sum + a_ty.size());
+        let return_size = ty.returns.iter().fold(0, |sum, a_ty| sum + a_ty.size());
+
+        if parameter_size > 0xFFFF {
+            return Err(ValidationError::FunctionParametersTooLarge);
+        }
+
+        if return_size > 0xFFFF {
+            return Err(ValidationError::FunctionReturnsTooLarge);
+        }
+
+        Ok(Func {
+            ty: ty_idx,
+            stack_usage: 0,
+            parameter_size: parameter_size as u16,
+            return_size: return_size as u16,
+            locals: Vec::zero(),
+            expr: Expr::zero(),
+        })
+    }
+}
+
+struct FunctionSection;
 impl FunctionSection {
-    pub fn read(wasm: &mut Reader) -> Result<Vec<TypeIdx>, ValidationError> {
-        wasm.read_vec(TypeIdx::read)
+    pub fn read(wasm: &mut Reader, module: &Module) -> Result<Vec<Func>, ValidationError> {
+        wasm.read_vec(|w| Func::read_func_section(w, module))
     }
 }
 
@@ -459,14 +486,21 @@ impl CodeSection {
     pub fn read<const N: usize>(
         wasm: &mut Reader,
         builder: &mut CodeBuilder<N>,
-        module: &Module,
-    ) -> Result<Vec<Func>, ValidationError> {
-        let mut i = 0u32;
-        wasm.read_vec(|r| {
-            let o = Func::read(r, builder, FuncIdx(i), module);
-            i += 1;
-            o
-        })
+        module: &mut Module,
+    ) -> Result<(), ValidationError> {
+        let n = wasm.read_u32()?;
+        if n as usize != module.functions.len() {
+            return Err(ValidationError::InvalidCodeSectionFunctionCount);
+        }
+
+        let mut functions = core::mem::replace(&mut module.functions, Vec::zero());
+        for f in &mut functions[..] {
+            f.read_from_code(wasm, module, builder)?;
+        }
+
+        let _ = core::mem::replace(&mut module.functions, functions);
+
+        Ok(())
     }
 }
 

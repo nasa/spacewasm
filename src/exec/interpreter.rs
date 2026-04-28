@@ -146,26 +146,44 @@ macro_rules! instruction {
             Ok(())
         }
     };
+    ($name:ident, unreachable) => {
+        fn $name(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+            // This instruction does not exist in the IR
+            let _ = state;
+            unreachable!()
+        }
+    };
+}
+
+struct Frame {
+    pub fp: u32,
+    pub pc: u32,
 }
 
 pub struct InterpreterState<'imports> {
     pc: JumpTarget,
+    fp: u32,
     sp: usize,
-    fp: usize,
     stack: Box<[u32]>,
     globals: Box<[u64]>,
-    imports: &'imports ModuleImports<'imports>,
+    module: Module<'imports>,
+}
+
+impl LocalVariable {
+    fn addr(&self, fp: u32) -> usize {
+        (fp as i32 + self.frame_offset) as usize
+    }
 }
 
 impl<'imports> InterpreterState<'imports> {
-    pub fn new(imports: &'imports ModuleImports<'imports>, stack_size: usize) -> Self {
+    pub fn new(module: Module<'imports>, stack_size: usize) -> Self {
         InterpreterState {
             pc: JumpTarget(0x0),
-            sp: stack_size,
-            fp: stack_size,
+            sp: 0x0,
+            fp: 0x0,
             stack: unsafe { Vec::new(1024).unwrap().assume_init() }.into_boxed_slice(),
             globals: Vec::new(10).unwrap().into_boxed_slice(),
-            imports,
+            module,
         }
     }
 
@@ -344,11 +362,7 @@ impl<'wasm, 'imports> BaseVisitor for Interpreter<'wasm, 'imports> {
         todo!()
     }
 
-    fn memory_grow(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        // This instruction should be disabled
-        let _ = state;
-        unreachable!()
-    }
+    instruction!(memory_grow, unreachable);
 
     fn i32_const(&self, n: i32, state: &mut Self::State) -> Result<(), Self::Error> {
         state.stack[state.sp] = n as u32;
@@ -655,29 +669,10 @@ impl<'wasm, 'imports> BaseVisitor for Interpreter<'wasm, 'imports> {
         Ok(())
     }
 
-    fn i32_reinterpret_f32(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        // This instruction does not exist in the IR
-        let _ = state;
-        unreachable!()
-    }
-
-    fn i64_reinterpret_f64(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        // This instruction does not exist in the IR
-        let _ = state;
-        unreachable!()
-    }
-
-    fn f32_reinterpret_i32(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        // This instruction does not exist in the IR
-        let _ = state;
-        unreachable!()
-    }
-
-    fn f64_reinterpret_i64(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        // This instruction does not exist in the IR
-        let _ = state;
-        unreachable!()
-    }
+    instruction!(i32_reinterpret_f32, unreachable);
+    instruction!(i64_reinterpret_f64, unreachable);
+    instruction!(f32_reinterpret_i32, unreachable);
+    instruction!(f64_reinterpret_i64, unreachable);
 }
 
 impl<'wasm, 'imports> IrVisitor for Interpreter<'wasm, 'imports> {
@@ -717,8 +712,7 @@ impl<'wasm, 'imports> IrVisitor for Interpreter<'wasm, 'imports> {
     }
 
     fn local_get(&self, l: LocalVariable, state: &mut Self::State) -> Result<(), Self::Error> {
-        let local_addr = state.fp + (l.frame_offset as usize);
-
+        let local_addr = l.addr(state.fp);
         match l.ty {
             ValType::I32 | ValType::F32 => {
                 // Read/write a single word
@@ -737,7 +731,7 @@ impl<'wasm, 'imports> IrVisitor for Interpreter<'wasm, 'imports> {
     }
 
     fn local_set(&self, l: LocalVariable, state: &mut Self::State) -> Result<(), Self::Error> {
-        let local_addr = state.fp + (l.frame_offset as usize);
+        let local_addr = l.addr(state.fp);
         match l.ty {
             ValType::I32 | ValType::F32 => {
                 // Read/write a single word
@@ -756,7 +750,7 @@ impl<'wasm, 'imports> IrVisitor for Interpreter<'wasm, 'imports> {
     }
 
     fn local_tee(&self, l: LocalVariable, state: &mut Self::State) -> Result<(), Self::Error> {
-        let local_addr = state.fp + (l.frame_offset as usize);
+        let local_addr = l.addr(state.fp);
         match l.ty {
             ValType::I32 | ValType::F32 => {
                 // Read/write a single word
@@ -775,7 +769,7 @@ impl<'wasm, 'imports> IrVisitor for Interpreter<'wasm, 'imports> {
     fn global_get(&self, g: GlobalVariable, state: &mut Self::State) -> Result<(), Self::Error> {
         match g.reference {
             GlobalVariableRef::Imported(i) => {
-                let gi = &state.imports.globals[i as usize];
+                let gi = &state.module.module_imports.globals[i as usize];
                 match gi.value.read().or(Err(InterpreterError::GlobalGetFailed))? {
                     Value::I32(i) => {
                         state.stack[state.sp] = i as u32;
@@ -826,7 +820,7 @@ impl<'wasm, 'imports> IrVisitor for Interpreter<'wasm, 'imports> {
     fn global_set(&self, g: GlobalVariable, state: &mut Self::State) -> Result<(), Self::Error> {
         match g.reference {
             GlobalVariableRef::Imported(i) => {
-                let gi = &state.imports.globals[i as usize];
+                let gi = &state.module.module_imports.globals[i as usize];
                 match g.ty {
                     ValType::I32 => {
                         state.sp -= 1;
