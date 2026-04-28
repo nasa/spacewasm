@@ -1,5 +1,4 @@
 use core::ops::{Deref, DerefMut};
-use core::ptr::NonNull;
 
 pub struct InnerVec<T: Sized> {
     pub ptr: *mut T,
@@ -51,8 +50,8 @@ impl<T: Sized> InnerVec<T> {
         }
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = T> {
-        unsafe { RawValIter::new(&self) }
+    pub fn iter(&self) -> impl Iterator<Item = &T> {
+        (**self).iter()
     }
 }
 
@@ -74,55 +73,6 @@ impl<T> DerefMut for InnerVec<T> {
         } else {
             unsafe { core::slice::from_raw_parts_mut(self.ptr, self.len as usize) }
         }
-    }
-}
-
-struct RawValIter<T> {
-    start: *const T,
-    end: *const T,
-}
-
-impl<T> RawValIter<T> {
-    unsafe fn new(slice: &[T]) -> Self {
-        unsafe {
-            RawValIter {
-                start: slice.as_ptr(),
-                end: if size_of::<T>() == 0 {
-                    ((slice.as_ptr() as usize) + slice.len()) as *const _
-                } else if slice.len() == 0 {
-                    slice.as_ptr()
-                } else {
-                    slice.as_ptr().add(slice.len())
-                },
-            }
-        }
-    }
-}
-
-impl<T> Iterator for RawValIter<T> {
-    type Item = T;
-    fn next(&mut self) -> Option<T> {
-        if self.start == self.end {
-            None
-        } else {
-            unsafe {
-                if size_of::<T>() == 0 {
-                    self.start = (self.start as usize + 1) as *const _;
-                    Some(core::ptr::read(NonNull::<T>::dangling().as_ptr()))
-                } else {
-                    let old_ptr = self.start;
-                    self.start = self.start.offset(1);
-                    Some(core::ptr::read(old_ptr))
-                }
-            }
-        }
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        let elem_size = size_of::<T>();
-        let len =
-            (self.end as usize - self.start as usize) / if elem_size == 0 { 1 } else { elem_size };
-        (len, Some(len))
     }
 }
 

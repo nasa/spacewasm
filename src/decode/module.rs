@@ -201,7 +201,6 @@ impl<'imports> Module<'imports> {
 
 /// All WASM sections ordered by the order expected in the file
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
-#[repr(u8)]
 pub enum SectionKind {
     Custom,
     Type,
@@ -494,7 +493,7 @@ impl CodeSection {
         }
 
         let mut functions = core::mem::replace(&mut module.functions, Vec::zero());
-        for f in &mut functions[..] {
+        for f in &mut functions {
             f.read_from_code(wasm, module, builder)?;
         }
 

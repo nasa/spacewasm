@@ -274,12 +274,9 @@ impl<'module, 'ctx, const N: usize> TextBuilder<'module, 'ctx, N> {
         let mut current_offset = 0;
         let mut current_index = 0;
 
-        let params = &signature.params[..];
-        let locals = &func.locals[..];
-
         // Check the parameters first
         // Frame offsets are negative
-        for (i, p_ty) in params.iter().enumerate() {
+        for (i, p_ty) in signature.params.iter().enumerate() {
             if x.0 == i as u32 {
                 return Ok(LocalVariable {
                     frame_offset: (current_offset / 4) as i32,
@@ -295,7 +292,7 @@ impl<'module, 'ctx, const N: usize> TextBuilder<'module, 'ctx, N> {
         current_offset += 8;
 
         // Now check the local variables
-        for (n, ty) in locals {
+        for (n, ty) in &func.locals {
             if current_index + n > x.0 {
                 // This bucket has the local variable
                 // Compute it's offset as a word index from the frame

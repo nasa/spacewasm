@@ -35,7 +35,7 @@ impl<T: Clone, A: Allocator + Clone> Clone for Vec<T, A> {
 
 impl<T: PartialEq, A: Allocator> PartialEq for Vec<T, A> {
     fn eq(&self, other: &Self) -> bool {
-        self.len() == other.len() && self.iter().zip(other.iter()).all(|(a, b)| a == b)
+        self[..] == other[..]
     }
 }
 
@@ -103,7 +103,7 @@ impl<T: Sized, A: Allocator> Vec<T, A> {
         self.inner.pop()
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = T> {
+    pub fn iter(&self) -> impl Iterator<Item = &T> {
         self.inner.iter()
     }
 
@@ -184,6 +184,22 @@ impl<T> IntoIterator for Vec<T, GlobalAllocator> {
             },
             alloc: GlobalAllocator,
         }
+    }
+}
+
+impl<'a, T, A: Allocator> IntoIterator for &'a Vec<T, A> {
+    type Item = &'a T;
+    type IntoIter = core::slice::Iter<'a, T>;
+    fn into_iter(self) -> Self::IntoIter {
+        (**self).iter()
+    }
+}
+
+impl<'a, T, A: Allocator> IntoIterator for &'a mut Vec<T, A> {
+    type Item = &'a mut T;
+    type IntoIter = core::slice::IterMut<'a, T>;
+    fn into_iter(self) -> Self::IntoIter {
+        (**self).iter_mut()
     }
 }
 
