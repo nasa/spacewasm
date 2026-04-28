@@ -1,4 +1,6 @@
-use spacewasm::{global_allocator, ExportDesc, FunctionImport, ModuleImports, ValType, Value};
+use spacewasm::{
+    global_allocator, ExportDesc, FunctionImport, Memory, ModuleImports, ValType, Value,
+};
 use spacewasm::{
     AllocError, Allocator, InnerVec, MemoryStatistics, PageAllocator, ReaderError, SectionKind,
     Stream,
@@ -176,14 +178,24 @@ fn main() {
                     100.0 * (module.final_page_offset as f64 / 256.0)
                 );
 
-                let mut state = spacewasm::InterpreterState::new(1024);
+                let mut state = spacewasm::InterpreterState::new(
+                    1024,
+                    Memory::from(
+                        unsafe { std::alloc::alloc(Layout::from_size_align(65536, 64).unwrap()) },
+                        65536,
+                    ),
+                );
+
                 match module.start {
                     None => {
-                        let f= module.exports.iter().find(|f| &f.name == "main").unwrap();
+                        let f = module.exports.iter().find(|f| &f.name == "main").unwrap();
                         match f.desc {
                             ExportDesc::Func(fi) => {
                                 let f = module.functions.get(fi.0 as usize).unwrap();
-                                std::eprintln!("fn main => {:?}", module.types.get(f.ty.0 as usize).unwrap());
+                                eprintln!(
+                                    "fn main => {:?}",
+                                    module.types.get(f.ty.0 as usize).unwrap()
+                                );
                                 state.invoke(f, &[Value::I32(0)]);
                             }
                             ExportDesc::Table(_) => {}
