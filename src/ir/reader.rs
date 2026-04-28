@@ -1,14 +1,19 @@
 use crate::*;
 
+#[derive(Debug, Clone)]
 pub enum IrReaderError {
     InvalidAddress,
     InvalidOpcode(u8),
     InvalidType,
 }
 
-pub struct Code<'wasm>(&'wasm Vec<Box<TextPage>>);
+pub struct Code(Vec<Box<TextPage>>);
 
-impl<'wasm> Code<'wasm> {
+impl Code {
+    pub fn new(code: Vec<Box<TextPage>>) -> Self {
+        Code(code)
+    }
+
     fn read(&self, address: JumpTarget) -> Result<u16, IrReaderError> {
         let page = address.page();
         let offset = address.offset();
@@ -45,10 +50,10 @@ impl<'wasm> Code<'wasm> {
         state: &mut S,
         pc: JumpTarget,
         visitor: V,
-    ) -> Result<u32, IrReaderError>
+    ) -> Result<u32, E>
     where
         V: IrVisitor<State = S, Error = E>,
-        IrReaderError: From<E>,
+        E: From<IrReaderError>,
     {
         let first = self.read(pc)?;
         let opcode = ((first >> 8) & 0xFF) as u8;
@@ -69,7 +74,7 @@ impl<'wasm> Code<'wasm> {
                     1 => ValType::I64,
                     2 => ValType::F32,
                     3 => ValType::F64,
-                    _ => return Err(IrReaderError::InvalidType),
+                    _ => return Err(IrReaderError::InvalidType.into()),
                 };
 
                 let frame_offset = self.read(pc + 1)? as i32;
@@ -85,7 +90,7 @@ impl<'wasm> Code<'wasm> {
                     1 => ValType::I64,
                     2 => ValType::F32,
                     3 => ValType::F64,
-                    _ => return Err(IrReaderError::InvalidType),
+                    _ => return Err(IrReaderError::InvalidType.into()),
                 };
 
                 let is_imported = (imm & 0xF0) != 0;
@@ -178,8 +183,26 @@ impl<'wasm> Code<'wasm> {
                 visitor.return_(imm, state)?;
                 Ok(1)
             }
-            CALL => instruction!(call, idx, FuncIdx),
-            CALL_INDIRECT => instruction!(call_indirect, idx, TypeIdx),
+            CALL => {
+                let (n, size) = if imm == 0xFF {
+                    (self.read(pc + 1)?, 2)
+                } else {
+                    (imm as u16, 1)
+                };
+
+                visitor.call(FuncIdx(n as u32), state)?;
+                Ok(size)
+            }
+            CALL_INDIRECT => {
+                let (n, size) = if imm == 0xFF {
+                    (self.read(pc + 1)?, 2)
+                } else {
+                    (imm as u16, 1)
+                };
+
+                visitor.call_indirect(TypeIdx(n as u32), state)?;
+                Ok(size)
+            }
 
             // Parametric instructions
             DROP => instruction!(drop),
@@ -388,7 +411,7 @@ impl<'wasm> Code<'wasm> {
             F32_REINTERPRET_I32 => instruction!(f32_reinterpret_i32),
             F64_REINTERPRET_I64 => instruction!(f64_reinterpret_i64),
 
-            _ => Err(IrReaderError::InvalidOpcode(opcode)),
+            _ => Err(IrReaderError::InvalidOpcode(opcode).into()),
         }
     }
 }

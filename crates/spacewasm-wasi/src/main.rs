@@ -175,6 +175,16 @@ fn main() {
                     module.final_page_offset,
                     100.0 * (module.final_page_offset as f64 / 256.0)
                 );
+
+                let mut state = spacewasm::InterpreterState::new(1024);
+
+                let interpreter =
+                    spacewasm::Interpreter::new(module.functions, module.module_imports);
+                let code = spacewasm::Code::new(module.text);
+
+                let r = interpreter.run(&code, &mut state, 10);
+
+                eprintln!("Interpreter finished {:?}", r)
             }
             Err(err) => {
                 eprintln!("Failed to parse: {:?}", err)

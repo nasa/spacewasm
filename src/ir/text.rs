@@ -258,8 +258,8 @@ impl<'module, 'ctx, const N: usize> TextBuilder<'module, 'ctx, N> {
         }
     }
 
-    pub fn context(&self) -> TextContext<'ctx> {
-        self.ctx
+    pub fn context(&self) -> &TextContext<'ctx> {
+        &self.ctx
     }
 
     /// Compute the offset in 32-bit words of a local variable given its index

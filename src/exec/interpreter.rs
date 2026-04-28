@@ -1,5 +1,5 @@
 use crate::*;
-use core::marker::PhantomData;
+use core::ops::AddAssign;
 
 macro_rules! instruction {
     ($name:ident, f32 -> f32, $f:ident, $( $t:tt )*) => {
@@ -155,13 +155,12 @@ macro_rules! instruction {
     };
 }
 
-pub struct InterpreterState<'module> {
+pub struct InterpreterState {
     pc: JumpTarget,
     fp: u32,
     sp: usize,
     stack: Box<[u32]>,
     globals: Box<[u64]>,
-    module: &'module Module<'module>,
 }
 
 impl LocalVariable {
@@ -170,15 +169,14 @@ impl LocalVariable {
     }
 }
 
-impl<'module> InterpreterState<'module> {
-    pub fn new(module: &'module Module<'module>, stack_size: usize) -> Self {
+impl InterpreterState {
+    pub fn new(stack_size: usize) -> Self {
         InterpreterState {
             pc: JumpTarget(0x0),
             sp: 0x0,
             fp: 0x0,
             stack: unsafe { Vec::new(stack_size as u32).unwrap().assume_init() }.into_boxed_slice(),
             globals: Vec::new(10).unwrap().into_boxed_slice(),
-            module,
         }
     }
 
@@ -206,22 +204,57 @@ impl<'module> InterpreterState<'module> {
     }
 }
 
-pub struct Interpreter<'wasm, 'module> {
-    code: Code<'wasm>,
-    phantom: PhantomData<&'module ()>,
+pub struct Interpreter<'module> {
+    functions: Vec<Func>,
+    imports: ModuleImports<'module>,
 }
 
+impl AddAssign<u32> for JumpTarget {
+    fn add_assign(&mut self, rhs: u32) {
+        self.0.add_assign(rhs);
+    }
+}
+
+impl<'module> Interpreter<'module> {
+    pub fn new(functions: Vec<Func>, imports: ModuleImports<'module>) -> Self {
+        Interpreter { functions, imports }
+    }
+
+    pub fn run(
+        &self,
+        code: &Code,
+        state: &mut InterpreterState,
+        n_instructions: usize,
+    ) -> Result<(), InterpreterError> {
+        // Run up to n instructions
+        for _ in 0..n_instructions {
+            let size = code.visit_instruction(state, state.pc, self)?;
+            state.pc += size;
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone)]
 pub enum InterpreterError {
     Trap,
     Finished,
     TableLookupFailed,
     GlobalGetFailed,
     GlobalSetFailed,
+    ReaderError(IrReaderError),
 }
 
-impl<'wasm, 'module> BaseVisitor for Interpreter<'wasm, 'module> {
+impl From<IrReaderError> for InterpreterError {
+    fn from(err: IrReaderError) -> Self {
+        InterpreterError::ReaderError(err)
+    }
+}
+
+impl<'module> BaseVisitor for &'module Interpreter<'module> {
     type Error = InterpreterError;
-    type State = InterpreterState<'module>;
+    type State = InterpreterState;
 
     fn finish(&self, _: &mut Self::State) -> Result<(), Self::Error> {
         Ok(())
@@ -658,7 +691,7 @@ impl<'wasm, 'module> BaseVisitor for Interpreter<'wasm, 'module> {
     instruction!(f64_reinterpret_i64, unreachable);
 }
 
-impl<'wasm, 'module> IrVisitor for Interpreter<'wasm, 'module> {
+impl<'module> IrVisitor for &'module Interpreter<'module> {
     fn if_(&self, false_address: JumpTarget, state: &mut Self::State) -> Result<(), Self::Error> {
         let v = state.pop_i32();
         if v == 0 {
@@ -723,7 +756,7 @@ impl<'wasm, 'module> IrVisitor for Interpreter<'wasm, 'module> {
     fn call(&self, x: FuncIdx, state: &mut Self::State) -> Result<(), Self::Error> {
         // TODO(tumbar) Check stack usage
         // TODO(tumbar) Figure out host functions
-        let f = &state.module.functions[x.0 as usize];
+        let f = &self.functions[x.0 as usize];
 
         // The arguments are already at the top of the stack
         // We need to push the frame pointer and the return instruction pointer to the stack
@@ -812,7 +845,7 @@ impl<'wasm, 'module> IrVisitor for Interpreter<'wasm, 'module> {
     fn global_get(&self, g: GlobalVariable, state: &mut Self::State) -> Result<(), Self::Error> {
         match g.reference {
             GlobalVariableRef::Imported(i) => {
-                let gi = &state.module.module_imports.globals[i as usize];
+                let gi = &self.imports.globals[i as usize];
                 match gi.value.read().or(Err(InterpreterError::GlobalGetFailed))? {
                     Value::I32(i) => {
                         state.stack[state.sp] = i as u32;
@@ -863,7 +896,7 @@ impl<'wasm, 'module> IrVisitor for Interpreter<'wasm, 'module> {
     fn global_set(&self, g: GlobalVariable, state: &mut Self::State) -> Result<(), Self::Error> {
         match g.reference {
             GlobalVariableRef::Imported(i) => {
-                let gi = &state.module.module_imports.globals[i as usize];
+                let gi = &self.imports.globals[i as usize];
                 match g.ty {
                     ValType::I32 => {
                         state.sp -= 1;
