@@ -89,7 +89,7 @@ macro_rules! instruction {
             state.sp -= 3;
             let $b = state.get_u64(state.sp + 1) as i64;
             let $a = state.get_u64(state.sp - 1) as i64;
-            state.write_u32(state.sp, if $($t)* { 1 } else { 0 });
+            state.write_u32(state.sp - 1, if $($t)* { 1 } else { 0 });
             Ok(())
         }
     };
@@ -98,7 +98,7 @@ macro_rules! instruction {
             state.sp -= 3;
             let $b = state.get_f64(state.sp + 1);
             let $a = state.get_f64(state.sp - 1);
-            state.write_u32(state.sp, if $($t)* { 1 } else { 0 });
+            state.write_u32(state.sp - 1, if $($t)* { 1 } else { 0 });
             Ok(())
         }
     };
@@ -259,7 +259,7 @@ impl<'module> Interpreter<'module> {
     ) -> Result<(), InterpreterError> {
         // Run up to n instructions
         for _ in 0..n_instructions {
-            let size = code.visit_instruction(state, state.pc, Inspector { v: &self })?;
+            let size = code.visit_instruction(state, state.pc, Inspector { v: self })?;
             state.pc += size;
         }
 
@@ -298,7 +298,7 @@ impl From<HostFunctionPause> for InterpreterError {
 }
 
 #[allow(unused_variables)]
-impl<'module> BaseVisitor for &'module Interpreter<'module> {
+impl<'module> BaseVisitor for Interpreter<'module> {
     type Error = InterpreterError;
     type State = InterpreterState;
 
@@ -806,7 +806,7 @@ impl<'module> BaseVisitor for &'module Interpreter<'module> {
     instruction!(f64_reinterpret_i64, unreachable);
 }
 
-impl<'module> IrVisitor for &'module Interpreter<'module> {
+impl<'module> IrVisitor for Interpreter<'module> {
     fn if_(&self, false_address: JumpTarget, state: &mut Self::State) -> Result<(), Self::Error> {
         state.sp -= 1;
         let v = state.stack[state.sp];
