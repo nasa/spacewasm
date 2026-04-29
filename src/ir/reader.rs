@@ -1,11 +1,11 @@
-extern crate std;
 use crate::*;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CodeReaderStopCondition {
     InvalidAddress,
     InvalidOpcode(u8),
     InvalidType,
+    InvalidCallType(u8),
     Finished,
 }
 
@@ -60,9 +60,6 @@ impl Code {
         let first = self.read(pc)?;
         let opcode = (first >> 8) as u8;
         let imm = (first & 0xFF) as u8;
-
-        let opcode_name = opcode_to_string(opcode);
-        std::eprintln!("{opcode_name} {imm}");
 
         macro_rules! instruction {
             // Instruction with no operands
@@ -188,14 +185,16 @@ impl Code {
                 Ok(1)
             }
             CALL => {
-                let (n, size) = if imm == 0xFF {
-                    (self.read(pc + 1)?, 2)
+                let idx = self.read(pc + 1)?;
+                if imm == 0 {
+                    visitor.call(idx, state)?;
+                } else if idx == 1 {
+                    visitor.call_host(idx, state)?;
                 } else {
-                    (imm as u16, 1)
+                    return Err(CodeReaderStopCondition::InvalidCallType(imm).into());
                 };
 
-                visitor.call(FuncIdx(n as u32), state)?;
-                Ok(size)
+                Ok(3)
             }
             CALL_INDIRECT => {
                 let (n, size) = if imm == 0xFF {

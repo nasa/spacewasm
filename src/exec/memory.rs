@@ -1,3 +1,5 @@
+extern crate std;
+
 use crate::{Allocator, GlobalAllocator};
 use core::alloc::Layout;
 
@@ -23,7 +25,8 @@ impl Memory {
 
     #[inline]
     fn check_in_bounds(&self, addr: usize, size: usize) -> Result<(), MemoryOutOfBounds> {
-        if addr + size >= self.size {
+        if addr + size > self.size {
+            std::eprintln!("OOB addr={addr}, size={size}");
             Err(MemoryOutOfBounds)
         } else {
             Ok(())

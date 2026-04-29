@@ -1,3 +1,6 @@
+extern crate std;
+use core::ops::ControlFlow;
+
 use crate::{Box, ImportDesc, Module, Reader, ValType, ValidationError, Value};
 
 pub struct GlobalValueError;
@@ -31,20 +34,69 @@ impl<'imports> GlobalImport<'imports> {
     }
 }
 
-pub trait Args {
-    /// Get an argument's value
-    fn get(&self, idx: usize) -> Value;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostFunctionPause {
+    /// Halt execution due to an error
+    Trap,
+
+    /// Halt execution to perform work asynchronously
+    Pause,
 }
 
-pub struct FunctionImport<'imports> {
-    pub module: &'imports str,
-    pub name: &'imports str,
-    pub params: &'imports [ValType],
-    pub returns: &'imports [ValType],
-    pub f: fn(a: &dyn Args) -> Option<Value>,
+pub type HostFunctionResult = ControlFlow<HostFunctionPause, Option<Value>>;
+
+pub struct HostFunction<'imports> {
+    module: &'imports str,
+    name: &'imports str,
+    params: &'imports [ValType],
+    returns: &'imports [ValType],
+    f: fn(&[Value]) -> HostFunctionResult,
+
+    param_size: u16,
+    return_size: u16,
 }
 
-impl<'imports> FunctionImport<'imports> {
+impl<'imports> HostFunction<'imports> {
+    pub fn new(
+        module: &'imports str,
+        name: &'imports str,
+        params: &'imports [ValType],
+        returns: &'imports [ValType],
+        f: fn(a: &[Value]) -> HostFunctionResult,
+    ) -> Self {
+        let mut o = HostFunction {
+            module,
+            name,
+            params,
+            returns,
+            f,
+            param_size: 0,
+            return_size: 0,
+        };
+
+        let ps = o.params.iter().fold(0, |n, i| n + i.size());
+        assert!(ps <= 0xFFFF);
+        o.param_size = ps as u16;
+
+        let rs = o.returns.iter().fold(0, |n, i| n + i.size());
+        assert!(rs <= 0xFFFF);
+        o.return_size = rs as u16;
+
+        o
+    }
+
+    pub fn params(&self) -> &'imports [ValType] {
+        self.params
+    }
+
+    pub fn param_size(&self) -> usize {
+        self.param_size as usize
+    }
+
+    pub fn call(&self, a: &[Value]) -> HostFunctionResult {
+        (self.f)(a)
+    }
+
     pub fn matches(&self, module: &str, name: &str) -> bool {
         self.module == module && self.name == name
     }
@@ -64,7 +116,7 @@ impl<'imports> MemoryImport<'imports> {
 
 pub struct ModuleImports<'imports> {
     pub globals: &'imports [GlobalImport<'imports>],
-    pub functions: &'imports [FunctionImport<'imports>],
+    pub functions: &'imports [HostFunction<'imports>],
     pub memories: &'imports [MemoryImport<'imports>],
 }
 
@@ -98,6 +150,7 @@ impl Import {
                 let wasm_returns = &ty.returns[..];
 
                 // Look up the global import that matches the module name and symbol name
+                std::eprintln!("function import {module_name}::{name}");
                 let (index, function_import) = module
                     .module_imports
                     .functions
@@ -117,6 +170,16 @@ impl Import {
                 {
                     Ok(Import::Func(index as u16))
                 } else {
+                    std::eprintln!(
+                        "import {module_name}::{name} params: {:?}, returns {:?}",
+                        function_import.params,
+                        function_import.returns
+                    );
+                    std::eprintln!(
+                        "wasm expected params: {:?}, returns {:?}",
+                        wasm_params,
+                        wasm_returns
+                    );
                     Err(ValidationError::FunctionImportTypeMismatch)
                 }
             }

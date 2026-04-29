@@ -1,32 +1,35 @@
+extern crate std;
+
 use crate::{
-    FuncIdx, GlobalIdx, JumpTarget, LabelIdx, LocalIdx, MemArg, ResultType, TypeIdx, ValType,
+    BaseVisitor, FuncIdx, GlobalIdx, GlobalVariable, IrVisitor, JumpTarget, LabelIdx, LocalIdx,
+    LocalVariable, MemArg, ResultType, TypeIdx, WasmVisitor,
 };
 
-/// A convenience macro for defining the visitor function for a decoded
-/// WebAssembly instruction from any intermediate representation.
 macro_rules! visit_fn {
     // No additional parameters
     ($name:ident) => {
-        fn $name(&self, state: &mut Self::State) -> Result<(), Self::Error>;
+        fn $name(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+            std::eprintln!("{}()", stringify!($name));
+            self.v.$name(state)
+        }
     };
 
     // With additional parameters
     ($name:ident, $($param:ident : $ty:ty),+) => {
-        fn $name(&self, $($param: $ty),+, state: &mut Self::State) -> Result<(), Self::Error>;
+        fn $name(&self, $($param: $ty),+, state: &mut Self::State) -> Result<(), Self::Error> {
+            std::eprintln!("{}{:?}", stringify!($name), ($((stringify!($param), &$param),)+));
+            self.v.$name($($param,)+ state)
+        }
     };
 }
 
-/// An abstraction over WASM IR and internal IR.
-/// This trait can be used to index, compile and execute either form of IR
-/// with the same common implementation. The decoding and traversal code will
-/// call into this visitor and is IR specific. This trait is purely for operating
-/// on decoded WebAssembly instructions.
-///
-/// Note: This visitor does not handle the control-flow instructions since those are
-///       IR-specific. See [WasmVisitor] and [IrVisitor]
-pub trait BaseVisitor {
-    type Error;
-    type State;
+pub struct Inspector<'a, S, E, T: BaseVisitor<State = S, Error = E>> {
+    pub v: &'a T,
+}
+
+impl<'a, S, E, T: BaseVisitor<State = S, Error = E>> BaseVisitor for Inspector<'a, S, E, T> {
+    type Error = E;
+    type State = S;
 
     // Exit the expression
     visit_fn!(finish);
@@ -220,9 +223,9 @@ pub trait BaseVisitor {
     visit_fn!(f64_reinterpret_i64);
 }
 
-/// An abstraction over WASM Bytecode.
-/// Used to implement validation and compilation of WASM bytecode.
-pub trait WasmVisitor: BaseVisitor {
+impl<'a, S, E, T: BaseVisitor<State = S, Error = E> + WasmVisitor> WasmVisitor
+    for Inspector<'a, S, E, T>
+{
     visit_fn!(enter_block, block_type: ResultType);
     visit_fn!(exit_block);
     visit_fn!(loop_, block_type: ResultType);
@@ -244,44 +247,20 @@ pub trait WasmVisitor: BaseVisitor {
     visit_fn!(global_set, x: GlobalIdx);
 }
 
-#[derive(Debug)]
-pub struct LocalVariable {
-    // Offset of the local variable in 32-bit words
-    // Function parameters are negative relative to the FP
-    // Locals are positive relative to FP + 2
-    pub frame_offset: i16,
-
-    // Variable's type
-    pub ty: ValType,
-}
-
-#[derive(Debug)]
-pub enum GlobalVariableRef {
-    Imported(u32),
-    Internal(u32),
-}
-
-#[derive(Debug)]
-pub struct GlobalVariable {
-    // The index of the global variable
-    pub reference: GlobalVariableRef,
-    pub ty: ValType,
-    pub mutable: bool,
-}
-
-#[derive(Debug)]
-pub enum FuncRef {
-    HostFunc(u16),
-    Func(u16),
-}
-
-/// An abstraction over IR Bytecode.
-/// Used to implement the interpreter.
-pub trait IrVisitor: BaseVisitor {
+impl<'a, S, E, T: BaseVisitor<State = S, Error = E> + IrVisitor> IrVisitor
+    for Inspector<'a, S, E, T>
+{
     visit_fn!(if_, false_address: JumpTarget);
     visit_fn!(br, addr: JumpTarget);
     visit_fn!(br_if, true_address: JumpTarget);
-    visit_fn!(br_table, cases: impl FnOnce(u16) -> Result<JumpTarget, ()>);
+    fn br_table(
+        &self,
+        cases: impl FnOnce(u16) -> Result<JumpTarget, ()>,
+        state: &mut Self::State,
+    ) -> Result<(), Self::Error> {
+        std::eprintln!("br_table()");
+        self.v.br_table(cases, state)
+    }
 
     visit_fn!(return_, return_size: u8);
     visit_fn!(call, x: u16);

@@ -1,13 +1,12 @@
 use spacewasm::{
-    global_allocator, ExportDesc, FunctionImport, Memory, ModuleImports, ValType, Value,
-};
-use spacewasm::{
-    AllocError, Allocator, InnerVec, MemoryStatistics, PageAllocator, ReaderError, SectionKind,
-    Stream,
+    global_allocator, AllocError, Allocator, ExportDesc, FuncRef, HostFunction, InnerVec, Memory,
+    MemoryStatistics, ModuleImports, PageAllocator, ReaderError, SectionKind, Stream, ValType,
+    Value,
 };
 use std::alloc::Layout;
 use std::collections::{HashMap, VecDeque};
 use std::io::Read;
+use std::ops::ControlFlow;
 
 struct RustSystemAllocator;
 unsafe impl Allocator for RustSystemAllocator {
@@ -87,48 +86,52 @@ fn main() {
             ModuleImports {
                 globals: &[],
                 functions: &[
-                    FunctionImport {
-                        module: "fprime_core",
-                        name: "panic",
-                        params: &[ValType::I32, ValType::I32],
-                        returns: &[],
-                        f: |a| {
+                    HostFunction::new(
+                        "fprime_core",
+                        "panic",
+                        &[ValType::I32, ValType::I32],
+                        &[],
+                        |a| {
                             eprintln!("PANIC {:?} {:?}", a.get(0), a.get(1));
-                            None
+                            ControlFlow::Continue(None)
                         },
-                    },
-                    FunctionImport {
-                        module: "fprime_core",
-                        name: "rsleep",
-                        params: &[ValType::I64],
-                        returns: &[],
-                        f: |a| {
-                            eprintln!("RSLEEP {:?}", a.get(0));
-                            None
-                        },
-                    },
-                    FunctionImport {
-                        module: "fprime_core",
-                        name: "command",
-                        params: &[ValType::I32, ValType::I32],
-                        returns: &[ValType::I32],
-                        f: |a| {
+                    ),
+                    HostFunction::new("fprime_core", "rsleep", &[ValType::I64], &[], |a| {
+                        eprintln!("RSLEEP {:?}", a.get(0));
+                        ControlFlow::Continue(None)
+                    }),
+                    HostFunction::new(
+                        "fprime_core",
+                        "command",
+                        &[ValType::I32, ValType::I32],
+                        &[ValType::I32],
+                        |a| {
                             eprintln!("COMMAND {:?} {:?}", a.get(0), a.get(1));
-                            Some(spacewasm::Value::I32(0))
+                            ControlFlow::Continue(Some(Value::I32(0)))
                         },
-                    },
-                    FunctionImport {
-                        module: "fprime_core",
-                        name: "telemetry",
-                        params: &[
+                    ),
+                    HostFunction::new(
+                        "fprime_core",
+                        "message",
+                        &[ValType::I32, ValType::I32],
+                        &[],
+                        |a| {
+                            eprintln!("COMMAND {:?} {:?}", a.get(0), a.get(1));
+                            ControlFlow::Continue(None)
+                        },
+                    ),
+                    HostFunction::new(
+                        "fprime_core",
+                        "telemetry",
+                        &[
                             ValType::I32,
                             ValType::I32,
                             ValType::I32,
                             ValType::I32,
                             ValType::I32,
                         ],
-                        returns: &[ValType::I32],
-                        f: |a| {
+                        &[ValType::I32],
+                        |a| {
                             eprintln!(
                                 "TELEMETRY {:?} {:?} {:?} {:?} {:?}",
                                 a.get(0),
@@ -137,9 +140,9 @@ fn main() {
                                 a.get(3),
                                 a.get(4),
                             );
-                            Some(spacewasm::Value::I32(0))
+                            ControlFlow::Continue(Some(Value::I32(0)))
                         },
-                    },
+                    ),
                 ],
                 memories: &[],
             },
@@ -178,6 +181,19 @@ fn main() {
                     100.0 * (module.final_page_offset as f64 / 256.0)
                 );
 
+                eprintln!("Exports:");
+                for i in &module.exports {
+                    match &i.desc {
+                        ExportDesc::Func(fi) => {
+                            eprintln!("Function: {} {:?}", &i.name, fi);
+                        }
+                        ExportDesc::Table(_) => {}
+                        ExportDesc::Mem(_) => {}
+                        ExportDesc::Global(_) => {}
+                    }
+                }
+                eprintln!("====");
+
                 let mut state = spacewasm::InterpreterState::new(
                     1024,
                     Memory::from(
@@ -191,7 +207,10 @@ fn main() {
                         let f = module.exports.iter().find(|f| &f.name == "main").unwrap();
                         match f.desc {
                             ExportDesc::Func(fi) => {
-                                let f = module.functions.get(fi.0 as usize).unwrap();
+                                let FuncRef::Func(fdi) = module.get_func_ref(fi).unwrap() else {
+                                    panic!("Invalid main function ref")
+                                };
+                                let f = module.functions.get(fdi as usize).unwrap();
                                 eprintln!(
                                     "fn main => {:?}",
                                     module.types.get(f.ty.0 as usize).unwrap()
@@ -205,7 +224,7 @@ fn main() {
                     }
                     Some(fi) => {
                         let f = module.functions.get(fi.0 as usize).unwrap();
-                        state.invoke(f, &[Value::I32(0)]);
+                        state.invoke(f, &[]);
                     }
                 }
 

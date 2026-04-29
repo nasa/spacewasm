@@ -38,7 +38,7 @@ impl Default for TextPage {
 /// Format: `[reserved:2][page_index:22][offset:8]`
 /// - `page_index`: which page (0-4M pages supported)
 /// - `offset`: word index within the page (0-255)
-#[derive(PartialEq, Eq, Clone, Copy)]
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub struct JumpTarget(pub u32);
 
 impl core::ops::Add<u32> for JumpTarget {
@@ -260,6 +260,10 @@ impl<'module, 'ctx, const N: usize> TextBuilder<'module, 'ctx, N> {
 
     pub fn context(&self) -> &TextContext<'ctx> {
         &self.ctx
+    }
+
+    pub fn get_func_ref(&self, x: FuncIdx) -> Result<FuncRef, ValidationError> {
+        self.module.get_func_ref(x)
     }
 
     /// Compute the offset in 32-bit words of a local variable given its index
@@ -555,6 +559,10 @@ impl<'module, 'ctx, const N: usize> TextBuilder<'module, 'ctx, N> {
     /// Format: `[opcode:8][0x00:8]`
     pub(crate) fn push_no_operand(&mut self, op: u8) -> Result<(), AllocError> {
         self.code.push((op as u16) << 8)
+    }
+
+    pub(crate) fn push(&mut self, word: u16) -> Result<(), AllocError> {
+        self.code.push(word)
     }
 
     /// Emit an instruction with an 8-bit operand

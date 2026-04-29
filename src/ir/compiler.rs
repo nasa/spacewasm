@@ -114,7 +114,19 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
     }
 
     fn call(&self, x: FuncIdx, state: &mut Self::State) -> Result<(), Self::Error> {
-        state.push_8_or_16(CALL, x.0)
+        let f_ref = state.get_func_ref(x)?;
+        match f_ref {
+            FuncRef::HostFunc(i) => {
+                state.push_with_operand(CALL, 1)?;
+                state.push(i)?;
+            }
+            FuncRef::Func(i) => {
+                state.push_with_operand(CALL, 0)?;
+                state.push(i)?;
+            }
+        }
+
+        Ok(())
     }
 
     fn call_indirect(&self, x: TypeIdx, state: &mut Self::State) -> Result<(), Self::Error> {

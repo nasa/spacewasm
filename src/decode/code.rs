@@ -1,5 +1,6 @@
 use crate::*;
 
+#[derive(Clone)]
 pub struct Expr(pub JumpTarget);
 
 impl Expr {
@@ -12,12 +13,23 @@ impl Expr {
         builder: &mut CodeBuilder<N>,
         module: &Module,
         ctx: TextContext<'_>,
+        debug: bool,
     ) -> Result<Self, ValidationError> {
         let e = Expr(builder.pc());
-        wasm.read_code(
-            &Compiler::<'_, N>::new(),
-            &mut TextBuilder::new(builder, module, ctx),
-        )?;
+        if debug {
+            wasm.read_code(
+                &Inspector {
+                    v: &Compiler::<'_, N>::new(),
+                },
+                &mut TextBuilder::new(builder, module, ctx),
+            )?;
+        } else {
+            wasm.read_code(
+                &Compiler::<'_, N>::new(),
+                &mut TextBuilder::new(builder, module, ctx),
+            )?;
+        }
+
         Ok(e)
     }
 }
@@ -28,6 +40,7 @@ impl From<Expr> for JumpTarget {
     }
 }
 
+#[derive(Clone)]
 pub struct Func {
     /// Function signature.
     pub ty: TypeIdx,
@@ -53,17 +66,20 @@ pub struct Func {
     pub expr: Expr,
 }
 
-impl Func {
-    pub fn read_from_code<const N: usize>(
+impl<'a> Module<'a> {
+    pub fn read_function_code<const N: usize>(
         &mut self,
         wasm: &mut Reader,
-        module: &Module,
         builder: &mut CodeBuilder<N>,
+        i: usize,
     ) -> Result<(), ValidationError> {
         let size = wasm.read_u32()?;
         let start = wasm.offset();
 
-        self.locals = wasm.read_vec(|w| {
+        let empty_f = self.functions[i].clone();
+        let mut f = core::mem::replace(&mut self.functions[i], empty_f);
+
+        f.locals = wasm.read_vec(|w| {
             let n = w.read_u32()?;
             let t = ValType::read(w)?;
 
@@ -75,7 +91,7 @@ impl Func {
         })?;
 
         // Compute the local size in words
-        let size_in_words = self
+        let size_in_words = f
             .locals
             .iter()
             .fold(0, |sum, (n, ty)| sum + (*n as usize) * ty.size())
@@ -85,7 +101,10 @@ impl Func {
             return Err(ValidationError::TooManyLocals);
         }
 
-        self.expr = Expr::read(wasm, builder, module, TextContext::Function(self))?;
+        f.local_size = size_in_words as u16;
+        f.expr = Expr::read(wasm, builder, self, TextContext::Function(&f), i == 4)?;
+
+        let _ = core::mem::replace(&mut self.functions[i], f);
 
         let end = wasm.offset();
         if (end - start) as u32 != size {
@@ -96,6 +115,7 @@ impl Func {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct MemArg {
     pub align: u32,
     pub offset: u32,

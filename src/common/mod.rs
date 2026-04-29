@@ -1,2 +1,5 @@
 mod visitor;
 pub use visitor::*;
+
+mod inspector;
+pub use inspector::*;

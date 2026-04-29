@@ -197,6 +197,34 @@ impl<'imports> Module<'imports> {
 
         Ok(())
     }
+
+    pub fn get_func_ref(&self, x: FuncIdx) -> Result<FuncRef, ValidationError> {
+        // Check if this function index is a host function or an internal function
+        let mut n = 0;
+        for f in self.imports.iter() {
+            match f {
+                Import::Func(fi) => {
+                    if x.0 == n {
+                        // We are at the proper index, this is our function
+                        // This import has already been resolved to an embedded function
+                        return Ok(FuncRef::HostFunc(*fi));
+                    }
+
+                    n += 1;
+                }
+                _ => {}
+            }
+        }
+
+        // 'n' is the number of imported functions which offset the local function index
+        let i = (x.0 - n) as usize;
+
+        if i >= self.functions.len() {
+            Err(ValidationError::FunctionIdxOutOfRange)
+        } else {
+            Ok(FuncRef::Func(i as u16))
+        }
+    }
 }
 
 /// All WASM sections ordered by the order expected in the file
@@ -390,7 +418,7 @@ impl Global {
         module: &Module,
     ) -> Result<Self, ValidationError> {
         let type_ = GlobalType::read(wasm)?;
-        let init = Expr::read(wasm, builder, module, TextContext::Constant)?;
+        let init = Expr::read(wasm, builder, module, TextContext::Constant, false)?;
         Ok(Global { type_, init })
     }
 }
@@ -458,7 +486,7 @@ impl Element {
         module: &Module,
     ) -> Result<Self, ValidationError> {
         let table = TableIdx::read(wasm)?;
-        let offset = Expr::read(wasm, builder, module, TextContext::Constant)?;
+        let offset = Expr::read(wasm, builder, module, TextContext::Constant, false)?;
         let init = wasm.read_vec(FuncIdx::read)?;
 
         Ok(Element {
@@ -493,12 +521,9 @@ impl CodeSection {
             return Err(ValidationError::InvalidCodeSectionFunctionCount);
         }
 
-        let mut functions = core::mem::replace(&mut module.functions, Vec::zero());
-        for f in &mut functions {
-            f.read_from_code(wasm, module, builder)?;
+        for i in 0..n as usize {
+            module.read_function_code(wasm, builder, i)?;
         }
-
-        let _ = core::mem::replace(&mut module.functions, functions);
 
         Ok(())
     }
@@ -517,7 +542,7 @@ impl Data {
         module: &Module,
     ) -> Result<Self, ValidationError> {
         let mem = MemIdx::read(wasm)?;
-        let offset = Expr::read(wasm, builder, module, TextContext::Constant)?;
+        let offset = Expr::read(wasm, builder, module, TextContext::Constant, false)?;
         let init = wasm.read_vec(|w| w.read_u8())?;
 
         Ok(Data { mem, offset, init })

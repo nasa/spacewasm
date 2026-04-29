@@ -1,5 +1,7 @@
 use crate::util::Vec;
 use crate::{Allocator, GlobalAllocator, ValidationError};
+use core::fmt;
+use core::fmt::Formatter;
 use core::ops::Deref;
 
 #[derive(PartialEq, Eq)]
@@ -13,6 +15,12 @@ impl TryFrom<&[u8]> for String<GlobalAllocator> {
             Ok(s) => s.try_into(),
             Err(_) => Err(ValidationError::MalformedUtf8),
         }
+    }
+}
+
+impl<A: Allocator> fmt::Display for String<A> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.write_str(&self)
     }
 }
 
