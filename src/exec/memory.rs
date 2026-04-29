@@ -8,6 +8,7 @@ pub struct Memory {
     size: usize,
 }
 
+#[derive(Debug)]
 pub struct MemoryOutOfBounds;
 
 impl Memory {

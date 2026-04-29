@@ -315,17 +315,19 @@ impl<'module> BaseVisitor for &'module Interpreter<'module> {
     }
 
     fn drop(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        todo!()
+        state.sp -= 1;
+        Ok(())
     }
 
     fn select(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        // state.sp -= 1;
-        // let c = stack.;
-        // let val2 = state.stack[state.sp];
-        // let val1 = state.stack[state.sp - 1];
-        // state.stack[state.sp - 1] = if c != 0 { val1 } else { val2 };
-        // Ok(())
-        todo!()
+        state.sp -= 1;
+        let c = state.stack[state.sp];
+        let val2 = state.stack[state.sp - 1];
+        let val1 = state.stack[state.sp - 2];
+        state.sp -= 2;
+        state.stack[state.sp] = if c != 0 { val1 } else { val2 };
+        state.sp += 1;
+        Ok(())
     }
 
     fn i32_load(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
@@ -1121,3 +1123,7 @@ impl<'module> IrVisitor for &'module Interpreter<'module> {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "interpreter_tests.rs"]
+mod interpreter_tests;

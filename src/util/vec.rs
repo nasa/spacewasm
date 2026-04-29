@@ -45,9 +45,31 @@ impl<T: Sized> Vec<T, GlobalAllocator> {
     pub fn new(capacity: u32) -> Result<Vec<T>, AllocError> {
         Vec::new_in(GlobalAllocator, capacity)
     }
+
+    pub fn new_from(ptr: *mut T, capacity: u32) -> Vec<T> {
+        Vec {
+            inner: InnerVec {
+                ptr,
+                capacity,
+                len: 0,
+            },
+            alloc: GlobalAllocator,
+        }
+    }
 }
 
 impl<T: Sized, A: Allocator> Vec<T, A> {
+    pub fn new_from_with_alloc(ptr: *mut T, capacity: u32, alloc: A) -> Vec<T, A> {
+        Vec {
+            inner: InnerVec {
+                ptr,
+                capacity,
+                len: 0,
+            },
+            alloc,
+        }
+    }
+
     pub fn new_in(alloc: A, capacity: u32) -> Result<Vec<T, A>, AllocError> {
         // We don't want to handle ZST
         const {
