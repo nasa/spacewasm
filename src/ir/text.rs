@@ -221,11 +221,6 @@ impl<const N: usize> CodeBuilder<N> {
     }
 }
 
-pub enum TextContext<'f> {
-    Constant,
-    Function(&'f Func),
-}
-
 /// High-level builder for compiled IR that handles control flow and instruction encoding.
 ///
 /// This builder manages:
@@ -238,7 +233,7 @@ pub enum TextContext<'f> {
 pub struct TextBuilder<'module, 'ctx, const N: usize> {
     code: &'module mut CodeBuilder<N>,
     module: &'module Module<'module>,
-    ctx: TextContext<'ctx>,
+    func: &'ctx Func,
     control_frames: StaticVec<ControlFrame, 64>,
     else_frames: StaticVec<JumpTarget, 64>,
 }
@@ -247,19 +242,19 @@ impl<'module, 'ctx, const N: usize> TextBuilder<'module, 'ctx, N> {
     pub fn new(
         code: &'module mut CodeBuilder<N>,
         module: &'module Module,
-        ctx: TextContext<'ctx>,
+        func: &'ctx Func,
     ) -> TextBuilder<'module, 'ctx, N> {
         TextBuilder {
             code,
             module,
-            ctx,
+            func,
             control_frames: Default::default(),
             else_frames: Default::default(),
         }
     }
 
-    pub fn context(&self) -> &TextContext<'ctx> {
-        &self.ctx
+    pub fn func(&self) -> &Func {
+        &self.func
     }
 
     pub fn get_func_ref(&self, x: FuncIdx) -> Result<FuncRef, ValidationError> {
@@ -274,14 +269,10 @@ impl<'module, 'ctx, const N: usize> TextBuilder<'module, 'ctx, N> {
 
         let x = x.0 as u16;
 
-        let TextContext::Function(func) = self.ctx else {
-            return Err(ValidationError::InstructionOutsideOfFunction);
-        };
-
         let signature = self
             .module
             .types
-            .get(func.ty.0 as usize)
+            .get(self.func.ty.0 as usize)
             .ok_or(ValidationError::TypeIdxOutOfRange)?;
 
         // Search for the variable and compute it's offset
@@ -295,7 +286,7 @@ impl<'module, 'ctx, const N: usize> TextBuilder<'module, 'ctx, N> {
                 // We need to convert this offset to be relative to the frame pointer
                 // which is immediately after the final parameter
                 let frame_offset =
-                    (((current_offset / 4) as i32) - (func.parameter_size as i32)) as i16;
+                    (((current_offset / 4) as i32) - (self.func.parameter_size as i32)) as i16;
 
                 return Ok(LocalVariable {
                     frame_offset,
@@ -311,7 +302,7 @@ impl<'module, 'ctx, const N: usize> TextBuilder<'module, 'ctx, N> {
         current_offset = 0;
 
         // Now check the local variables
-        for (n, ty) in &func.locals {
+        for (n, ty) in &self.func.locals {
             if current_index + n > x {
                 // This bucket has the local variable
                 // Compute it's offset as a word index from the frame
@@ -346,10 +337,33 @@ impl<'module, 'ctx, const N: usize> TextBuilder<'module, 'ctx, N> {
             .skip(x.0 as usize)
             .next();
 
-        match self.ctx {
-            // Constant global references must be to imported values
-            TextContext::Constant => {
-                let idx = imported_idx.ok_or(ValidationError::GlobalIdxOutOfRange)?;
+        match imported_idx {
+            // This index is one of the WASM defined globals
+            None => {
+                let idx = x.0 as usize - self.module.module_imports.globals.len();
+                let g = self
+                    .module
+                    .globals
+                    .get(idx)
+                    .ok_or(ValidationError::GlobalIdxOutOfRange)?;
+
+                // We are storing internal globals on the stack
+                // Compute the memory offset of this global
+                let offset_bytes = self
+                    .module
+                    .globals
+                    .iter()
+                    .take(idx)
+                    .fold(0, |n, g| n + g.type_.ty.size());
+
+                Ok(GlobalVariable {
+                    reference: GlobalVariableRef::Internal((offset_bytes / 4) as u32),
+                    ty: g.type_.ty,
+                    mutable: g.type_.mutable,
+                })
+            }
+            // This index refers to an imported global
+            Some(idx) => {
                 let g = self
                     .module
                     .module_imports
@@ -363,39 +377,6 @@ impl<'module, 'ctx, const N: usize> TextBuilder<'module, 'ctx, N> {
                     mutable: g.value.mutable(),
                 })
             }
-
-            TextContext::Function(_) => match imported_idx {
-                // This index is one of the WASM defined globals
-                None => {
-                    let idx = x.0 as usize - self.module.module_imports.globals.len();
-                    let g = self
-                        .module
-                        .globals
-                        .get(idx)
-                        .ok_or(ValidationError::GlobalIdxOutOfRange)?;
-
-                    Ok(GlobalVariable {
-                        reference: GlobalVariableRef::Internal(idx as u32),
-                        ty: g.type_.ty,
-                        mutable: g.type_.mutable,
-                    })
-                }
-                // This index refers to an imported global
-                Some(idx) => {
-                    let g = self
-                        .module
-                        .module_imports
-                        .globals
-                        .get(idx as usize)
-                        .unwrap();
-
-                    Ok(GlobalVariable {
-                        reference: GlobalVariableRef::Imported(idx as u32),
-                        ty: g.value.ty(),
-                        mutable: g.value.mutable(),
-                    })
-                }
-            },
         }
     }
 

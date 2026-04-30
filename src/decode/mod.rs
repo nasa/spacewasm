@@ -21,3 +21,5 @@ pub use types::*;
 
 mod code;
 pub use code::*;
+
+mod constant;

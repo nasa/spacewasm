@@ -1,122 +1,11 @@
 use crate::*;
 use core::ops::{AddAssign, ControlFlow};
 
-macro_rules! instruction {
-    ($name:ident, f32 -> f32, $f:ident, $( $t:tt )*) => {
-        fn $name(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-            let $f = state.get_f32(state.sp - 1);
-            state.write_f32(state.sp - 1, $($t)*);
-            Ok(())
-        }
-    };
-    ($name:ident, i32 -> i32, $i:ident, $( $t:tt )*) => {
-        fn $name(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-            let $i = state.get_u32(state.sp - 1) as i32;
-            state.write_u32(state.sp - 1, ($($t)*) as u32);
-            Ok(())
-        }
-    };
-    ($name:ident, f64 -> f64, $f:ident, $( $t:tt )*) => {
-        fn $name(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-            let $f = state.get_f64(state.sp - 2);
-            state.write_f64(state.sp - 2, $($t)*);
-            Ok(())
-        }
-    };
-    ($name:ident, i64 -> i64, $i:ident, $( $t:tt )*) => {
-        fn $name(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-            let $i = state.get_u64(state.sp - 2) as i64;
-            state.write_u64(state.sp - 2, ($($t)*) as u64);
-            Ok(())
-        }
-    };
-    ($name:ident, f32, f32 -> f32, $a:ident, $b:ident, $( $t:tt )*) => {
-        fn $name(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-            state.sp -= 1;
-            let $b = state.get_f32(state.sp);
-            let $a = state.get_f32(state.sp - 1);
-            state.write_f32(state.sp - 1, $($t)*);
-            Ok(())
-        }
-    };
-    ($name:ident, i32, i32 -> i32, $a:ident, $b:ident, $( $t:tt )*) => {
-        fn $name(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-            state.sp -= 1;
-            let $b = state.get_u32(state.sp) as i32;
-            let $a = state.get_u32(state.sp - 1) as i32;
-            state.write_u32(state.sp - 1, ($($t)*) as u32);
-            Ok(())
-        }
-    };
-    ($name:ident, i32, i32 -> bool, $a:ident, $b:ident, $( $t:tt )*) => {
-        fn $name(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-            state.sp -= 1;
-            let $b = state.get_u32(state.sp) as i32;
-            let $a = state.get_u32(state.sp - 1) as i32;
-            state.write_u32(state.sp - 1, if $($t)* { 1 } else { 0 });
-            Ok(())
-        }
-    };
-    ($name:ident, f32, f32 -> bool, $a:ident, $b:ident, $( $t:tt )*) => {
-        fn $name(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-            state.sp -= 1;
-            let $b = state.get_f32(state.sp);
-            let $a = state.get_f32(state.sp - 1);
-            state.write_u32(state.sp - 1, if $($t)* { 1 } else { 0 });
-            Ok(())
-        }
-    };
-    ($name:ident, f64, f64 -> f64, $a:ident, $b:ident, $( $t:tt )*) => {
-        fn $name(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-            state.sp -= 2;
-            let $b = state.get_f64(state.sp);
-            let $a = state.get_f64(state.sp - 2);
-            state.write_f64(state.sp - 2, $($t)*);
-            Ok(())
-        }
-    };
-    ($name:ident, i64, i64 -> i64, $a:ident, $b:ident, $( $t:tt )*) => {
-        fn $name(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-            state.sp -= 2;
-            let $b = state.get_u64(state.sp) as i64;
-            let $a = state.get_u64(state.sp - 2) as i64;
-            state.write_u64(state.sp - 2, ($($t)*) as u64);
-            Ok(())
-        }
-    };
-    ($name:ident, i64, i64 -> bool, $a:ident, $b:ident, $( $t:tt )*) => {
-        fn $name(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-            state.sp -= 3;
-            let $b = state.get_u64(state.sp + 1) as i64;
-            let $a = state.get_u64(state.sp - 1) as i64;
-            state.write_u32(state.sp - 1, if $($t)* { 1 } else { 0 });
-            Ok(())
-        }
-    };
-    ($name:ident, f64, f64 -> bool, $a:ident, $b:ident, $( $t:tt )*) => {
-        fn $name(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-            state.sp -= 3;
-            let $b = state.get_f64(state.sp + 1);
-            let $a = state.get_f64(state.sp - 1);
-            state.write_u32(state.sp - 1, if $($t)* { 1 } else { 0 });
-            Ok(())
-        }
-    };
-    ($name:ident, unreachable) => {
-        fn $name(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-            // This instruction does not exist in the IR
-            let _ = state;
-            unreachable!()
-        }
-    };
-}
-
 pub struct InterpreterState {
     pc: JumpTarget,
     fp: u32,
     sp: usize,
     stack: Box<[u32]>,
-    globals: Box<[u64]>,
     ram: Memory,
 }
 
@@ -133,31 +22,57 @@ impl InterpreterState {
             sp: 0x0,
             fp: 0x0,
             stack: unsafe { Vec::new(stack_size as u32).unwrap().assume_init() }.into_boxed_slice(),
-            globals: unsafe { Vec::new(10).unwrap().assume_init() }.into_boxed_slice(),
             ram,
         }
     }
 
+    pub fn initialize_globals(&mut self, globals: &[Global]) {
+        // Globals must be initialized before any invocation
+        assert_eq!(self.sp, 0);
+        assert_eq!(self.fp, 0);
+
+        for global in globals {
+            match global.init {
+                Value::I32(i) => {
+                    self.write_u32(self.sp, i as u32);
+                    self.sp += 1;
+                }
+                Value::I64(i) => {
+                    self.write_u64(self.sp, i as u64);
+                    self.sp += 2;
+                }
+                Value::F32(z) => {
+                    self.write_f32(self.sp, z);
+                    self.sp += 1;
+                }
+                Value::F64(z) => {
+                    self.write_f64(self.sp, z);
+                    self.sp += 2;
+                }
+            }
+        }
+    }
+
     #[inline]
-    fn get_u32(&self, addr: usize) -> u32 {
+    fn read_u32(&self, addr: usize) -> u32 {
         self.stack[addr]
     }
 
     #[inline]
-    fn get_f32(&self, addr: usize) -> f32 {
-        f32::from_bits(self.get_u32(addr))
+    fn read_f32(&self, addr: usize) -> f32 {
+        f32::from_bits(self.read_u32(addr))
     }
 
     #[inline]
-    fn get_u64(&self, addr: usize) -> u64 {
+    fn read_u64(&self, addr: usize) -> u64 {
         let lo = self.stack[addr];
         let hi = self.stack[addr + 1];
         (lo as u64) | ((hi as u64) << 32)
     }
 
     #[inline]
-    fn get_f64(&self, addr: usize) -> f64 {
-        f64::from_bits(self.get_u64(addr))
+    fn read_f64(&self, addr: usize) -> f64 {
+        f64::from_bits(self.read_u64(addr))
     }
 
     #[inline]
@@ -236,8 +151,10 @@ impl InterpreterState {
 }
 
 pub struct Interpreter<'module> {
-    functions: Vec<Func>,
-    imports: ModuleImports<'module>,
+    pub functions: &'module [Func],
+    pub global_imports: &'module [GlobalImport<'module>],
+    pub function_imports: &'module [HostFunction<'module>],
+    pub memory_imports: &'module [MemoryImport<'module>],
 }
 
 impl AddAssign<u32> for JumpTarget {
@@ -247,8 +164,18 @@ impl AddAssign<u32> for JumpTarget {
 }
 
 impl<'module> Interpreter<'module> {
-    pub fn new(functions: Vec<Func>, imports: ModuleImports<'module>) -> Self {
-        Interpreter { functions, imports }
+    pub fn new(
+        functions: &'module [Func],
+        global_imports: &'module [GlobalImport<'module>],
+        function_imports: &'module [HostFunction<'module>],
+        memory_imports: &'module [MemoryImport<'module>],
+    ) -> Self {
+        Interpreter {
+            functions,
+            global_imports,
+            function_imports,
+            memory_imports,
+        }
     }
 
     pub fn run(
@@ -297,6 +224,116 @@ impl From<HostFunctionPause> for InterpreterError {
     }
 }
 
+macro_rules! instruction {
+    ($name:ident, f32 -> f32, $f:ident, $( $t:tt )*) => {
+        fn $name(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+            let $f = state.read_f32(state.sp - 1);
+            state.write_f32(state.sp - 1, $($t)*);
+            Ok(())
+        }
+    };
+    ($name:ident, i32 -> i32, $i:ident, $( $t:tt )*) => {
+        fn $name(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+            let $i = state.read_u32(state.sp - 1) as i32;
+            state.write_u32(state.sp - 1, ($($t)*) as u32);
+            Ok(())
+        }
+    };
+    ($name:ident, f64 -> f64, $f:ident, $( $t:tt )*) => {
+        fn $name(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+            let $f = state.read_f64(state.sp - 2);
+            state.write_f64(state.sp - 2, $($t)*);
+            Ok(())
+        }
+    };
+    ($name:ident, i64 -> i64, $i:ident, $( $t:tt )*) => {
+        fn $name(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+            let $i = state.read_u64(state.sp - 2) as i64;
+            state.write_u64(state.sp - 2, ($($t)*) as u64);
+            Ok(())
+        }
+    };
+    ($name:ident, f32, f32 -> f32, $a:ident, $b:ident, $( $t:tt )*) => {
+        fn $name(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+            state.sp -= 1;
+            let $b = state.read_f32(state.sp);
+            let $a = state.read_f32(state.sp - 1);
+            state.write_f32(state.sp - 1, $($t)*);
+            Ok(())
+        }
+    };
+    ($name:ident, i32, i32 -> i32, $a:ident, $b:ident, $( $t:tt )*) => {
+        fn $name(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+            state.sp -= 1;
+            let $b = state.read_u32(state.sp) as i32;
+            let $a = state.read_u32(state.sp - 1) as i32;
+            state.write_u32(state.sp - 1, ($($t)*) as u32);
+            Ok(())
+        }
+    };
+    ($name:ident, i32, i32 -> bool, $a:ident, $b:ident, $( $t:tt )*) => {
+        fn $name(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+            state.sp -= 1;
+            let $b = state.read_u32(state.sp) as i32;
+            let $a = state.read_u32(state.sp - 1) as i32;
+            state.write_u32(state.sp - 1, if $($t)* { 1 } else { 0 });
+            Ok(())
+        }
+    };
+    ($name:ident, f32, f32 -> bool, $a:ident, $b:ident, $( $t:tt )*) => {
+        fn $name(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+            state.sp -= 1;
+            let $b = state.read_f32(state.sp);
+            let $a = state.read_f32(state.sp - 1);
+            state.write_u32(state.sp - 1, if $($t)* { 1 } else { 0 });
+            Ok(())
+        }
+    };
+    ($name:ident, f64, f64 -> f64, $a:ident, $b:ident, $( $t:tt )*) => {
+        fn $name(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+            state.sp -= 2;
+            let $b = state.read_f64(state.sp);
+            let $a = state.read_f64(state.sp - 2);
+            state.write_f64(state.sp - 2, $($t)*);
+            Ok(())
+        }
+    };
+    ($name:ident, i64, i64 -> i64, $a:ident, $b:ident, $( $t:tt )*) => {
+        fn $name(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+            state.sp -= 2;
+            let $b = state.read_u64(state.sp) as i64;
+            let $a = state.read_u64(state.sp - 2) as i64;
+            state.write_u64(state.sp - 2, ($($t)*) as u64);
+            Ok(())
+        }
+    };
+    ($name:ident, i64, i64 -> bool, $a:ident, $b:ident, $( $t:tt )*) => {
+        fn $name(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+            state.sp -= 3;
+            let $b = state.read_u64(state.sp + 1) as i64;
+            let $a = state.read_u64(state.sp - 1) as i64;
+            state.write_u32(state.sp - 1, if $($t)* { 1 } else { 0 });
+            Ok(())
+        }
+    };
+    ($name:ident, f64, f64 -> bool, $a:ident, $b:ident, $( $t:tt )*) => {
+        fn $name(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+            state.sp -= 3;
+            let $b = state.read_f64(state.sp + 1);
+            let $a = state.read_f64(state.sp - 1);
+            state.write_u32(state.sp - 1, if $($t)* { 1 } else { 0 });
+            Ok(())
+        }
+    };
+    ($name:ident, unreachable) => {
+        fn $name(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+            // This instruction does not exist in the IR
+            let _ = state;
+            unreachable!()
+        }
+    };
+}
+
 #[allow(unused_variables)]
 impl<'module> BaseVisitor for Interpreter<'module> {
     type Error = InterpreterError;
@@ -321,207 +358,195 @@ impl<'module> BaseVisitor for Interpreter<'module> {
 
     fn select(&self, state: &mut Self::State) -> Result<(), Self::Error> {
         state.sp -= 1;
-        let c = state.stack[state.sp];
-        let val2 = state.stack[state.sp - 1];
-        let val1 = state.stack[state.sp - 2];
+        let c = state.read_u32(state.sp);
+        let val2 = state.read_u32(state.sp - 1);
+        let val1 = state.read_u32(state.sp - 2);
         state.sp -= 2;
-        state.stack[state.sp] = if c != 0 { val1 } else { val2 };
+        state.write_u32(state.sp, if c != 0 { val1 } else { val2 });
         state.sp += 1;
         Ok(())
     }
 
     fn i32_load(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
-        let addr = state.stack[state.sp - 1] as usize;
+        let addr = state.read_u32(state.sp - 1) as usize;
         let val = state.ram.load_u32(addr + m.offset as usize)?;
-        state.stack[state.sp - 1] = val;
+        state.write_u32(state.sp - 1, val);
         Ok(())
     }
 
     fn i64_load(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
-        let addr = state.stack[state.sp - 1] as usize;
+        let addr = state.read_u32(state.sp - 1) as usize;
         let val = state.ram.load_u64(addr + m.offset as usize)?;
-        state.stack[state.sp - 1] = val as u32;
-        state.stack[state.sp] = (val >> 32) as u32;
+        state.write_u64(state.sp - 1, val);
         state.sp += 1;
         Ok(())
     }
 
     fn f32_load(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
-        let addr = state.stack[state.sp - 1] as usize;
+        let addr = state.read_u32(state.sp - 1) as usize;
         let val = state.ram.load_u32(addr + m.offset as usize)?;
-        state.stack[state.sp - 1] = val;
+        state.write_u32(state.sp - 1, val);
         Ok(())
     }
 
     fn f64_load(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
-        let addr = state.stack[state.sp - 1] as usize;
+        let addr = state.read_u32(state.sp - 1) as usize;
         let val = state.ram.load_u64(addr + m.offset as usize)?;
-        state.stack[state.sp - 1] = val as u32;
-        state.stack[state.sp] = (val >> 32) as u32;
+        state.write_u64(state.sp - 1, val);
         state.sp += 1;
         Ok(())
     }
 
     fn i32_load8_s(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
-        let addr = state.stack[state.sp - 1] as usize;
+        let addr = state.read_u32(state.sp - 1) as usize;
         let val = state.ram.load_u8(addr + m.offset as usize)? as i8 as i32;
-        state.stack[state.sp - 1] = val as u32;
+        state.write_u32(state.sp - 1, val as u32);
         Ok(())
     }
 
     fn i32_load8_u(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
-        let addr = state.stack[state.sp - 1] as usize;
+        let addr = state.read_u32(state.sp - 1) as usize;
         let val = state.ram.load_u8(addr + m.offset as usize)? as u32;
-        state.stack[state.sp - 1] = val;
+        state.write_u32(state.sp - 1, val);
         Ok(())
     }
 
     fn i32_load16_s(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
-        let addr = state.stack[state.sp - 1] as usize;
+        let addr = state.read_u32(state.sp - 1) as usize;
         let val = state.ram.load_u16(addr + m.offset as usize)? as i16 as i32;
-        state.stack[state.sp - 1] = val as u32;
+        state.write_u32(state.sp - 1, val as u32);
         Ok(())
     }
 
     fn i32_load16_u(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
-        let addr = state.stack[state.sp - 1] as usize;
+        let addr = state.read_u32(state.sp - 1) as usize;
         let val = state.ram.load_u16(addr + m.offset as usize)? as u32;
-        state.stack[state.sp - 1] = val;
+        state.write_u32(state.sp - 1, val);
         Ok(())
     }
 
     fn i64_load8_s(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
-        let addr = state.stack[state.sp - 1] as usize;
+        let addr = state.read_u32(state.sp - 1) as usize;
         let val = state.ram.load_u8(addr + m.offset as usize)? as i8 as i64 as u64;
-        state.stack[state.sp - 1] = val as u32;
-        state.stack[state.sp] = (val >> 32) as u32;
+        state.write_u64(state.sp - 1, val);
         state.sp += 1;
         Ok(())
     }
 
     fn i64_load8_u(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
-        let addr = state.stack[state.sp - 1] as usize;
+        let addr = state.read_u32(state.sp - 1) as usize;
         let val = state.ram.load_u8(addr + m.offset as usize)? as u64;
-        state.stack[state.sp - 1] = val as u32;
-        state.stack[state.sp] = (val >> 32) as u32;
+        state.write_u64(state.sp - 1, val);
         state.sp += 1;
         Ok(())
     }
 
     fn i64_load16_s(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
-        let addr = state.stack[state.sp - 1] as usize;
+        let addr = state.read_u32(state.sp - 1) as usize;
         let val = state.ram.load_u16(addr + m.offset as usize)? as i16 as i64 as u64;
-        state.stack[state.sp - 1] = val as u32;
-        state.stack[state.sp] = (val >> 32) as u32;
+        state.write_u64(state.sp - 1, val);
         state.sp += 1;
         Ok(())
     }
 
     fn i64_load16_u(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
-        let addr = state.stack[state.sp - 1] as usize;
+        let addr = state.read_u32(state.sp - 1) as usize;
         let val = state.ram.load_u16(addr + m.offset as usize)? as u64;
-        state.stack[state.sp - 1] = val as u32;
-        state.stack[state.sp] = (val >> 32) as u32;
+        state.write_u64(state.sp - 1, val);
         state.sp += 1;
         Ok(())
     }
 
     fn i64_load32_s(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
-        let addr = state.stack[state.sp - 1] as usize;
+        let addr = state.read_u32(state.sp - 1) as usize;
         let val = state.ram.load_u32(addr + m.offset as usize)? as i32 as i64 as u64;
-        state.stack[state.sp - 1] = val as u32;
-        state.stack[state.sp] = (val >> 32) as u32;
+        state.write_u64(state.sp - 1, val);
         state.sp += 1;
         Ok(())
     }
 
     fn i64_load32_u(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
-        let addr = state.stack[state.sp - 1] as usize;
+        let addr = state.read_u32(state.sp - 1) as usize;
         let val = state.ram.load_u32(addr + m.offset as usize)? as u64;
-        state.stack[state.sp - 1] = val as u32;
-        state.stack[state.sp] = (val >> 32) as u32;
+        state.write_u64(state.sp - 1, val);
         state.sp += 1;
         Ok(())
     }
 
     fn i32_store(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
         state.sp -= 2;
-        let val = state.stack[state.sp + 1];
-        let addr = state.stack[state.sp] as usize;
+        let val = state.read_u32(state.sp + 1);
+        let addr = state.read_u32(state.sp) as usize;
         state.ram.store_u32(addr + m.offset as usize, val)?;
         Ok(())
     }
 
     fn i64_store(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
         state.sp -= 3;
-        let lo = state.stack[state.sp + 1];
-        let hi = state.stack[state.sp + 2];
-        let val = (lo as u64) | ((hi as u64) << 32);
-        let addr = state.stack[state.sp] as usize;
+        let val = state.read_u64(state.sp + 1);
+        let addr = state.read_u32(state.sp) as usize;
         state.ram.store_u64(addr + m.offset as usize, val)?;
         Ok(())
     }
 
     fn f32_store(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
         state.sp -= 2;
-        let val = state.stack[state.sp + 1];
-        let addr = state.stack[state.sp] as usize;
+        let val = state.read_u32(state.sp + 1);
+        let addr = state.read_u32(state.sp) as usize;
         state.ram.store_u32(addr + m.offset as usize, val)?;
         Ok(())
     }
 
     fn f64_store(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
         state.sp -= 3;
-        let lo = state.stack[state.sp + 1];
-        let hi = state.stack[state.sp + 2];
-        let val = (lo as u64) | ((hi as u64) << 32);
-        let addr = state.stack[state.sp] as usize;
+        let val = state.read_u64(state.sp + 1);
+        let addr = state.read_u32(state.sp) as usize;
         state.ram.store_u64(addr + m.offset as usize, val)?;
         Ok(())
     }
 
     fn i32_store8(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
         state.sp -= 2;
-        let val = state.stack[state.sp + 1] as u8;
-        let addr = state.stack[state.sp] as usize;
+        let val = state.read_u32(state.sp + 1) as u8;
+        let addr = state.read_u32(state.sp) as usize;
         state.ram.store_u8(addr + m.offset as usize, val)?;
         Ok(())
     }
 
     fn i32_store16(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
         state.sp -= 2;
-        let val = state.stack[state.sp + 1] as u16;
-        let addr = state.stack[state.sp] as usize;
+        let val = state.read_u32(state.sp + 1) as u16;
+        let addr = state.read_u32(state.sp) as usize;
         state.ram.store_u16(addr + m.offset as usize, val)?;
         Ok(())
     }
 
     fn i64_store8(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
         state.sp -= 3;
-        let val = state.stack[state.sp + 1] as u8;
-        let addr = state.stack[state.sp] as usize;
+        let val = state.read_u64(state.sp + 1) as u8;
+        let addr = state.read_u32(state.sp) as usize;
         state.ram.store_u8(addr + m.offset as usize, val)?;
         Ok(())
     }
 
     fn i64_store16(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
         state.sp -= 3;
-        let val = state.stack[state.sp + 1] as u16;
-        let addr = state.stack[state.sp] as usize;
+        let val = state.read_u64(state.sp + 1) as u16;
+        let addr = state.read_u32(state.sp) as usize;
         state.ram.store_u16(addr + m.offset as usize, val)?;
         Ok(())
     }
 
     fn i64_store32(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
         state.sp -= 3;
-        let val = state.stack[state.sp + 1];
-        let addr = state.stack[state.sp] as usize;
+        let val = state.read_u64(state.sp + 1) as u32;
+        let addr = state.read_u32(state.sp) as usize;
         state.ram.store_u32(addr + m.offset as usize, val)?;
         Ok(())
     }
 
     fn memory_size(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        state.stack[state.sp] = state.ram.size_pages();
+        state.write_u32(state.sp, state.ram.size_pages());
         state.sp += 1;
         Ok(())
     }
@@ -529,29 +554,25 @@ impl<'module> BaseVisitor for Interpreter<'module> {
     instruction!(memory_grow, unreachable);
 
     fn i32_const(&self, n: i32, state: &mut Self::State) -> Result<(), Self::Error> {
-        state.stack[state.sp] = n as u32;
+        state.write_u32(state.sp, n as u32);
         state.sp += 1;
         Ok(())
     }
 
     fn i64_const(&self, n: i64, state: &mut Self::State) -> Result<(), Self::Error> {
-        let bits = n as u64;
-        state.stack[state.sp] = bits as u32;
-        state.stack[state.sp + 1] = (bits >> 32) as u32;
+        state.write_u64(state.sp, n as u64);
         state.sp += 2;
         Ok(())
     }
 
     fn f32_const(&self, z: f32, state: &mut Self::State) -> Result<(), Self::Error> {
-        state.stack[state.sp] = z.to_bits();
+        state.write_f32(state.sp, z);
         state.sp += 1;
         Ok(())
     }
 
     fn f64_const(&self, z: f64, state: &mut Self::State) -> Result<(), Self::Error> {
-        let bits = z.to_bits();
-        state.stack[state.sp] = bits as u32;
-        state.stack[state.sp + 1] = (bits >> 32) as u32;
+        state.write_f64(state.sp, z);
         state.sp += 2;
         Ok(())
     }
@@ -663,33 +684,33 @@ impl<'module> BaseVisitor for Interpreter<'module> {
     }
 
     fn i32_trunc_f32_s(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        let f = state.get_f32(state.sp - 1);
+        let f = state.read_f32(state.sp - 1);
         state.write_u32(state.sp - 1, f as i32 as u32);
         Ok(())
     }
 
     fn i32_trunc_f32_u(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        let f = state.get_f32(state.sp - 1);
+        let f = state.read_f32(state.sp - 1);
         state.write_u32(state.sp - 1, f as u32);
         Ok(())
     }
 
     fn i32_trunc_f64_s(&self, state: &mut Self::State) -> Result<(), Self::Error> {
         state.sp -= 1;
-        let f = state.get_f64(state.sp - 1);
+        let f = state.read_f64(state.sp - 1);
         state.write_u32(state.sp - 1, f as i32 as u32);
         Ok(())
     }
 
     fn i32_trunc_f64_u(&self, state: &mut Self::State) -> Result<(), Self::Error> {
         state.sp -= 1;
-        let f = state.get_f64(state.sp - 1);
+        let f = state.read_f64(state.sp - 1);
         state.write_u32(state.sp - 1, f as u32);
         Ok(())
     }
 
     fn i64_extend_i32_s(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        let i = state.get_u32(state.sp - 1) as i32;
+        let i = state.read_u32(state.sp - 1) as i32;
         let extended = i as i64 as u64;
         state.write_u64(state.sp - 1, extended);
         state.sp += 1;
@@ -705,7 +726,7 @@ impl<'module> BaseVisitor for Interpreter<'module> {
     }
 
     fn i64_trunc_f32_s(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        let f = state.get_f32(state.sp - 1);
+        let f = state.read_f32(state.sp - 1);
         let i = f as i64 as u64;
         state.write_u64(state.sp - 1, i);
         state.sp += 1;
@@ -713,7 +734,7 @@ impl<'module> BaseVisitor for Interpreter<'module> {
     }
 
     fn i64_trunc_f32_u(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        let f = state.get_f32(state.sp - 1);
+        let f = state.read_f32(state.sp - 1);
         let u = f as u64;
         state.write_u64(state.sp - 1, u);
         state.sp += 1;
@@ -721,80 +742,80 @@ impl<'module> BaseVisitor for Interpreter<'module> {
     }
 
     fn i64_trunc_f64_s(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        let f = state.get_f64(state.sp - 2);
+        let f = state.read_f64(state.sp - 2);
         let i = f as i64 as u64;
         state.write_u64(state.sp - 2, i);
         Ok(())
     }
 
     fn i64_trunc_f64_u(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        let f = state.get_f64(state.sp - 2);
+        let f = state.read_f64(state.sp - 2);
         let u = f as u64;
         state.write_u64(state.sp - 2, u);
         Ok(())
     }
 
     fn f32_convert_i32_s(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        let i = state.get_u32(state.sp - 1) as i32;
+        let i = state.read_u32(state.sp - 1) as i32;
         state.write_f32(state.sp - 1, i as f32);
         Ok(())
     }
 
     fn f32_convert_i32_u(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        let u = state.get_u32(state.sp - 1);
+        let u = state.read_u32(state.sp - 1);
         state.write_f32(state.sp - 1, u as f32);
         Ok(())
     }
 
     fn f32_convert_i64_s(&self, state: &mut Self::State) -> Result<(), Self::Error> {
         state.sp -= 1;
-        let i = state.get_u64(state.sp - 1) as i64;
+        let i = state.read_u64(state.sp - 1) as i64;
         state.write_f32(state.sp - 1, i as f32);
         Ok(())
     }
 
     fn f32_convert_i64_u(&self, state: &mut Self::State) -> Result<(), Self::Error> {
         state.sp -= 1;
-        let u = state.get_u64(state.sp - 1);
+        let u = state.read_u64(state.sp - 1);
         state.write_f32(state.sp - 1, u as f32);
         Ok(())
     }
 
     fn f32_demote_f64(&self, state: &mut Self::State) -> Result<(), Self::Error> {
         state.sp -= 1;
-        let f = state.get_f64(state.sp - 1);
+        let f = state.read_f64(state.sp - 1);
         state.write_f32(state.sp - 1, f as f32);
         Ok(())
     }
 
     fn f64_convert_i32_s(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        let i = state.get_u32(state.sp - 1) as i32;
+        let i = state.read_u32(state.sp - 1) as i32;
         state.write_f64(state.sp - 1, i as f64);
         state.sp += 1;
         Ok(())
     }
 
     fn f64_convert_i32_u(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        let u = state.get_u32(state.sp - 1);
+        let u = state.read_u32(state.sp - 1);
         state.write_f64(state.sp - 1, u as f64);
         state.sp += 1;
         Ok(())
     }
 
     fn f64_convert_i64_s(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        let i = state.get_u64(state.sp - 2) as i64;
+        let i = state.read_u64(state.sp - 2) as i64;
         state.write_f64(state.sp - 2, i as f64);
         Ok(())
     }
 
     fn f64_convert_i64_u(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        let u = state.get_u64(state.sp - 2);
+        let u = state.read_u64(state.sp - 2);
         state.write_f64(state.sp - 2, u as f64);
         Ok(())
     }
 
     fn f64_promote_f32(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        let f = state.get_f32(state.sp - 1);
+        let f = state.read_f32(state.sp - 1);
         state.write_f64(state.sp - 1, f as f64);
         state.sp += 1;
         Ok(())
@@ -901,7 +922,7 @@ impl<'module> IrVisitor for Interpreter<'module> {
     }
 
     fn call_host(&self, x: u16, state: &mut Self::State) -> Result<(), Self::Error> {
-        let f = &self.imports.functions[x as usize];
+        let f = &self.function_imports[x as usize];
         let mut sv: StaticVec<Value, 8> = StaticVec::new();
 
         state.sp -= f.param_size();
@@ -909,22 +930,22 @@ impl<'module> IrVisitor for Interpreter<'module> {
         for p_ty in f.params() {
             match p_ty {
                 ValType::I32 => {
-                    sv.push(Value::I32(state.get_u32(state.sp + offset) as i32))
+                    sv.push(Value::I32(state.read_u32(state.sp + offset) as i32))
                         .unwrap();
                     offset += 1;
                 }
                 ValType::I64 => {
-                    sv.push(Value::I64(state.get_u64(state.sp + offset) as i64))
+                    sv.push(Value::I64(state.read_u64(state.sp + offset) as i64))
                         .unwrap();
                     offset += 2;
                 }
                 ValType::F32 => {
-                    sv.push(Value::F32(state.get_f32(state.sp + offset)))
+                    sv.push(Value::F32(state.read_f32(state.sp + offset)))
                         .unwrap();
                     offset += 1;
                 }
                 ValType::F64 => {
-                    sv.push(Value::F64(state.get_f64(state.sp + offset)))
+                    sv.push(Value::F64(state.read_f64(state.sp + offset)))
                         .unwrap();
                     offset += 2;
                 }
@@ -1022,7 +1043,7 @@ impl<'module> IrVisitor for Interpreter<'module> {
     fn global_get(&self, g: GlobalVariable, state: &mut Self::State) -> Result<(), Self::Error> {
         match g.reference {
             GlobalVariableRef::Imported(i) => {
-                let gi = &self.imports.globals[i as usize];
+                let gi = &self.global_imports[i as usize];
                 match gi.value.read().or(Err(InterpreterError::GlobalGetFailed))? {
                     Value::I32(i) => {
                         state.stack[state.sp] = i as u32;
@@ -1049,22 +1070,17 @@ impl<'module> IrVisitor for Interpreter<'module> {
                     }
                 };
             }
-            GlobalVariableRef::Internal(i) => {
-                let raw = state.globals[i as usize];
-                let lo = raw as u32;
-                let hi = (raw >> 32) as u32;
-                match g.ty {
-                    ValType::I32 | ValType::F32 => {
-                        state.stack[state.sp] = lo;
-                        state.sp += 1;
-                    }
-                    ValType::I64 | ValType::F64 => {
-                        state.stack[state.sp] = lo;
-                        state.stack[state.sp + 1] = hi;
-                        state.sp += 2;
-                    }
+            GlobalVariableRef::Internal(addr) => match g.ty {
+                ValType::I32 | ValType::F32 => {
+                    state.stack[state.sp] = state.stack[addr as usize];
+                    state.sp += 1;
                 }
-            }
+                ValType::I64 | ValType::F64 => {
+                    state.stack[state.sp] = state.stack[addr as usize];
+                    state.stack[state.sp + 1] = state.stack[(addr + 1) as usize];
+                    state.sp += 2;
+                }
+            },
         }
 
         Ok(())
@@ -1073,7 +1089,7 @@ impl<'module> IrVisitor for Interpreter<'module> {
     fn global_set(&self, g: GlobalVariable, state: &mut Self::State) -> Result<(), Self::Error> {
         match g.reference {
             GlobalVariableRef::Imported(i) => {
-                let gi = &self.imports.globals[i as usize];
+                let gi = &self.global_imports[i as usize];
                 match g.ty {
                     ValType::I32 => {
                         state.sp -= 1;
@@ -1102,22 +1118,17 @@ impl<'module> IrVisitor for Interpreter<'module> {
                 }
                 .or(Err(InterpreterError::GlobalSetFailed))?;
             }
-            GlobalVariableRef::Internal(i) => {
-                let gv = &mut state.globals[i as usize];
-                match g.ty {
-                    ValType::I32 | ValType::F32 => {
-                        state.sp -= 1;
-                        *gv = state.stack[state.sp] as u64;
-                    }
-                    ValType::I64 | ValType::F64 => {
-                        state.sp -= 2;
-                        let lo = state.stack[state.sp];
-                        let hi = state.stack[state.sp + 1];
-                        let raw = lo as u64 | ((hi as u64) << 32);
-                        *gv = raw;
-                    }
+            GlobalVariableRef::Internal(addr) => match g.ty {
+                ValType::I32 | ValType::F32 => {
+                    state.sp -= 1;
+                    state.stack[addr as usize] = state.stack[state.sp];
                 }
-            }
+                ValType::I64 | ValType::F64 => {
+                    state.sp -= 2;
+                    state.stack[addr as usize] = state.stack[state.sp];
+                    state.stack[(addr + 1) as usize] = state.stack[state.sp + 1];
+                }
+            },
         }
 
         Ok(())

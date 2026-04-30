@@ -1,4 +1,5 @@
 use crate::alloc::AllocError;
+use crate::decode::constant::ConstantExprError;
 use crate::decode::ReaderError;
 use crate::SectionKind;
 
@@ -84,6 +85,7 @@ pub enum ValidationError {
     BrTableHasTooManyCases,
     TableImportsNotSupportedYet, // TODO(tumbar) Implement dynamic linking
     MemoryImportsNotSupportedYet, // TODO(tumbar) Implement implement shared memory
+    InvalidConstantExpr(ConstantExprError),
     AllocError(AllocError),
     ReaderError(ReaderError),
 }
@@ -91,6 +93,12 @@ pub enum ValidationError {
 impl From<AllocError> for ValidationError {
     fn from(value: AllocError) -> Self {
         ValidationError::AllocError(value)
+    }
+}
+
+impl From<ConstantExprError> for ValidationError {
+    fn from(value: ConstantExprError) -> Self {
+        ValidationError::InvalidConstantExpr(value)
     }
 }
 

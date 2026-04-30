@@ -194,13 +194,20 @@ fn main() {
                 }
                 eprintln!("====");
 
+                let mem = &module.memories[0];
+                let heap_size = (mem.0.min as usize) * 65536;
+
                 let mut state = spacewasm::InterpreterState::new(
                     1024,
                     Memory::from(
-                        unsafe { std::alloc::alloc(Layout::from_size_align(65536, 64).unwrap()) },
-                        65536,
+                        unsafe {
+                            std::alloc::alloc(Layout::from_size_align(heap_size, 64).unwrap())
+                        },
+                        heap_size,
                     ),
                 );
+
+                state.initialize_globals(&module.globals);
 
                 match module.start {
                     None => {
@@ -228,11 +235,15 @@ fn main() {
                     }
                 }
 
-                let interpreter =
-                    spacewasm::Interpreter::new(module.functions, module.module_imports);
-                let code = spacewasm::Code::new(module.text);
+                let interpreter = spacewasm::Interpreter::new(
+                    &module.functions,
+                    module.module_imports.globals,
+                    module.module_imports.functions,
+                    module.module_imports.memories,
+                );
 
-                let r = interpreter.run(&code, &mut state, 10);
+                let code = spacewasm::Code::new(module.text);
+                let r = interpreter.run(&code, &mut state, 1000);
 
                 eprintln!("Interpreter finished {:?}", r)
             }

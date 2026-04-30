@@ -74,11 +74,11 @@ impl<'imports> HostFunction<'imports> {
             return_size: 0,
         };
 
-        let ps = o.params.iter().fold(0, |n, i| n + i.size());
+        let ps = o.params.iter().fold(0, |n, i| n + i.size()) / 4;
         assert!(ps <= 0xFFFF);
         o.param_size = ps as u16;
 
-        let rs = o.returns.iter().fold(0, |n, i| n + i.size());
+        let rs = o.returns.iter().fold(0, |n, i| n + i.size()) / 4;
         assert!(rs <= 0xFFFF);
         o.return_size = rs as u16;
 

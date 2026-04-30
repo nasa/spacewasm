@@ -103,14 +103,9 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
     }
 
     fn return_(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        match state.context() {
-            TextContext::Constant => Err(ValidationError::InvalidConstInstruction),
-            TextContext::Function(f) => {
-                // Return instructions also encode the return size from their function's context
-                state.push_with_operand(RETURN, f.return_size)?;
-                Ok(())
-            }
-        }
+        // Return instructions also encode the return size from their function's context
+        state.push_with_operand(RETURN, state.func().return_size)?;
+        Ok(())
     }
 
     fn call(&self, x: FuncIdx, state: &mut Self::State) -> Result<(), Self::Error> {

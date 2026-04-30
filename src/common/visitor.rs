@@ -257,7 +257,9 @@ pub struct LocalVariable {
 
 #[derive(Debug)]
 pub enum GlobalVariableRef {
+    /// Global is stored in the import table
     Imported(u32),
+    /// Global is stored on the stack at this offset
     Internal(u32),
 }
 

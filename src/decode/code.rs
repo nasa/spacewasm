@@ -1,3 +1,4 @@
+use crate::decode::constant::ConstantCompiler;
 use crate::*;
 
 #[derive(Clone)]
@@ -8,11 +9,17 @@ impl Expr {
         Expr(JumpTarget(0))
     }
 
+    pub fn read_constant(wasm: &mut Reader) -> Result<Value, ValidationError> {
+        let mut value: Option<Value> = None;
+        wasm.read_code(&ConstantCompiler, &mut value)?;
+        Ok(value.unwrap())
+    }
+
     pub fn read<const N: usize>(
         wasm: &mut Reader,
         builder: &mut CodeBuilder<N>,
         module: &Module,
-        ctx: TextContext<'_>,
+        ctx: &Func,
         debug: bool,
     ) -> Result<Self, ValidationError> {
         let e = Expr(builder.pc());
@@ -102,7 +109,7 @@ impl<'a> Module<'a> {
         }
 
         f.local_size = size_in_words as u16;
-        f.expr = Expr::read(wasm, builder, self, TextContext::Function(&f), i == 4)?;
+        f.expr = Expr::read(wasm, builder, self, &f, i == 4)?;
 
         let _ = core::mem::replace(&mut self.functions[i], f);
 

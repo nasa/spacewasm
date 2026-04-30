@@ -188,7 +188,7 @@ impl Code {
                 let idx = self.read(pc + 1)?;
                 if imm == 0 {
                     visitor.call(idx, state)?;
-                } else if idx == 1 {
+                } else if imm == 1 {
                     visitor.call_host(idx, state)?;
                 } else {
                     return Err(CodeReaderStopCondition::InvalidCallType(imm).into());
