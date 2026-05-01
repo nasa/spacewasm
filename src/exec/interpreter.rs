@@ -2,11 +2,14 @@ use crate::*;
 use core::ops::{AddAssign, ControlFlow};
 
 pub struct InterpreterState {
-    pc: JumpTarget,
-    fp: u32,
-    sp: usize,
-    stack: Stack,
-    ram: Memory,
+    pub pc: JumpTarget,
+    pub fp: u32,
+    pub sp: usize,
+    pub stack: Stack,
+    pub ram: Memory,
+
+    /// A pause was requested at an instruction. This points to the next instruction.
+    pub pending_pc: Option<JumpTarget>,
 }
 
 impl LocalVariable {
@@ -23,48 +26,8 @@ impl InterpreterState {
             fp: 0x0,
             stack: Stack::new(stack_size),
             ram,
+            pending_pc: None,
         }
-    }
-
-    // Test helpers
-    #[cfg(test)]
-    pub fn read_u32(&self, addr: usize) -> u32 {
-        self.stack.read_u32(addr)
-    }
-
-    #[cfg(test)]
-    pub fn write_u32(&mut self, addr: usize, value: u32) {
-        self.stack.write_u32(addr, value);
-    }
-
-    #[cfg(test)]
-    pub fn read_u64(&self, addr: usize) -> u64 {
-        self.stack.read_u64(addr)
-    }
-
-    #[cfg(test)]
-    pub fn write_u64(&mut self, addr: usize, value: u64) {
-        self.stack.write_u64(addr, value);
-    }
-
-    #[cfg(test)]
-    pub fn read_f32(&self, addr: usize) -> f32 {
-        self.stack.read_f32(addr)
-    }
-
-    #[cfg(test)]
-    pub fn write_f32(&mut self, addr: usize, value: f32) {
-        self.stack.write_f32(addr, value);
-    }
-
-    #[cfg(test)]
-    pub fn read_f64(&self, addr: usize) -> f64 {
-        self.stack.read_f64(addr)
-    }
-
-    #[cfg(test)]
-    pub fn write_f64(&mut self, addr: usize, value: f64) {
-        self.stack.write_f64(addr, value);
     }
 
     pub fn initialize_globals(&mut self, globals: &[Global]) {
@@ -155,6 +118,18 @@ impl AddAssign<u32> for JumpTarget {
     }
 }
 
+#[derive(Debug, Clone)]
+pub enum InterpreterResult {
+    /// Reached the end of the program
+    Finished,
+    /// No more fuel (ran to instruction bound)
+    OutOfFuel,
+    /// An instruction requested a pause or failed
+    Instruction(InstructionError),
+    /// Failed to read an instruction from memory
+    ReaderError(IrReaderError),
+}
+
 impl<'module> Interpreter<'module> {
     pub fn new(
         functions: &'module [Func],
@@ -175,19 +150,33 @@ impl<'module> Interpreter<'module> {
         code: &Code,
         state: &mut InterpreterState,
         n_instructions: usize,
-    ) -> Result<(), InterpreterError> {
-        // Run up to n instructions
-        for _ in 0..n_instructions {
-            let size = code.visit_instruction(state, state.pc, Inspector { v: self })?;
-            state.pc += size;
+    ) -> InterpreterResult {
+        if let Some(pending) = state.pending_pc.take() {
+            state.pc = pending;
         }
 
-        Ok(())
+        // Run up to n instructions
+        for _ in 0..n_instructions {
+            match code.visit_instruction(state, state.pc, Inspector { v: self }) {
+                Ok((0, _)) => return InterpreterResult::Finished,
+                Ok((size, Some(err))) => {
+                    state.pending_pc = Some(state.pc + size);
+                    return InterpreterResult::Instruction(err);
+                }
+                Ok((size, None)) => {
+                    // Nominal path
+                    state.pc += size;
+                }
+                Err(err) => return InterpreterResult::ReaderError(err),
+            }
+        }
+
+        InterpreterResult::OutOfFuel
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InterpreterError {
+pub enum InstructionError {
     Trap,
     Finished,
     TableLookupFailed,
@@ -195,24 +184,17 @@ pub enum InterpreterError {
     GlobalSetFailed,
     MemoryOutOfBounds,
     HostFunction(HostFunctionPause),
-    Reader(CodeReaderStopCondition),
 }
 
-impl From<CodeReaderStopCondition> for InterpreterError {
-    fn from(err: CodeReaderStopCondition) -> Self {
-        InterpreterError::Reader(err)
-    }
-}
-
-impl From<MemoryOutOfBounds> for InterpreterError {
+impl From<MemoryOutOfBounds> for InstructionError {
     fn from(_: MemoryOutOfBounds) -> Self {
-        InterpreterError::MemoryOutOfBounds
+        InstructionError::MemoryOutOfBounds
     }
 }
 
-impl From<HostFunctionPause> for InterpreterError {
+impl From<HostFunctionPause> for InstructionError {
     fn from(err: HostFunctionPause) -> Self {
-        InterpreterError::HostFunction(err)
+        InstructionError::HostFunction(err)
     }
 }
 
@@ -328,7 +310,7 @@ macro_rules! instruction {
 
 #[allow(unused_variables)]
 impl<'module> BaseVisitor for Interpreter<'module> {
-    type Error = InterpreterError;
+    type Error = InstructionError;
     type State = InterpreterState;
 
     fn finish(&self, _: &mut Self::State) -> Result<(), Self::Error> {
@@ -336,7 +318,7 @@ impl<'module> BaseVisitor for Interpreter<'module> {
     }
 
     fn unreachable(&self, _: &mut Self::State) -> Result<(), Self::Error> {
-        Err(InterpreterError::Trap)
+        Err(InstructionError::Trap)
     }
 
     fn nop(&self, _: &mut Self::State) -> Result<(), Self::Error> {
@@ -854,7 +836,7 @@ impl<'module> IrVisitor for Interpreter<'module> {
     ) -> Result<(), Self::Error> {
         state.sp -= 1;
         let v = state.stack.read_u32(state.sp);
-        let addr = cases(v as u16).map_err(|_| InterpreterError::TableLookupFailed)?;
+        let addr = cases(v as u16).map_err(|_| InstructionError::TableLookupFailed)?;
 
         state.pc = addr;
         Ok(())
@@ -1044,7 +1026,7 @@ impl<'module> IrVisitor for Interpreter<'module> {
         match g.reference {
             GlobalVariableRef::Imported(i) => {
                 let gi = &self.global_imports[i as usize];
-                match gi.value.read().or(Err(InterpreterError::GlobalGetFailed))? {
+                match gi.value.read().or(Err(InstructionError::GlobalGetFailed))? {
                     Value::I32(i) => {
                         state.stack.write_u32(state.sp, i as u32);
                         state.sp += 1;
@@ -1106,7 +1088,7 @@ impl<'module> IrVisitor for Interpreter<'module> {
                         gi.value.write(Value::F64(f))
                     }
                 }
-                .or(Err(InterpreterError::GlobalSetFailed))?;
+                .or(Err(InstructionError::GlobalSetFailed))?;
             }
             GlobalVariableRef::Internal(addr) => match g.ty {
                 ValType::I32 | ValType::F32 => {
