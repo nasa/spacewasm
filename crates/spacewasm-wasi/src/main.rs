@@ -192,10 +192,11 @@ fn main() {
                         ExportDesc::Global(_) => {}
                     }
                 }
-                eprintln!("====");
 
                 let mem = &module.memories[0];
                 let heap_size = (mem.0.min as usize) * 65536;
+
+                eprintln!("Heap size: {}", heap_size);
 
                 let mut state = spacewasm::InterpreterState::new(
                     1024,
@@ -241,6 +242,8 @@ fn main() {
                     module.module_imports.functions,
                     module.module_imports.memories,
                 );
+
+                eprintln!("====");
 
                 let code = spacewasm::Code::new(module.text);
                 let r = interpreter.run(&code, &mut state, 1000);

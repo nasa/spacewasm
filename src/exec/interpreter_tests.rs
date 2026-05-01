@@ -31,13 +31,13 @@ mod tests {
                 let interpreter = create_test_interpreter();
                 let mut state = create_test_state();
 
-                state.stack[0] = $input;
+                state.write_u32(0, $input);
                 state.sp = 1;
 
                 (&interpreter).$op(&mut state).unwrap();
 
                 assert_eq!(state.sp, 1);
-                assert_eq!(state.stack[0], $expected);
+                assert_eq!(state.read_u32(0), $expected);
             }
         };
 
@@ -48,14 +48,14 @@ mod tests {
                 let interpreter = create_test_interpreter();
                 let mut state = create_test_state();
 
-                state.stack[0] = $a;
-                state.stack[1] = $b;
+                state.write_u32(0, $a);
+                state.write_u32(1, $b);
                 state.sp = 2;
 
                 (&interpreter).$op(&mut state).unwrap();
 
                 assert_eq!(state.sp, 1);
-                assert_eq!(state.stack[0], $expected);
+                assert_eq!(state.read_u32(0), $expected);
             }
         };
 
@@ -67,8 +67,7 @@ mod tests {
                 let mut state = create_test_state();
 
                 let input_val = $input as u64;
-                state.stack[0] = input_val as u32;
-                state.stack[1] = (input_val >> 32) as u32;
+                state.write_u64(0, input_val);
                 state.sp = 2;
 
                 (&interpreter).$op(&mut state).unwrap();
@@ -88,10 +87,8 @@ mod tests {
 
                 let a_val = $a as u64;
                 let b_val = $b as u64;
-                state.stack[0] = a_val as u32;
-                state.stack[1] = (a_val >> 32) as u32;
-                state.stack[2] = b_val as u32;
-                state.stack[3] = (b_val >> 32) as u32;
+                state.write_u64(0, a_val);
+                state.write_u64(2, b_val);
                 state.sp = 4;
 
                 (&interpreter).$op(&mut state).unwrap();
@@ -185,11 +182,11 @@ mod tests {
 
         (&interpreter).i32_const(42, &mut state).unwrap();
         assert_eq!(state.sp, 1);
-        assert_eq!(state.stack[0], 42);
+        assert_eq!(state.read_u32(0), 42);
 
         (&interpreter).i32_const(-1, &mut state).unwrap();
         assert_eq!(state.sp, 2);
-        assert_eq!(state.stack[1] as i32, -1);
+        assert_eq!(state.read_u32(1) as i32, -1);
     }
 
     #[test]
@@ -240,7 +237,7 @@ mod tests {
         state.ram.store_u32(100, 0x12345678).unwrap();
 
         // Push address onto stack
-        state.stack[0] = 100;
+        state.write_u32(0, 100);
         state.sp = 1;
 
         (&interpreter)
@@ -254,7 +251,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(state.sp, 1);
-        assert_eq!(state.stack[0], 0x12345678);
+        assert_eq!(state.read_u32(0), 0x12345678);
     }
 
     #[test]
@@ -264,7 +261,7 @@ mod tests {
 
         state.ram.store_u32(108, 0xDEADBEEF).unwrap();
 
-        state.stack[0] = 100;
+        state.write_u32(0, 100);
         state.sp = 1;
 
         (&interpreter)
@@ -277,7 +274,7 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(state.stack[0], 0xDEADBEEF);
+        assert_eq!(state.read_u32(0), 0xDEADBEEF);
     }
 
     #[test]
@@ -287,7 +284,7 @@ mod tests {
 
         state.ram.store_u64(100, 0x123456789ABCDEF0).unwrap();
 
-        state.stack[0] = 100;
+        state.write_u32(0, 100);
         state.sp = 1;
 
         (&interpreter)
@@ -311,7 +308,7 @@ mod tests {
 
         state.ram.store_u8(100, 0xFF).unwrap(); // -1 in i8
 
-        state.stack[0] = 100;
+        state.write_u32(0, 100);
         state.sp = 1;
 
         (&interpreter)
@@ -324,7 +321,7 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(state.stack[0] as i32, -1);
+        assert_eq!(state.read_u32(0) as i32, -1);
     }
 
     #[test]
@@ -334,7 +331,7 @@ mod tests {
 
         state.ram.store_u8(100, 0xFF).unwrap();
 
-        state.stack[0] = 100;
+        state.write_u32(0, 100);
         state.sp = 1;
 
         (&interpreter)
@@ -347,7 +344,7 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(state.stack[0], 0xFF);
+        assert_eq!(state.read_u32(0), 0xFF);
     }
 
     #[test]
@@ -357,7 +354,7 @@ mod tests {
 
         state.ram.store_u16(100, 0xFFFF).unwrap(); // -1 in i16
 
-        state.stack[0] = 100;
+        state.write_u32(0, 100);
         state.sp = 1;
 
         (&interpreter)
@@ -370,7 +367,7 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(state.stack[0] as i32, -1);
+        assert_eq!(state.read_u32(0) as i32, -1);
     }
 
     #[test]
@@ -380,7 +377,7 @@ mod tests {
 
         state.ram.store_u16(100, 0xFFFF).unwrap();
 
-        state.stack[0] = 100;
+        state.write_u32(0, 100);
         state.sp = 1;
 
         (&interpreter)
@@ -393,7 +390,7 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(state.stack[0], 0xFFFF);
+        assert_eq!(state.read_u32(0), 0xFFFF);
     }
 
     #[test]
@@ -403,7 +400,7 @@ mod tests {
 
         state.ram.store_u8(100, 0xFF).unwrap();
 
-        state.stack[0] = 100;
+        state.write_u32(0, 100);
         state.sp = 1;
 
         (&interpreter)
@@ -427,7 +424,7 @@ mod tests {
 
         state.ram.store_u32(100, 0xDEADBEEF).unwrap();
 
-        state.stack[0] = 100;
+        state.write_u32(0, 100);
         state.sp = 1;
 
         (&interpreter)
@@ -450,8 +447,8 @@ mod tests {
         let interpreter = create_test_interpreter();
         let mut state = create_test_state();
 
-        state.stack[0] = 100; // address
-        state.stack[1] = 0x12345678; // value
+        state.write_u32(0, 100); // address
+        state.write_u32(1, 0x12345678); // value
         state.sp = 2;
 
         (&interpreter)
@@ -473,8 +470,8 @@ mod tests {
         let interpreter = create_test_interpreter();
         let mut state = create_test_state();
 
-        state.stack[0] = 100;
-        state.stack[1] = 0xDEADBEEF;
+        state.write_u32(0, 100);
+        state.write_u32(1, 0xDEADBEEF);
         state.sp = 2;
 
         (&interpreter)
@@ -495,7 +492,7 @@ mod tests {
         let interpreter = create_test_interpreter();
         let mut state = create_test_state();
 
-        state.stack[0] = 100; // address
+        state.write_u32(0, 100); // address
         state.write_u64(1, 0x123456789ABCDEF0); // value
         state.sp = 3;
 
@@ -518,8 +515,8 @@ mod tests {
         let interpreter = create_test_interpreter();
         let mut state = create_test_state();
 
-        state.stack[0] = 100;
-        state.stack[1] = 0x123456FF;
+        state.write_u32(0, 100);
+        state.write_u32(1, 0x123456FF);
         state.sp = 2;
 
         (&interpreter)
@@ -541,8 +538,8 @@ mod tests {
         let interpreter = create_test_interpreter();
         let mut state = create_test_state();
 
-        state.stack[0] = 100;
-        state.stack[1] = 0x1234FFFF;
+        state.write_u32(0, 100);
+        state.write_u32(1, 0x1234FFFF);
         state.sp = 2;
 
         (&interpreter)
@@ -564,7 +561,7 @@ mod tests {
         let interpreter = create_test_interpreter();
         let mut state = create_test_state();
 
-        state.stack[0] = 100;
+        state.write_u32(0, 100);
         state.write_u64(1, 0x123456789ABCDEFF);
         state.sp = 3;
 
@@ -587,7 +584,7 @@ mod tests {
         let interpreter = create_test_interpreter();
         let mut state = create_test_state();
 
-        state.stack[0] = 100;
+        state.write_u32(0, 100);
         state.write_u64(1, 0x12345678DEADBEEF);
         state.sp = 3;
 
@@ -696,7 +693,7 @@ mod tests {
         (&interpreter).i32_wrap_i64(&mut state).unwrap();
 
         assert_eq!(state.sp, 1);
-        assert_eq!(state.stack[0], 0x9ABCDEF0);
+        assert_eq!(state.read_u32(0), 0x9ABCDEF0);
     }
 
     #[test]
@@ -710,7 +707,7 @@ mod tests {
         (&interpreter).i32_trunc_f32_s(&mut state).unwrap();
 
         assert_eq!(state.sp, 1);
-        assert_eq!(state.stack[0] as i32, 3);
+        assert_eq!(state.read_u32(0) as i32, 3);
     }
 
     #[test]
@@ -724,7 +721,7 @@ mod tests {
         (&interpreter).i32_trunc_f32_u(&mut state).unwrap();
 
         assert_eq!(state.sp, 1);
-        assert_eq!(state.stack[0], 3);
+        assert_eq!(state.read_u32(0), 3);
     }
 
     #[test]
@@ -738,7 +735,7 @@ mod tests {
         (&interpreter).i32_trunc_f64_s(&mut state).unwrap();
 
         assert_eq!(state.sp, 1);
-        assert_eq!(state.stack[0] as i32, 3);
+        assert_eq!(state.read_u32(0) as i32, 3);
     }
 
     #[test]
@@ -746,7 +743,7 @@ mod tests {
         let interpreter = create_test_interpreter();
         let mut state = create_test_state();
 
-        state.stack[0] = (-1i32) as u32;
+        state.write_u32(0, (-1i32) as u32);
         state.sp = 1;
 
         (&interpreter).i64_extend_i32_s(&mut state).unwrap();
@@ -760,7 +757,7 @@ mod tests {
         let interpreter = create_test_interpreter();
         let mut state = create_test_state();
 
-        state.stack[0] = 0xFFFFFFFF;
+        state.write_u32(0, 0xFFFFFFFF);
         state.sp = 1;
 
         (&interpreter).i64_extend_i32_u(&mut state).unwrap();
@@ -802,7 +799,7 @@ mod tests {
         let interpreter = create_test_interpreter();
         let mut state = create_test_state();
 
-        state.stack[0] = (-42i32) as u32;
+        state.write_u32(0, (-42i32) as u32);
         state.sp = 1;
 
         (&interpreter).f32_convert_i32_s(&mut state).unwrap();
@@ -816,7 +813,7 @@ mod tests {
         let interpreter = create_test_interpreter();
         let mut state = create_test_state();
 
-        state.stack[0] = 42;
+        state.write_u32(0, 42);
         state.sp = 1;
 
         (&interpreter).f32_convert_i32_u(&mut state).unwrap();
@@ -858,7 +855,7 @@ mod tests {
         let interpreter = create_test_interpreter();
         let mut state = create_test_state();
 
-        state.stack[0] = (-42i32) as u32;
+        state.write_u32(0, (-42i32) as u32);
         state.sp = 1;
 
         (&interpreter).f64_convert_i32_s(&mut state).unwrap();
@@ -901,7 +898,7 @@ mod tests {
         let interpreter = create_test_interpreter();
         let mut state = create_test_state();
 
-        state.stack[0] = 42;
+        state.write_u32(0, 42);
         state.sp = 1;
 
         (&interpreter).drop(&mut state).unwrap();
@@ -914,15 +911,15 @@ mod tests {
         let interpreter = create_test_interpreter();
         let mut state = create_test_state();
 
-        state.stack[0] = 10; // val1
-        state.stack[1] = 20; // val2
-        state.stack[2] = 1; // condition (true)
+        state.write_u32(0, 10); // val1
+        state.write_u32(1, 20); // val2
+        state.write_u32(2, 1); // condition (true)
         state.sp = 3;
 
         (&interpreter).select(&mut state).unwrap();
 
         assert_eq!(state.sp, 1);
-        assert_eq!(state.stack[0], 10);
+        assert_eq!(state.read_u32(0), 10);
     }
 
     #[test]
@@ -930,15 +927,15 @@ mod tests {
         let interpreter = create_test_interpreter();
         let mut state = create_test_state();
 
-        state.stack[0] = 10; // val1
-        state.stack[1] = 20; // val2
-        state.stack[2] = 0; // condition (false)
+        state.write_u32(0, 10); // val1
+        state.write_u32(1, 20); // val2
+        state.write_u32(2, 0); // condition (false)
         state.sp = 3;
 
         (&interpreter).select(&mut state).unwrap();
 
         assert_eq!(state.sp, 1);
-        assert_eq!(state.stack[0], 20);
+        assert_eq!(state.read_u32(0), 20);
     }
 
     // ===== Memory Size/Grow Operations =====
@@ -952,7 +949,7 @@ mod tests {
         (&interpreter).memory_size(&mut state).unwrap();
 
         assert_eq!(state.sp, 1);
-        assert_eq!(state.stack[0], 1); // 65536 / 65536 = 1 page
+        assert_eq!(state.read_u32(0), 1); // 65536 / 65536 = 1 page
     }
 
     // ===== Float Comparison Operations =====
@@ -968,7 +965,7 @@ mod tests {
         (&interpreter).f32_eq(&mut state).unwrap();
 
         assert_eq!(state.sp, 1);
-        assert_eq!(state.stack[0], 1);
+        assert_eq!(state.read_u32(0), 1);
     }
 
     #[test]
@@ -983,7 +980,7 @@ mod tests {
         (&interpreter).f32_ne(&mut state).unwrap();
 
         assert_eq!(state.sp, 1);
-        assert_eq!(state.stack[0], 1);
+        assert_eq!(state.read_u32(0), 1);
     }
 
     #[test]
@@ -998,7 +995,7 @@ mod tests {
         (&interpreter).f32_lt(&mut state).unwrap();
 
         assert_eq!(state.sp, 1);
-        assert_eq!(state.stack[0], 1);
+        assert_eq!(state.read_u32(0), 1);
     }
 
     #[test]
@@ -1013,7 +1010,7 @@ mod tests {
         (&interpreter).f64_eq(&mut state).unwrap();
 
         assert_eq!(state.sp, 1);
-        assert_eq!(state.stack[0], 1);
+        assert_eq!(state.read_u32(0), 1);
     }
 
     // ===== i64 Comparison Operations (return i32) =====
@@ -1029,7 +1026,7 @@ mod tests {
         (&interpreter).i64_eq(&mut state).unwrap();
 
         assert_eq!(state.sp, 1);
-        assert_eq!(state.stack[0], 1);
+        assert_eq!(state.read_u32(0), 1);
     }
 
     #[test]
@@ -1044,7 +1041,7 @@ mod tests {
         (&interpreter).i64_ne(&mut state).unwrap();
 
         assert_eq!(state.sp, 1);
-        assert_eq!(state.stack[0], 1);
+        assert_eq!(state.read_u32(0), 1);
     }
 
     #[test]
@@ -1059,7 +1056,7 @@ mod tests {
         (&interpreter).i64_lt_s(&mut state).unwrap();
 
         assert_eq!(state.sp, 1);
-        assert_eq!(state.stack[0], 1);
+        assert_eq!(state.read_u32(0), 1);
     }
 
     // ===== Additional Edge Cases =====
@@ -1068,14 +1065,14 @@ mod tests {
         let interpreter = create_test_interpreter();
         let mut state = create_test_state();
 
-        state.stack[0] = 0xFFFFFFFF;
-        state.stack[1] = 2;
+        state.write_u32(0, 0xFFFFFFFF);
+        state.write_u32(1, 2);
         state.sp = 2;
 
         (&interpreter).i32_add(&mut state).unwrap();
 
         assert_eq!(state.sp, 1);
-        assert_eq!(state.stack[0], 1); // Wraps around
+        assert_eq!(state.read_u32(0), 1); // Wraps around
     }
 
     #[test]
