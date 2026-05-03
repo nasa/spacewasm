@@ -453,7 +453,7 @@ impl<'module, 'ctx, const N: usize> TextBuilder<'module, 'ctx, N> {
 
             // Handle if-without-else case: if this is an if block and else_frames has an entry,
             // it means no else_() was called, so we need to back-patch the IF sentinel here
-            if last.is_if() && !self.else_frames.is_empty() {
+            if last.is_if() && self.else_frames.len() > 0 {
                 let Some(else_addr) = self.else_frames.pop() else {
                     return Err(ValidationError::InvalidElseBlock);
                 };

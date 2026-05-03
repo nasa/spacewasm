@@ -225,6 +225,7 @@ mod tests {
 
     /// Wrapper that delegates BaseVisitor and IrVisitor to TestHandler
     /// This is written ONCE and reused for all tests
+    #[derive(Clone, Copy)]
     struct TestVisitor<H>(H);
 
     impl<H: TestHandler> BaseVisitor for TestVisitor<H> {
@@ -669,10 +670,6 @@ mod tests {
         };
     }
 
-    // ============================================================================
-    // Comprehensive instruction tests
-    // ============================================================================
-
     // Control flow and parametric (no params)
     test_instr!(no_param: test_unreachable, handle_unreachable, unreachable);
     test_instr!(no_param: test_nop, handle_nop, nop);
@@ -856,8 +853,490 @@ mod tests {
     test_instr!(memarg: test_i64_store16, handle_i64_store16, i64_store16, 1, 2);
     test_instr!(memarg: test_i64_store32, handle_i64_store32, i64_store32, 2, 4);
 
-    // Note: WasmVisitor methods (local_get, global_get, call, return, control flow)
-    // cannot be tested with this infrastructure because they take different
-    // parameters than IrVisitor methods. They would require integration tests
-    // that compile and execute complete WebAssembly modules.
+    /// Test if/else control flow specifically
+    #[test]
+    fn test_if_else() {
+        use crate::{ResultType, WasmVisitor};
+
+        let mut code_builder = CodeBuilder::<4>::new();
+        let mut module = create_test_module();
+
+        let mut types = crate::Vec::new(1).unwrap();
+        types.push(crate::FuncType {
+            params: crate::Vec::zero(),
+            returns: crate::Vec::zero(),
+        });
+        module.types = types;
+
+        let func = create_test_func();
+        let compiler = Compiler::<4>::new();
+
+        {
+            let mut text_builder = TextBuilder::new(&mut code_builder, &module, &func);
+
+            // Test if/else structure with code in both branches
+            compiler.i32_const(1, &mut text_builder).unwrap(); // Condition
+            compiler.if_(ResultType(None), &mut text_builder).unwrap();
+            compiler.i32_const(2, &mut text_builder).unwrap(); // Then branch
+            compiler.else_(&mut text_builder).unwrap();
+            compiler.i32_const(3, &mut text_builder).unwrap(); // Else branch
+            compiler.exit_block(&mut text_builder).unwrap();
+            compiler.return_(&mut text_builder).unwrap();
+        }
+
+        let result = code_builder.finish();
+        assert!(result.is_ok(), "if/else should compile: {:?}", result.err());
+
+        // Verify the code was generated
+        let (pages, _) = result.unwrap();
+        assert!(pages.len() > 0, "Should generate code");
+
+        // Now decode and verify we see the BR instruction from else
+        use core::cell::Cell;
+        use std::rc::Rc;
+
+        #[derive(Clone)]
+        struct ElseTestHandler {
+            if_count: Rc<Cell<u32>>,
+            br_count: Rc<Cell<u32>>,
+            i32_const_count: Rc<Cell<u32>>,
+        }
+
+        impl TestHandler for ElseTestHandler {
+            type State = ();
+
+            fn handle_if(&self, _: JumpTarget, _: &mut Self::State) -> Result<(), ()> {
+                self.if_count.set(self.if_count.get() + 1);
+                Ok(())
+            }
+
+            fn handle_br(&self, _: JumpTarget, _: &mut Self::State) -> Result<(), ()> {
+                self.br_count.set(self.br_count.get() + 1);
+                Ok(())
+            }
+
+            fn handle_i32_const(&self, _: i32, _: &mut Self::State) -> Result<(), ()> {
+                self.i32_const_count.set(self.i32_const_count.get() + 1);
+                Ok(())
+            }
+
+            fn handle_return(&self, _: u8, _: &mut Self::State) -> Result<(), ()> {
+                Ok(())
+            }
+
+            fn handle_unreachable(&self, _: &mut Self::State) -> Result<(), ()> {
+                Ok(())
+            }
+
+            fn handle_finish(&self, _: &mut Self::State) -> Result<(), ()> {
+                Ok(())
+            }
+        }
+
+        let code = Code::new(pages);
+        let handler = ElseTestHandler {
+            if_count: Rc::new(Cell::new(0)),
+            br_count: Rc::new(Cell::new(0)),
+            i32_const_count: Rc::new(Cell::new(0)),
+        };
+
+        let mut state = ();
+        let mut pc = JumpTarget(0);
+        let mut instruction_count = 0;
+
+        loop {
+            let visitor = TestVisitor(handler.clone());
+            match code.visit_instruction(&mut state, pc, visitor) {
+                Ok((words_consumed, _)) => {
+                    pc = pc + words_consumed;
+                    instruction_count += 1;
+                    if instruction_count > 100 {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+
+        // Verify if/else structure:
+        // - 1 if instruction
+        // - 1 br instruction (generated by else to jump to end)
+        // - 2 i32.const instructions (one in then branch, one in else branch)
+        assert_eq!(handler.if_count.get(), 1, "Should have 1 if instruction");
+        assert_eq!(
+            handler.br_count.get(),
+            1,
+            "Should have 1 br instruction (from else clause)"
+        );
+        assert_eq!(
+            handler.i32_const_count.get(),
+            3,
+            "Should have 3 i32.const (condition + then + else)"
+        );
+    }
+
+    /// Comprehensive test for control flow and variable instructions
+    ///
+    /// Compiles a sequence of instructions covering all major categories:
+    /// - Local variables: local.get, local.set, local.tee
+    /// - Global variables: global.get, global.set
+    /// - Control flow: block, loop, if, br, br_if, br_table, return, call (internal functions)
+    /// - Constants: i32.const
+    ///
+    /// Then reads back the compiled IR code and verifies each instruction type
+    /// was correctly encoded and decoded. This validates the full compile→encode→decode
+    /// pipeline for control flow and variable operations.
+    ///
+    /// Note: The 'else' instruction is tested separately in test_if_else.
+    #[test]
+    fn test_control_flow_and_variables() {
+        use crate::{FuncIdx, GlobalIdx, LabelIdx, LocalIdx, ResultType, WasmVisitor};
+        use core::ops::ControlFlow;
+
+        let mut code_builder = CodeBuilder::<4>::new();
+
+        // Create module with globals and imports
+        let mut module = create_test_module();
+
+        // Add function types for the test function and callees
+        let mut types = crate::Vec::new(2).unwrap();
+        // Type 0: () -> () for our test function and callees
+        types.push(crate::FuncType {
+            params: crate::Vec::zero(),
+            returns: crate::Vec::zero(),
+        });
+        module.types = types;
+
+        // Add some internal functions to call
+        let mut functions = crate::Vec::new(2).unwrap();
+        functions.push(create_test_func()); // Function 0 (internal)
+        functions.push(create_test_func()); // Function 1 (internal)
+        module.functions = functions;
+
+        // Add global variables
+        let mut globals = crate::Vec::new(2).unwrap();
+        globals.push(crate::Global {
+            type_: crate::GlobalType {
+                ty: crate::ValType::I32,
+                mutable: true,
+            },
+            init: crate::Value::I32(0),
+        });
+        globals.push(crate::Global {
+            type_: crate::GlobalType {
+                ty: crate::ValType::I64,
+                mutable: true,
+            },
+            init: crate::Value::I64(0),
+        });
+        module.globals = globals;
+
+        // Setup module imports - add an imported function
+        static EMPTY_PARAMS: &[crate::ValType] = &[];
+        static EMPTY_RETURNS: &[crate::ValType] = &[];
+
+        fn dummy_host_fn(_args: &[crate::Value]) -> crate::HostFunctionResult {
+            ControlFlow::Continue(None)
+        }
+
+        let host_func = crate::HostFunction::new(
+            "env",
+            "imported_fn",
+            EMPTY_PARAMS,
+            EMPTY_RETURNS,
+            dummy_host_fn,
+        );
+
+        // Create a long-lived slice containing the host function
+        let host_funcs = [host_func];
+
+        module.module_imports = ModuleImports {
+            functions: &host_funcs,
+            memories: &[],
+            globals: &[],
+        };
+
+        // Add Import entries to indicate which function indices are imported
+        let mut imports = crate::Vec::new(1).unwrap();
+        imports.push(crate::Import::Func(0)); // Function index 0 is imported (host_funcs[0])
+        module.imports = imports;
+
+        // Create function with locals
+        let mut func = create_test_func();
+        func.locals = {
+            let mut locals = crate::Vec::new(3).unwrap();
+            locals.push((1, crate::ValType::I32));
+            locals.push((1, crate::ValType::I64));
+            locals.push((1, crate::ValType::F32));
+            locals
+        };
+        func.local_size = 16;
+        func.parameter_size = 0;
+
+        let compiler = Compiler::<4>::new();
+
+        // Compile a sequence of instructions testing all control flow and variable operations
+        {
+            let mut text_builder = TextBuilder::new(&mut code_builder, &module, &func);
+
+            // Test local variable operations
+            compiler.local_get(LocalIdx(0), &mut text_builder).unwrap();
+            compiler.local_set(LocalIdx(1), &mut text_builder).unwrap();
+            compiler.local_tee(LocalIdx(2), &mut text_builder).unwrap();
+
+            // Test global variable operations
+            compiler
+                .global_get(GlobalIdx(0), &mut text_builder)
+                .unwrap();
+            compiler
+                .global_set(GlobalIdx(1), &mut text_builder)
+                .unwrap();
+
+            // Test control flow: block
+            compiler
+                .enter_block(ResultType(None), &mut text_builder)
+                .unwrap();
+            compiler.i32_const(42, &mut text_builder).unwrap();
+            compiler.exit_block(&mut text_builder).unwrap();
+
+            // Test control flow: loop
+            compiler.loop_(ResultType(None), &mut text_builder).unwrap();
+            compiler.i32_const(43, &mut text_builder).unwrap();
+            compiler.exit_block(&mut text_builder).unwrap();
+
+            // Test control flow: if (without else - else is tested separately)
+            compiler.i32_const(1, &mut text_builder).unwrap();
+            compiler.if_(ResultType(None), &mut text_builder).unwrap();
+            compiler.i32_const(2, &mut text_builder).unwrap();
+            compiler.exit_block(&mut text_builder).unwrap();
+
+            // Test control flow: br, br_if
+            compiler
+                .enter_block(ResultType(None), &mut text_builder)
+                .unwrap();
+            compiler.i32_const(1, &mut text_builder).unwrap();
+            compiler.br_if(LabelIdx(0), &mut text_builder).unwrap();
+            compiler.br(LabelIdx(0), &mut text_builder).unwrap();
+            compiler.exit_block(&mut text_builder).unwrap();
+
+            // Test control flow: call to internal function
+            // We have 1 imported function, so internal function 0 is at index 1
+            compiler.call(FuncIdx(1), &mut text_builder).unwrap();
+
+            // Test control flow: call to imported function (call_host)
+            // Imported function 0 is at index 0
+            compiler.call(FuncIdx(0), &mut text_builder).unwrap();
+
+            // Test control flow: br_table
+            compiler
+                .enter_block(ResultType(None), &mut text_builder)
+                .unwrap();
+            compiler.i32_const(0, &mut text_builder).unwrap();
+            compiler
+                .br_table(&[LabelIdx(0), LabelIdx(0)], LabelIdx(0), &mut text_builder)
+                .unwrap();
+            compiler.exit_block(&mut text_builder).unwrap();
+
+            // Test control flow: return
+            compiler.return_(&mut text_builder).unwrap();
+        }
+
+        // Verify compilation succeeded
+        let result = code_builder.finish();
+        assert!(result.is_ok(), "Compilation should succeed");
+
+        // Verify we generated some code
+        let (pages, _) = result.unwrap();
+        assert!(pages.len() > 0, "Should generate at least one page of code");
+
+        // Now read back the compiled code and verify correct instructions are decoded
+        use core::cell::Cell;
+        extern crate std;
+        use std::rc::Rc;
+
+        #[derive(Clone)]
+        struct InstructionCounts {
+            local_get: Rc<Cell<u32>>,
+            local_set: Rc<Cell<u32>>,
+            local_tee: Rc<Cell<u32>>,
+            global_get: Rc<Cell<u32>>,
+            global_set: Rc<Cell<u32>>,
+            i32_const: Rc<Cell<u32>>,
+            if_: Rc<Cell<u32>>,
+            br: Rc<Cell<u32>>,
+            br_if: Rc<Cell<u32>>,
+            br_table: Rc<Cell<u32>>,
+            call: Rc<Cell<u32>>,
+            call_host: Rc<Cell<u32>>,
+            return_: Rc<Cell<u32>>,
+        }
+
+        #[derive(Clone)]
+        struct ReadHandler {
+            counts: InstructionCounts,
+            first_local_get: Rc<Cell<Option<(i16, crate::ValType)>>>,
+        }
+
+        impl TestHandler for ReadHandler {
+            type State = ();
+
+            fn handle_local_get(&self, var: LocalVariable, _: &mut Self::State) -> Result<(), ()> {
+                self.counts.local_get.set(self.counts.local_get.get() + 1);
+                // Capture the first local_get for verification
+                if self.first_local_get.get().is_none() {
+                    self.first_local_get.set(Some((var.frame_offset, var.ty)));
+                }
+                Ok(())
+            }
+
+            fn handle_local_set(&self, _: LocalVariable, _: &mut Self::State) -> Result<(), ()> {
+                self.counts.local_set.set(self.counts.local_set.get() + 1);
+                Ok(())
+            }
+
+            fn handle_local_tee(&self, _: LocalVariable, _: &mut Self::State) -> Result<(), ()> {
+                self.counts.local_tee.set(self.counts.local_tee.get() + 1);
+                Ok(())
+            }
+
+            fn handle_global_get(&self, _: GlobalVariable, _: &mut Self::State) -> Result<(), ()> {
+                self.counts.global_get.set(self.counts.global_get.get() + 1);
+                Ok(())
+            }
+
+            fn handle_global_set(&self, _: GlobalVariable, _: &mut Self::State) -> Result<(), ()> {
+                self.counts.global_set.set(self.counts.global_set.get() + 1);
+                Ok(())
+            }
+
+            fn handle_i32_const(&self, _: i32, _: &mut Self::State) -> Result<(), ()> {
+                self.counts.i32_const.set(self.counts.i32_const.get() + 1);
+                Ok(())
+            }
+
+            fn handle_if(&self, _: JumpTarget, _: &mut Self::State) -> Result<(), ()> {
+                self.counts.if_.set(self.counts.if_.get() + 1);
+                Ok(())
+            }
+
+            fn handle_br(&self, _: JumpTarget, _: &mut Self::State) -> Result<(), ()> {
+                self.counts.br.set(self.counts.br.get() + 1);
+                Ok(())
+            }
+
+            fn handle_br_if(&self, _: JumpTarget, _: &mut Self::State) -> Result<(), ()> {
+                self.counts.br_if.set(self.counts.br_if.get() + 1);
+                Ok(())
+            }
+
+            fn handle_br_table(
+                &self,
+                _f: impl FnOnce(u16) -> Result<JumpTarget, ()>,
+                _: &mut Self::State,
+            ) -> Result<(), ()> {
+                self.counts.br_table.set(self.counts.br_table.get() + 1);
+                Ok(())
+            }
+
+            fn handle_return(&self, _: u8, _: &mut Self::State) -> Result<(), ()> {
+                self.counts.return_.set(self.counts.return_.get() + 1);
+                Ok(())
+            }
+
+            fn handle_call(&self, idx: u16, _: &mut Self::State) -> Result<(), ()> {
+                assert_eq!(idx, 0);
+                self.counts.call.set(self.counts.call.get() + 1);
+                Ok(())
+            }
+
+            fn handle_call_host(&self, idx: u16, _: &mut Self::State) -> Result<(), ()> {
+                assert_eq!(idx, 0);
+                self.counts.call_host.set(self.counts.call_host.get() + 1);
+                Ok(())
+            }
+
+            // Allow unreachable instructions (might be generated by compiler for certain control flow)
+            fn handle_unreachable(&self, _: &mut Self::State) -> Result<(), ()> {
+                Ok(())
+            }
+
+            // Allow finish instructions
+            fn handle_finish(&self, _: &mut Self::State) -> Result<(), ()> {
+                Ok(())
+            }
+        }
+
+        let code = Code::new(pages);
+        let handler = ReadHandler {
+            counts: InstructionCounts {
+                local_get: Rc::new(Cell::new(0)),
+                local_set: Rc::new(Cell::new(0)),
+                local_tee: Rc::new(Cell::new(0)),
+                global_get: Rc::new(Cell::new(0)),
+                global_set: Rc::new(Cell::new(0)),
+                i32_const: Rc::new(Cell::new(0)),
+                if_: Rc::new(Cell::new(0)),
+                br: Rc::new(Cell::new(0)),
+                br_if: Rc::new(Cell::new(0)),
+                br_table: Rc::new(Cell::new(0)),
+                call: Rc::new(Cell::new(0)),
+                call_host: Rc::new(Cell::new(0)),
+                return_: Rc::new(Cell::new(0)),
+            },
+            first_local_get: Rc::new(Cell::new(None)),
+        };
+        let mut state = ();
+
+        let mut pc = JumpTarget(0);
+        let mut instruction_count = 0;
+        loop {
+            let visitor = TestVisitor(handler.clone());
+            match code.visit_instruction(&mut state, pc, visitor) {
+                Ok((words_consumed, _)) => {
+                    pc = pc + words_consumed;
+                    instruction_count += 1;
+                    // Safety limit to prevent infinite loops
+                    if instruction_count > 1000 || handler.counts.return_.get() > 0 {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+
+        assert!(
+            instruction_count > 0,
+            "Should have decoded some instructions"
+        );
+
+        assert_eq!(handler.counts.local_get.get(), 1);
+        assert_eq!(handler.counts.local_set.get(), 1);
+        assert_eq!(handler.counts.local_tee.get(), 1);
+
+        if let Some((_offset, ty)) = handler.first_local_get.get() {
+            assert_eq!(ty, crate::ValType::I32, "First local.get should be I32");
+        } else {
+            panic!("Should have captured first local.get");
+        }
+
+        assert_eq!(handler.counts.global_get.get(), 1);
+        assert_eq!(handler.counts.global_set.get(), 1);
+
+        assert_eq!(handler.counts.if_.get(), 1);
+        assert!(
+            handler.counts.br.get() >= 1,
+            "Should have at least 1 br, found {}",
+            handler.counts.br.get()
+        );
+        assert_eq!(handler.counts.br_if.get(), 1);
+        assert_eq!(handler.counts.br_table.get(), 1);
+        assert_eq!(handler.counts.return_.get(), 1);
+        assert_eq!(handler.counts.call.get(), 1);
+        assert_eq!(handler.counts.call_host.get(), 1);
+        assert!(
+            handler.counts.i32_const.get() >= 6,
+            "Should have at least 6 i32.const instructions, found {}",
+            handler.counts.i32_const.get()
+        );
+    }
 }

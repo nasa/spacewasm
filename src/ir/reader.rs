@@ -203,7 +203,7 @@ impl Code {
                     return Err(IrReaderError::InvalidCallType(imm));
                 };
 
-                Ok((3, err))
+                Ok((2, err))
             }
             CALL_INDIRECT => {
                 let (n, size) = if imm == 0xFF {
