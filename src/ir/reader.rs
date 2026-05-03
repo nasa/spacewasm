@@ -257,9 +257,6 @@ impl Code {
             // Memory instructions - size/grow
             MEMORY_SIZE => instruction!(memory_size),
 
-            // This operation is not allowed during compilation
-            MEMORY_GROW => unreachable!(),
-
             // Numeric instructions - const
             I32_CONST => {
                 let (n, size) = if imm == 0xFF {
@@ -426,10 +423,6 @@ impl Code {
             F64_CONVERT_I64_S => instruction!(f64_convert_i64_s),
             F64_CONVERT_I64_U => instruction!(f64_convert_i64_u),
             F64_PROMOTE_F32 => instruction!(f64_promote_f32),
-            I32_REINTERPRET_F32 => instruction!(i32_reinterpret_f32),
-            I64_REINTERPRET_F64 => instruction!(i64_reinterpret_f64),
-            F32_REINTERPRET_I32 => instruction!(f32_reinterpret_i32),
-            F64_REINTERPRET_I64 => instruction!(f64_reinterpret_i64),
             END => Ok((0, None)),
             _ => Err(IrReaderError::InvalidOpcode(opcode)),
         }

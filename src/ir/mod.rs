@@ -6,3 +6,6 @@ pub use text::*;
 
 mod reader;
 pub use reader::*;
+
+#[cfg(test)]
+mod compiler_tests;

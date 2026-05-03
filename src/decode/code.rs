@@ -122,7 +122,7 @@ impl<'a> Module<'a> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MemArg {
     pub align: u32,
     pub offset: u32,

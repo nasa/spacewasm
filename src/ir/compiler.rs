@@ -220,13 +220,13 @@ impl<'a, const N: usize> BaseVisitor for Compiler<'a, N> {
     }
 
     fn f32_const(&self, z: f32, state: &mut Self::State) -> Result<(), Self::Error> {
-        state.push_no_operand(I32_CONST)?;
+        state.push_no_operand(F32_CONST)?;
         state.push_32(z.to_bits())?;
         Ok(())
     }
 
     fn f64_const(&self, z: f64, state: &mut Self::State) -> Result<(), Self::Error> {
-        state.push_no_operand(I64_CONST)?;
+        state.push_no_operand(F64_CONST)?;
         state.push_64(z.to_bits())?;
         Ok(())
     }
