@@ -1119,12 +1119,10 @@ mod tests {
             compiler.br(LabelIdx(0), &mut text_builder).unwrap();
             compiler.exit_block(&mut text_builder).unwrap();
 
-            // Test control flow: call to internal function
-            // We have 1 imported function, so internal function 0 is at index 1
+            // Call internal
             compiler.call(FuncIdx(1), &mut text_builder).unwrap();
 
-            // Test control flow: call to imported function (call_host)
-            // Imported function 0 is at index 0
+            // Call host
             compiler.call(FuncIdx(0), &mut text_builder).unwrap();
 
             // Test control flow: br_table
