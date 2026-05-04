@@ -30,7 +30,11 @@ impl InterpreterState {
         }
     }
 
-    pub fn initialize_globals(&mut self, globals: &[Global]) {
+    pub fn initialize(
+        &mut self,
+        globals: &[Global],
+        data: &[Data],
+    ) -> Result<(), MemoryOutOfBounds> {
         // Globals must be initialized before any invocation
         assert_eq!(self.sp, 0);
         assert_eq!(self.fp, 0);
@@ -55,6 +59,12 @@ impl InterpreterState {
                 }
             }
         }
+
+        for data in data {
+            self.ram.store(data.offset, &data.init)?;
+        }
+
+        Ok(())
     }
 
     /// Invoke a function with some parameters
@@ -157,7 +167,7 @@ impl<'module> Interpreter<'module> {
 
         // Run up to n instructions
         for _ in 0..n_instructions {
-            match code.visit_instruction(state, state.pc, Inspector { v: self }) {
+            match code.visit_instruction(state, state.pc, &Inspector { v: self }) {
                 Ok((0, _)) => return InterpreterResult::Finished,
                 Ok((size, Some(err))) => {
                     state.pending_pc = Some(state.pc + size);

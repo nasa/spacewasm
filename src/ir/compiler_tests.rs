@@ -397,7 +397,7 @@ mod tests {
         let visitor = TestVisitor(handler);
         let mut state = initial_state;
 
-        code.visit_instruction(&mut state, JumpTarget(0), visitor)
+        code.visit_instruction(&mut state, JumpTarget(0), &visitor)
             .unwrap();
         assert_fn(state);
     }
@@ -946,7 +946,7 @@ mod tests {
 
         loop {
             let visitor = TestVisitor(handler.clone());
-            match code.visit_instruction(&mut state, pc, visitor) {
+            match code.visit_instruction(&mut state, pc, &visitor) {
                 Ok((words_consumed, _)) => {
                     pc = pc + words_consumed;
                     instruction_count += 1;
@@ -1289,7 +1289,7 @@ mod tests {
         let mut instruction_count = 0;
         loop {
             let visitor = TestVisitor(handler.clone());
-            match code.visit_instruction(&mut state, pc, visitor) {
+            match code.visit_instruction(&mut state, pc, &visitor) {
                 Ok((words_consumed, _)) => {
                     pc = pc + words_consumed;
                     instruction_count += 1;

@@ -1,7 +1,7 @@
 use spacewasm::{
-    global_allocator, AllocError, Allocator, ExportDesc, FuncRef, HostFunction, InnerVec, Memory,
-    MemoryStatistics, ModuleImports, PageAllocator, ReaderError, SectionKind, Stream, ValType,
-    Value,
+    global_allocator, AllocError, Allocator, ExportDesc, FuncRef, HostFunction, HostFunctionPause, InnerVec,
+    Memory, MemoryStatistics, ModuleImports, PageAllocator, ReaderError, SectionKind, Stream,
+    ValType, Value,
 };
 use std::alloc::Layout;
 use std::collections::{HashMap, VecDeque};
@@ -93,7 +93,7 @@ fn main() {
                         &[],
                         |a| {
                             eprintln!("PANIC {:?} {:?}", a.get(0), a.get(1));
-                            ControlFlow::Continue(None)
+                            ControlFlow::Break(HostFunctionPause::Trap)
                         },
                     ),
                     HostFunction::new("fprime_core", "rsleep", &[ValType::I64], &[], |a| {
@@ -208,7 +208,7 @@ fn main() {
                     ),
                 );
 
-                state.initialize_globals(&module.globals);
+                state.initialize(&module.globals, &module.data).unwrap();
 
                 match module.start {
                     None => {

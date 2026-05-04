@@ -75,6 +75,16 @@ impl Memory {
         Ok(())
     }
 
+    pub fn store(&self, addr: usize, data: &[u8]) -> Result<(), MemoryOutOfBounds> {
+        self.check_in_bounds(addr, data.len())?;
+
+        unsafe {
+            data.as_ptr()
+                .copy_to(self.ptr.offset(addr as isize), data.len());
+        }
+        Ok(())
+    }
+
     pub fn load_u8(&self, addr: usize) -> Result<u8, MemoryOutOfBounds> {
         self.check_in_bounds(addr, 1)?;
         unsafe { Ok(self.ptr.offset(addr as isize).read()) }

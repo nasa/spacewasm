@@ -52,7 +52,7 @@ impl Code {
         &self,
         state: &mut S,
         pc: JumpTarget,
-        visitor: V,
+        visitor: &V,
     ) -> InstructionResult<E>
     where
         V: IrVisitor<State = S, Error = E>,

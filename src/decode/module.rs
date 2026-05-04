@@ -514,18 +514,40 @@ impl CodeSection {
 }
 
 pub struct Data {
-    pub mem: MemIdx,
-    pub offset: Value,
+    pub offset: usize,
     pub init: Vec<u8>,
 }
 
 impl Data {
     pub fn read(wasm: &mut Reader) -> Result<Self, ValidationError> {
         let mem = MemIdx::read(wasm)?;
+        if mem.0 != 0 {
+            return Err(ValidationError::InvalidMemIndex);
+        }
+
         let offset = Expr::read_constant(wasm)?;
         let init = wasm.read_vec(|w| w.read_u8())?;
 
-        Ok(Data { mem, offset, init })
+        let offset = match offset {
+            Value::I32(i) => {
+                if i < 0 {
+                    return Err(ValidationError::InvalidNegativeMemOffset);
+                }
+
+                i as usize
+            }
+            Value::I64(i) => {
+                if i < 0 {
+                    return Err(ValidationError::InvalidNegativeMemOffset);
+                }
+
+                i as usize
+            }
+            Value::F32(_) => return Err(ValidationError::InvalidMemOffsetType),
+            Value::F64(_) => return Err(ValidationError::InvalidMemOffsetType),
+        };
+
+        Ok(Data { offset, init })
     }
 }
 
