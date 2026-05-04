@@ -282,7 +282,7 @@ fn main() {
                 let code = spacewasm::Code::new(module.text);
                 let r = interpreter.run(&code, &mut state, 1000);
 
-                eprintln!("Interpreter finished {:?}", r)
+                eprintln!("Interpreter result: {:?}", r)
             }
             Err(err) => {
                 eprintln!("Failed to parse: {:?}", err)

@@ -8,24 +8,21 @@ pub enum IrReaderError {
     InvalidCallType(u8),
 }
 
-pub enum IrReaderReturn<E> {
-    InstructionPause(E),
-    Continue,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IrReaderStop<E> {
+    Instruction(E),
     Finished,
 }
 
-impl<E> From<Result<(), E>> for IrReaderReturn<E> {
-    fn from(value: Result<(), E>) -> Self {
-        match value {
-            Ok(_) => IrReaderReturn::Continue,
-            Err(e) => IrReaderReturn::InstructionPause(e),
-        }
+impl<E> From<E> for IrReaderStop<E> {
+    fn from(err: E) -> Self {
+        IrReaderStop::Instruction(err)
     }
 }
 
 pub struct Code(Vec<Box<TextPage>>);
 
-type InstructionResult<E> = Result<IrReaderReturn<E>, IrReaderError>;
+type IrReaderResult<E> = Result<(), IrReaderStop<E>>;
 
 impl Code {
     pub fn new(code: Vec<Box<TextPage>>) -> Self {
@@ -69,19 +66,18 @@ impl Code {
         state: &mut S,
         pc: &mut JumpTarget,
         visitor: &V,
-    ) -> InstructionResult<E>
+    ) -> IrReaderResult<E>
     where
         V: IrVisitor<State = S, Error = E>,
     {
-        let first = self.read(pc)?;
+        let first = self.read(pc).unwrap();
         let opcode = (first >> 8) as u8;
         let imm = (first & 0xFF) as u8;
 
         macro_rules! instruction {
             // Instruction with no operands
             ($name:ident) => {{
-                let r = visitor.$name(state);
-                Ok(r.into())
+                visitor.$name(state)?;
             }};
 
             // An instruction with a local variable reference immediate
@@ -91,13 +87,12 @@ impl Code {
                     1 => ValType::I64,
                     2 => ValType::F32,
                     3 => ValType::F64,
-                    _ => return Err(IrReaderError::InvalidType),
+                    _ => Err(IrReaderError::InvalidType).unwrap(),
                 };
 
-                let frame_offset = self.read(pc)? as i16;
+                let frame_offset = self.read(pc).unwrap() as i16;
 
-                let r = visitor.$name(LocalVariable { frame_offset, ty }, state);
-                Ok(r.into())
+                visitor.$name(LocalVariable { frame_offset, ty }, state)?;
             }};
 
             // An instruction with a global variable reference immediate
@@ -107,13 +102,13 @@ impl Code {
                     1 => ValType::I64,
                     2 => ValType::F32,
                     3 => ValType::F64,
-                    _ => return Err(IrReaderError::InvalidType),
+                    _ => Err(IrReaderError::InvalidType).unwrap(),
                 };
 
                 let is_imported = (imm & 0xF0) != 0;
-                let index = self.read(pc)? as u32;
+                let index = self.read(pc).unwrap() as u32;
 
-                let r = visitor.$name(
+                visitor.$name(
                     GlobalVariable {
                         reference: if is_imported {
                             GlobalVariableRef::Imported(index)
@@ -124,23 +119,20 @@ impl Code {
                         mutable: true,
                     },
                     state,
-                );
-
-                Ok(r.into())
+                )?;
             }};
 
             // An instruction with a MemArg operand
             ($name:ident, MemArg) => {{
                 let align = imm;
-                let offset = self.read_u32(pc)?;
-                let r = visitor.$name(
+                let offset = self.read_u32(pc).unwrap();
+                visitor.$name(
                     MemArg {
                         align: align as u32,
                         offset,
                     },
                     state,
-                );
-                Ok(r.into())
+                )?;
             }};
         }
 
@@ -151,33 +143,30 @@ impl Code {
             NOP => instruction!(nop),
 
             IF => {
-                let false_address = self.read_u32(pc)?;
-                let r = visitor.if_(JumpTarget(false_address), state);
-                Ok(r.into())
+                let false_address = self.read_u32(pc).unwrap();
+                visitor.if_(JumpTarget(false_address), state)?;
             }
 
             BR => {
-                let address = self.read_u32(pc)?;
-                let r = visitor.br(JumpTarget(address), state);
-                Ok(r.into())
+                let address = self.read_u32(pc).unwrap();
+                visitor.br(JumpTarget(address), state)?;
             }
 
             BR_IF => {
-                let true_address = self.read_u32(pc)?;
-                let r = visitor.br_if(JumpTarget(true_address), state);
-                Ok(r.into())
+                let true_address = self.read_u32(pc).unwrap();
+                visitor.br_if(JumpTarget(true_address), state)?;
             }
 
             BR_TABLE => {
                 let n = if imm == 0xFF {
-                    self.read(pc)?
+                    self.read(pc).unwrap()
                 } else {
                     imm as u16
                 };
 
-                let default_ = self.read_u32(pc)?;
+                let default_ = self.read_u32(pc).unwrap();
 
-                let r = visitor.br_table(
+                visitor.br_table(
                     |case_| {
                         if case_ < n {
                             let Ok(addr) = self.read_u32(pc) else {
@@ -190,36 +179,30 @@ impl Code {
                         }
                     },
                     state,
-                );
-
-                Ok(r.into())
+                )?;
             }
 
             RETURN => {
-                let r = visitor.return_(imm, state);
-                Ok(r.into())
+                visitor.return_(imm, state)?;
             }
             CALL => {
-                let idx = self.read(pc)?;
-                let r = if imm == 0 {
-                    visitor.call(idx, state)
+                let idx = self.read(pc).unwrap();
+                if imm == 0 {
+                    visitor.call(idx, state)?;
                 } else if imm == 1 {
-                    visitor.call_host(idx, state)
+                    visitor.call_host(idx, state)?;
                 } else {
-                    return Err(IrReaderError::InvalidCallType(imm));
-                };
-
-                Ok(r.into())
+                    Err(IrReaderError::InvalidCallType(imm)).unwrap()
+                }
             }
             CALL_INDIRECT => {
                 let n = if imm == 0xFF {
-                    self.read(pc)?
+                    self.read(pc).unwrap()
                 } else {
                     imm as u16
                 };
 
-                let r = visitor.call_indirect(TypeIdx(n as u32), state);
-                Ok(r.into())
+                visitor.call_indirect(TypeIdx(n as u32), state)?;
             }
 
             // Parametric instructions
@@ -266,31 +249,27 @@ impl Code {
             // Numeric instructions - const
             I32_CONST => {
                 let n = if imm == 0xFF {
-                    self.read_u32(pc)?
+                    self.read_u32(pc).unwrap()
                 } else {
                     imm as u32
                 };
-                let r = visitor.i32_const(n as i32, state);
-                Ok(r.into())
+                visitor.i32_const(n as i32, state)?;
             }
             I64_CONST => {
                 let n = if imm == 0xFF {
-                    self.read_u64(pc)?
+                    self.read_u64(pc).unwrap()
                 } else {
                     imm as u64
                 };
-                let r = visitor.i64_const(n as i64, state);
-                Ok(r.into())
+                visitor.i64_const(n as i64, state)?;
             }
             F32_CONST => {
-                let z = self.read_u32(pc)?;
-                let r = visitor.f32_const(f32::from_bits(z), state);
-                Ok(r.into())
+                let z = self.read_u32(pc).unwrap();
+                visitor.f32_const(f32::from_bits(z), state)?;
             }
             F64_CONST => {
-                let z = self.read_u64(pc)?;
-                let r = visitor.f64_const(f64::from_bits(z), state);
-                Ok(r.into())
+                let z = self.read_u64(pc).unwrap();
+                visitor.f64_const(f64::from_bits(z), state)?;
             }
 
             // Numeric instructions - i32 test/rel
@@ -429,8 +408,10 @@ impl Code {
             F64_CONVERT_I64_S => instruction!(f64_convert_i64_s),
             F64_CONVERT_I64_U => instruction!(f64_convert_i64_u),
             F64_PROMOTE_F32 => instruction!(f64_promote_f32),
-            END => Ok(IrReaderReturn::Finished),
-            _ => Err(IrReaderError::InvalidOpcode(opcode)),
+            END => return Err(IrReaderStop::Finished),
+            _ => Err(IrReaderError::InvalidOpcode(opcode)).unwrap(),
         }
+
+        Ok(())
     }
 }

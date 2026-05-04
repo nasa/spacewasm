@@ -136,6 +136,15 @@ pub enum InterpreterResult {
     ReaderError(IrReaderError),
 }
 
+impl From<IrReaderStop<InstructionError>> for InterpreterResult {
+    fn from(value: IrReaderStop<InstructionError>) -> Self {
+        match value {
+            IrReaderStop::Instruction(i) => InterpreterResult::Instruction(i),
+            IrReaderStop::Finished => InterpreterResult::Finished,
+        }
+    }
+}
+
 impl<'module> Interpreter<'module> {
     pub fn new(
         functions: &'module [Func],
@@ -161,7 +170,8 @@ impl<'module> Interpreter<'module> {
         for _ in 0..n_instructions {
             let old_pc = state.pc;
             let mut pc = state.pc;
-            let i_res = code.visit_instruction(state, &mut pc, &Inspector { v: self });
+
+            let i_res = code.visit_instruction(state, &mut pc, self);
             if old_pc != state.pc {
                 // We jumped, leave the PC
             } else {
@@ -170,16 +180,8 @@ impl<'module> Interpreter<'module> {
             }
 
             match i_res {
-                Ok(o) => match o {
-                    IrReaderReturn::InstructionPause(ip) => {
-                        return InterpreterResult::Instruction(ip);
-                    }
-                    IrReaderReturn::Continue => {}
-                    IrReaderReturn::Finished => {
-                        return InterpreterResult::Finished;
-                    }
-                },
-                Err(err) => return InterpreterResult::ReaderError(err),
+                Ok(_) => {}
+                Err(e) => return e.into(),
             }
         }
 

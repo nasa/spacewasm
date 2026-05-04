@@ -1,8 +1,8 @@
 #[cfg(test)]
 mod tests {
     use crate::{
-        BaseVisitor, Code, CodeBuilder, Compiler, GlobalVariable, IrVisitor, JumpTarget,
-        LocalVariable, MemArg, Module, ModuleImports, TextBuilder, TypeIdx,
+        BaseVisitor, Code, CodeBuilder, Compiler, GlobalVariable, InterpreterState, IrVisitor,
+        JumpTarget, LocalVariable, MemArg, Module, ModuleImports, TextBuilder, TypeIdx,
     };
     use core::cell::Cell;
 
@@ -397,7 +397,8 @@ mod tests {
         let visitor = TestVisitor(handler);
         let mut state = initial_state;
 
-        code.visit_instruction(&mut state, JumpTarget(0), &visitor)
+        let mut pc = JumpTarget(0);
+        code.visit_instruction(&mut state, &mut pc, &visitor)
             .unwrap();
         assert_fn(state);
     }
@@ -942,18 +943,10 @@ mod tests {
 
         let mut state = ();
         let mut pc = JumpTarget(0);
-        let mut instruction_count = 0;
-
         loop {
             let visitor = TestVisitor(handler.clone());
-            match code.visit_instruction(&mut state, pc, &visitor) {
-                Ok((words_consumed, _)) => {
-                    pc = pc + words_consumed;
-                    instruction_count += 1;
-                    if instruction_count > 100 {
-                        break;
-                    }
-                }
+            match code.visit_instruction(&mut state, &mut pc, &visitor) {
+                Ok(_) => {}
                 Err(_) => break,
             }
         }
@@ -1035,7 +1028,10 @@ mod tests {
         static EMPTY_PARAMS: &[crate::ValType] = &[];
         static EMPTY_RETURNS: &[crate::ValType] = &[];
 
-        fn dummy_host_fn(_args: &[crate::Value]) -> crate::HostFunctionResult {
+        fn dummy_host_fn(
+            _: &mut InterpreterState,
+            _args: &[crate::Value],
+        ) -> crate::HostFunctionResult {
             ControlFlow::Continue(None)
         }
 
@@ -1286,26 +1282,13 @@ mod tests {
         let mut state = ();
 
         let mut pc = JumpTarget(0);
-        let mut instruction_count = 0;
         loop {
             let visitor = TestVisitor(handler.clone());
-            match code.visit_instruction(&mut state, pc, &visitor) {
-                Ok((words_consumed, _)) => {
-                    pc = pc + words_consumed;
-                    instruction_count += 1;
-                    // Safety limit to prevent infinite loops
-                    if instruction_count > 1000 || handler.counts.return_.get() > 0 {
-                        break;
-                    }
-                }
+            match code.visit_instruction(&mut state, &mut pc, &visitor) {
+                Ok(_) => {}
                 Err(_) => break,
             }
         }
-
-        assert!(
-            instruction_count > 0,
-            "Should have decoded some instructions"
-        );
 
         assert_eq!(handler.counts.local_get.get(), 1);
         assert_eq!(handler.counts.local_set.get(), 1);
