@@ -7,9 +7,6 @@ pub struct InterpreterState {
     pub sp: usize,
     pub stack: Stack,
     pub ram: Memory,
-
-    /// A pause was requested at an instruction. This points to the next instruction.
-    pub pending_pc: Option<JumpTarget>,
 }
 
 impl LocalVariable {
@@ -26,7 +23,6 @@ impl InterpreterState {
             fp: 0x0,
             stack: Stack::new(stack_size),
             ram,
-            pending_pc: None,
         }
     }
 
@@ -161,22 +157,28 @@ impl<'module> Interpreter<'module> {
         state: &mut InterpreterState,
         n_instructions: usize,
     ) -> InterpreterResult {
-        if let Some(pending) = state.pending_pc.take() {
-            state.pc = pending;
-        }
-
         // Run up to n instructions
         for _ in 0..n_instructions {
-            match code.visit_instruction(state, state.pc, &Inspector { v: self }) {
-                Ok((0, _)) => return InterpreterResult::Finished,
-                Ok((size, Some(err))) => {
-                    state.pending_pc = Some(state.pc + size);
-                    return InterpreterResult::Instruction(err);
-                }
-                Ok((size, None)) => {
-                    // Nominal path
-                    state.pc += size;
-                }
+            let old_pc = state.pc;
+            let mut pc = state.pc;
+            let i_res = code.visit_instruction(state, &mut pc, &Inspector { v: self });
+            if old_pc != state.pc {
+                // We jumped, leave the PC
+            } else {
+                // Increment the program counter
+                state.pc = pc;
+            }
+
+            match i_res {
+                Ok(o) => match o {
+                    IrReaderReturn::InstructionPause(ip) => {
+                        return InterpreterResult::Instruction(ip);
+                    }
+                    IrReaderReturn::Continue => {}
+                    IrReaderReturn::Finished => {
+                        return InterpreterResult::Finished;
+                    }
+                },
                 Err(err) => return InterpreterResult::ReaderError(err),
             }
         }
@@ -941,7 +943,7 @@ impl<'module> IrVisitor for Interpreter<'module> {
             }
         }
 
-        match f.call(&sv) {
+        match f.call(state, &sv) {
             ControlFlow::Continue(v) => {
                 match v {
                     None => {}

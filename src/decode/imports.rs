@@ -1,7 +1,7 @@
 extern crate std;
 use core::ops::ControlFlow;
 
-use crate::{Box, ImportDesc, Module, Reader, ValType, ValidationError, Value};
+use crate::{Box, ImportDesc, InterpreterState, Module, Reader, ValType, ValidationError, Value};
 
 pub struct GlobalValueError;
 
@@ -50,7 +50,7 @@ pub struct HostFunction<'imports> {
     name: &'imports str,
     params: &'imports [ValType],
     returns: &'imports [ValType],
-    f: fn(&[Value]) -> HostFunctionResult,
+    f: fn(state: &mut InterpreterState, &[Value]) -> HostFunctionResult,
 
     param_size: u16,
     return_size: u16,
@@ -62,7 +62,7 @@ impl<'imports> HostFunction<'imports> {
         name: &'imports str,
         params: &'imports [ValType],
         returns: &'imports [ValType],
-        f: fn(a: &[Value]) -> HostFunctionResult,
+        f: fn(state: &mut InterpreterState, a: &[Value]) -> HostFunctionResult,
     ) -> Self {
         let mut o = HostFunction {
             module,
@@ -93,8 +93,8 @@ impl<'imports> HostFunction<'imports> {
         self.param_size as usize
     }
 
-    pub fn call(&self, a: &[Value]) -> HostFunctionResult {
-        (self.f)(a)
+    pub fn call(&self, state: &mut InterpreterState, a: &[Value]) -> HostFunctionResult {
+        (self.f)(state, a)
     }
 
     pub fn matches(&self, module: &str, name: &str) -> bool {

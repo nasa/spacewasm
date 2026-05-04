@@ -89,14 +89,27 @@ fn main() {
                     HostFunction::new(
                         "fprime_core",
                         "panic",
-                        &[ValType::I32, ValType::I32],
+                        &[ValType::I32, ValType::I32, ValType::I32],
                         &[],
-                        |a| {
-                            eprintln!("PANIC {:?} {:?}", a.get(0), a.get(1));
+                        |state, a| {
+                            let Some(Value::I32(addr)) = a.get(0) else {
+                                panic!("expected i32");
+                            };
+                            let Some(Value::I32(len)) = a.get(1) else {
+                                panic!("expected i32");
+                            };
+                            let Some(Value::I32(line_no)) = a.get(2) else {
+                                panic!("expected i32");
+                            };
+
+                            let f = state.ram.load(*addr as usize, *len as usize).unwrap();
+                            let s: &str = core::str::from_utf8(f).unwrap();
+
+                            eprintln!("PANIC {}:{}", s, line_no);
                             ControlFlow::Break(HostFunctionPause::Trap)
                         },
                     ),
-                    HostFunction::new("fprime_core", "rsleep", &[ValType::I64], &[], |a| {
+                    HostFunction::new("fprime_core", "rsleep", &[ValType::I64], &[], |_, a| {
                         eprintln!("RSLEEP {:?}", a.get(0));
                         ControlFlow::Continue(None)
                     }),
@@ -105,7 +118,7 @@ fn main() {
                         "command",
                         &[ValType::I32, ValType::I32],
                         &[ValType::I32],
-                        |a| {
+                        |_, a| {
                             eprintln!("COMMAND {:?} {:?}", a.get(0), a.get(1));
                             ControlFlow::Continue(Some(Value::I32(0)))
                         },
@@ -115,7 +128,7 @@ fn main() {
                         "message",
                         &[ValType::I32, ValType::I32],
                         &[],
-                        |a| {
+                        |_, a| {
                             eprintln!("COMMAND {:?} {:?}", a.get(0), a.get(1));
                             ControlFlow::Continue(None)
                         },
@@ -131,15 +144,36 @@ fn main() {
                             ValType::I32,
                         ],
                         &[ValType::I32],
-                        |a| {
-                            eprintln!(
-                                "TELEMETRY {:?} {:?} {:?} {:?} {:?}",
-                                a.get(0),
-                                a.get(1),
-                                a.get(2),
-                                a.get(3),
-                                a.get(4),
-                            );
+                        |state, a| {
+                            let Some(Value::I32(id)) = a.get(0) else {
+                                panic!("expected i32");
+                            };
+                            let Some(Value::I32(time_ptr)) = a.get(1) else {
+                                panic!("expected i32");
+                            };
+                            let Some(Value::I32(time_len)) = a.get(2) else {
+                                panic!("expected i32");
+                            };
+                            let Some(Value::I32(value_ptr)) = a.get(3) else {
+                                panic!("expected i32");
+                            };
+                            let Some(Value::I32(value_len)) = a.get(4) else {
+                                panic!("expected i32");
+                            };
+
+                            // Time base
+                            state.ram.store_u16(*time_ptr as usize, 0).unwrap();
+
+                            // Time context
+                            state.ram.store_u8((*time_ptr as usize) + 2, 0).unwrap();
+
+                            // Seconds
+                            state.ram.store_u32((*time_ptr as usize) + 3, 0).unwrap();
+
+                            // Useconds
+                            state.ram.store_u32((*time_ptr as usize) + 7, 0).unwrap();
+
+                            eprintln!("TELEMETRY {id}");
                             ControlFlow::Continue(Some(Value::I32(0)))
                         },
                     ),
@@ -223,7 +257,7 @@ fn main() {
                                     "fn main => {:?}",
                                     module.types.get(f.ty.0 as usize).unwrap()
                                 );
-                                state.invoke(f, &[Value::I32(0)]);
+                                state.invoke(f, &[]);
                             }
                             ExportDesc::Table(_) => {}
                             ExportDesc::Mem(_) => {}

@@ -85,6 +85,16 @@ impl Memory {
         Ok(())
     }
 
+    pub fn load(&self, addr: usize, len: usize) -> Result<&[u8], MemoryOutOfBounds> {
+        self.check_in_bounds(addr, len)?;
+        unsafe {
+            Ok(core::slice::from_raw_parts(
+                self.ptr.offset(addr as isize),
+                len,
+            ))
+        }
+    }
+
     pub fn load_u8(&self, addr: usize) -> Result<u8, MemoryOutOfBounds> {
         self.check_in_bounds(addr, 1)?;
         unsafe { Ok(self.ptr.offset(addr as isize).read()) }
