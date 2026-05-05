@@ -1,16 +1,33 @@
-use crate::util::Vec;
-use crate::Box;
+use crate::{Allocator, GlobalAllocator};
+use core::alloc::Layout;
 
-pub struct Stack(Box<[u32]>);
+pub struct Stack {
+    ptr: *mut u32,
+    size: usize,
+}
 
 impl Stack {
-    pub fn new(stack_size: usize) -> Self {
-        Stack(unsafe { Vec::new(stack_size as u32).unwrap().assume_init() }.into_boxed_slice())
+    pub fn new(size: usize) -> Self {
+        Stack {
+            ptr: unsafe {
+                GlobalAllocator
+                    .alloc(Layout::from_size_align(size * 4, 4).unwrap())
+                    .unwrap()
+                    .cast()
+            },
+            size,
+        }
+    }
+
+    #[inline]
+    fn check_bounds(&self, addr: usize, word_n: usize) {
+        assert!(addr + word_n <= self.size);
     }
 
     #[inline]
     pub(crate) fn read_u32(&self, addr: usize) -> u32 {
-        self.0[addr]
+        self.check_bounds(addr, 1);
+        unsafe { *self.ptr.add(addr) }
     }
 
     #[inline]
@@ -20,9 +37,8 @@ impl Stack {
 
     #[inline]
     pub(crate) fn read_u64(&self, addr: usize) -> u64 {
-        let lo = self.0[addr];
-        let hi = self.0[addr + 1];
-        (lo as u64) | ((hi as u64) << 32)
+        self.check_bounds(addr, 2);
+        unsafe { self.ptr.add(addr).cast::<u64>().read_unaligned() }
     }
 
     #[inline]
@@ -32,7 +48,8 @@ impl Stack {
 
     #[inline]
     pub(crate) fn write_u32(&mut self, addr: usize, value: u32) {
-        self.0[addr] = value;
+        self.check_bounds(addr, 1);
+        unsafe { *self.ptr.add(addr) = value }
     }
 
     #[inline]
@@ -42,12 +59,23 @@ impl Stack {
 
     #[inline]
     pub(crate) fn write_u64(&mut self, addr: usize, value: u64) {
-        self.0[addr] = value as u32;
-        self.0[addr + 1] = (value >> 32) as u32;
+        self.check_bounds(addr, 2);
+        unsafe { self.ptr.add(addr).cast::<u64>().write_unaligned(value) }
     }
 
     #[inline]
     pub(crate) fn write_f64(&mut self, addr: usize, value: f64) {
         self.write_u64(addr, value.to_bits());
+    }
+}
+
+impl Drop for Stack {
+    fn drop(&mut self) {
+        unsafe {
+            GlobalAllocator.dealloc(
+                self.ptr.cast(),
+                Layout::from_size_align(self.size * 4, 4).unwrap(),
+            );
+        }
     }
 }

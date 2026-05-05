@@ -137,3 +137,11 @@ impl Memory {
         (self.size / 65536) as u32
     }
 }
+
+impl Drop for Memory {
+    fn drop(&mut self) {
+        unsafe {
+            GlobalAllocator.dealloc(self.ptr, Layout::from_size_align(self.size, 16).unwrap());
+        }
+    }
+}
