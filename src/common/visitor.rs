@@ -28,9 +28,6 @@ pub trait BaseVisitor {
     type Error;
     type State;
 
-    // Exit the expression
-    visit_fn!(finish);
-
     // Control instructions
     visit_fn!(unreachable);
     visit_fn!(nop);
@@ -225,6 +222,7 @@ pub trait BaseVisitor {
 pub trait WasmVisitor: BaseVisitor {
     visit_fn!(enter_block, block_type: ResultType);
     visit_fn!(exit_block);
+    visit_fn!(finish);
     visit_fn!(loop_, block_type: ResultType);
     visit_fn!(if_, block_type: ResultType);
     visit_fn!(else_);

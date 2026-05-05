@@ -340,10 +340,6 @@ impl<'module> BaseVisitor for Interpreter<'module> {
     type Error = InstructionError;
     type State = InterpreterState;
 
-    fn finish(&self, _: &mut Self::State) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
     fn unreachable(&self, _: &mut Self::State) -> Result<(), Self::Error> {
         Err(InstructionError::Trap)
     }

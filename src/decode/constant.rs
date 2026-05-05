@@ -35,15 +35,6 @@ impl BaseVisitor for ConstantCompiler {
     type Error = ConstantExprError;
     type State = Option<Value>;
 
-    // Exit the expression
-    fn finish(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        if let Some(_) = state {
-            Ok(())
-        } else {
-            Err(ConstantExprError::NoValue)
-        }
-    }
-
     // Control instructions
     invalid_constant_fn!(unreachable);
     invalid_constant_fn!(nop);
@@ -262,6 +253,15 @@ impl BaseVisitor for ConstantCompiler {
 }
 
 impl WasmVisitor for ConstantCompiler {
+    // Exit the expression
+    fn finish(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        if let Some(_) = state {
+            Ok(())
+        } else {
+            Err(ConstantExprError::NoValue)
+        }
+    }
+
     invalid_constant_fn!(enter_block, block_type: ResultType);
     invalid_constant_fn!(exit_block);
     invalid_constant_fn!(loop_, block_type: ResultType);

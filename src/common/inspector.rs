@@ -31,9 +31,6 @@ impl<'a, S, E, T: BaseVisitor<State = S, Error = E>> BaseVisitor for Inspector<'
     type Error = E;
     type State = S;
 
-    // Exit the expression
-    visit_fn!(finish);
-
     // Control instructions
     visit_fn!(unreachable);
     visit_fn!(nop);
@@ -228,6 +225,7 @@ impl<'a, S, E, T: BaseVisitor<State = S, Error = E> + WasmVisitor> WasmVisitor
 {
     visit_fn!(enter_block, block_type: ResultType);
     visit_fn!(exit_block);
+    visit_fn!(finish);
     visit_fn!(loop_, block_type: ResultType);
     visit_fn!(if_, block_type: ResultType);
     visit_fn!(else_);

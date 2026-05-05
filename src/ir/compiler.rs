@@ -48,6 +48,10 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
         state.exit_block()
     }
 
+    fn finish(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        self.return_(state)
+    }
+
     fn loop_(&self, block_type: ResultType, state: &mut Self::State) -> Result<(), Self::Error> {
         // TODO(tumbar) Verify the block type
         let _ = block_type;
@@ -168,10 +172,6 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
 impl<'a, const N: usize> BaseVisitor for Compiler<'a, N> {
     type Error = ValidationError;
     type State = TextBuilder<'a, 'a, N>;
-
-    fn finish(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        self.return_(state)
-    }
 
     instruction!(unreachable, UNREACHABLE);
     instruction!(nop, NOP);
