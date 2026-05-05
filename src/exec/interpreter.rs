@@ -1,5 +1,3 @@
-extern crate std;
-
 use crate::*;
 use core::ops::{AddAssign, ControlFlow};
 
@@ -188,10 +186,25 @@ impl<'module> Interpreter<'module> {
     }
 }
 
+/// A raw value
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RawValue(pub u64);
+
+impl RawValue {
+    pub fn to_value(self, ty: ValType) -> Value {
+        match ty {
+            ValType::I32 => Value::I32((self.0 as u32) as i32),
+            ValType::I64 => Value::I64(self.0 as i64),
+            ValType::F32 => Value::F32(f32::from_bits(self.0 as u32)),
+            ValType::F64 => Value::F64(f64::from_bits(self.0)),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InstructionError {
     /// The program has completed
-    Finished,
+    Finished(RawValue),
     /// The program has been aborted
     Trap,
     /// An instruction or host function has requested the interpreter to pause
@@ -335,7 +348,6 @@ macro_rules! instruction {
     };
 }
 
-#[allow(unused_variables)]
 impl<'module> BaseVisitor for Interpreter<'module> {
     type Error = InstructionError;
     type State = InterpreterState;
@@ -890,7 +902,15 @@ impl<'module> IrVisitor for Interpreter<'module> {
 
         if return_pc == JumpTarget::SENTINEL {
             state.pc = JumpTarget::SENTINEL;
-            Err(InstructionError::Finished)
+            let return_value = match return_size {
+                0 => RawValue(0),
+                1 => RawValue(state.stack.read_u32(state.sp - 1) as u64),
+                2 => RawValue(state.stack.read_u64(state.sp - 2)),
+                // TODO(tumbar) We need to verify that the entrypoint function does not return anything unexpected
+                _ => unreachable!(),
+            };
+
+            Err(InstructionError::Finished(return_value))
         } else {
             state.pc = return_pc + 2; // skip over the call or call_indirect
             Ok(())
@@ -1019,16 +1039,6 @@ impl<'module> IrVisitor for Interpreter<'module> {
                 let f_actual = &self.types[f.ty.0 as usize];
 
                 if f_actual.params != f_expected.params || f_actual.returns != f_expected.returns {
-                    std::eprintln!(
-                        "PARAMS actual: {:?}, expected: {:?}",
-                        f_actual.params,
-                        f_expected.params
-                    );
-                    std::eprintln!(
-                        "RETURNS actual: {:?}, expected: {:?}",
-                        f_actual.returns,
-                        f_expected.returns
-                    );
                     return Err(InstructionError::InvalidTableFunctionType);
                 }
 

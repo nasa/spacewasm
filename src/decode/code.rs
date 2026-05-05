@@ -25,9 +25,7 @@ impl Expr {
         let e = Expr(builder.pc());
         if debug {
             wasm.read_code(
-                &Inspector {
-                    v: &Compiler::<'_, N>::new(),
-                },
+                &Compiler::<'_, N>::new(),
                 &mut TextBuilder::new(builder, module, ctx),
             )?;
         } else {
