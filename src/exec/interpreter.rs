@@ -190,15 +190,24 @@ impl<'module> Interpreter<'module> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InstructionError {
-    Trap,
+    /// The program has completed
     Finished,
+    /// The program has been aborted
+    Trap,
+    /// An instruction or host function has requested the interpreter to pause
+    Pause,
+    /// An indirect call tried to map to a table function out of range
     InvalidTableIndex,
+    /// The function type in an indirect call does not match the function pointer's type
     InvalidTableFunctionType,
+    /// A dynamic br_table lookup was out of bounds
     BrTableLookupFailed,
+    /// An imported global could not be read
     GlobalGetFailed,
+    /// An imported global could not be set
     GlobalSetFailed,
+    /// A memory operation is out of bounds
     MemoryOutOfBounds,
-    HostFunction(HostFunctionPause),
 }
 
 impl From<MemoryOutOfBounds> for InstructionError {
@@ -209,7 +218,10 @@ impl From<MemoryOutOfBounds> for InstructionError {
 
 impl From<HostFunctionPause> for InstructionError {
     fn from(err: HostFunctionPause) -> Self {
-        InstructionError::HostFunction(err)
+        match err {
+            HostFunctionPause::Trap => InstructionError::Trap,
+            HostFunctionPause::Pause => InstructionError::Pause,
+        }
     }
 }
 

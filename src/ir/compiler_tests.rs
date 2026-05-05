@@ -13,10 +13,9 @@ mod tests {
         Module {
             types: crate::Vec::zero(),
             functions: crate::Vec::zero(),
-            tables: crate::Vec::zero(),
+            table: crate::Vec::zero(),
             memories: crate::Vec::zero(),
             globals: crate::Vec::zero(),
-            elements: crate::Vec::zero(),
             data: crate::Vec::zero(),
             start: None,
             imports: crate::Vec::zero(),
