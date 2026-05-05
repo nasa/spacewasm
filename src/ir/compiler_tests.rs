@@ -24,7 +24,7 @@ mod tests {
             wasm_size: 0,
             final_page_offset: 0,
             memory_usage: Default::default(),
-            module_imports: ModuleImports {
+            module_imports: &ModuleImports {
                 functions: &[],
                 memories: &[],
                 globals: &[],
@@ -1040,12 +1040,13 @@ mod tests {
 
         // Create a long-lived slice containing the host function
         let host_funcs = [host_func];
-
-        module.module_imports = ModuleImports {
+        let imports = ModuleImports {
             functions: &host_funcs,
             memories: &[],
             globals: &[],
         };
+
+        module.module_imports = &imports;
 
         // Add Import entries to indicate which function indices are imported
         let mut imports = crate::Vec::new(1).unwrap();
