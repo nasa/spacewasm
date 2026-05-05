@@ -25,13 +25,19 @@ impl Stack {
         //              for stack overflow at the callsite so this simply verifies implementation
         //              correctness. This is good during development/security fuzzing but not useful
         //              during runtime.
-        assert!(addr + word_n <= self.size);
+        assert!(
+            addr + word_n <= self.size,
+            "addr={} word_n={} size={}",
+            addr,
+            word_n,
+            self.size
+        );
     }
 
     #[inline]
     pub(crate) fn read_u32(&self, addr: usize) -> u32 {
         self.check_bounds(addr, 1);
-        unsafe { *self.ptr.add(addr) }
+        unsafe { *(self.ptr.add(addr)) }
     }
 
     #[inline]
@@ -53,7 +59,7 @@ impl Stack {
     #[inline]
     pub(crate) fn write_u32(&mut self, addr: usize, value: u32) {
         self.check_bounds(addr, 1);
-        unsafe { *self.ptr.add(addr) = value }
+        unsafe { *(self.ptr.add(addr)) = value }
     }
 
     #[inline]

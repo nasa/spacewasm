@@ -1,11 +1,10 @@
 use spacewasm::{
-    ExportDesc, FuncRef, HostFunction, HostFunctionPause, Memory, ModuleImports, SectionKind,
-    ValType, Value,
+    ExportDesc, FuncRef, HostFunction, HostFunctionPause, InterpreterResult, Memory, ModuleImports,
+    SectionKind, ValType, Value,
 };
+use spacewasm_std::FileStream;
 use std::alloc::Layout;
 use std::ops::ControlFlow;
-
-use spacewasm_std::FileStream;
 
 fn main() {
     let imports = ModuleImports {
@@ -116,6 +115,16 @@ fn main() {
                     ControlFlow::Continue(Some(Value::I32(0)))
                 },
             ),
+            HostFunction::new("env", "clock_ms", &[], &[ValType::I64], |_, _| {
+                let ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis() as i64;
+
+                eprintln!("CLOCK_MS {}", ms);
+
+                ControlFlow::Continue(Some(Value::I64(ms)))
+            }),
         ],
         memories: &[],
     };
@@ -186,31 +195,16 @@ fn main() {
 
                 state.initialize(&module.globals, &module.data).unwrap();
 
-                match module.start {
+                let fi = match module.start {
                     None => {
-                        let f = module.exports.iter().find(|f| &f.name == "main").unwrap();
-                        match f.desc {
-                            ExportDesc::Func(fi) => {
-                                let FuncRef::Func(fdi) = module.get_func_ref(fi).unwrap() else {
-                                    panic!("Invalid main function ref")
-                                };
-                                let f = module.functions.get(fdi as usize).unwrap();
-                                eprintln!(
-                                    "fn main => {:?}",
-                                    module.types.get(f.ty.0 as usize).unwrap()
-                                );
-                                state.invoke(f, &[]);
-                            }
-                            ExportDesc::Table(_) => {}
-                            ExportDesc::Mem(_) => {}
-                            ExportDesc::Global(_) => {}
-                        }
+                        let f = module.exports.iter().find(|f| &f.name == "run").unwrap();
+                        let ExportDesc::Func(fi) = f.desc else {
+                            panic!()
+                        };
+                        fi
                     }
-                    Some(fi) => {
-                        let f = module.functions.get(fi.0 as usize).unwrap();
-                        state.invoke(f, &[]);
-                    }
-                }
+                    Some(fi) => fi,
+                };
 
                 let interpreter = spacewasm::Interpreter::new(
                     &module.functions,
@@ -221,12 +215,21 @@ fn main() {
                     &module.types,
                 );
 
+                let FuncRef::Func(fi) = module.get_func_ref(fi).unwrap() else {
+                    panic!()
+                };
+                let f = &module.functions[fi as usize];
+                interpreter.invoke(&mut state, f, &[]);
+
                 eprintln!("====");
 
                 let code = spacewasm::Code::new(module.text);
-                let r = interpreter.run(&code, &mut state, 100000);
+                let mut result = InterpreterResult::OutOfFuel;
+                while result == InterpreterResult::OutOfFuel {
+                    result = interpreter.run(&code, &mut state, usize::MAX)
+                }
 
-                eprintln!("Interpreter result: {:?}", r)
+                eprintln!("Interpreter result: {:?}", result)
             }
             Err(err) => {
                 eprintln!("Failed to parse: {:?}", err)

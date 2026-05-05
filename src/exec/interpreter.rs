@@ -60,54 +60,8 @@ impl InterpreterState {
             self.ram.store(data.offset, &data.init)?;
         }
 
-        Ok(())
-    }
-
-    /// Invoke a function with some parameters
-    /// Warning! If this is being used as an interrupt rather than an entry point,
-    /// make sure that the function does not return any values as that will cause stack pollution!
-    pub fn invoke(&mut self, f: &Func, params: &[Value]) {
-        for p in params {
-            // TODO(tumbar) Validate input parameters
-            match p {
-                Value::I32(i) => {
-                    self.stack.write_u32(self.sp, *i as u32);
-                    self.sp += 1;
-                }
-                Value::I64(i) => {
-                    self.stack.write_u64(self.sp, *i as u64);
-                    self.sp += 2;
-                }
-                Value::F32(z) => {
-                    self.stack.write_f32(self.sp, *z);
-                    self.sp += 1;
-                }
-                Value::F64(z) => {
-                    self.stack.write_f64(self.sp, *z);
-                    self.sp += 2;
-                }
-            }
-        }
-
-        // Push the frame information
-        let frame_length = (self.sp - self.fp as usize) as u32;
-        assert!(frame_length <= 0xFFFFF);
-
-        let frame_length = frame_length << 16;
-        self.stack
-            .write_u32(self.sp, frame_length | (f.parameter_size as u32));
-        self.stack.write_u32(self.sp + 1, self.pc.0);
         self.fp = self.sp as u32;
-        self.sp += 2;
-
-        // Zero out the local variables
-        for i in 0..(f.local_size as usize) {
-            self.stack.write_u32(self.sp + i, 0);
-        }
-
-        // Allocate space for frame and the local variables
-        self.sp += f.local_size as usize;
-        self.pc = f.expr.0;
+        Ok(())
     }
 }
 
@@ -126,7 +80,7 @@ impl AddAssign<u32> for JumpTarget {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InterpreterResult {
     /// Reached the end of the program
     Finished,
@@ -155,6 +109,62 @@ impl<'module> Interpreter<'module> {
             table,
             types,
         }
+    }
+
+    fn call_impl(&self, f: &Func, state: &mut InterpreterState) {
+        // The arguments are already at the top of the stack
+        // We need to push the frame pointer and the return instruction pointer to the stack
+        // We also encode the parameter size into the stack frame so that the return can unwind the stack
+        let frame_length = (state.sp - state.fp as usize) as u32;
+        assert!(frame_length <= 0xFFFFF);
+
+        let frame_length = frame_length << 16;
+
+        state
+            .stack
+            .write_u32(state.sp, frame_length | (f.parameter_size as u32));
+        state.stack.write_u32(state.sp + 1, state.pc.0);
+        state.fp = state.sp as u32;
+
+        // Zero out the local variables
+        for i in 0..(f.local_size as usize) {
+            state.stack.write_u32(state.sp + 2 + i, 0);
+        }
+
+        // Allocate space for frame and the local variables
+        state.sp += 2 + f.local_size as usize;
+
+        // Jump to the function's execution point
+        state.pc = f.expr.0;
+    }
+
+    /// Invoke a function with some parameters
+    /// Warning! If this is being used as an interrupt rather than an entry point,
+    /// make sure that the function does not return any values as that will cause stack pollution!
+    pub fn invoke(&self, state: &mut InterpreterState, f: &Func, params: &[Value]) {
+        for p in params {
+            // TODO(tumbar) Validate input parameters
+            match p {
+                Value::I32(i) => {
+                    state.stack.write_u32(state.sp, *i as u32);
+                    state.sp += 1;
+                }
+                Value::I64(i) => {
+                    state.stack.write_u64(state.sp, *i as u64);
+                    state.sp += 2;
+                }
+                Value::F32(z) => {
+                    state.stack.write_f32(state.sp, *z);
+                    state.sp += 1;
+                }
+                Value::F64(z) => {
+                    state.stack.write_f64(state.sp, *z);
+                    state.sp += 2;
+                }
+            }
+        }
+
+        self.call_impl(f, state);
     }
 
     pub fn run(
@@ -897,22 +907,25 @@ impl<'module> IrVisitor for Interpreter<'module> {
             state.stack.write_u32(parameter_start + i, val);
         }
 
-        state.sp = parameter_start + return_size;
         state.fp = return_fp;
 
         if return_pc == JumpTarget::SENTINEL {
+            state.sp = parameter_start;
             state.pc = JumpTarget::SENTINEL;
+            extern crate std;
             let return_value = match return_size {
                 0 => RawValue(0),
-                1 => RawValue(state.stack.read_u32(state.sp - 1) as u64),
-                2 => RawValue(state.stack.read_u64(state.sp - 2)),
+                1 => RawValue(state.stack.read_u32(state.sp) as u64),
+                2 => RawValue(state.stack.read_u64(state.sp)),
                 // TODO(tumbar) We need to verify that the entrypoint function does not return anything unexpected
                 _ => unreachable!(),
             };
 
+            std::eprintln!("FINISHED return_size={return_size}, return_value={return_value:?}");
             Err(InstructionError::Finished(return_value))
         } else {
-            state.pc = return_pc + 2; // skip over the call or call_indirect
+            state.sp = parameter_start + return_size;
+            state.pc = return_pc + 2; // +2 to skip over the call or call_indirect
             Ok(())
         }
     }
@@ -920,31 +933,7 @@ impl<'module> IrVisitor for Interpreter<'module> {
     fn call(&self, x: u16, state: &mut Self::State) -> Result<(), Self::Error> {
         // TODO(tumbar) Check stack usage
         let f = &self.functions[x as usize];
-
-        // The arguments are already at the top of the stack
-        // We need to push the frame pointer and the return instruction pointer to the stack
-        // We also encode the parameter size into the stack frame so that the return can unwind the stack
-        let frame_length = (state.sp - state.fp as usize) as u32;
-        assert!(frame_length <= 0xFFFFF);
-
-        let frame_length = frame_length << 16;
-
-        state
-            .stack
-            .write_u32(state.sp, frame_length | (f.parameter_size as u32));
-        state.stack.write_u32(state.sp + 1, state.pc.0);
-        state.fp = state.sp as u32;
-
-        // Zero out the local variables
-        for i in 0..(f.local_size as usize) {
-            state.stack.write_u32(state.sp + 2 + i, 0);
-        }
-
-        // Allocate space for frame and the local variables
-        state.sp += 2 + f.local_size as usize;
-
-        // Jump to the function's execution point
-        state.pc = f.expr.0;
+        self.call_impl(f, state);
         Ok(())
     }
 
@@ -1043,7 +1032,8 @@ impl<'module> IrVisitor for Interpreter<'module> {
                 }
 
                 // Call the function
-                self.call(fi, state)
+                self.call_impl(f, state);
+                Ok(())
             }
         }
     }
