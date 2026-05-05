@@ -16,7 +16,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "spacewasm-wasi"
+name = "spacewasm-std"
 version = "0.1.0"
 dependencies = [
  "spacewasm",
