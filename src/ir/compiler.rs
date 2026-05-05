@@ -125,8 +125,9 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
     }
 
     fn call_indirect(&self, x: TypeIdx, state: &mut Self::State) -> Result<(), Self::Error> {
-        // FIXME(tumbar) How do I implement this?
-        state.push_8_or_16(CALL_INDIRECT, x.0)
+        state.push_no_operand(CALL_INDIRECT)?;
+        state.push(x.0 as u16)?;
+        Ok(())
     }
 
     fn local_get(&self, x: LocalIdx, state: &mut Self::State) -> Result<(), Self::Error> {
@@ -168,7 +169,10 @@ impl<'a, const N: usize> BaseVisitor for Compiler<'a, N> {
     type Error = ValidationError;
     type State = TextBuilder<'a, 'a, N>;
 
-    instruction!(finish, END);
+    fn finish(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        self.return_(state)
+    }
+
     instruction!(unreachable, UNREACHABLE);
     instruction!(nop, NOP);
 

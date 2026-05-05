@@ -70,7 +70,7 @@ impl<'a, const MAX_PAGES: usize> PageAllocatorInner<'a, MAX_PAGES> {
         PageAllocatorInner {
             page_allocator: alloc,
             page_size,
-            pages: [None; MAX_PAGES],
+            pages: [const { None }; MAX_PAGES],
         }
     }
 }
@@ -189,7 +189,13 @@ impl<'a, const MAX_PAGES: usize> Drop for PageAllocatorInner<'a, MAX_PAGES> {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
+struct AllocCache {
+    restore_ptr: usize,
+    alloc_ptr: usize,
+}
+
+#[derive(Clone)]
 struct Page {
     ptr: *mut u8,
     size: usize,
@@ -197,6 +203,7 @@ struct Page {
     n_allocations: usize,
     wasted: usize,
     has_deallocated: bool,
+    cache: Option<AllocCache>,
 }
 
 impl Page {
@@ -208,6 +215,7 @@ impl Page {
             n_allocations: 0,
             wasted: 0,
             has_deallocated: false,
+            cache: None,
         }
     }
 
@@ -225,9 +233,14 @@ impl Page {
         let final_offset = (start_address - self.ptr as usize) + layout.size();
         if final_offset <= self.size {
             assert!(!self.has_deallocated);
+            self.cache = Some(AllocCache {
+                restore_ptr: (self.ptr as usize) + self.allocated,
+                alloc_ptr: start_address,
+            });
 
             self.allocated = final_offset;
             self.n_allocations += 1;
+
             Some(start_address as *mut u8)
         } else {
             None
@@ -239,10 +252,21 @@ impl Page {
         let dealloc_ptr = ptr as usize;
         let page_ptr = self.ptr as usize;
 
-        if page_ptr <= dealloc_ptr && dealloc_ptr <= page_ptr + self.size {
-            // This is out pointer, 'free' it
-            // FIXME(tumbar) We may want to track used regions of the pages
+        if dealloc_ptr >= page_ptr && dealloc_ptr < page_ptr + self.size {
+            // This is our pointer, 'free' it
             assert!(self.n_allocations > 0);
+
+            // Check is we can deallocate this pointer without marking this page with a dealloc flag
+            if let Some(cache) = self.cache.take() {
+                if cache.alloc_ptr == dealloc_ptr {
+                    self.n_allocations -= 1;
+                    self.allocated = cache.restore_ptr - page_ptr;
+                    self.wasted -= dealloc_ptr - cache.restore_ptr;
+                    return Some(self.n_allocations == 0);
+                }
+            };
+
+            // FIXME(tumbar) We may want to track used regions of the pages
             self.n_allocations -= 1;
             self.has_deallocated = true;
             Some(self.n_allocations == 0)

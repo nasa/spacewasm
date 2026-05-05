@@ -1,4 +1,3 @@
-extern crate std;
 use core::ops::ControlFlow;
 
 use crate::{Box, ImportDesc, InterpreterState, Module, Reader, ValType, ValidationError, Value};
@@ -89,6 +88,10 @@ impl<'imports> HostFunction<'imports> {
         self.params
     }
 
+    pub fn returns(&self) -> &'imports [ValType] {
+        self.returns
+    }
+
     pub fn param_size(&self) -> usize {
         self.param_size as usize
     }
@@ -150,7 +153,6 @@ impl Import {
                 let wasm_returns = &ty.returns[..];
 
                 // Look up the global import that matches the module name and symbol name
-                std::eprintln!("function import {module_name}::{name}");
                 let (index, function_import) = module
                     .module_imports
                     .functions
@@ -170,16 +172,6 @@ impl Import {
                 {
                     Ok(Import::Func(index as u16))
                 } else {
-                    std::eprintln!(
-                        "import {module_name}::{name} params: {:?}, returns {:?}",
-                        function_import.params,
-                        function_import.returns
-                    );
-                    std::eprintln!(
-                        "wasm expected params: {:?}, returns {:?}",
-                        wasm_params,
-                        wasm_returns
-                    );
                     Err(ValidationError::FunctionImportTypeMismatch)
                 }
             }

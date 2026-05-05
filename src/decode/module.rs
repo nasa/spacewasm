@@ -3,17 +3,15 @@ use crate::*;
 pub struct Module<'imports> {
     pub types: Vec<FuncType>,
     pub functions: Vec<Func>,
-    pub tables: Vec<TableType>,
+    pub table: Vec<FuncRef>,
     pub memories: Vec<MemType>,
     pub globals: Vec<Global>,
-    pub module_imports: ModuleImports<'imports>,
     pub imports: Vec<Import>,
     pub exports: Vec<Export>,
-    pub elements: Vec<Element>,
     pub data: Vec<Data>,
     pub start: Option<FuncIdx>,
-
     pub text: Vec<Box<TextPage>>,
+    pub module_imports: ModuleImports<'imports>,
     pub wasm_size: usize,
     pub final_page_offset: usize,
     pub memory_usage: [MemoryStatistics; SectionKind::N as usize],
@@ -79,13 +77,12 @@ impl<'imports> Module<'imports> {
             types: Vec::zero(),
             functions: Vec::zero(),
             text: Vec::zero(),
-            tables: Vec::zero(),
+            table: Vec::zero(),
             memories: Vec::zero(),
             globals: Vec::zero(),
             module_imports,
             imports: Vec::zero(),
             exports: Vec::zero(),
-            elements: Vec::zero(),
             data: Vec::zero(),
             start: None,
             wasm_size: 0,
@@ -169,7 +166,7 @@ impl<'imports> Module<'imports> {
                 self.functions = FunctionSection::read(wasm, self)?;
             }
             Table => {
-                self.tables = TableSection::read(wasm)?;
+                self.table = TableSection::read(wasm)?;
             }
             Memory => {
                 self.memories = MemorySection::read(wasm)?;
@@ -184,7 +181,7 @@ impl<'imports> Module<'imports> {
                 self.start.replace(FuncIdx::read(wasm)?);
             }
             Element => {
-                self.elements = ElementSection::read(wasm)?;
+                ElementSection::read(wasm, self)?;
             }
             Code => {
                 CodeSection::read::<PN>(wasm, code_builder, self)?;
@@ -301,7 +298,7 @@ impl TypeSection {
 
 macro_rules! read_impl_u32 {
     ($type_name:ident) => {
-        #[derive(Debug, Clone, Copy)]
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
         pub struct $type_name(pub u32);
         impl $type_name {
             pub fn read(wasm: &mut Reader) -> Result<Self, ValidationError> {
@@ -394,8 +391,21 @@ impl FunctionSection {
 pub struct TableSection;
 
 impl TableSection {
-    pub fn read(wasm: &mut Reader) -> Result<Vec<TableType>, ValidationError> {
-        wasm.read_vec(TableType::read)
+    pub fn read(wasm: &mut Reader) -> Result<Vec<FuncRef>, ValidationError> {
+        let n = wasm.read_u32()?;
+        if n == 0 {
+            Ok(Vec::zero())
+        } else if n == 1 {
+            let table_type = TableType::read(wasm)?;
+            let mut v = Vec::new(table_type.limits.min)?;
+            for _ in 0..table_type.limits.min {
+                v.push(FuncRef::Func(0xFFFF))
+            }
+
+            Ok(v)
+        } else {
+            Err(ValidationError::InvalidTableIndex)
+        }
     }
 }
 
@@ -465,30 +475,42 @@ impl ExportSection {
     }
 }
 
-pub struct Element {
-    pub table: TableIdx,
-    pub offset: Value,
-    pub init: Vec<FuncIdx>,
-}
+pub struct Element;
 
 impl Element {
-    pub fn read(wasm: &mut Reader) -> Result<Self, ValidationError> {
+    pub fn read(wasm: &mut Reader, module: &mut Module) -> Result<(), ValidationError> {
         let table = TableIdx::read(wasm)?;
-        let offset = Expr::read_constant(wasm)?;
-        let init = wasm.read_vec(FuncIdx::read)?;
+        if table.0 != 0 {
+            return Err(ValidationError::InvalidTableIndex);
+        }
 
-        Ok(Element {
-            table,
-            offset,
-            init,
-        })
+        let Value::I32(offset) = Expr::read_constant(wasm)? else {
+            return Err(ValidationError::InvalidElementOffset);
+        };
+
+        let init = wasm.read_vec(FuncIdx::read)?;
+        if (offset as usize + init.len()) > module.table.len() {
+            return Err(ValidationError::InvalidElementOutOfBounds);
+        }
+
+        // Write the function indexes into the table
+        for (i, idx) in init.iter().enumerate() {
+            module.table[(offset as usize) + i] = module.get_func_ref(*idx)?;
+        }
+
+        Ok(())
     }
 }
 
 pub struct ElementSection;
 impl ElementSection {
-    pub fn read(wasm: &mut Reader) -> Result<Vec<Element>, ValidationError> {
-        wasm.read_vec(|r| Element::read(r))
+    pub fn read(wasm: &mut Reader, module: &mut Module) -> Result<(), ValidationError> {
+        let len = wasm.read_u32()?;
+        for _ in 0..len {
+            Element::read(wasm, module)?;
+        }
+
+        Ok(())
     }
 }
 

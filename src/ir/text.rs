@@ -52,7 +52,7 @@ impl JumpTarget {
     /// Sentinel value used to mark the end of a linked list of jump addresses.
     /// Uses 0x3FFF_FFFF (all 1s in the 30-bit address space) so it never conflicts
     /// with the control bits (bits 30-31) or valid addresses (24-bit page index).
-    const SENTINEL: JumpTarget = JumpTarget(0x3FFF_FFFFu32);
+    pub const SENTINEL: JumpTarget = JumpTarget(0x3FFF_FFFFu32);
 
     /// Extract the page index (upper 24 bits).
     pub fn page(&self) -> usize {

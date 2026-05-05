@@ -271,7 +271,7 @@ pub struct GlobalVariable {
     pub mutable: bool,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum FuncRef {
     HostFunc(u16),
     Func(u16),

@@ -8,21 +8,7 @@ pub enum IrReaderError {
     InvalidCallType(u8),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum IrReaderStop<E> {
-    Instruction(E),
-    Finished,
-}
-
-impl<E> From<E> for IrReaderStop<E> {
-    fn from(err: E) -> Self {
-        IrReaderStop::Instruction(err)
-    }
-}
-
 pub struct Code(Vec<Box<TextPage>>);
-
-type IrReaderResult<E> = Result<(), IrReaderStop<E>>;
 
 impl Code {
     pub fn new(code: Vec<Box<TextPage>>) -> Self {
@@ -66,7 +52,7 @@ impl Code {
         state: &mut S,
         pc: &mut JumpTarget,
         visitor: &V,
-    ) -> IrReaderResult<E>
+    ) -> Result<(), E>
     where
         V: IrVisitor<State = S, Error = E>,
     {
@@ -196,12 +182,7 @@ impl Code {
                 }
             }
             CALL_INDIRECT => {
-                let n = if imm == 0xFF {
-                    self.read(pc).unwrap()
-                } else {
-                    imm as u16
-                };
-
+                let n = self.read(pc).unwrap();
                 visitor.call_indirect(TypeIdx(n as u32), state)?;
             }
 
@@ -408,7 +389,6 @@ impl Code {
             F64_CONVERT_I64_S => instruction!(f64_convert_i64_s),
             F64_CONVERT_I64_U => instruction!(f64_convert_i64_u),
             F64_PROMOTE_F32 => instruction!(f64_promote_f32),
-            END => return Err(IrReaderStop::Finished),
             _ => Err(IrReaderError::InvalidOpcode(opcode)).unwrap(),
         }
 

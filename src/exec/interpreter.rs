@@ -1,3 +1,5 @@
+extern crate std;
+
 use crate::*;
 use core::ops::{AddAssign, ControlFlow};
 
@@ -18,7 +20,7 @@ impl LocalVariable {
 impl InterpreterState {
     pub fn new(stack_size: usize, ram: Memory) -> Self {
         InterpreterState {
-            pc: JumpTarget(0xFFFFFFFFu32),
+            pc: JumpTarget::SENTINEL,
             sp: 0x0,
             fp: 0x0,
             stack: Stack::new(stack_size),
@@ -116,6 +118,8 @@ pub struct Interpreter<'module> {
     pub global_imports: &'module [GlobalImport<'module>],
     pub function_imports: &'module [HostFunction<'module>],
     pub memory_imports: &'module [MemoryImport<'module>],
+    pub table: &'module [FuncRef],
+    pub types: &'module [FuncType],
 }
 
 impl AddAssign<u32> for JumpTarget {
@@ -136,27 +140,22 @@ pub enum InterpreterResult {
     ReaderError(IrReaderError),
 }
 
-impl From<IrReaderStop<InstructionError>> for InterpreterResult {
-    fn from(value: IrReaderStop<InstructionError>) -> Self {
-        match value {
-            IrReaderStop::Instruction(i) => InterpreterResult::Instruction(i),
-            IrReaderStop::Finished => InterpreterResult::Finished,
-        }
-    }
-}
-
 impl<'module> Interpreter<'module> {
     pub fn new(
         functions: &'module [Func],
         global_imports: &'module [GlobalImport<'module>],
         function_imports: &'module [HostFunction<'module>],
         memory_imports: &'module [MemoryImport<'module>],
+        table: &'module [FuncRef],
+        types: &'module [FuncType],
     ) -> Self {
         Interpreter {
             functions,
             global_imports,
             function_imports,
             memory_imports,
+            table,
+            types,
         }
     }
 
@@ -181,7 +180,7 @@ impl<'module> Interpreter<'module> {
 
             match i_res {
                 Ok(_) => {}
-                Err(e) => return e.into(),
+                Err(e) => return InterpreterResult::Instruction(e),
             }
         }
 
@@ -193,7 +192,9 @@ impl<'module> Interpreter<'module> {
 pub enum InstructionError {
     Trap,
     Finished,
-    TableLookupFailed,
+    InvalidTableIndex,
+    InvalidTableFunctionType,
+    BrTableLookupFailed,
     GlobalGetFailed,
     GlobalSetFailed,
     MemoryOutOfBounds,
@@ -850,7 +851,7 @@ impl<'module> IrVisitor for Interpreter<'module> {
     ) -> Result<(), Self::Error> {
         state.sp -= 1;
         let v = state.stack.read_u32(state.sp);
-        let addr = cases(v as u16).map_err(|_| InstructionError::TableLookupFailed)?;
+        let addr = cases(v as u16).map_err(|_| InstructionError::BrTableLookupFailed)?;
 
         state.pc = addr;
         Ok(())
@@ -860,7 +861,7 @@ impl<'module> IrVisitor for Interpreter<'module> {
         let return_size = return_size as usize;
 
         let fp = state.fp as usize;
-        let return_pc = state.stack.read_u32(state.fp as usize + 1);
+        let return_pc = JumpTarget(state.stack.read_u32(state.fp as usize + 1));
 
         // The frame pointer on the stack actually encodes ((sp - fp) << 16) | prm_size
         let frame_length_and_prm_size = state.stack.read_u32(state.fp as usize);
@@ -878,9 +879,14 @@ impl<'module> IrVisitor for Interpreter<'module> {
 
         state.sp = parameter_start + return_size;
         state.fp = return_fp;
-        state.pc = JumpTarget(return_pc);
 
-        Ok(())
+        if return_pc == JumpTarget::SENTINEL {
+            state.pc = JumpTarget::SENTINEL;
+            Err(InstructionError::Finished)
+        } else {
+            state.pc = return_pc + 2; // skip over the call or call_indirect
+            Ok(())
+        }
     }
 
     fn call(&self, x: u16, state: &mut Self::State) -> Result<(), Self::Error> {
@@ -973,9 +979,55 @@ impl<'module> IrVisitor for Interpreter<'module> {
         }
     }
 
-    #[allow(unused_variables)]
     fn call_indirect(&self, x: TypeIdx, state: &mut Self::State) -> Result<(), Self::Error> {
-        todo!()
+        // Pop the table pointer off the stack
+        state.sp -= 1;
+        let i = state.stack.read_u32(state.sp) as usize;
+        let f_expected = &self.types[x.0 as usize];
+
+        if i >= self.table.len() {
+            return Err(InstructionError::InvalidTableIndex);
+        }
+
+        // Look up the internal or host function
+        let f_ref = self.table[i];
+        match f_ref {
+            FuncRef::HostFunc(hfi) => {
+                // Make sure the type matches our expectations (runtime validation)
+                let f = &self.function_imports[hfi as usize];
+                if f.params()[..] != f_expected.params[..]
+                    || f.returns()[..] != f_expected.returns[..]
+                {
+                    return Err(InstructionError::InvalidTableFunctionType);
+                }
+
+                self.call_host(i as u16, state)
+            }
+            FuncRef::Func(fi) => {
+                let f = &self.functions[fi as usize];
+
+                // Validate the function is the proper type
+                // This asserts that it's safe to call the function with the current stack
+                let f_actual = &self.types[f.ty.0 as usize];
+
+                if f_actual.params != f_expected.params || f_actual.returns != f_expected.returns {
+                    std::eprintln!(
+                        "PARAMS actual: {:?}, expected: {:?}",
+                        f_actual.params,
+                        f_expected.params
+                    );
+                    std::eprintln!(
+                        "RETURNS actual: {:?}, expected: {:?}",
+                        f_actual.returns,
+                        f_expected.returns
+                    );
+                    return Err(InstructionError::InvalidTableFunctionType);
+                }
+
+                // Call the function
+                self.call(fi, state)
+            }
+        }
     }
 
     fn local_get(&self, l: LocalVariable, state: &mut Self::State) -> Result<(), Self::Error> {

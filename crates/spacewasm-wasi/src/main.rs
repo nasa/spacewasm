@@ -128,8 +128,22 @@ fn main() {
                         "message",
                         &[ValType::I32, ValType::I32],
                         &[],
-                        |_, a| {
-                            eprintln!("COMMAND {:?} {:?}", a.get(0), a.get(1));
+                        |state, a| {
+                            let Some(Value::I32(msg_ptr)) = a.get(0) else {
+                                panic!("expected i32");
+                            };
+                            let Some(Value::I32(msg_len)) = a.get(1) else {
+                                panic!("expected i32");
+                            };
+
+                            let msg_r = state
+                                .ram
+                                .load(*msg_ptr as usize, *msg_len as usize)
+                                .unwrap();
+
+                            let msg: &str = core::str::from_utf8(msg_r).unwrap();
+
+                            eprintln!("MESSAGE {msg}");
                             ControlFlow::Continue(None)
                         },
                     ),
@@ -151,13 +165,13 @@ fn main() {
                             let Some(Value::I32(time_ptr)) = a.get(1) else {
                                 panic!("expected i32");
                             };
-                            let Some(Value::I32(time_len)) = a.get(2) else {
+                            let Some(Value::I32(_time_len)) = a.get(2) else {
                                 panic!("expected i32");
                             };
-                            let Some(Value::I32(value_ptr)) = a.get(3) else {
+                            let Some(Value::I32(_value_ptr)) = a.get(3) else {
                                 panic!("expected i32");
                             };
-                            let Some(Value::I32(value_len)) = a.get(4) else {
+                            let Some(Value::I32(_value_len)) = a.get(4) else {
                                 panic!("expected i32");
                             };
 
@@ -275,12 +289,14 @@ fn main() {
                     module.module_imports.globals,
                     module.module_imports.functions,
                     module.module_imports.memories,
+                    &module.table,
+                    &module.types,
                 );
 
                 eprintln!("====");
 
                 let code = spacewasm::Code::new(module.text);
-                let r = interpreter.run(&code, &mut state, 1000);
+                let r = interpreter.run(&code, &mut state, 100000);
 
                 eprintln!("Interpreter result: {:?}", r)
             }

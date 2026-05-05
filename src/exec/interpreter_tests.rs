@@ -19,6 +19,8 @@ mod tests {
             global_imports: &[],
             function_imports: &[],
             memory_imports: &[],
+            table: &[],
+            types: &[],
         }
     }
 
