@@ -8,10 +8,10 @@ pub enum IrReaderError {
     InvalidCallType(u8),
 }
 
-pub struct Code(Vec<Box<TextPage>>);
+pub struct Code<'code>(&'code [Box<TextPage>]);
 
-impl Code {
-    pub fn new(code: Vec<Box<TextPage>>) -> Self {
+impl<'code> Code<'code> {
+    pub fn new(code: &'code [Box<TextPage>]) -> Self {
         Code(code)
     }
 

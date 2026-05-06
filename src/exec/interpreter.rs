@@ -912,7 +912,6 @@ impl<'module> IrVisitor for Interpreter<'module> {
         if return_pc == JumpTarget::SENTINEL {
             state.sp = parameter_start;
             state.pc = JumpTarget::SENTINEL;
-            extern crate std;
             let return_value = match return_size {
                 0 => RawValue(0),
                 1 => RawValue(state.stack.read_u32(state.sp) as u64),
@@ -921,7 +920,6 @@ impl<'module> IrVisitor for Interpreter<'module> {
                 _ => unreachable!(),
             };
 
-            std::eprintln!("FINISHED return_size={return_size}, return_value={return_value:?}");
             Err(InstructionError::Finished(return_value))
         } else {
             state.sp = parameter_start + return_size;

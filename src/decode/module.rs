@@ -11,7 +11,7 @@ pub struct Module<'imports> {
     pub data: Vec<Data>,
     pub start: Option<FuncIdx>,
     pub text: Vec<Box<TextPage>>,
-    pub module_imports: &'imports ModuleImports<'imports>,
+    pub module_imports: ModuleImports<'imports>,
     pub wasm_size: usize,
     pub final_page_offset: usize,
     pub memory_usage: [MemoryStatistics; SectionKind::N as usize],
@@ -45,7 +45,7 @@ impl CustomSectionHandler for DefaultCustomSectionHandler {
 impl<'imports> Module<'imports> {
     pub fn new<const N: usize>(
         stream: &mut dyn Stream,
-        module_imports: &'imports ModuleImports<'imports>,
+        module_imports: ModuleImports<'imports>,
     ) -> Result<Module<'imports>, ParseError> {
         let mut wasm = Reader::new(stream);
 
@@ -59,7 +59,7 @@ impl<'imports> Module<'imports> {
 
     fn read<const N: usize>(
         wasm: &mut Reader,
-        module_imports: &'imports ModuleImports<'imports>,
+        module_imports: ModuleImports<'imports>,
         custom_handler: &mut dyn CustomSectionHandler,
     ) -> Result<Module<'imports>, SectionDecodeError> {
         let magic = wasm.strip_bytes::<4>()?;

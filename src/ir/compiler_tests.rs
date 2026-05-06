@@ -24,7 +24,7 @@ mod tests {
             wasm_size: 0,
             final_page_offset: 0,
             memory_usage: Default::default(),
-            module_imports: &ModuleImports {
+            module_imports: ModuleImports {
                 functions: &[],
                 memories: &[],
                 globals: &[],
@@ -392,7 +392,7 @@ mod tests {
         }
 
         let (pages, _) = code_builder.finish().unwrap();
-        let code = Code::new(pages);
+        let code = Code::new(&pages);
         let visitor = TestVisitor(handler);
         let mut state = initial_state;
 
@@ -929,7 +929,7 @@ mod tests {
             }
         }
 
-        let code = Code::new(pages);
+        let code = Code::new(&pages);
         let handler = ElseTestHandler {
             if_count: Rc::new(Cell::new(0)),
             br_count: Rc::new(Cell::new(0)),
@@ -1046,7 +1046,7 @@ mod tests {
             globals: &[],
         };
 
-        module.module_imports = &imports;
+        module.module_imports = imports;
 
         // Add Import entries to indicate which function indices are imported
         let mut imports = crate::Vec::new(1).unwrap();
@@ -1251,7 +1251,7 @@ mod tests {
             }
         }
 
-        let code = Code::new(pages);
+        let code = Code::new(&pages);
         let handler = ReadHandler {
             counts: InstructionCounts {
                 local_get: Rc::new(Cell::new(0)),

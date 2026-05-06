@@ -131,7 +131,7 @@ fn main() {
 
     std::env::args().skip(1).for_each(|path| {
         let file = std::fs::File::open(path).expect("failed to open file");
-        match spacewasm::Module::new::<256>(&mut FileStream::new(file), &imports) {
+        match spacewasm::Module::new::<256>(&mut FileStream::new(file), imports.clone()) {
             Ok(module) => {
                 let mut total: usize = 0;
                 for (i, section) in module.memory_usage.iter().enumerate() {
@@ -223,7 +223,7 @@ fn main() {
 
                 eprintln!("====");
 
-                let code = spacewasm::Code::new(module.text);
+                let code = spacewasm::Code::new(&module.text);
                 let mut result = InterpreterResult::OutOfFuel;
                 while result == InterpreterResult::OutOfFuel {
                     result = interpreter.run(&code, &mut state, usize::MAX)

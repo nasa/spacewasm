@@ -25,7 +25,8 @@ fn main() {
             .unwrap()
             .as_millis() as i64;
 
-        CLOCK_CALL_COUNT.fetch_add(1, Ordering::Relaxed);
+        let count = CLOCK_CALL_COUNT.fetch_add(1, Ordering::Relaxed);
+        eprintln!("[clock_ms call #{}] returning {}", count + 1, ms);
 
         ControlFlow::Continue(Some(Value::I64(ms)))
     });
@@ -38,7 +39,7 @@ fn main() {
 
     let file = std::fs::File::open("benches/coremark-minimal.wasm")
         .expect("failed to open coremark-minimal.wasm");
-    let module = spacewasm::Module::new::<256>(&mut FileStream::new(file), &imports)
+    let module = spacewasm::Module::new::<256>(&mut FileStream::new(file), imports)
         .expect("failed to parse wasm module");
 
     let mem = &module.memories[0];
@@ -67,10 +68,6 @@ fn main() {
         _ => panic!("run export is not a function"),
     };
 
-    let f_ty = &module.types[func.ty.0 as usize];
-    eprintln!("Running CoreMark run() => ({:?}) -> {:?}\n", f_ty.params, f_ty.returns);
-    state.invoke(func, &[]);
-
     let interpreter = spacewasm::Interpreter::new(
         &module.functions,
         module.module_imports.globals,
@@ -80,7 +77,14 @@ fn main() {
         &module.types,
     );
 
-    let code = spacewasm::Code::new(module.text);
+    let f_ty = &module.types[func.ty.0 as usize];
+    eprintln!(
+        "Running CoreMark run() => ({:?}) -> {:?}\n",
+        f_ty.params, f_ty.returns
+    );
+    interpreter.invoke(&mut state, func, &[]);
+
+    let code = spacewasm::Code::new(&module.text);
     let bench_start = Instant::now();
 
     eprintln!("Starting execution...");
@@ -93,6 +97,10 @@ fn main() {
     eprintln!("Execution completed with result: {:?}", result);
     let total_calls = CLOCK_CALL_COUNT.load(Ordering::Relaxed);
     eprintln!("Total clock_ms calls: {}", total_calls);
+    eprintln!(
+        "Final PC: {:?}, SP: {}, FP: {}",
+        state.pc, state.sp, state.fp
+    );
 
     // Extract return value (CoreMark score as f32)
     // According to https://github.com/wasm3/wasm-coremark:
@@ -101,13 +109,13 @@ fn main() {
     match result {
         InterpreterResult::Instruction(InstructionError::Finished(raw_value)) => {
             // The run function returns f32, so interpret the bits as float
-            let coremark_score = raw_value.0;
+            let coremark_score = f32::from_bits(raw_value.0 as u32);
 
             println!("Execution time: {:.3}s", elapsed.as_secs_f64());
             println!("Return value: {:.3}", coremark_score);
             println!();
 
-            if coremark_score > 1 {
+            if coremark_score > 1.0 {
                 println!("=== CoreMark Results ===");
                 println!("CoreMark Score: {:.3}", coremark_score);
                 println!("CoreMark/MHz: {:.3}", coremark_score);

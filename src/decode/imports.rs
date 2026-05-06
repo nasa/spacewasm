@@ -1,6 +1,6 @@
 use core::ops::ControlFlow;
 
-use crate::{Box, ImportDesc, InterpreterState, Module, Reader, ValType, ValidationError, Value};
+use crate::{Box, GlobalAllocator, ImportDesc, InterpreterState, Module, Reader, ValType, ValidationError, Value};
 
 pub struct GlobalValueError;
 
@@ -19,6 +19,16 @@ pub trait GlobalValue {
 
     /// If a global is not mutable, [write] will not be called
     fn mutable(&self) -> bool;
+}
+
+impl<T: GlobalValue> Box<T> {
+    pub fn into_global_value_dyn(mut self) -> Box<dyn GlobalValue>
+    where T: GlobalValue + 'static
+    {
+        let ptr = self.as_mut_ptr() as *mut dyn GlobalValue;
+        core::mem::forget(self); // Prevent double free
+        unsafe { Box::from_raw(GlobalAllocator, ptr) }
+    }
 }
 
 pub struct GlobalImport<'imports> {
@@ -117,6 +127,7 @@ impl<'imports> MemoryImport<'imports> {
     }
 }
 
+#[derive(Clone)]
 pub struct ModuleImports<'imports> {
     pub globals: &'imports [GlobalImport<'imports>],
     pub functions: &'imports [HostFunction<'imports>],

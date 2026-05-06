@@ -2,6 +2,7 @@ use crate::alloc::{AllocError, Allocator, GlobalAllocator};
 use crate::util::Vec;
 use core::alloc::Layout;
 use core::ops::{Deref, DerefMut};
+use core::{mem, ptr};
 
 /// A heap-allocated value with a configurable allocator.
 /// Similar to [::alloc::boxed::Box] but allows specifying a custom allocator.
@@ -19,6 +20,31 @@ impl<A: Allocator, T: core::fmt::Debug> core::fmt::Debug for Box<T, A> {
 impl<T: Clone, A: Allocator + Clone> Clone for Box<T, A> {
     fn clone(&self) -> Self {
         Box::new_in(self.alloc.clone(), (**self).clone()).unwrap()
+    }
+}
+
+impl<T: ?Sized, A: Allocator> Box<T, A> {
+    #[inline]
+    fn into_raw_with_allocator(self) -> (*mut T, A) {
+        let mut b = mem::ManuallyDrop::new(self);
+        // We carefully get the raw pointer out in a way that Miri's aliasing model understands what
+        // is happening: using the primitive "deref" of `Box`. In case `A` is *not* `Global`, we
+        // want *no* aliasing requirements here!
+        // In case `A` *is* `Global`, this does not quite have the right behavior; `into_raw`
+        // works around that.
+        let ptr = &raw mut **b;
+        let alloc = unsafe { ptr::read(&b.alloc) };
+        (ptr, alloc)
+    }
+
+    #[inline]
+    pub fn leak<'a>(b: Self) -> &'a mut T
+    where
+        A: 'a,
+    {
+        let (ptr, alloc) = b.into_raw_with_allocator();
+        mem::forget(alloc);
+        unsafe { &mut *ptr }
     }
 }
 
