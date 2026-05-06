@@ -111,7 +111,7 @@ macro_rules! global_allocator {
         #[unsafe(no_mangle)]
         pub unsafe extern "C" fn __spacewasm_alloc(size: usize, align: usize, err: *mut u32) -> *mut u8 {
             let Ok(layout) = core::alloc::Layout::from_size_align(size, align) else {
-                unsafe { *err = crate::AllocError::InvalidLayout.into(); }
+                unsafe { *err = ::spacewasm::AllocError::InvalidLayout.into(); }
                 return core::ptr::null_mut();
             };
 
@@ -131,7 +131,7 @@ macro_rules! global_allocator {
         }
 
         #[unsafe(no_mangle)]
-        pub unsafe extern "C" fn __spacewasm_memory_statistics() -> crate::MemoryStatistics {
+        pub unsafe extern "C" fn __spacewasm_memory_statistics() -> ::spacewasm::MemoryStatistics {
             unsafe { (*GLOBAL_ALLOCATOR).memory_statistics() }
         }
     };

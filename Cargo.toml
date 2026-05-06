@@ -20,6 +20,9 @@ path = "src/lib.rs"
 [dependencies]
 libm = "0.2.16"
 
+[dev-dependencies]
+wast = "248.0.0"
+
 [profile.release]
 opt-level = 3
 lto = true

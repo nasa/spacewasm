@@ -1,4 +1,5 @@
-use spectest::run_wast_test_file;
+mod spectest;
+use spectest::*;
 
 #[test]
 fn address() {

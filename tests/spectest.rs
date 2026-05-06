@@ -115,7 +115,7 @@ impl TestContext {
             Module::new::<256>(&mut stream, self.imports.clone())
                 .map_err(|e| format!("failed to parse module: {:?}", e))?,
         )
-        .unwrap();
+            .unwrap();
 
         let heap_size = if module.memories.is_empty() {
             65536
@@ -336,8 +336,8 @@ fn create_spectest_imports() -> ModuleImports<'static> {
                 value: Mutex::new(Value::I32(666)),
                 ty: ValType::I32,
             })
-            .unwrap()
-            .into_global_value_dyn(),
+                .unwrap()
+                .into_global_value_dyn(),
         },
         GlobalImport {
             module: "spectest",
@@ -346,8 +346,8 @@ fn create_spectest_imports() -> ModuleImports<'static> {
                 value: Mutex::new(Value::I64(666)),
                 ty: ValType::I64,
             })
-            .unwrap()
-            .into_global_value_dyn(),
+                .unwrap()
+                .into_global_value_dyn(),
         },
         GlobalImport {
             module: "spectest",
@@ -356,8 +356,8 @@ fn create_spectest_imports() -> ModuleImports<'static> {
                 value: Mutex::new(Value::F32(666.6)),
                 ty: ValType::F32,
             })
-            .unwrap()
-            .into_global_value_dyn(),
+                .unwrap()
+                .into_global_value_dyn(),
         },
         GlobalImport {
             module: "spectest",
@@ -366,8 +366,8 @@ fn create_spectest_imports() -> ModuleImports<'static> {
                 value: Mutex::new(Value::F64(666.6)),
                 ty: ValType::F64,
             })
-            .unwrap()
-            .into_global_value_dyn(),
+                .unwrap()
+                .into_global_value_dyn(),
         },
     ];
 
@@ -419,7 +419,7 @@ fn create_spectest_imports() -> ModuleImports<'static> {
 
 fn run_wast_test_file_internal(file_name: &str) -> Result<TestResult, String> {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    let wast_path = format!("{}/tests/{}.wast", manifest_dir, file_name);
+    let wast_path = format!("{}/tests/spectest/{}.wast", manifest_dir, file_name);
 
     let wast_content = std::fs::read_to_string(&wast_path)
         .map_err(|e| format!("failed to read wast file: {}", e))?;
@@ -461,8 +461,8 @@ fn run_wast_test_file_internal(file_name: &str) -> Result<TestResult, String> {
             }
             WastDirective::AssertReturn { exec, results, .. } => {
                 let WastExecute::Invoke(WastInvoke {
-                    module, name, args, ..
-                }) = &exec
+                                            module, name, args, ..
+                                        }) = &exec
                 else {
                     stats.skipped += 1;
                     continue;
@@ -508,8 +508,8 @@ fn run_wast_test_file_internal(file_name: &str) -> Result<TestResult, String> {
             }
             WastDirective::AssertTrap { exec, message, .. } => {
                 let WastExecute::Invoke(WastInvoke {
-                    module, name, args, ..
-                }) = &exec
+                                            module, name, args, ..
+                                        }) = &exec
                 else {
                     stats.skipped += 1;
                     continue;
