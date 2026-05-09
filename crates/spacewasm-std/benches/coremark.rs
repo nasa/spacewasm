@@ -1,10 +1,10 @@
 use spacewasm::{
-    ExportDesc, FuncRef, HostFunction, InstructionError, InterpreterResult, Memory, ModuleImports,
-    ValType, Value,
+    ExportDesc, FuncRef, HostFunction, HostModule, InstructionError, InterpreterResult, Memory,
+    Store, StoreModule, Value,
 };
 use spacewasm_std::FileStream;
 use std::alloc::Layout;
-use std::ops::ControlFlow;
+use std::ops::{ControlFlow, Deref};
 use std::time::Instant;
 
 fn main() {
@@ -19,28 +19,42 @@ fn main() {
     use std::sync::atomic::{AtomicUsize, Ordering};
     static CLOCK_CALL_COUNT: AtomicUsize = AtomicUsize::new(0);
 
-    let clock_ms_fn = HostFunction::new("env", "clock_ms", &[], &[ValType::I64], |_, _| {
-        let ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as i64;
+    let env = HostModule {
+        name: "env",
+        globals: spacewasm::vec![],
+        functions: spacewasm::vec![HostFunction::new(
+            "clock_ms",
+            "".into(),
+            "I".into(),
+            |_, _| {
+                let ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis() as i64;
 
-        let count = CLOCK_CALL_COUNT.fetch_add(1, Ordering::Relaxed);
-        eprintln!("[clock_ms call #{}] returning {}", count + 1, ms);
+                eprintln!("CLOCK_MS {}", ms);
 
-        ControlFlow::Continue(Some(Value::I64(ms)))
-    });
-
-    let imports = ModuleImports {
-        globals: &[],
-        functions: &[clock_ms_fn],
-        memories: &[],
+                ControlFlow::Continue(Some(Value::I64(ms)))
+            },
+        )],
     };
+
+    let mut store = Store::new(2).unwrap();
+    store
+        .0
+        .push(spacewasm::Box::new(StoreModule::Host(env)).unwrap());
 
     let file = std::fs::File::open("benches/coremark-minimal.wasm")
         .expect("failed to open coremark-minimal.wasm");
-    let module = spacewasm::Module::new::<256>(&mut FileStream::new(file), imports)
+    let module = spacewasm::Module::new::<256>("coremark", &mut FileStream::new(file), &store)
         .expect("failed to parse wasm module");
+
+    store
+        .0
+        .push(spacewasm::Box::new(StoreModule::Module(module)).unwrap());
+    let StoreModule::Module(module) = store.0.get(store.0.len() - 1).unwrap().deref() else {
+        unreachable!()
+    };
 
     let mem = &module.memories[0];
     let heap_size = (mem.0.min as usize) * 65536;
@@ -51,7 +65,7 @@ fn main() {
             heap_size,
         ),
     );
-    state.initialize(&module.globals, &module.data).unwrap();
+    state.initialize(&module).unwrap();
 
     let export = module
         .exports
@@ -68,14 +82,7 @@ fn main() {
         _ => panic!("run export is not a function"),
     };
 
-    let interpreter = spacewasm::Interpreter::new(
-        &module.functions,
-        module.module_imports.globals,
-        module.module_imports.functions,
-        module.module_imports.memories,
-        &module.table,
-        &module.types,
-    );
+    let interpreter = spacewasm::Interpreter::new(&store, &module);
 
     let f_ty = &module.types[func.ty.0 as usize];
     eprintln!(

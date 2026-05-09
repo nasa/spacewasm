@@ -157,9 +157,7 @@ impl Store {
                         }
                     }
                 }
-                StoreModule::Module(wm) => if wm.name == module_name {
-                    
-                },
+                StoreModule::Module(wm) => if wm.name == module_name {},
             }
         }
 
@@ -168,8 +166,6 @@ impl Store {
 }
 
 impl Import {
-    fn import_function() {}
-
     pub fn read(
         wasm: &mut Reader,
         module: &Module,
