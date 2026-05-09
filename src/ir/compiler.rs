@@ -8,7 +8,7 @@ pub struct Compiler<'a, const N: usize> {
 impl<'a, const N: usize> Compiler<'a, N> {
     pub fn new() -> Compiler<'a, N> {
         Compiler {
-            _marker: PhantomData,
+            _marker: Default::default(),
         }
     }
 }
@@ -115,17 +115,24 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
     fn call(&self, x: FuncIdx, state: &mut Self::State) -> Result<(), Self::Error> {
         let f_ref = state.get_func_ref(x)?;
         match f_ref {
-            FuncRef::HostFunc(i) => {
-                state.push_with_operand(CALL, 1)?;
-                state.push(i)?;
-            }
             FuncRef::Func(i) => {
                 state.push_with_operand(CALL, 0)?;
                 state.push(i)?;
+                Ok(())
+            }
+            FuncRef::HostFunc { module, index } => {
+                assert!(module.0 >= 1);
+                state.push_with_operand(CALL, module.0)?;
+                state.push(index)?;
+                Ok(())
+            }
+            FuncRef::ExternFunc { .. } => {
+                // TODO(tumbar) We do not yet support calling WASM functions across modules
+                //              This would require isolation of memory, instruction and (stack?)
+                //              space.
+                Err(ValidationError::FunctionCallsAcrossModuleNotSupportedYet)
             }
         }
-
-        Ok(())
     }
 
     fn call_indirect(&self, x: TypeIdx, state: &mut Self::State) -> Result<(), Self::Error> {
@@ -171,7 +178,7 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
 
 impl<'a, const N: usize> BaseVisitor for Compiler<'a, N> {
     type Error = ValidationError;
-    type State = TextBuilder<'a, 'a, N>;
+    type State = TextBuilder<'a, N>;
 
     instruction!(unreachable, UNREACHABLE);
     instruction!(nop, NOP);

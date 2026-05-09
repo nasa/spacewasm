@@ -68,7 +68,7 @@ impl<T: Sized, A: Allocator> Box<T, A> {
 
         // Write the value into the allocated memory
         unsafe {
-            core::ptr::write(ptr, value);
+            ptr::write(ptr, value);
         }
 
         Ok(Box { ptr, alloc })
@@ -108,7 +108,7 @@ impl<T: ?Sized, A: Allocator> Drop for Box<T, A> {
     fn drop(&mut self) {
         // Drop the contained value
         unsafe {
-            core::ptr::drop_in_place(self.ptr);
+            ptr::drop_in_place(self.ptr);
         }
 
         // Deallocate the memory

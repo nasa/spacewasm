@@ -1,121 +1,102 @@
 use spacewasm::{
-    ExportDesc, FuncRef, HostFunction, HostFunctionPause, InterpreterResult, Memory, ModuleImports,
-    SectionKind, ValType, Value,
+    vec, Box, ExportDesc, FuncRef, HostFunction, HostFunctionPause, HostModule,
+    InterpreterResult, Memory, SectionKind, Store, StoreModule, Value,
 };
 use spacewasm_std::FileStream;
 use std::alloc::Layout;
-use std::ops::ControlFlow;
+use std::ops::{ControlFlow, Deref};
 
 fn main() {
-    let imports = ModuleImports {
-        globals: &[],
-        functions: &[
-            HostFunction::new(
-                "fprime_core",
-                "panic",
-                &[ValType::I32, ValType::I32, ValType::I32],
-                &[],
-                |state, a| {
-                    let Some(Value::I32(addr)) = a.get(0) else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(len)) = a.get(1) else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(line_no)) = a.get(2) else {
-                        panic!("expected i32");
-                    };
+    let fprime_core = HostModule {
+        name: "fprime_core",
+        globals: vec![],
+        functions: vec![
+            HostFunction::new("panic", "iii".into(), "".into(), |state, a| {
+                let Some(Value::I32(addr)) = a.get(0) else {
+                    panic!("expected i32");
+                };
+                let Some(Value::I32(len)) = a.get(1) else {
+                    panic!("expected i32");
+                };
+                let Some(Value::I32(line_no)) = a.get(2) else {
+                    panic!("expected i32");
+                };
 
-                    let f = state.ram.load(*addr as usize, *len as usize).unwrap();
-                    let s: &str = core::str::from_utf8(f).unwrap();
+                let f = state.ram.load(*addr as usize, *len as usize).unwrap();
+                let s: &str = core::str::from_utf8(f).unwrap();
 
-                    eprintln!("PANIC {}:{}", s, line_no);
-                    ControlFlow::Break(HostFunctionPause::Trap)
-                },
-            ),
-            HostFunction::new("fprime_core", "rsleep", &[ValType::I64], &[], |_, a| {
+                eprintln!("PANIC {}:{}", s, line_no);
+                ControlFlow::Break(HostFunctionPause::Trap)
+            }),
+            HostFunction::new("rsleep", "I".into(), "".into(), |_, a| {
                 eprintln!("RSLEEP {:?}", a.get(0));
                 ControlFlow::Continue(None)
             }),
-            HostFunction::new(
-                "fprime_core",
-                "command",
-                &[ValType::I32, ValType::I32],
-                &[ValType::I32],
-                |_, a| {
-                    eprintln!("COMMAND {:?} {:?}", a.get(0), a.get(1));
-                    ControlFlow::Continue(Some(Value::I32(0)))
-                },
-            ),
-            HostFunction::new(
-                "fprime_core",
-                "message",
-                &[ValType::I32, ValType::I32],
-                &[],
-                |state, a| {
-                    let Some(Value::I32(msg_ptr)) = a.get(0) else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(msg_len)) = a.get(1) else {
-                        panic!("expected i32");
-                    };
+            HostFunction::new("command", "ii".into(), "i".into(), |_, a| {
+                eprintln!("COMMAND {:?} {:?}", a.get(0), a.get(1));
+                ControlFlow::Continue(Some(Value::I32(0)))
+            }),
+            HostFunction::new("message", "ii".into(), "".into(), |state, a| {
+                let Some(Value::I32(msg_ptr)) = a.get(0) else {
+                    panic!("expected i32");
+                };
+                let Some(Value::I32(msg_len)) = a.get(1) else {
+                    panic!("expected i32");
+                };
 
-                    let msg_r = state
-                        .ram
-                        .load(*msg_ptr as usize, *msg_len as usize)
-                        .unwrap();
+                let msg_r = state
+                    .ram
+                    .load(*msg_ptr as usize, *msg_len as usize)
+                    .unwrap();
 
-                    let msg: &str = core::str::from_utf8(msg_r).unwrap();
+                let msg: &str = core::str::from_utf8(msg_r).unwrap();
 
-                    eprintln!("MESSAGE {msg}");
-                    ControlFlow::Continue(None)
-                },
-            ),
-            HostFunction::new(
-                "fprime_core",
-                "telemetry",
-                &[
-                    ValType::I32,
-                    ValType::I32,
-                    ValType::I32,
-                    ValType::I32,
-                    ValType::I32,
-                ],
-                &[ValType::I32],
-                |state, a| {
-                    let Some(Value::I32(id)) = a.get(0) else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(time_ptr)) = a.get(1) else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(_time_len)) = a.get(2) else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(_value_ptr)) = a.get(3) else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(_value_len)) = a.get(4) else {
-                        panic!("expected i32");
-                    };
+                eprintln!("MESSAGE {msg}");
+                ControlFlow::Continue(None)
+            }),
+            HostFunction::new("telemetry", "iiiii".into(), "i".into(), |state, a| {
+                let Some(Value::I32(id)) = a.get(0) else {
+                    panic!("expected i32");
+                };
+                let Some(Value::I32(time_ptr)) = a.get(1) else {
+                    panic!("expected i32");
+                };
+                let Some(Value::I32(_time_len)) = a.get(2) else {
+                    panic!("expected i32");
+                };
+                let Some(Value::I32(_value_ptr)) = a.get(3) else {
+                    panic!("expected i32");
+                };
+                let Some(Value::I32(_value_len)) = a.get(4) else {
+                    panic!("expected i32");
+                };
 
-                    // Time base
-                    state.ram.store_u16(*time_ptr as usize, 0).unwrap();
+                // Time base
+                state.ram.store_u16(*time_ptr as usize, 0).unwrap();
 
-                    // Time context
-                    state.ram.store_u8((*time_ptr as usize) + 2, 0).unwrap();
+                // Time context
+                state.ram.store_u8((*time_ptr as usize) + 2, 0).unwrap();
 
-                    // Seconds
-                    state.ram.store_u32((*time_ptr as usize) + 3, 0).unwrap();
+                // Seconds
+                state.ram.store_u32((*time_ptr as usize) + 3, 0).unwrap();
 
-                    // Useconds
-                    state.ram.store_u32((*time_ptr as usize) + 7, 0).unwrap();
+                // Useconds
+                state.ram.store_u32((*time_ptr as usize) + 7, 0).unwrap();
 
-                    eprintln!("TELEMETRY {id}");
-                    ControlFlow::Continue(Some(Value::I32(0)))
-                },
-            ),
-            HostFunction::new("env", "clock_ms", &[], &[ValType::I64], |_, _| {
+                eprintln!("TELEMETRY {id}");
+                ControlFlow::Continue(Some(Value::I32(0)))
+            }),
+        ],
+    };
+
+    let env = HostModule {
+        name: "env",
+        globals: vec![],
+        functions: vec![HostFunction::new(
+            "clock_ms",
+            "".into(),
+            "I".into(),
+            |_, _| {
                 let ms = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()
@@ -124,14 +105,19 @@ fn main() {
                 eprintln!("CLOCK_MS {}", ms);
 
                 ControlFlow::Continue(Some(Value::I64(ms)))
-            }),
-        ],
-        memories: &[],
+            },
+        )],
     };
+
+    let mut store = Store::new(3).unwrap();
+    store
+        .0
+        .push(Box::new(StoreModule::Host(fprime_core)).unwrap());
+    store.0.push(Box::new(StoreModule::Host(env)).unwrap());
 
     std::env::args().skip(1).for_each(|path| {
         let file = std::fs::File::open(path).expect("failed to open file");
-        match spacewasm::Module::new::<256>(&mut FileStream::new(file), imports.clone()) {
+        match spacewasm::Module::new::<256>("main", &mut FileStream::new(file), &store) {
             Ok(module) => {
                 let mut total: usize = 0;
                 for (i, section) in module.memory_usage.iter().enumerate() {
@@ -183,6 +169,13 @@ fn main() {
 
                 eprintln!("Heap size: {}", heap_size);
 
+                store.0.push(Box::new(StoreModule::Module(module)).unwrap());
+
+                let StoreModule::Module(module) = store.0.get(store.0.len() - 1).unwrap().deref()
+                else {
+                    unreachable!()
+                };
+
                 let mut state = spacewasm::InterpreterState::new(
                     1024,
                     Memory::from(
@@ -193,9 +186,9 @@ fn main() {
                     ),
                 );
 
-                state.initialize(&module.globals, &module.data).unwrap();
+                state.initialize(&module).unwrap();
 
-                let fi = match module.start {
+                let fi = match &module.start {
                     None => {
                         let f = module.exports.iter().find(|f| &f.name == "run").unwrap();
                         let ExportDesc::Func(fi) = f.desc else {
@@ -203,17 +196,10 @@ fn main() {
                         };
                         fi
                     }
-                    Some(fi) => fi,
+                    Some(fi) => *fi,
                 };
 
-                let interpreter = spacewasm::Interpreter::new(
-                    &module.functions,
-                    module.module_imports.globals,
-                    module.module_imports.functions,
-                    module.module_imports.memories,
-                    &module.table,
-                    &module.types,
-                );
+                let interpreter = spacewasm::Interpreter::new(&store, module);
 
                 let FuncRef::Func(fi) = module.get_func_ref(fi).unwrap() else {
                     panic!()

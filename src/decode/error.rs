@@ -42,6 +42,7 @@ pub enum ValidationError {
     MalformedMagic,
     MalformedVersion,
     MalformedUtf8,
+    DuplicateModuleName,
     MalformedSectionId(u8),
     MalformedValueType(u8),
     MalformedFunction(u8),
@@ -91,6 +92,7 @@ pub enum ValidationError {
     BrTableHasTooManyCases,
     TableImportsNotSupportedYet, // TODO(tumbar) Implement dynamic linking
     MemoryImportsNotSupportedYet, // TODO(tumbar) Implement implement shared memory
+    FunctionCallsAcrossModuleNotSupportedYet, // TODO(tumbar) Implement module context isolation
     InvalidConstantExpr(ConstantExprError),
     AllocError(AllocError),
     ReaderError(ReaderError),

@@ -1,6 +1,8 @@
 use crate::*;
 
-pub struct Module<'imports> {
+pub struct Module {
+    pub name: String,
+    pub index: usize,
     pub types: Vec<FuncType>,
     pub functions: Vec<Func>,
     pub table: Vec<FuncRef>,
@@ -11,7 +13,6 @@ pub struct Module<'imports> {
     pub data: Vec<Data>,
     pub start: Option<FuncIdx>,
     pub text: Vec<Box<TextPage>>,
-    pub module_imports: ModuleImports<'imports>,
     pub wasm_size: usize,
     pub final_page_offset: usize,
     pub memory_usage: [MemoryStatistics; SectionKind::N as usize],
@@ -42,26 +43,28 @@ impl CustomSectionHandler for DefaultCustomSectionHandler {
     }
 }
 
-impl<'imports> Module<'imports> {
+impl Module {
     pub fn new<const N: usize>(
+        name: &str,
         stream: &mut dyn Stream,
-        module_imports: ModuleImports<'imports>,
-    ) -> Result<Module<'imports>, ParseError> {
+        store: &Store,
+    ) -> Result<Module, ParseError> {
         let mut wasm = Reader::new(stream);
 
-        Module::read::<N>(&mut wasm, module_imports, &mut DefaultCustomSectionHandler).map_err(
-            |err| ParseError {
+        Module::read::<N>(name, &mut wasm, store, &mut DefaultCustomSectionHandler).map_err(|err| {
+            ParseError {
                 offset: wasm.offset() as u32,
                 err: err.into(),
-            },
-        )
+            }
+        })
     }
 
     fn read<const N: usize>(
+        name: &str,
         wasm: &mut Reader,
-        module_imports: ModuleImports<'imports>,
+        store: &Store,
         custom_handler: &mut dyn CustomSectionHandler,
-    ) -> Result<Module<'imports>, SectionDecodeError> {
+    ) -> Result<Module, SectionDecodeError> {
         let magic = wasm.strip_bytes::<4>()?;
         if magic != [0x00, 0x61, 0x73, 0x6D] {
             return Err(ValidationError::MalformedMagic.into());
@@ -73,14 +76,20 @@ impl<'imports> Module<'imports> {
             return Err(ValidationError::MalformedVersion.into());
         }
 
+        // Make sure that the module name is not a duplicate in the store
+        if let Some(_) = store.0.iter().find(|m| m.name() == name) {
+            return Err(ValidationError::DuplicateModuleName.into());
+        }
+
         let mut module = Module {
+            name: name.try_into()?,
+            index: store.0.len(),
             types: Vec::zero(),
             functions: Vec::zero(),
             text: Vec::zero(),
             table: Vec::zero(),
             memories: Vec::zero(),
             globals: Vec::zero(),
-            module_imports,
             imports: Vec::zero(),
             exports: Vec::zero(),
             data: Vec::zero(),
@@ -120,7 +129,14 @@ impl<'imports> Module<'imports> {
             let memory_before = GlobalAllocator.memory_statistics();
 
             module
-                .read_section(wasm, section_size, section_ty, custom_handler, &mut builder)
+                .read_section(
+                    wasm,
+                    store,
+                    section_size,
+                    section_ty,
+                    custom_handler,
+                    &mut builder,
+                )
                 .map_err(|e| e.with_section(section_ty))?;
 
             let memory_after = GlobalAllocator.memory_statistics();
@@ -146,6 +162,7 @@ impl<'imports> Module<'imports> {
     fn read_section<const PN: usize>(
         &mut self,
         wasm: &mut Reader,
+        store: &Store,
         section_size: usize,
         section_ty: SectionKind,
         custom_handler: &mut dyn CustomSectionHandler,
@@ -160,7 +177,7 @@ impl<'imports> Module<'imports> {
                 self.types = TypeSection::read(wasm)?;
             }
             Import => {
-                self.imports = ImportSection::read(wasm, self)?;
+                self.imports = ImportSection::read(wasm, store, self)?;
             }
             Function => {
                 self.functions = FunctionSection::read(wasm, self)?;
@@ -184,7 +201,7 @@ impl<'imports> Module<'imports> {
                 ElementSection::read(wasm, self)?;
             }
             Code => {
-                CodeSection::read::<PN>(wasm, code_builder, self)?;
+                CodeSection::read::<PN>(wasm, code_builder, store, self)?;
             }
             Data => {
                 self.data = DataSection::read(wasm)?;
@@ -200,11 +217,32 @@ impl<'imports> Module<'imports> {
         let mut n = 0;
         for f in self.imports.iter() {
             match f {
-                Import::Func(fi) => {
+                Import::Func { module, index } => {
                     if x.0 == n {
+                        // Module 0 indicates the current module which
+                        // doesn't make sense for an import
+                        assert_ne!(module.0, 0);
+
                         // We are at the proper index, this is our function
                         // This import has already been resolved to an embedded function
-                        return Ok(FuncRef::HostFunc(*fi));
+                        return Ok(FuncRef::ExternFunc {
+                            module: *module,
+                            index: *index,
+                        });
+                    }
+
+                    n += 1;
+                }
+                Import::FuncHost { module, index } => {
+                    if x.0 == n {
+                        // Module 0 indicates the current module which
+                        // doesn't make sense for an import
+                        assert_ne!(module.0, 0);
+
+                        return Ok(FuncRef::HostFunc {
+                            module: *module,
+                            index: *index,
+                        });
                     }
 
                     n += 1;
@@ -221,6 +259,37 @@ impl<'imports> Module<'imports> {
         } else {
             Ok(FuncRef::Func(i as u16))
         }
+    }
+
+    pub fn func_import_count(&self) -> usize {
+        self.imports
+            .iter()
+            .filter(|f| match f {
+                Import::Func { .. } => true,
+                Import::FuncHost { .. } => true,
+                _ => false,
+            })
+            .count()
+    }
+
+    pub fn global_import_count(&self) -> usize {
+        self.imports
+            .iter()
+            .filter(|f| match f {
+                Import::Global { .. } => true,
+                Import::GlobalHost { .. } => true,
+                _ => false,
+            })
+            .count()
+    }
+
+    pub fn module_ref<'store>(
+        &self,
+        store: &'store Store,
+        module_ref: ModuleRef,
+    ) -> &'store StoreModule {
+        let mod_idx = self.index - (module_ref.0 as usize);
+        &store.0[mod_idx]
     }
 }
 
@@ -344,8 +413,12 @@ impl ImportDesc {
 pub struct ImportSection;
 
 impl ImportSection {
-    pub fn read(wasm: &mut Reader, module: &Module) -> Result<Vec<Import>, ValidationError> {
-        wasm.read_vec(|w| Import::read(w, module))
+    pub fn read(
+        wasm: &mut Reader,
+        store: &Store,
+        module: &Module,
+    ) -> Result<Vec<Import>, ValidationError> {
+        wasm.read_vec(|w| Import::read(w, module, store))
     }
 }
 
@@ -495,7 +568,12 @@ impl Element {
 
         // Write the function indexes into the table
         for (i, idx) in init.iter().enumerate() {
-            module.table[(offset as usize) + i] = module.get_func_ref(*idx)?;
+            let r = module.get_func_ref(*idx)?;
+            if let FuncRef::ExternFunc { .. } = &r {
+                return Err(ValidationError::FunctionCallsAcrossModuleNotSupportedYet);
+            }
+
+            module.table[(offset as usize) + i] = r;
         }
 
         Ok(())
@@ -520,6 +598,7 @@ impl CodeSection {
     pub fn read<const N: usize>(
         wasm: &mut Reader,
         builder: &mut CodeBuilder<N>,
+        store: &Store,
         module: &mut Module,
     ) -> Result<(), ValidationError> {
         let n = wasm.read_u32()?;
@@ -528,7 +607,7 @@ impl CodeSection {
         }
 
         for i in 0..n as usize {
-            module.read_function_code(wasm, builder, i)?;
+            module.read_function_code(wasm, store, builder, i)?;
         }
 
         Ok(())

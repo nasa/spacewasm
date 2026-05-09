@@ -81,33 +81,6 @@ impl<'code> Code<'code> {
                 visitor.$name(LocalVariable { frame_offset, ty }, state)?;
             }};
 
-            // An instruction with a global variable reference immediate
-            ($name:ident, global) => {{
-                let ty = match (imm & 0x0F) {
-                    0 => ValType::I32,
-                    1 => ValType::I64,
-                    2 => ValType::F32,
-                    3 => ValType::F64,
-                    _ => Err(IrReaderError::InvalidType).unwrap(),
-                };
-
-                let is_imported = (imm & 0xF0) != 0;
-                let index = self.read(pc).unwrap() as u32;
-
-                visitor.$name(
-                    GlobalVariable {
-                        reference: if is_imported {
-                            GlobalVariableRef::Imported(index)
-                        } else {
-                            GlobalVariableRef::Internal(index)
-                        },
-                        ty,
-                        mutable: true,
-                    },
-                    state,
-                )?;
-            }};
-
             // An instruction with a MemArg operand
             ($name:ident, MemArg) => {{
                 let align = imm;
@@ -175,10 +148,8 @@ impl<'code> Code<'code> {
                 let idx = self.read(pc).unwrap();
                 if imm == 0 {
                     visitor.call(idx, state)?;
-                } else if imm == 1 {
-                    visitor.call_host(idx, state)?;
                 } else {
-                    Err(IrReaderError::InvalidCallType(imm)).unwrap()
+                    visitor.call_host(ModuleRef(imm), idx, state)?;
                 }
             }
             CALL_INDIRECT => {
@@ -194,8 +165,36 @@ impl<'code> Code<'code> {
             LOCAL_GET => instruction!(local_get, local),
             LOCAL_SET => instruction!(local_set, local),
             LOCAL_TEE => instruction!(local_tee, local),
-            GLOBAL_GET => instruction!(global_get, global),
-            GLOBAL_SET => instruction!(global_set, global),
+            GLOBAL_GET => {
+                let ty = match imm & 0x80 {
+                    0 => ValType::I32,
+                    _ => ValType::I64,
+                };
+
+                let module = imm & 0x7F;
+                let index = self.read(pc).unwrap();
+
+                if module == 0 {
+                    visitor.global_get(ty, index, state)?;
+                } else {
+                    visitor.global_get_host(ModuleRef(module), ty, index, state)?;
+                }
+            }
+            GLOBAL_SET => {
+                let ty = match imm & 0x80 {
+                    0 => ValType::I32,
+                    _ => ValType::I64,
+                };
+
+                let module = imm & 0x7F;
+                let index = self.read(pc).unwrap();
+
+                if module == 0 {
+                    visitor.global_set(ty, index, state)?;
+                } else {
+                    visitor.global_set_host(ModuleRef(module), ty, index, state)?;
+                }
+            }
 
             // Memory instructions - loads
             I32_LOAD => instruction!(i32_load, MemArg),

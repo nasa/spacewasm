@@ -18,22 +18,16 @@ impl Expr {
     pub fn read<const N: usize>(
         wasm: &mut Reader,
         builder: &mut CodeBuilder<N>,
+        store: &Store,
         module: &Module,
         ctx: &Func,
-        debug: bool,
-    ) -> Result<Self, ValidationError> {
+    ) -> Result<Self, ValidationError>
+    {
         let e = Expr(builder.pc());
-        if debug {
-            wasm.read_code(
-                &Compiler::<'_, N>::new(),
-                &mut TextBuilder::new(builder, module, ctx),
-            )?;
-        } else {
-            wasm.read_code(
-                &Compiler::<'_, N>::new(),
-                &mut TextBuilder::new(builder, module, ctx),
-            )?;
-        }
+        wasm.read_code(
+            &Compiler::<'_, N>::new(),
+            &mut TextBuilder::new(builder, store, module, ctx),
+        )?;
 
         Ok(e)
     }
@@ -71,10 +65,11 @@ pub struct Func {
     pub expr: Expr,
 }
 
-impl<'a> Module<'a> {
+impl Module {
     pub fn read_function_code<const N: usize>(
         &mut self,
         wasm: &mut Reader,
+        store: &Store,
         builder: &mut CodeBuilder<N>,
         i: usize,
     ) -> Result<(), ValidationError> {
@@ -107,7 +102,7 @@ impl<'a> Module<'a> {
         }
 
         f.local_size = size_in_words as u16;
-        f.expr = Expr::read(wasm, builder, self, &f, i == 4)?;
+        f.expr = Expr::read(wasm, builder, store, self, &f)?;
 
         let _ = core::mem::replace(&mut self.functions[i], f);
 

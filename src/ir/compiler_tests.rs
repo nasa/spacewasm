@@ -2,15 +2,16 @@
 mod tests {
     use crate::{
         BaseVisitor, Code, CodeBuilder, Compiler, GlobalVariable, InterpreterState, IrVisitor,
-        JumpTarget, LocalVariable, MemArg, Module, ModuleImports, TextBuilder, TypeIdx,
+        JumpTarget, LocalVariable, MemArg, Module, TextBuilder, TypeIdx,
     };
     use core::cell::Cell;
 
     extern crate std;
 
     /// Helper to create a minimal module for testing
-    fn create_test_module() -> Module<'static> {
+    fn create_test_module() -> Module {
         Module {
+            name: "test".try_into().unwrap(),
             types: crate::Vec::zero(),
             functions: crate::Vec::zero(),
             table: crate::Vec::zero(),
@@ -24,11 +25,6 @@ mod tests {
             wasm_size: 0,
             final_page_offset: 0,
             memory_usage: Default::default(),
-            module_imports: ModuleImports {
-                functions: &[],
-                memories: &[],
-                globals: &[],
-            },
         }
     }
 

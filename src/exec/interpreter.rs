@@ -26,16 +26,25 @@ impl InterpreterState {
         }
     }
 
-    pub fn initialize(
-        &mut self,
-        globals: &[Global],
-        data: &[Data],
-    ) -> Result<(), MemoryOutOfBounds> {
+    /// Before executing code from a module, the global and data must be initialized into
+    /// the state. This function will do the following for module [m]
+    ///
+    /// Assert the stack pointer and frame pointer are zero. This function should be called
+    /// before any function invocation
+    ///
+    /// For each global, g, in [m]:
+    ///    With init constant, c, of g:
+    ///    Write c to the stack
+    ///
+    /// For each data, d, in [m]
+    ///     For d with init data i and offset o:
+    ///     Write i to the RAM at offset o.
+    pub fn initialize(&mut self, m: &Module) -> Result<(), MemoryOutOfBounds> {
         // Globals must be initialized before any invocation
         assert_eq!(self.sp, 0);
         assert_eq!(self.fp, 0);
 
-        for global in globals {
+        for global in &m.globals {
             match global.init {
                 Value::I32(i) => {
                     self.stack.write_u32(self.sp, i as u32);
@@ -56,7 +65,7 @@ impl InterpreterState {
             }
         }
 
-        for data in data {
+        for data in &m.data {
             self.ram.store(data.offset, &data.init)?;
         }
 
@@ -65,13 +74,9 @@ impl InterpreterState {
     }
 }
 
-pub struct Interpreter<'module> {
-    pub functions: &'module [Func],
-    pub global_imports: &'module [GlobalImport<'module>],
-    pub function_imports: &'module [HostFunction<'module>],
-    pub memory_imports: &'module [MemoryImport<'module>],
-    pub table: &'module [FuncRef],
-    pub types: &'module [FuncType],
+pub struct Interpreter<'store> {
+    pub store: &'store Store,
+    pub module: &'store Module,
 }
 
 impl AddAssign<u32> for JumpTarget {
@@ -92,23 +97,9 @@ pub enum InterpreterResult {
     ReaderError(IrReaderError),
 }
 
-impl<'module> Interpreter<'module> {
-    pub fn new(
-        functions: &'module [Func],
-        global_imports: &'module [GlobalImport<'module>],
-        function_imports: &'module [HostFunction<'module>],
-        memory_imports: &'module [MemoryImport<'module>],
-        table: &'module [FuncRef],
-        types: &'module [FuncType],
-    ) -> Self {
-        Interpreter {
-            functions,
-            global_imports,
-            function_imports,
-            memory_imports,
-            table,
-            types,
-        }
+impl<'store> Interpreter<'store> {
+    pub fn new(store: &'store Store, module: &'store Module) -> Self {
+        Interpreter { store, module }
     }
 
     fn call_impl(&self, f: &Func, state: &mut InterpreterState) {
@@ -142,6 +133,9 @@ impl<'module> Interpreter<'module> {
     /// Warning! If this is being used as an interrupt rather than an entry point,
     /// make sure that the function does not return any values as that will cause stack pollution!
     pub fn invoke(&self, state: &mut InterpreterState, f: &Func, params: &[Value]) {
+        // extern crate std;
+        // std::eprintln!("invoke PC = {}", f.expr.0.0);
+
         for p in params {
             // TODO(tumbar) Validate input parameters
             match p {
@@ -178,6 +172,8 @@ impl<'module> Interpreter<'module> {
             let old_pc = state.pc;
             let mut pc = state.pc;
 
+            // extern crate std;
+            // std::eprint!("PC = {} ", pc.0);
             let i_res = code.visit_instruction(state, &mut pc, self);
             if old_pc != state.pc {
                 // We jumped, leave the PC
@@ -185,6 +181,8 @@ impl<'module> Interpreter<'module> {
                 // Increment the program counter
                 state.pc = pc;
             }
+
+            // std::eprintln!(" => POST PC = {}", state.pc.0);
 
             match i_res {
                 Ok(_) => {}
@@ -930,18 +928,27 @@ impl<'module> IrVisitor for Interpreter<'module> {
 
     fn call(&self, x: u16, state: &mut Self::State) -> Result<(), Self::Error> {
         // TODO(tumbar) Check stack usage
-        let f = &self.functions[x as usize];
+        let f = &self.module.functions[x as usize];
         self.call_impl(f, state);
         Ok(())
     }
 
-    fn call_host(&self, x: u16, state: &mut Self::State) -> Result<(), Self::Error> {
-        let f = &self.function_imports[x as usize];
+    fn call_host(
+        &self,
+        module: ModuleRef,
+        x: u16,
+        state: &mut Self::State,
+    ) -> Result<(), Self::Error> {
+        let StoreModule::Host(m) = self.module.module_ref(&self.store, module) else {
+            unreachable!()
+        };
+        let f = &m.functions[x as usize];
+
         let mut sv: StaticVec<Value, 8> = StaticVec::new();
 
         state.sp -= f.param_size();
         let mut offset = 0;
-        for p_ty in f.params() {
+        for p_ty in f.params().iter() {
             match p_ty {
                 ValType::I32 => {
                     sv.push(Value::I32(state.stack.read_u32(state.sp + offset) as i32))
@@ -998,32 +1005,21 @@ impl<'module> IrVisitor for Interpreter<'module> {
         // Pop the table pointer off the stack
         state.sp -= 1;
         let i = state.stack.read_u32(state.sp) as usize;
-        let f_expected = &self.types[x.0 as usize];
+        let f_expected = &self.module.types[x.0 as usize];
 
-        if i >= self.table.len() {
+        if i >= self.module.table.len() {
             return Err(InstructionError::InvalidTableIndex);
         }
 
         // Look up the internal or host function
-        let f_ref = self.table[i];
+        let f_ref = self.module.table[i];
         match f_ref {
-            FuncRef::HostFunc(hfi) => {
-                // Make sure the type matches our expectations (runtime validation)
-                let f = &self.function_imports[hfi as usize];
-                if f.params()[..] != f_expected.params[..]
-                    || f.returns()[..] != f_expected.returns[..]
-                {
-                    return Err(InstructionError::InvalidTableFunctionType);
-                }
-
-                self.call_host(i as u16, state)
-            }
             FuncRef::Func(fi) => {
-                let f = &self.functions[fi as usize];
+                let f = &self.module.functions[fi as usize];
 
                 // Validate the function is the proper type
                 // This asserts that it's safe to call the function with the current stack
-                let f_actual = &self.types[f.ty.0 as usize];
+                let f_actual = &self.module.types[f.ty.0 as usize];
 
                 if f_actual.params != f_expected.params || f_actual.returns != f_expected.returns {
                     return Err(InstructionError::InvalidTableFunctionType);
@@ -1033,6 +1029,22 @@ impl<'module> IrVisitor for Interpreter<'module> {
                 self.call_impl(f, state);
                 Ok(())
             }
+            FuncRef::HostFunc { module, index } => {
+                // Make sure the type matches our expectations (runtime validation)
+                let StoreModule::Host(m) = self.module.module_ref(&self.store, module) else {
+                    unreachable!()
+                };
+                let f = &m.functions[index as usize];
+                if f.params() != f_expected.params[..]
+                    || f.returns() != f_expected.returns[..]
+                {
+                    return Err(InstructionError::InvalidTableFunctionType);
+                }
+
+                self.call_host(module, i as u16, state)
+            }
+            // TODO(tumbar) This is currently disallowed at compile time
+            FuncRef::ExternFunc { .. } => unreachable!(),
         }
     }
 
@@ -1094,89 +1106,122 @@ impl<'module> IrVisitor for Interpreter<'module> {
         Ok(())
     }
 
-    fn global_get(&self, g: GlobalVariable, state: &mut Self::State) -> Result<(), Self::Error> {
-        match g.reference {
-            GlobalVariableRef::Imported(i) => {
-                let gi = &self.global_imports[i as usize];
-                match gi.value.read().or(Err(InstructionError::GlobalGetFailed))? {
-                    Value::I32(i) => {
-                        state.stack.write_u32(state.sp, i as u32);
-                        state.sp += 1;
-                    }
-                    Value::I64(i) => {
-                        state.stack.write_u64(state.sp, i as u64);
-                        state.sp += 2;
-                    }
-                    Value::F32(f) => {
-                        state.stack.write_f32(state.sp, f);
-                        state.sp += 1;
-                    }
-                    Value::F64(f) => {
-                        state.stack.write_f64(state.sp, f);
-                        state.sp += 2;
-                    }
-                };
+    fn global_get(
+        &self,
+        ty: ValType,
+        addr: u16,
+        state: &mut Self::State,
+    ) -> Result<(), Self::Error> {
+        match ty {
+            ValType::I32 | ValType::F32 => {
+                let val = state.stack.read_u32(addr as usize);
+                state.stack.write_u32(state.sp, val);
+                state.sp += 1;
             }
-            GlobalVariableRef::Internal(addr) => match g.ty {
-                ValType::I32 | ValType::F32 => {
-                    let val = state.stack.read_u32(addr as usize);
-                    state.stack.write_u32(state.sp, val);
-                    state.sp += 1;
-                }
-                ValType::I64 | ValType::F64 => {
-                    let val = state.stack.read_u64(addr as usize);
-                    state.stack.write_u64(state.sp, val);
-                    state.sp += 2;
-                }
-            },
+            ValType::I64 | ValType::F64 => {
+                let val = state.stack.read_u64(addr as usize);
+                state.stack.write_u64(state.sp, val);
+                state.sp += 2;
+            }
         }
 
         Ok(())
     }
 
-    fn global_set(&self, g: GlobalVariable, state: &mut Self::State) -> Result<(), Self::Error> {
-        match g.reference {
-            GlobalVariableRef::Imported(i) => {
-                let gi = &self.global_imports[i as usize];
-                match g.ty {
-                    ValType::I32 => {
-                        state.sp -= 1;
-                        let val = state.stack.read_u32(state.sp) as i32;
-                        gi.value.write(Value::I32(val))
-                    }
-                    ValType::I64 => {
-                        state.sp -= 2;
-                        let val = state.stack.read_u64(state.sp) as i64;
-                        gi.value.write(Value::I64(val))
-                    }
-                    ValType::F32 => {
-                        state.sp -= 1;
-                        let f = state.stack.read_f32(state.sp);
-                        gi.value.write(Value::F32(f))
-                    }
-                    ValType::F64 => {
-                        state.sp -= 2;
-                        let f = state.stack.read_f64(state.sp);
-                        gi.value.write(Value::F64(f))
-                    }
-                }
-                .or(Err(InstructionError::GlobalSetFailed))?;
+    fn global_get_host(
+        &self,
+        module: ModuleRef,
+        _ty: ValType,
+        index: u16,
+        state: &mut Self::State,
+    ) -> Result<(), Self::Error> {
+        let StoreModule::Host(m) = self.module.module_ref(&self.store, module) else {
+            unreachable!()
+        };
+
+        match m.globals[index as usize]
+            .value
+            .read()
+            .or(Err(InstructionError::GlobalGetFailed))?
+        {
+            Value::I32(i) => {
+                state.stack.write_u32(state.sp, i as u32);
+                state.sp += 1;
             }
-            GlobalVariableRef::Internal(addr) => match g.ty {
-                ValType::I32 | ValType::F32 => {
-                    state.sp -= 1;
-                    let val = state.stack.read_u32(state.sp);
-                    state.stack.write_u32(addr as usize, val);
-                }
-                ValType::I64 | ValType::F64 => {
-                    state.sp -= 2;
-                    let val = state.stack.read_u64(state.sp);
-                    state.stack.write_u64(addr as usize, val);
-                }
-            },
+            Value::I64(i) => {
+                state.stack.write_u64(state.sp, i as u64);
+                state.sp += 2;
+            }
+            Value::F32(f) => {
+                state.stack.write_f32(state.sp, f);
+                state.sp += 1;
+            }
+            Value::F64(f) => {
+                state.stack.write_f64(state.sp, f);
+                state.sp += 2;
+            }
+        };
+
+        Ok(())
+    }
+
+    fn global_set(
+        &self,
+        ty: ValType,
+        addr: u16,
+        state: &mut Self::State,
+    ) -> Result<(), Self::Error> {
+        match ty {
+            ValType::I32 | ValType::F32 => {
+                state.sp -= 1;
+                let val = state.stack.read_u32(state.sp);
+                state.stack.write_u32(addr as usize, val);
+            }
+            ValType::I64 | ValType::F64 => {
+                state.sp -= 2;
+                let val = state.stack.read_u64(state.sp);
+                state.stack.write_u64(addr as usize, val);
+            }
         }
 
         Ok(())
+    }
+
+    fn global_set_host(
+        &self,
+        module: ModuleRef,
+        ty: ValType,
+        index: u16,
+        state: &mut Self::State,
+    ) -> Result<(), Self::Error> {
+        let StoreModule::Host(m) = self.module.module_ref(&self.store, module) else {
+            unreachable!()
+        };
+
+        let g = &m.globals[index as usize];
+        match ty {
+            ValType::I32 => {
+                state.sp -= 1;
+                let val = state.stack.read_u32(state.sp) as i32;
+                g.value.write(Value::I32(val))
+            }
+            ValType::I64 => {
+                state.sp -= 2;
+                let val = state.stack.read_u64(state.sp) as i64;
+                g.value.write(Value::I64(val))
+            }
+            ValType::F32 => {
+                state.sp -= 1;
+                let f = state.stack.read_f32(state.sp);
+                g.value.write(Value::F32(f))
+            }
+            ValType::F64 => {
+                state.sp -= 2;
+                let f = state.stack.read_f64(state.sp);
+                g.value.write(Value::F64(f))
+            }
+        }
+        .or(Err(InstructionError::GlobalSetFailed))
     }
 }
 

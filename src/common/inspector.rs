@@ -1,8 +1,8 @@
 extern crate std;
 
 use crate::{
-    BaseVisitor, FuncIdx, GlobalIdx, GlobalVariable, IrVisitor, JumpTarget, LabelIdx, LocalIdx,
-    LocalVariable, MemArg, ResultType, TypeIdx, WasmVisitor,
+    BaseVisitor, FuncIdx, GlobalIdx, IrVisitor, JumpTarget, LabelIdx, LocalIdx, LocalVariable,
+    MemArg, ModuleRef, ResultType, TypeIdx, ValType, WasmVisitor,
 };
 
 macro_rules! visit_fn {
@@ -262,13 +262,15 @@ impl<'a, S, E, T: BaseVisitor<State = S, Error = E> + IrVisitor> IrVisitor
 
     visit_fn!(return_, return_size: u8);
     visit_fn!(call, x: u16);
-    visit_fn!(call_host, x: u16);
+    visit_fn!(call_host, module: ModuleRef, x: u16);
     visit_fn!(call_indirect, x: TypeIdx);
 
     // Variable instructions
     visit_fn!(local_get, l: LocalVariable);
     visit_fn!(local_set, l: LocalVariable);
     visit_fn!(local_tee, l: LocalVariable);
-    visit_fn!(global_get, g: GlobalVariable);
-    visit_fn!(global_set, g: GlobalVariable);
+    visit_fn!(global_get, ty: ValType, address: u16);
+    visit_fn!(global_get_host, module: ModuleRef, ty: ValType, index: u16);
+    visit_fn!(global_set, ty: ValType, address: u16);
+    visit_fn!(global_set_host, module: ModuleRef, ty: ValType, index: u16);
 }

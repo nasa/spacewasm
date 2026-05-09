@@ -124,6 +124,15 @@ impl ControlFrame {
     }
 }
 
+/// The decoded representation of a global variable
+#[derive(Debug)]
+pub struct GlobalVariable {
+    // The index of the global variable
+    pub reference: Ref,
+    pub ty: ValType,
+    pub mutable: bool,
+}
+
 /// Low-level builder for paged IR code.
 ///
 /// Manages allocation of pages and writing 16-bit words to the current position.
@@ -230,26 +239,29 @@ impl<const N: usize> CodeBuilder<N> {
 /// - Managing a stack of control frames for nested blocks
 ///
 /// The `N` generic parameter limits the maximum number of code pages.
-pub struct TextBuilder<'module, 'ctx, const N: usize> {
-    code: &'module mut CodeBuilder<N>,
-    module: &'module Module<'module>,
-    func: &'ctx Func,
+pub struct TextBuilder<'a, const N: usize> {
+    code: &'a mut CodeBuilder<N>,
+    store: &'a Store,
+    module: &'a Module,
+    func: &'a Func,
     control_frames: StaticVec<ControlFrame, 64>,
     else_frames: StaticVec<JumpTarget, 64>,
 }
 
-impl<'module, 'ctx, const N: usize> TextBuilder<'module, 'ctx, N> {
+impl<'a, const N: usize> TextBuilder<'a, N> {
     pub fn new(
-        code: &'module mut CodeBuilder<N>,
-        module: &'module Module,
-        func: &'ctx Func,
-    ) -> TextBuilder<'module, 'ctx, N> {
+        code: &'a mut CodeBuilder<N>,
+        store: &'a Store,
+        module: &'a Module,
+        func: &'a Func,
+    ) -> TextBuilder<'a, N> {
         TextBuilder {
             code,
             module,
             func,
             control_frames: Default::default(),
             else_frames: Default::default(),
+            store,
         }
     }
 
@@ -331,7 +343,10 @@ impl<'module, 'ctx, const N: usize> TextBuilder<'module, 'ctx, N> {
             .imports
             .iter()
             .filter_map(|i| match &i {
-                Import::Global(g) => Some(*g),
+                Import::Global { module, index } => Some(Ref {
+                    module: *module,
+                    index: *index,
+                }),
                 _ => None,
             })
             .skip(x.0 as usize)
@@ -340,7 +355,7 @@ impl<'module, 'ctx, const N: usize> TextBuilder<'module, 'ctx, N> {
         match imported_idx {
             // This index is one of the WASM defined globals
             None => {
-                let idx = x.0 as usize - self.module.module_imports.globals.len();
+                let idx = x.0 as usize - self.module.global_import_count();
                 let g = self
                     .module
                     .globals
@@ -357,26 +372,36 @@ impl<'module, 'ctx, const N: usize> TextBuilder<'module, 'ctx, N> {
                     .fold(0, |n, g| n + g.type_.ty.size());
 
                 Ok(GlobalVariable {
-                    reference: GlobalVariableRef::Internal((offset_bytes / 4) as u32),
+                    reference: Ref {
+                        module: ModuleRef::current(), // this is an internal global
+                        index: (offset_bytes / 4) as u16,
+                    },
                     ty: g.type_.ty,
                     mutable: g.type_.mutable,
                 })
             }
             // This index refers to an imported global
-            Some(idx) => {
-                let g = self
-                    .module
-                    .module_imports
-                    .globals
-                    .get(idx as usize)
-                    .unwrap();
-
-                Ok(GlobalVariable {
-                    reference: GlobalVariableRef::Imported(idx as u32),
-                    ty: g.value.ty(),
-                    mutable: g.value.mutable(),
-                })
-            }
+            Some(i_ref) => match self.module.module_ref(self.store, i_ref.module) {
+                StoreModule::Host(hm) => {
+                    let global = hm
+                        .globals
+                        .get(i_ref.index as usize)
+                        .ok_or(ValidationError::GlobalIdxOutOfRange)?;
+                    Ok(GlobalVariable {
+                        reference: i_ref,
+                        ty: global.value.ty(),
+                        mutable: global.value.mutable(),
+                    })
+                }
+                StoreModule::Module(wm) => {
+                    let f = wm.globals.get(i_ref.index as usize).unwrap();
+                    Ok(GlobalVariable {
+                        reference: i_ref,
+                        ty: f.type_.ty,
+                        mutable: f.type_.mutable,
+                    })
+                }
+            },
         }
     }
 
@@ -558,21 +583,22 @@ impl<'module, 'ctx, const N: usize> TextBuilder<'module, 'ctx, N> {
     }
 
     pub(crate) fn push_global(&mut self, op: u8, g: GlobalVariable) -> Result<(), ValidationError> {
-        let ty_enc = g.ty as u8;
-        let (index_ty, idx) = match &g.reference {
-            GlobalVariableRef::Imported(i) => (1u8 << 7, *i),
-            GlobalVariableRef::Internal(i) => (0u8, *i),
+        let module = g.reference.module.0;
+        if module >= 0x80 {
+            // The final bit is reserved for the size type
+            return Err(ValidationError::IdxTooLarge);
+        }
+
+        let ty_enc = match g.ty {
+            ValType::I32 | ValType::F32 => 0x0,
+            ValType::I64 | ValType::F64 => 0x80,
         };
 
         self.code
-            .push(((op as u16) << 8) | index_ty as u16 | ty_enc as u16)?;
+            .push(((op as u16) << 8) | ty_enc as u16 | module as u16)?;
 
-        if idx > 0xFFFF {
-            Err(ValidationError::IdxTooLarge)
-        } else {
-            self.code.push(idx as u16)?;
-            Ok(())
-        }
+        self.code.push(g.reference.index)?;
+        Ok(())
     }
 
     /// Emit an instruction with an 8-bit or 16-bit index operand.

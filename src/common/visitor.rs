@@ -1,5 +1,6 @@
 use crate::{
-    FuncIdx, GlobalIdx, JumpTarget, LabelIdx, LocalIdx, MemArg, ResultType, TypeIdx, ValType,
+    FuncIdx, GlobalIdx, JumpTarget, LabelIdx, LocalIdx, MemArg, ResultType, Store, TypeIdx,
+    ValType,
 };
 
 /// A convenience macro for defining the visitor function for a decoded
@@ -253,26 +254,37 @@ pub struct LocalVariable {
     pub ty: ValType,
 }
 
-#[derive(Debug)]
-pub enum GlobalVariableRef {
-    /// Global is stored in the import table
-    Imported(u32),
-    /// Global is stored on the stack at this offset
-    Internal(u32),
-}
-
-#[derive(Debug)]
-pub struct GlobalVariable {
-    // The index of the global variable
-    pub reference: GlobalVariableRef,
-    pub ty: ValType,
-    pub mutable: bool,
-}
-
+/// A reference to a function in the WASM store
 #[derive(Debug, Clone, Copy)]
 pub enum FuncRef {
-    HostFunc(u16),
+    /// A function in the current WASM module
     Func(u16),
+    /// A host function in another WASM module
+    HostFunc { module: ModuleRef, index: u16 },
+    /// A function in another WASM module
+    ExternFunc { module: ModuleRef, index: u16 },
+}
+
+/// An index offset from the current module.
+/// Module imports can only refer to modules loaded before it.
+/// References store a relative offset from the 'current' module. 0 indicates the current module.
+#[derive(Debug, Clone, Copy)]
+pub struct ModuleRef(pub u8);
+
+impl ModuleRef {
+    /// Construct a new module reference given the absolute index to the module and the store.
+    pub fn new(store: &Store, module_index: usize) -> ModuleRef {
+        let offset = store.0.len() - module_index;
+        ModuleRef(offset as u8)
+    }
+
+    pub fn current() -> ModuleRef {
+        ModuleRef(0)
+    }
+
+    pub fn get(&self, current_module: usize) -> usize {
+        current_module - (self.0 as usize)
+    }
 }
 
 /// An abstraction over IR Bytecode.
@@ -285,13 +297,17 @@ pub trait IrVisitor: BaseVisitor {
 
     visit_fn!(return_, return_size: u8);
     visit_fn!(call, x: u16);
-    visit_fn!(call_host, x: u16);
+    // TODO(tumbar) Support calling functions across WASM modules
+    // visit_fn!(call_external, module: ModuleRef, x: u16);
+    visit_fn!(call_host, module: ModuleRef, x: u16);
     visit_fn!(call_indirect, x: TypeIdx);
 
     // Variable instructions
     visit_fn!(local_get, l: LocalVariable);
     visit_fn!(local_set, l: LocalVariable);
     visit_fn!(local_tee, l: LocalVariable);
-    visit_fn!(global_get, g: GlobalVariable);
-    visit_fn!(global_set, g: GlobalVariable);
+    visit_fn!(global_get, ty: ValType, address: u16);
+    visit_fn!(global_get_host, module: ModuleRef, ty: ValType, index: u16);
+    visit_fn!(global_set, ty: ValType, address: u16);
+    visit_fn!(global_set_host, module: ModuleRef, ty: ValType, index: u16);
 }

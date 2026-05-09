@@ -1,148 +1,180 @@
-use core::ops::ControlFlow;
+use crate::*;
+use core::ops::Deref;
 
-use crate::{Box, GlobalAllocator, ImportDesc, InterpreterState, Module, Reader, ValType, ValidationError, Value};
-
-pub struct GlobalValueError;
-
-pub trait GlobalValue {
-    /// Write a value to this global variable.
-    /// This will not be called if this value is not mutable.
-    /// The value will always correspond to the [self.ty()] variant
-    fn write(&self, value: Value) -> Result<(), GlobalValueError>;
-
-    /// Read a global's value
-    /// The value should always correspond to the [self.ty()] variant
-    fn read(&self) -> Result<Value, GlobalValueError>;
-
-    /// Global's type
-    fn ty(&self) -> ValType;
-
-    /// If a global is not mutable, [write] will not be called
-    fn mutable(&self) -> bool;
+/// A general purpose
+#[derive(Debug, Clone, Copy)]
+pub struct Ref {
+    pub module: ModuleRef,
+    pub index: u16,
 }
 
-impl<T: GlobalValue> Box<T> {
-    pub fn into_global_value_dyn(mut self) -> Box<dyn GlobalValue>
-    where T: GlobalValue + 'static
-    {
-        let ptr = self.as_mut_ptr() as *mut dyn GlobalValue;
-        core::mem::forget(self); // Prevent double free
-        unsafe { Box::from_raw(GlobalAllocator, ptr) }
-    }
-}
-
-pub struct GlobalImport<'imports> {
-    pub module: &'imports str,
-    pub name: &'imports str,
-    pub value: Box<dyn GlobalValue>,
-}
-
-impl<'imports> GlobalImport<'imports> {
-    pub fn matches(&self, module: &str, name: &str) -> bool {
-        self.module == module && self.name == name
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HostFunctionPause {
-    /// Halt execution due to an error
-    Trap,
-
-    /// Halt execution to perform work asynchronously
-    Pause,
-}
-
-pub type HostFunctionResult = ControlFlow<HostFunctionPause, Option<Value>>;
-
-pub struct HostFunction<'imports> {
-    module: &'imports str,
-    name: &'imports str,
-    params: &'imports [ValType],
-    returns: &'imports [ValType],
-    f: fn(state: &mut InterpreterState, &[Value]) -> HostFunctionResult,
-
-    param_size: u16,
-    return_size: u16,
-}
-
-impl<'imports> HostFunction<'imports> {
-    pub fn new(
-        module: &'imports str,
-        name: &'imports str,
-        params: &'imports [ValType],
-        returns: &'imports [ValType],
-        f: fn(state: &mut InterpreterState, a: &[Value]) -> HostFunctionResult,
-    ) -> Self {
-        let mut o = HostFunction {
-            module,
-            name,
-            params,
-            returns,
-            f,
-            param_size: 0,
-            return_size: 0,
-        };
-
-        let ps = o.params.iter().fold(0, |n, i| n + i.size()) / 4;
-        assert!(ps <= 0xFFFF);
-        o.param_size = ps as u16;
-
-        let rs = o.returns.iter().fold(0, |n, i| n + i.size()) / 4;
-        assert!(rs <= 0xFFFF);
-        o.return_size = rs as u16;
-
-        o
-    }
-
-    pub fn params(&self) -> &'imports [ValType] {
-        self.params
-    }
-
-    pub fn returns(&self) -> &'imports [ValType] {
-        self.returns
-    }
-
-    pub fn param_size(&self) -> usize {
-        self.param_size as usize
-    }
-
-    pub fn call(&self, state: &mut InterpreterState, a: &[Value]) -> HostFunctionResult {
-        (self.f)(state, a)
-    }
-
-    pub fn matches(&self, module: &str, name: &str) -> bool {
-        self.module == module && self.name == name
-    }
-}
-
-pub struct MemoryImport<'imports> {
-    pub module: &'imports str,
-    pub name: &'imports str,
-    pub data: &'imports mut [u8],
-}
-
-impl<'imports> MemoryImport<'imports> {
-    pub fn matches(&self, module: &str, name: &str) -> bool {
-        self.module == module && self.name == name
-    }
-}
-
-#[derive(Clone)]
-pub struct ModuleImports<'imports> {
-    pub globals: &'imports [GlobalImport<'imports>],
-    pub functions: &'imports [HostFunction<'imports>],
-    pub memories: &'imports [MemoryImport<'imports>],
-}
-
+#[derive(Debug, Clone, Copy)]
 pub enum Import {
-    Func(u16),
-    Table(u16),
-    Mem(u16),
-    Global(u16),
+    Func { module: ModuleRef, index: u16 },
+    FuncHost { module: ModuleRef, index: u16 },
+    Table { module: ModuleRef, index: u16 },
+    Mem { module: ModuleRef, index: u16 },
+    Global { module: ModuleRef, index: u16 },
+    GlobalHost { module: ModuleRef, index: u16 },
+}
+
+impl From<Import> for Ref {
+    fn from(value: Import) -> Self {
+        match value {
+            Import::Func { module, index }
+            | Import::FuncHost { module, index }
+            | Import::Table { module, index }
+            | Import::Mem { module, index }
+            | Import::Global { module, index }
+            | Import::GlobalHost { module, index } => Ref { module, index },
+        }
+    }
+}
+
+impl Store {
+    fn link_function(
+        &self,
+        module_name: &str,
+        name: &str,
+        expected_ty: &FuncType,
+    ) -> Result<Import, ValidationError> {
+        for (mi, module) in self.0.iter().enumerate() {
+            match module.deref() {
+                StoreModule::Host(hm) => {
+                    if hm.name == module_name {
+                        for (fi, f) in hm.functions.iter().enumerate() {
+                            if f.name() == name {
+                                // Validate the function signature
+                                return if f.params() == expected_ty.params[..]
+                                    && f.returns() == expected_ty.returns[..]
+                                {
+                                    Ok(Import::FuncHost {
+                                        module: ModuleRef::new(self, mi),
+                                        index: fi as u16,
+                                    })
+                                } else {
+                                    Err(ValidationError::FunctionImportTypeMismatch)
+                                };
+                            }
+                        }
+                    }
+                }
+                StoreModule::Module(wm) => {
+                    // Check if this module is the module we are looking for
+                    if wm.name == module_name {
+                        // Look for any exports that match this function name
+                        for e in &wm.exports {
+                            if e.name == name {
+                                // Make sure this is a function
+                                return if let ExportDesc::Func(fi) = e.desc {
+                                    // This index could either be an import or a function
+                                    // in the current module
+                                    if (fi.0 as usize) < wm.func_import_count() {
+                                        // This function index is an import
+                                        // The function reference is relative to _this_ module
+                                        // We will need to convert the module reference index to be
+                                        // relative to the current module under construction
+                                        let wm_relative_ref = wm
+                                            .imports
+                                            .iter()
+                                            .filter_map(|i| match &i {
+                                                Import::Global { module, index } => Some(Ref {
+                                                    module: *module,
+                                                    index: *index,
+                                                }),
+                                                _ => None,
+                                            })
+                                            .skip(fi.0 as usize)
+                                            .next()
+                                            .unwrap();
+
+                                        // Check the function signature
+
+                                        Ok(Import::Func {
+                                            module: ModuleRef::new(self, mi),
+                                            index: wm_relative_ref.index,
+                                        })
+                                    } else {
+                                        // This function is in the current module
+                                        let f = wm
+                                            .functions
+                                            .get((fi.0 as usize) - wm.func_import_count())
+                                            .ok_or(ValidationError::FunctionIdxOutOfRange)?;
+
+                                        let ty = wm
+                                            .types
+                                            .get(f.ty.0 as usize)
+                                            .ok_or(ValidationError::TypeIdxOutOfRange)?;
+
+                                        // Check the function signature
+                                        if ty == expected_ty {
+                                            Ok(Import::Func {
+                                                module: ModuleRef::new(self, mi),
+                                                index: ((fi.0 as usize) - wm.func_import_count())
+                                                    as u16,
+                                            })
+                                        } else {
+                                            Err(ValidationError::FunctionImportTypeMismatch)
+                                        }
+                                    }
+                                } else {
+                                    Err(ValidationError::FunctionImportTypeMismatch)
+                                };
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Err(ValidationError::FunctionImportNotFound)
+    }
+
+    fn link_global(
+        &self,
+        module_name: &str,
+        name: &str,
+        expected_ty: GlobalType,
+    ) -> Result<Import, ValidationError> {
+        for (mi, module) in self.0.iter().enumerate() {
+            match module.deref() {
+                StoreModule::Host(hm) => {
+                    if hm.name == module_name {
+                        for (gi, g) in hm.globals.iter().enumerate() {
+                            if g.name == name {
+                                // Validate the imported type matches the global type defined here
+                                if g.value.ty() != expected_ty.ty {
+                                    return Err(ValidationError::GlobalImportTypeMismatch);
+                                } else if !g.value.mutable() && expected_ty.mutable {
+                                    return Err(ValidationError::GlobalIsNotMutable);
+                                }
+
+                                return Ok(Import::GlobalHost {
+                                    module: ModuleRef::new(self, mi),
+                                    index: gi as u16,
+                                });
+                            }
+                        }
+                    }
+                }
+                StoreModule::Module(wm) => if wm.name == module_name {
+                    
+                },
+            }
+        }
+
+        Err(ValidationError::GlobalImportNotFound)
+    }
 }
 
 impl Import {
-    pub fn read(wasm: &mut Reader, module: &Module<'_>) -> Result<Import, ValidationError> {
+    fn import_function() {}
+
+    pub fn read(
+        wasm: &mut Reader,
+        module: &Module,
+        store: &Store,
+    ) -> Result<Import, ValidationError> {
         let module_raw = wasm.read_vec_stack::<32, _>(|r| r.read_u8())?;
         let module_name = (&module_raw).try_into()?;
 
@@ -160,59 +192,11 @@ impl Import {
                     .get(f.0 as usize)
                     .ok_or(ValidationError::FunctionImportOutOfRange)?;
 
-                let wasm_params = &ty.params[..];
-                let wasm_returns = &ty.returns[..];
-
-                // Look up the global import that matches the module name and symbol name
-                let (index, function_import) = module
-                    .module_imports
-                    .functions
-                    .iter()
-                    .enumerate()
-                    .find_map(|(i, fi)| {
-                        if fi.matches(module_name, name) {
-                            Some((i, fi))
-                        } else {
-                            None
-                        }
-                    })
-                    .ok_or(ValidationError::FunctionImportNotFound)?;
-
-                // Validate the WASM type against the embedder's type
-                if function_import.params == wasm_params && function_import.returns == wasm_returns
-                {
-                    Ok(Import::Func(index as u16))
-                } else {
-                    Err(ValidationError::FunctionImportTypeMismatch)
-                }
+                store.link_function(module_name, name, ty)
             }
             ImportDesc::Table(_) => Err(ValidationError::TableImportsNotSupportedYet),
             ImportDesc::Mem(_) => Err(ValidationError::MemoryImportsNotSupportedYet),
-            ImportDesc::Global(g_ty) => {
-                // Look up the global import that matches the module name and symbol name
-                let (index, global_import) = module
-                    .module_imports
-                    .globals
-                    .iter()
-                    .enumerate()
-                    .find_map(|(i, gi)| {
-                        if gi.matches(module_name, name) {
-                            Some((i, gi))
-                        } else {
-                            None
-                        }
-                    })
-                    .ok_or(ValidationError::GlobalImportNotFound)?;
-
-                // Validate the imported type matches the global type defined here
-                if global_import.value.ty() != g_ty.ty {
-                    return Err(ValidationError::GlobalImportTypeMismatch);
-                } else if !global_import.value.mutable() && g_ty.mutable {
-                    return Err(ValidationError::GlobalIsNotMutable);
-                }
-
-                Ok(Import::Global(index as u16))
-            }
+            ImportDesc::Global(g_ty) => store.link_global(module_name, name, g_ty),
         }
     }
 }
