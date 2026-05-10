@@ -151,9 +151,10 @@ mod proof_harness {
         }
     }
 
-    /// len ≤ capacity is maintained by all operations
+    /// len ≤ capacity maintained by all operations
+    /// No integer overflows in len or offset calculations
     #[kani::proof]
-    fn verify_len_never_exceeds_capacity() {
+    fn verify_len_invariants() {
         unsafe {
             let alloc = StaticAllocator::<ALLOC_SIZE, ALLOC_DEPTH>::new();
             let capacity: u32 = kani::any();
@@ -169,13 +170,33 @@ mod proof_harness {
             // Perform arbitrary operation
             let op: u8 = kani::any();
             match op % 2 {
-                0 if vec.len < vec.capacity => vec.push(42),
-                1 if vec.len > 0 => { vec.pop(); },
+                0 if vec.len < vec.capacity => {
+                    let old_len = vec.len;
+                    vec.push(42);
+
+                    // Verify no overflow on increment
+                    assert!(vec.len == old_len + 1, "len must increment by 1");
+
+                    // Verify len as usize doesn't truncate
+                    let len_usize = vec.len as usize;
+                    assert!(len_usize == vec.len as usize);
+                },
+                1 if vec.len > 0 => {
+                    let old_len = vec.len;
+                    vec.pop();
+
+                    // Verify no underflow on decrement
+                    assert!(vec.len == old_len - 1, "len must decrement by 1");
+                },
                 _ => {}
             }
 
-            // INVARIANT: len ≤ capacity must hold after any operation
-            assert!(vec.len <= vec.capacity);
+            //  len ≤ capacity must hold after any operation
+            assert!(vec.len <= vec.capacity, "len must never exceed capacity");
+
+            //  Offset calculation should not overflow
+            let offset = vec.len as usize;
+            assert!(offset <= capacity as usize, "offset must fit in usize");
 
             dealloc_inner_vec(vec, &alloc);
         }
@@ -200,35 +221,6 @@ mod proof_harness {
 
             // The pointer at capacity (one-past-end) should also be valid for iteration
             let _end_ptr = vec.ptr.add(capacity as usize);
-
-            dealloc_inner_vec(vec, &alloc);
-        }
-    }
-
-    /// No integer overflows in len or offset calculations
-    #[kani::proof]
-    fn verify_no_integer_overflow() {
-        unsafe {
-            let alloc = StaticAllocator::<ALLOC_SIZE, ALLOC_DEPTH>::new();
-
-            // Use realistic capacity bounds
-            let capacity: u32 = kani::any();
-            kani::assume(capacity > 0 && capacity < 1000);
-
-            let mut vec = create_valid_inner_vec::<u32>(capacity, &alloc);
-            vec.len = capacity - 1;
-
-            // Push should not overflow len
-            vec.push(42);
-            assert!(vec.len == capacity);
-
-            // len as usize should not truncate
-            let len_usize = vec.len as usize;
-            assert!(len_usize == capacity as usize);
-
-            // Offset calculation should not overflow
-            let offset = vec.len as usize;
-            assert!(offset <= capacity as usize);
 
             dealloc_inner_vec(vec, &alloc);
         }
@@ -260,64 +252,46 @@ mod proof_harness {
         assert_eq!(vec.capacity(), 0);
     }
 
-    /// push writes only at valid index after len < capacity check
-    #[kani::proof]
-    fn verify_push_writes_at_correct_index() {
-        unsafe {
-            let alloc = StaticAllocator::<ALLOC_SIZE, ALLOC_DEPTH>::new();
-
-            // Use small concrete capacity for faster verification
-            let mut vec = create_valid_inner_vec::<u32>(3, &alloc);
-
-            // Test push at different positions
-            let initial_len: u32 = kani::any();
-            kani::assume(initial_len < 3);  // Must be < capacity
-            vec.len = initial_len;
-
-            let value: u32 = kani::any();
-            vec.push(value);
-
-            // After push, len increased by 1
-            assert_eq!(vec.len, initial_len + 1);
-
-            // The value is at the old len position (verifies correct offset calculation)
-            let written_value = unsafe { core::ptr::read(vec.ptr.add(initial_len as usize)) };
-            assert_eq!(written_value, value);
-
-            dealloc_inner_vec(vec, &alloc);
-        }
-    }
-
-    /// pop reads only from initialized memory [0, len)
+    /// push writes at index len, pop reads from initialized memory
+    /// Tests push/pop round-trip correctness
     #[kani::proof]
     #[kani::unwind(4)]  // Limit loop unrolling
-    fn verify_pop_reads_initialized_memory() {
+    fn verify_push_pop_operations() {
         unsafe {
             let alloc = StaticAllocator::<ALLOC_SIZE, ALLOC_DEPTH>::new();
             let capacity: u32 = kani::any();
-            kani::assume(capacity > 0 && capacity <= 3);  // Reduced bound
+            kani::assume(capacity > 0 && capacity <= 3);
 
             let mut vec = create_valid_inner_vec::<u32>(capacity, &alloc);
 
-            // Initialize some elements
+            // Test push at different positions
             let initial_len: u32 = kani::any();
-            kani::assume(initial_len > 0 && initial_len <= capacity);
+            kani::assume(initial_len < capacity);
+            vec.len = initial_len;
 
-            for i in 0..initial_len {
-                vec.len = i;
-                vec.push(i); // Initialize with known values
-            }
+            // Push a symbolic value
+            let value: u32 = kani::any();
+            let push_position = vec.len;
+            vec.push(value);
 
+            //  After push, len increased by 1
+            assert_eq!(vec.len, initial_len + 1, "push must increment len");
+
+            //  Value is at the old len position (correct offset)
+            let written_value = unsafe { core::ptr::read(vec.ptr.add(push_position as usize)) };
+            assert_eq!(written_value, value, "push must write at correct index");
+
+            // Now test pop on the same vector
             let old_len = vec.len;
             let popped = vec.pop();
 
-            // Pop should return Some(value) and decrement len
-            assert!(popped.is_some());
-            assert_eq!(popped.unwrap(), old_len - 1);
-            assert_eq!(vec.len, old_len - 1);
+            //  Pop returns Some(value) and decrements len
+            assert!(popped.is_some(), "pop on non-empty vec must return Some");
+            assert_eq!(popped.unwrap(), value, "pop must return the pushed value");
+            assert_eq!(vec.len, old_len - 1, "pop must decrement len");
 
-            // The read was at index (old_len - 1), which was initialized
-            // This is verified by the fact that pop succeeded and returned the expected value
+            // Round-trip: push then pop should restore state
+            assert_eq!(vec.len, initial_len, "push then pop restores original len");
 
             dealloc_inner_vec(vec, &alloc);
         }
@@ -356,9 +330,10 @@ mod proof_harness {
         }
     }
 
-    /// Each value should be dropped exactly once
+    /// Each value dropped exactly once, iterator properly invalidates vec
+    /// drop_count ≤ (original_len - current_len)
     #[kani::proof]
-    fn verify_values_dropped_once() {
+    fn verify_drop_semantics() {
         unsafe {
             let mut drop_count: u32 = 0;  // Local counter
 
@@ -369,16 +344,25 @@ mod proof_harness {
             vec.push(Droppable { value: 100, drop_counter: &mut drop_count as *mut u32 });
             vec.push(Droppable { value: 200, drop_counter: &mut drop_count as *mut u32 });
 
+            let original_len = vec.len;
+            assert_eq!(original_len, 2, "Should have 2 elements");
+
             // First iteration should consume values and drop them
             {
-                let mut count = 0;
                 for _val in vec.iter() {
-                    count += 1;
+                    // Values are consumed and dropped
                 }
             }
 
-            // After first iteration: drop_count = 2 (one drop per element)
+            let current_len = vec.len;
             let drops_after_first = drop_count;
+
+            //  drop_count ≤ (original_len - current_len)
+            // With correct ownership tracking, drops should equal removed elements
+            assert!(
+                drop_count <= (original_len - current_len),
+                "Drops must not exceed removed elements"
+            );
 
             // Second iteration over same data
             {
@@ -387,48 +371,13 @@ mod proof_harness {
                 }
             }
 
-            // Expected: drop_count should still be 2 (no additional drops)
-            // Each value should be dropped exactly once
             let drops_after_second = drop_count;
 
-            // Verify no additional drops occurred
-            assert_eq!(drops_after_second, drops_after_first);
-
-            dealloc_inner_vec(vec, &alloc);
-        }
-    }
-
-    /// drops ≤ (original_len - current_len)
-    #[kani::proof]
-    fn verify_iter_invalidates_vec() {
-        unsafe {
-            let mut drop_count: u32 = 0;  // Local counter
-
-            let alloc = StaticAllocator::<ALLOC_SIZE, ALLOC_DEPTH>::new();
-            let mut vec = create_valid_inner_vec::<Droppable>(2, &alloc);
-
-            vec.push(Droppable { value: 100, drop_counter: &mut drop_count as *mut u32 });
-            vec.push(Droppable { value: 200, drop_counter: &mut drop_count as *mut u32 });
-
-            let original_len = vec.len;
-
-            // Consume the iterator - this drops the values
-            for _val in vec.iter() {
-                // Values are consumed and dropped
-            }
-
-            let current_len = vec.len;
-
-            // Expected: If values are dropped, vec.len should reflect their removal
-            // Number of drops should equal number of values removed from vec
-            // In other words: drop_count ≤ (original_len - current_len)
-            //
-            // With correct ownership tracking:
-            //   - If drops = 2, then current_len should be 0 (both values removed)
-            //   - Or: vec should be consumed/invalidated after iter()
-
-            // Verify ownership accounting is correct
-            assert!(drop_count <= (original_len - current_len));
+            //  Each value dropped exactly once (no double-drop)
+            assert_eq!(
+                drops_after_second, drops_after_first,
+                "No additional drops should occur on second iteration"
+            );
 
             dealloc_inner_vec(vec, &alloc);
         }
