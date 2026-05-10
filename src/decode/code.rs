@@ -1,14 +1,34 @@
+use crate::decode::constant::ConstantCompiler;
 use crate::*;
 
-pub struct Expr(JumpTarget);
+#[derive(Clone)]
+pub struct Expr(pub JumpTarget);
 
 impl Expr {
+    pub fn zero() -> Expr {
+        Expr(JumpTarget(0))
+    }
+
+    pub fn read_constant(wasm: &mut Reader) -> Result<Value, ValidationError> {
+        let mut value: Option<Value> = None;
+        wasm.read_code(&ConstantCompiler, &mut value)?;
+        Ok(value.unwrap())
+    }
+
     pub fn read<const N: usize>(
         wasm: &mut Reader,
-        builder: &mut TextBuilder<N>,
-    ) -> Result<Self, ValidationError> {
+        builder: &mut CodeBuilder<N>,
+        store: &Store,
+        module: &Module,
+        ctx: &Func,
+    ) -> Result<Self, ValidationError>
+    {
         let e = Expr(builder.pc());
-        wasm.read_code(&Compiler, builder)?;
+        wasm.read_code(
+            &Compiler::<'_, N>::new(),
+            &mut TextBuilder::new(builder, store, module, ctx),
+        )?;
+
         Ok(e)
     }
 }
@@ -19,36 +39,83 @@ impl From<Expr> for JumpTarget {
     }
 }
 
+#[derive(Clone)]
 pub struct Func {
-    pub locals: Vec<(u32, ValType)>,
+    /// Function signature.
+    pub ty: TypeIdx,
+
+    /// Maximum shallow stack usage by this function (not including inner function calls)
+    /// (determined from analysis)
+    pub stack_usage: u16,
+
+    /// Size of the local variables
+    pub local_size: u16,
+
+    /// Parameter size in 32-bit words
+    pub parameter_size: u16,
+
+    /// Return value size in 32-bit words
+    pub return_size: u8,
+
+    /// Local variables allocated in this functions frame
+    /// Read in the code section
+    pub locals: Vec<(u16, ValType)>,
+
+    /// Functions entry point
     pub expr: Expr,
 }
 
-impl Func {
-    pub fn read<const N: usize>(
+impl Module {
+    pub fn read_function_code<const N: usize>(
+        &mut self,
         wasm: &mut Reader,
-        builder: &mut TextBuilder<N>,
-    ) -> Result<Self, ValidationError> {
+        store: &Store,
+        builder: &mut CodeBuilder<N>,
+        i: usize,
+    ) -> Result<(), ValidationError> {
         let size = wasm.read_u32()?;
         let start = wasm.offset();
 
-        let locals = wasm.read_vec(|w| {
+        let empty_f = self.functions[i].clone();
+        let mut f = core::mem::replace(&mut self.functions[i], empty_f);
+
+        f.locals = wasm.read_vec(|w| {
             let n = w.read_u32()?;
             let t = ValType::read(w)?;
-            Ok((n, t))
+
+            if n > 0xFFFF {
+                return Err(ValidationError::TooManyLocals);
+            }
+
+            Ok((n as u16, t))
         })?;
 
-        let expr = Expr::read(wasm, builder)?;
+        // Compute the local size in words
+        let size_in_words = f
+            .locals
+            .iter()
+            .fold(0, |sum, (n, ty)| sum + (*n as usize) * ty.size())
+            / 4;
+
+        if size_in_words > 0xFFFF {
+            return Err(ValidationError::TooManyLocals);
+        }
+
+        f.local_size = size_in_words as u16;
+        f.expr = Expr::read(wasm, builder, store, self, &f)?;
+
+        let _ = core::mem::replace(&mut self.functions[i], f);
 
         let end = wasm.offset();
         if (end - start) as u32 != size {
             Err(ValidationError::MalformedCodeSize)
         } else {
-            Ok(Func { locals, expr })
+            Ok(())
         }
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MemArg {
     pub align: u32,
     pub offset: u32,
@@ -123,7 +190,9 @@ impl<'wasm> Reader<'wasm> {
                 BR_TABLE => {
                     // TODO(tumbar) How do we expose maximum switch cases?
                     //              I definitely don't want to support 2^32-1...
-                    let lut: StaticVec<_, 64> = self.read_vec_stack(LabelIdx::read)?;
+                    let lut: StaticVec<_, 64> = self
+                        .read_vec_stack(LabelIdx::read)
+                        .or(Err(ValidationError::BrTableHasTooManyCases))?;
                     let default_ = LabelIdx::read(self)?;
                     visitor.br_table(&lut, default_, state)?;
                 }
@@ -177,11 +246,11 @@ impl<'wasm> Reader<'wasm> {
                 MEMORY_SIZE => {
                     self.expect_u8(0x00)?;
                     visitor.memory_size(state)?;
-                },
+                }
                 MEMORY_GROW => {
                     self.expect_u8(0x00)?;
                     visitor.memory_grow(state)?;
-                },
+                }
 
                 // Numeric instructions - const
                 I32_CONST => {

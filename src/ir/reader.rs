@@ -1,35 +1,43 @@
 use crate::*;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IrReaderError {
     InvalidAddress,
     InvalidOpcode(u8),
+    InvalidType,
+    InvalidCallType(u8),
 }
 
-pub struct Code<'wasm>(&'wasm Vec<Box<TextPage>>);
+pub struct Code<'code>(&'code [Box<TextPage>]);
 
-impl<'wasm> Code<'wasm> {
-    fn read(&self, address: JumpTarget) -> Result<u16, IrReaderError> {
+impl<'code> Code<'code> {
+    pub fn new(code: &'code [Box<TextPage>]) -> Self {
+        Code(code)
+    }
+
+    fn read(&self, address: &mut JumpTarget) -> Result<u16, IrReaderError> {
         let page = address.page();
         let offset = address.offset();
         if page >= self.0.len() || offset >= 256 {
             Err(IrReaderError::InvalidAddress)
         } else {
+            *address += 1;
             Ok(self.0[page].0[offset])
         }
     }
 
-    fn read_u32(&self, address: JumpTarget) -> Result<u32, IrReaderError> {
+    fn read_u32(&self, address: &mut JumpTarget) -> Result<u32, IrReaderError> {
         let w1 = self.read(address)?;
-        let w2 = self.read(address + 1)?;
+        let w2 = self.read(address)?;
 
         Ok((w1 as u32) | ((w2 as u32) << 16))
     }
 
-    fn read_u64(&self, address: JumpTarget) -> Result<u64, IrReaderError> {
+    fn read_u64(&self, address: &mut JumpTarget) -> Result<u64, IrReaderError> {
         let w1 = self.read(address)?;
-        let w2 = self.read(address + 1)?;
-        let w3 = self.read(address + 2)?;
-        let w4 = self.read(address + 3)?;
+        let w2 = self.read(address)?;
+        let w3 = self.read(address)?;
+        let w4 = self.read(address)?;
 
         let mut o = w1 as u64;
         o |= (w2 as u64) << 16;
@@ -39,45 +47,44 @@ impl<'wasm> Code<'wasm> {
         Ok(o)
     }
 
-    pub fn read_instruction<S, E, V>(
+    pub fn visit_instruction<S, E, V>(
         &self,
         state: &mut S,
-        pc: JumpTarget,
-        visitor: V,
-    ) -> Result<u32, IrReaderError>
+        pc: &mut JumpTarget,
+        visitor: &V,
+    ) -> Result<(), E>
     where
         V: IrVisitor<State = S, Error = E>,
-        IrReaderError: From<E>,
     {
-        let first = self.read(pc)?;
-        let opcode = ((first >> 8) & 0xFF) as u8;
-
-        #[allow(unused)] // RustRover false positive
-        let imm = first & 0xFF;
+        let first = self.read(pc).unwrap();
+        let opcode = (first >> 8) as u8;
+        let imm = (first & 0xFF) as u8;
 
         macro_rules! instruction {
             // Instruction with no operands
             ($name:ident) => {{
                 visitor.$name(state)?;
-                Ok(1)
             }};
 
-            // An instruction with an 8-bit or 16-bit index operand
-            ($name:ident, idx, $ty:ty) => {{
-                let (idx, len) = if imm == 0xFF {
-                    (self.read(pc + 1)? as u32, 2)
-                } else {
-                    (imm as u32, 1)
+            // An instruction with a local variable reference immediate
+            ($name:ident, local) => {{
+                let ty = match imm {
+                    0 => ValType::I32,
+                    1 => ValType::I64,
+                    2 => ValType::F32,
+                    3 => ValType::F64,
+                    _ => Err(IrReaderError::InvalidType).unwrap(),
                 };
 
-                visitor.$name(idx.into(), state)?;
-                Ok(len)
+                let frame_offset = self.read(pc).unwrap() as i16;
+
+                visitor.$name(LocalVariable { frame_offset, ty }, state)?;
             }};
 
             // An instruction with a MemArg operand
             ($name:ident, MemArg) => {{
                 let align = imm;
-                let offset = self.read_u32(pc + 1)?;
+                let offset = self.read_u32(pc).unwrap();
                 visitor.$name(
                     MemArg {
                         align: align as u32,
@@ -85,7 +92,6 @@ impl<'wasm> Code<'wasm> {
                     },
                     state,
                 )?;
-                Ok(3)
             }};
         }
 
@@ -96,37 +102,33 @@ impl<'wasm> Code<'wasm> {
             NOP => instruction!(nop),
 
             IF => {
-                let false_address = self.read_u32(pc + 1)?;
+                let false_address = self.read_u32(pc).unwrap();
                 visitor.if_(JumpTarget(false_address), state)?;
-                Ok(3)
             }
 
             BR => {
-                let address = self.read_u32(pc + 1)?;
+                let address = self.read_u32(pc).unwrap();
                 visitor.br(JumpTarget(address), state)?;
-                Ok(3)
             }
 
             BR_IF => {
-                let true_address = self.read_u32(pc + 1)?;
+                let true_address = self.read_u32(pc).unwrap();
                 visitor.br_if(JumpTarget(true_address), state)?;
-                Ok(3)
             }
 
             BR_TABLE => {
-                let (n, offset) = if imm == 0xFF {
-                    (self.read(pc + 1)?, 2)
+                let n = if imm == 0xFF {
+                    self.read(pc).unwrap()
                 } else {
-                    (imm, 1)
+                    imm as u16
                 };
 
-                let default_ = self.read_u32(pc + offset)?;
+                let default_ = self.read_u32(pc).unwrap();
 
                 visitor.br_table(
                     |case_| {
                         if case_ < n {
-                            let Ok(addr) = self.read_u32(pc + offset + 2 + (case_ as u32 * 2))
-                            else {
+                            let Ok(addr) = self.read_u32(pc) else {
                                 return Err(());
                             };
 
@@ -137,25 +139,64 @@ impl<'wasm> Code<'wasm> {
                     },
                     state,
                 )?;
-
-                Ok(offset + 2 + (n as u32 * 2))
             }
 
-            RETURN => instruction!(return_),
-            CALL => instruction!(call, idx, FuncIdx),
-            CALL_INDIRECT => instruction!(call_indirect, idx, TypeIdx),
+            RETURN => {
+                visitor.return_(imm, state)?;
+            }
+            CALL => {
+                let idx = self.read(pc).unwrap();
+                let is_host = (imm & 0x80) != 0;
+                if imm == 0 {
+                    visitor.call(idx, state)?;
+                } else if is_host {
+                    visitor.call_host(HostModuleRef(imm & 0x7F), idx, state)?
+                } else {
+                    // TODO(tumbar) Implement external WASM function calls
+                    unimplemented!()
+                }
+            }
+            CALL_INDIRECT => {
+                let n = self.read(pc).unwrap();
+                visitor.call_indirect(TypeIdx(n as u32), state)?;
+            }
 
             // Parametric instructions
             DROP => instruction!(drop),
             SELECT => instruction!(select),
 
             // Variable instructions
-            LOCAL_GET => instruction!(local_get, idx, LocalIdx),
-            LOCAL_SET => instruction!(local_set, idx, LocalIdx),
-            LOCAL_TEE => instruction!(local_tee, idx, LocalIdx),
-            GLOBAL_GET => instruction!(global_get, idx, GlobalIdx),
-            GLOBAL_SET => instruction!(global_set, idx, GlobalIdx),
+            LOCAL_GET => instruction!(local_get, local),
+            LOCAL_SET => instruction!(local_set, local),
+            LOCAL_TEE => instruction!(local_tee, local),
+            GLOBAL_GET => {
+                let index = if imm == 0xFF {
+                    self.read(pc).unwrap()
+                } else {
+                    imm as u16
+                };
 
+                visitor.global_get(index, state)?;
+            }
+            GLOBAL_SET => {
+                let index = if imm == 0xFF {
+                    self.read(pc).unwrap()
+                } else {
+                    imm as u16
+                };
+
+                visitor.global_set(index, state)?;
+            }
+            GLOBAL_GET_HOST => {
+                let module = HostModuleRef(imm);
+                let index = self.read(pc).unwrap();
+                visitor.global_get_host(module, index, state)?;
+            }
+            GLOBAL_SET_HOST => {
+                let module = HostModuleRef(imm);
+                let index = self.read(pc).unwrap();
+                visitor.global_set_host(module, index, state)?;
+            }
             // Memory instructions - loads
             I32_LOAD => instruction!(i32_load, MemArg),
             I64_LOAD => instruction!(i64_load, MemArg),
@@ -186,29 +227,30 @@ impl<'wasm> Code<'wasm> {
             // Memory instructions - size/grow
             MEMORY_SIZE => instruction!(memory_size),
 
-            // This operation is not allowed during compilation
-            MEMORY_GROW => unreachable!(),
-
             // Numeric instructions - const
             I32_CONST => {
-                let n = self.read_u32(pc + 1)?;
+                let n = if imm == 0xFF {
+                    self.read_u32(pc).unwrap()
+                } else {
+                    imm as u32
+                };
                 visitor.i32_const(n as i32, state)?;
-                Ok(3)
             }
             I64_CONST => {
-                let n = self.read_u64(pc + 1)?;
+                let n = if imm == 0xFF {
+                    self.read_u64(pc).unwrap()
+                } else {
+                    imm as u64
+                };
                 visitor.i64_const(n as i64, state)?;
-                Ok(5)
             }
             F32_CONST => {
-                let z = self.read_u32(pc + 1)?;
+                let z = self.read_u32(pc).unwrap();
                 visitor.f32_const(f32::from_bits(z), state)?;
-                Ok(3)
             }
             F64_CONST => {
-                let z = self.read_u64(pc + 1)?;
+                let z = self.read_u64(pc).unwrap();
                 visitor.f64_const(f64::from_bits(z), state)?;
-                Ok(5)
             }
 
             // Numeric instructions - i32 test/rel
@@ -347,12 +389,9 @@ impl<'wasm> Code<'wasm> {
             F64_CONVERT_I64_S => instruction!(f64_convert_i64_s),
             F64_CONVERT_I64_U => instruction!(f64_convert_i64_u),
             F64_PROMOTE_F32 => instruction!(f64_promote_f32),
-            I32_REINTERPRET_F32 => instruction!(i32_reinterpret_f32),
-            I64_REINTERPRET_F64 => instruction!(i64_reinterpret_f64),
-            F32_REINTERPRET_I32 => instruction!(f32_reinterpret_i32),
-            F64_REINTERPRET_I64 => instruction!(f64_reinterpret_i64),
-
-            _ => Err(IrReaderError::InvalidOpcode(opcode)),
+            _ => Err(IrReaderError::InvalidOpcode(opcode)).unwrap(),
         }
+
+        Ok(())
     }
 }

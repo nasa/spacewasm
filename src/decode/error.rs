@@ -1,4 +1,5 @@
 use crate::alloc::AllocError;
+use crate::decode::constant::ConstantExprError;
 use crate::decode::ReaderError;
 use crate::SectionKind;
 
@@ -41,6 +42,7 @@ pub enum ValidationError {
     MalformedMagic,
     MalformedVersion,
     MalformedUtf8,
+    DuplicateModuleName,
     MalformedSectionId(u8),
     MalformedValueType(u8),
     MalformedFunction(u8),
@@ -55,15 +57,46 @@ pub enum ValidationError {
     ExpectedTerminal(u8),
     InvalidOpcode(u8),
     MalformedCodeSize,
+    InvalidCodeSectionFunctionCount,
     VecTooLong,
     IdxTooLarge,
+    ModuleIdxTooLarge,
     MemAlignTooLarge,
     IllegalMemoryGrow,
+    InvalidElementOffset,
+    InvalidElementOutOfBounds,
+    InvalidTableIndex,
+    InvalidMemIndex,
+    InvalidMemOffsetType,
+    InvalidNegativeMemOffset,
     InvalidLabelIndex,
     InvalidElseBlock,
     InvalidEndBlock,
     PossibleBackpatchCycle,
     PageFault,
+    InstructionOutsideOfFunction,
+    LocalIdxOutOfRange,
+    FunctionIdxOutOfRange,
+    TypeIdxOutOfRange,
+    FunctionTextOutOfRange,
+    GlobalIdxOutOfRange,
+    FunctionImportNotFound,
+    GlobalImportNotFound,
+    FunctionImportOutOfRange,
+    FunctionImportTypeMismatch,
+    GlobalIsNotMutable,
+    GlobalImportTypeMismatch,
+    FunctionParametersTooLarge,
+    FunctionReturnsTooLarge,
+    TooManyLocals,
+    InvalidConstInstruction,
+    BrTableHasTooManyCases,
+    GlboalTypeMismatch,
+    TableImportsNotSupportedYet, // TODO(tumbar) Implement dynamic linking
+    MemoryImportsNotSupportedYet, // TODO(tumbar) Implement implement shared memory
+    FunctionCallsAcrossModuleNotSupportedYet, // TODO(tumbar) Implement module context isolation
+    GlobalsAcrossModuleNotSupportedYet, // TODO(tumbar) Implement module context isolation
+    InvalidConstantExpr(ConstantExprError),
     AllocError(AllocError),
     ReaderError(ReaderError),
 }
@@ -71,6 +104,12 @@ pub enum ValidationError {
 impl From<AllocError> for ValidationError {
     fn from(value: AllocError) -> Self {
         ValidationError::AllocError(value)
+    }
+}
+
+impl From<ConstantExprError> for ValidationError {
+    fn from(value: ConstantExprError) -> Self {
+        ValidationError::InvalidConstantExpr(value)
     }
 }
 

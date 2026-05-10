@@ -3,7 +3,7 @@
 //! See: <https://webassembly.github.io/spec/core/binary/types.html>
 
 use crate::util::String;
-use crate::{ValidationError, Vec, Reader};
+use crate::{Reader, ValidationError, Vec};
 
 /// A pointer and length into a UTF-8 string on the original WASM
 pub struct Name;
@@ -26,7 +26,24 @@ pub enum ValType {
     F64,
 }
 
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Value {
+    I32(i32),
+    I64(i64),
+    F32(f32),
+    F64(f64),
+}
+
 impl ValType {
+    pub fn size(&self) -> usize {
+        match self {
+            ValType::I32 => 4,
+            ValType::I64 => 8,
+            ValType::F32 => 4,
+            ValType::F64 => 8,
+        }
+    }
+
     fn convert(v: u8) -> Result<ValType, ValidationError> {
         // Value types are encoded by a single byte.
         use ValType::*;
@@ -44,7 +61,7 @@ impl ValType {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ResultType(pub Option<ValType>);
 
 impl ResultType {
@@ -59,6 +76,7 @@ impl ResultType {
     }
 }
 
+#[derive(PartialEq, Eq, Debug)]
 pub struct FuncType {
     pub params: Vec<ValType>,
     pub returns: Vec<ValType>,
@@ -150,20 +168,21 @@ impl TableType {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
 pub struct GlobalType {
-    pub val_type: ValType,
+    pub ty: ValType,
     pub mutable: bool,
 }
 
 impl GlobalType {
     pub(crate) fn read(wasm: &mut Reader) -> Result<Self, ValidationError> {
-        let val_type = ValType::read(wasm)?;
+        let ty = ValType::read(wasm)?;
         let mutable = match wasm.read_u8()? {
             0x00 => false, // const
             0x01 => true,  // mutable
             c => return Err(ValidationError::ExpectedConstOrVar(c)),
         };
 
-        Ok(GlobalType { val_type, mutable })
+        Ok(GlobalType { ty, mutable })
     }
 }

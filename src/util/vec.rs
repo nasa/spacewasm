@@ -13,6 +13,27 @@ pub struct Vec<T: Sized, A: Allocator = GlobalAllocator> {
     alloc: A,
 }
 
+#[macro_export]
+macro_rules! vec {
+    () => (
+        $crate::Vec::zero()
+    );
+    ($elem:expr; $n:expr) => (
+        $crate::Vec::from_elem($elem, $n)
+    );
+    ($($x:expr),+ $(,)?) => (
+        // Using `write_box_via_move` produces a dramatic improvement in stack usage for unoptimized
+        // programs using this code path to construct large Vecs. We can't use `write_via_move`
+        // because this entire invocation has to remain a call chain without `let` bindings, or else
+        // inference and temporary lifetimes change and things break (see `vec-macro-rvalue-scope`,
+        // `vec-macro-coercions`, and `autoderef-vec-box-fn-36786` tests).
+        //
+        // `box_assume_init_into_vec_unsafe` isn't actually safe but the way we use it here is. We
+        // can't use an unsafe block as that would also wrap `$x`.
+        $crate::Vec::from_array([$($x),+]).unwrap()
+    );
+}
+
 impl<A: Allocator, T: core::fmt::Debug> core::fmt::Debug for Vec<T, A> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         self.inner.fmt(f)
@@ -33,13 +54,52 @@ impl<T: Clone, A: Allocator + Clone> Clone for Vec<T, A> {
     }
 }
 
+impl<T: PartialEq, A: Allocator> PartialEq for Vec<T, A> {
+    fn eq(&self, other: &Self) -> bool {
+        self[..] == other[..]
+    }
+}
+
+impl<T: Eq, A: Allocator> Eq for Vec<T, A> {}
+
 impl<T: Sized> Vec<T, GlobalAllocator> {
+    pub fn from_array<const N: usize>(a: [T; N]) -> Result<Self, AllocError> {
+        let mut v = Vec::new(N as u32)?;
+        for i in a {
+            v.push(i);
+        }
+
+        Ok(v)
+    }
+
     pub fn new(capacity: u32) -> Result<Vec<T>, AllocError> {
         Vec::new_in(GlobalAllocator, capacity)
+    }
+
+    pub fn new_from(ptr: *mut T, capacity: u32) -> Vec<T> {
+        Vec {
+            inner: InnerVec {
+                ptr,
+                capacity,
+                len: 0,
+            },
+            alloc: GlobalAllocator,
+        }
     }
 }
 
 impl<T: Sized, A: Allocator> Vec<T, A> {
+    pub fn new_from_with_alloc(ptr: *mut T, capacity: u32, alloc: A) -> Vec<T, A> {
+        Vec {
+            inner: InnerVec {
+                ptr,
+                capacity,
+                len: 0,
+            },
+            alloc,
+        }
+    }
+
     pub fn new_in(alloc: A, capacity: u32) -> Result<Vec<T, A>, AllocError> {
         // We don't want to handle ZST
         const {
@@ -95,7 +155,7 @@ impl<T: Sized, A: Allocator> Vec<T, A> {
         self.inner.pop()
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = T> {
+    pub fn iter(&self) -> impl Iterator<Item = &T> {
         self.inner.iter()
     }
 
@@ -176,6 +236,22 @@ impl<T> IntoIterator for Vec<T, GlobalAllocator> {
             },
             alloc: GlobalAllocator,
         }
+    }
+}
+
+impl<'a, T, A: Allocator> IntoIterator for &'a Vec<T, A> {
+    type Item = &'a T;
+    type IntoIter = core::slice::Iter<'a, T>;
+    fn into_iter(self) -> Self::IntoIter {
+        (**self).iter()
+    }
+}
+
+impl<'a, T, A: Allocator> IntoIterator for &'a mut Vec<T, A> {
+    type Item = &'a mut T;
+    type IntoIter = core::slice::IterMut<'a, T>;
+    fn into_iter(self) -> Self::IntoIter {
+        (**self).iter_mut()
     }
 }
 

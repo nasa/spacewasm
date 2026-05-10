@@ -1,20 +1,23 @@
 use crate::*;
+use core::marker::PhantomData;
 
-pub struct Compiler<const N: usize>;
+pub struct Compiler<'a, const N: usize> {
+    _marker: PhantomData<&'a ()>,
+}
+
+impl<'a, const N: usize> Compiler<'a, N> {
+    pub fn new() -> Compiler<'a, N> {
+        Compiler {
+            _marker: Default::default(),
+        }
+    }
+}
 
 macro_rules! instruction {
     // No additional operands
     ($name:ident, $opcode:expr) => {
         fn $name(&self, state: &mut Self::State) -> Result<(), Self::Error> {
             state.push_no_operand($opcode)?;
-            Ok(())
-        }
-    };
-
-    // An instruction with an 8-bit or 16-bit index operand
-    ($name:ident, $opcode:expr, idx, $ty:ty) => {
-        fn $name(&self, x: $ty, state: &mut Self::State) -> Result<(), Self::Error> {
-            state.push_8_or_16($opcode, x.0)?;
             Ok(())
         }
     };
@@ -28,7 +31,7 @@ macro_rules! instruction {
     };
 }
 
-impl<const N: usize> WasmVisitor for Compiler<N> {
+impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
     fn enter_block(
         &self,
         block_type: ResultType,
@@ -43,6 +46,10 @@ impl<const N: usize> WasmVisitor for Compiler<N> {
 
     fn exit_block(&self, state: &mut Self::State) -> Result<(), Self::Error> {
         state.exit_block()
+    }
+
+    fn finish(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        self.return_(state)
     }
 
     fn loop_(&self, block_type: ResultType, state: &mut Self::State) -> Result<(), Self::Error> {
@@ -98,28 +105,124 @@ impl<const N: usize> WasmVisitor for Compiler<N> {
 
         Ok(())
     }
+
+    fn return_(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        // Return instructions also encode the return size from their function's context
+        state.push_with_operand(RETURN, state.func().return_size)?;
+        Ok(())
+    }
+
+    fn call(&self, x: FuncIdx, state: &mut Self::State) -> Result<(), Self::Error> {
+        let f_ref = state.get_func_ref(x)?;
+        match f_ref {
+            FuncRef::Func(index) => {
+                state.push_with_operand(CALL, 0)?;
+                state.push(index)?;
+                Ok(())
+            }
+            FuncRef::HostFunc { module, index } => {
+                if module.0 >= 0x80 {
+                    return Err(ValidationError::ModuleIdxTooLarge);
+                }
+
+                state.push_with_operand(CALL, 0x80 | module.0)?;
+                state.push(index)?;
+                Ok(())
+            }
+            FuncRef::ExternFunc { module, index } => {
+                if module.0 >= 0x80 {
+                    return Err(ValidationError::ModuleIdxTooLarge);
+                }
+
+                state.push_with_operand(CALL, module.0)?;
+                state.push(index)?;
+
+                // TODO(tumbar) We do not yet support calling WASM functions across modules
+                //              This would require isolation of memory and instruction (and stack?)
+                //              space.
+                Err(ValidationError::FunctionCallsAcrossModuleNotSupportedYet)
+            }
+        }
+    }
+
+    fn call_indirect(&self, x: TypeIdx, state: &mut Self::State) -> Result<(), Self::Error> {
+        state.push_no_operand(CALL_INDIRECT)?;
+        state.push(x.0 as u16)?;
+        Ok(())
+    }
+
+    fn local_get(&self, x: LocalIdx, state: &mut Self::State) -> Result<(), Self::Error> {
+        let l = state.get_local(x)?;
+        state.push_local(LOCAL_GET, l)?;
+        Ok(())
+    }
+
+    fn local_set(&self, x: LocalIdx, state: &mut Self::State) -> Result<(), Self::Error> {
+        let l = state.get_local(x)?;
+        state.push_local(LOCAL_SET, l)?;
+        Ok(())
+    }
+
+    fn local_tee(&self, x: LocalIdx, state: &mut Self::State) -> Result<(), Self::Error> {
+        let l = state.get_local(x)?;
+        state.push_local(LOCAL_TEE, l)?;
+        Ok(())
+    }
+
+    fn global_get(&self, x: GlobalIdx, state: &mut Self::State) -> Result<(), Self::Error> {
+        let g = state.get_global(x)?;
+        match g.reference {
+            Ref::Ref(idx) => {
+                state.push_8_or_16(GLOBAL_GET, idx as u32)?;
+                Ok(())
+            }
+            Ref::ExternalRef(r) => {
+                state.push_with_operand(GLOBAL_GET_EXTERNAL, r.module.0)?;
+                state.push(r.index)?;
+                Err(ValidationError::GlobalsAcrossModuleNotSupportedYet)
+            }
+            Ref::HostRef(r) => {
+                state.push_with_operand(GLOBAL_GET_HOST, r.module.0)?;
+                state.push(r.index)?;
+                Ok(())
+            }
+        }
+    }
+
+    fn global_set(&self, x: GlobalIdx, state: &mut Self::State) -> Result<(), Self::Error> {
+        let g = state.get_global(x)?;
+        if !g.mutable {
+            Err(ValidationError::GlobalIsNotMutable)
+        } else {
+            match g.reference {
+                Ref::Ref(idx) => {
+                    state.push_8_or_16(GLOBAL_SET, idx as u32)?;
+                    Ok(())
+                }
+                Ref::ExternalRef(r) => {
+                    state.push_with_operand(GLOBAL_SET_EXTERNAL, r.module.0)?;
+                    state.push(r.index)?;
+                    Err(ValidationError::GlobalsAcrossModuleNotSupportedYet)
+                }
+                Ref::HostRef(r) => {
+                    state.push_with_operand(GLOBAL_SET_HOST, r.module.0)?;
+                    state.push(r.index)?;
+                    Ok(())
+                }
+            }
+        }
+    }
 }
 
-impl<const N: usize> BaseVisitor for Compiler<N> {
+impl<'a, const N: usize> BaseVisitor for Compiler<'a, N> {
     type Error = ValidationError;
-    type State = TextBuilder<N>;
+    type State = TextBuilder<'a, N>;
 
-    instruction!(finish, END);
     instruction!(unreachable, UNREACHABLE);
     instruction!(nop, NOP);
 
-    instruction!(return_, RETURN);
-    instruction!(call, CALL, idx, FuncIdx);
-    instruction!(call_indirect, CALL_INDIRECT, idx, TypeIdx);
-
     instruction!(drop, DROP);
     instruction!(select, SELECT);
-
-    instruction!(local_get, LOCAL_GET, idx, LocalIdx);
-    instruction!(local_set, LOCAL_SET, idx, LocalIdx);
-    instruction!(local_tee, LOCAL_TEE, idx, LocalIdx);
-    instruction!(global_get, GLOBAL_GET, idx, GlobalIdx);
-    instruction!(global_set, GLOBAL_SET, idx, GlobalIdx);
 
     instruction!(i32_load, I32_LOAD, mem);
     instruction!(i64_load, I64_LOAD, mem);
@@ -166,12 +269,14 @@ impl<const N: usize> BaseVisitor for Compiler<N> {
     }
 
     fn f32_const(&self, z: f32, state: &mut Self::State) -> Result<(), Self::Error> {
-        state.push_8_or_32(I32_CONST, z.to_bits())?;
+        state.push_no_operand(F32_CONST)?;
+        state.push_32(z.to_bits())?;
         Ok(())
     }
 
     fn f64_const(&self, z: f64, state: &mut Self::State) -> Result<(), Self::Error> {
-        state.push_8_or_64(I64_CONST, z.to_bits())?;
+        state.push_no_operand(F64_CONST)?;
+        state.push_64(z.to_bits())?;
         Ok(())
     }
 

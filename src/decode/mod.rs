@@ -1,6 +1,12 @@
 mod reader;
 pub use reader::*;
 
+mod host;
+pub use host::*;
+
+mod imports;
+pub use imports::*;
+
 mod stream;
 pub use stream::*;
 
@@ -18,3 +24,5 @@ pub use types::*;
 
 mod code;
 pub use code::*;
+
+mod constant;

@@ -1,6 +1,5 @@
-use spacewasm::global_allocator;
 use spacewasm::{
-    AllocError, Allocator, InnerVec, MemoryStatistics, PageAllocator, ReaderError, SectionKind,
+    global_allocator, AllocError, Allocator, InnerVec, MemoryStatistics, PageAllocator, ReaderError,
     Stream,
 };
 use std::alloc::Layout;
@@ -27,14 +26,14 @@ global_allocator!(
     PageAllocator::new(&RustSystemAllocator {}, 8192)
 );
 
-struct FileStream {
+pub struct FileStream {
     file: std::fs::File,
     ready: VecDeque<Vec<u8>>,
     used: HashMap<*mut u8, Vec<u8>>,
 }
 
 impl FileStream {
-    fn new(file: std::fs::File) -> FileStream {
+    pub fn new(file: std::fs::File) -> FileStream {
         let mut ready = VecDeque::new();
         for _ in 0..8 {
             ready.push_back(vec![0u8; 1024]);
@@ -75,33 +74,4 @@ impl Stream for FileStream {
         let buf = self.used.remove(&chunk.ptr).unwrap();
         self.ready.push_back(buf);
     }
-}
-
-fn main() {
-    std::env::args().skip(1).for_each(|path| {
-        let file = std::fs::File::open(path).expect("failed to open file");
-        match spacewasm::Module::new::<256>(&mut FileStream::new(file)) {
-            Ok(module) => {
-                let mut total: usize = 0;
-                for (i, section) in module.memory_usage.iter().enumerate() {
-                    let section_kind = SectionKind::convert(i as u8).unwrap();
-                    eprintln!("{:?}: {} bytes", section_kind, section.total_bytes);
-                    total += section.total_bytes as usize;
-                }
-
-                eprintln!("Total: {}", total);
-                eprintln!(
-                    "Compilation Ratio: {:.2}x",
-                    (total as f64) / (module.wasm_size as f64)
-                );
-
-                eprintln!("{:?}", module.functions);
-
-                println!("Found {} imports", module.imports.len());
-            }
-            Err(err) => {
-                eprintln!("Failed to parse: {:?}", err)
-            }
-        }
-    });
 }

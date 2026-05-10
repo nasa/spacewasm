@@ -1,5 +1,5 @@
 [package]
-name = "spacewasm-wasi"
+name = "spacewasm-std"
 
 version.workspace = true
 authors.workspace = true
@@ -7,3 +7,10 @@ edition.workspace = true
 
 [dependencies]
 spacewasm = { path = "../.." }
+
+[lib]
+path = "src/lib.rs"
+
+[[bench]]
+name = "coremark"
+harness = false

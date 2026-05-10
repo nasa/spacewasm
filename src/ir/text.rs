@@ -1,4 +1,4 @@
-use crate::{AllocError, Box, LabelIdx, MemArg, StaticVec, ValidationError};
+use crate::*;
 
 /// # SpaceWASM IR Encoding
 ///
@@ -35,10 +35,10 @@ impl Default for TextPage {
 
 /// A 32-bit address into the paged IR code.
 ///
-/// Format: `[reserved:1][page_index:23][offset:8]`
-/// - `page_index`: which page (0-8M pages supported)
+/// Format: `[reserved:2][page_index:22][offset:8]`
+/// - `page_index`: which page (0-4M pages supported)
 /// - `offset`: word index within the page (0-255)
-#[derive(PartialEq, Eq, Clone, Copy)]
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub struct JumpTarget(pub u32);
 
 impl core::ops::Add<u32> for JumpTarget {
@@ -52,7 +52,7 @@ impl JumpTarget {
     /// Sentinel value used to mark the end of a linked list of jump addresses.
     /// Uses 0x3FFF_FFFF (all 1s in the 30-bit address space) so it never conflicts
     /// with the control bits (bits 30-31) or valid addresses (24-bit page index).
-    const SENTINEL: JumpTarget = JumpTarget(0x3FFF_FFFFu32);
+    pub const SENTINEL: JumpTarget = JumpTarget(0x3FFF_FFFFu32);
 
     /// Extract the page index (upper 24 bits).
     pub fn page(&self) -> usize {
@@ -124,18 +124,43 @@ impl ControlFrame {
     }
 }
 
+/// The decoded representation of a global variable
+#[derive(Debug)]
+pub struct GlobalVariable {
+    // The index of the global variable
+    pub reference: Ref,
+    pub ty: ValType,
+    pub mutable: bool,
+}
+
 /// Low-level builder for paged IR code.
 ///
 /// Manages allocation of pages and writing 16-bit words to the current position.
 /// The `N` generic parameter limits the maximum number of pages that can be allocated.
-struct CodeBuilder<const N: usize> {
+pub struct CodeBuilder<const N: usize> {
     pages: StaticVec<Box<TextPage>, N>,
     offset: usize,
 }
 
 impl<const N: usize> CodeBuilder<N> {
+    pub fn new() -> CodeBuilder<N> {
+        CodeBuilder {
+            pages: Default::default(),
+            offset: 0,
+        }
+    }
+
+    pub fn finish(self) -> Result<(Vec<Box<TextPage>>, usize), AllocError> {
+        let mut v = Vec::new(self.pages.len() as u32)?;
+        for i in self.pages {
+            v.push(i);
+        }
+
+        Ok((v, self.offset))
+    }
+
     /// Get the current program counter (address of the next word to be written)
-    fn pc(&self) -> JumpTarget {
+    pub fn pc(&self) -> JumpTarget {
         let (page_index, offset) = {
             if self.offset == 256 {
                 // We are at the start of the next page, we have not allocated it yet
@@ -167,7 +192,10 @@ impl<const N: usize> CodeBuilder<N> {
     ///
     /// Automatically allocates a new page if we've reached the end of the current one.
     fn push(&mut self, c: u16) -> Result<(), AllocError> {
-        if self.offset >= 256 {
+        if self.offset == 0 && self.pages.len() == 0 {
+            // No pages have been allocated yet
+            self.add_page()?;
+        } else if self.offset >= 256 {
             self.add_page()?;
         }
 
@@ -211,25 +239,174 @@ impl<const N: usize> CodeBuilder<N> {
 /// - Managing a stack of control frames for nested blocks
 ///
 /// The `N` generic parameter limits the maximum number of code pages.
-pub struct TextBuilder<const N: usize> {
-    code: CodeBuilder<N>,
+pub struct TextBuilder<'a, const N: usize> {
+    code: &'a mut CodeBuilder<N>,
+    store: &'a Store,
+    module: &'a Module,
+    func: &'a Func,
     control_frames: StaticVec<ControlFrame, 64>,
     else_frames: StaticVec<JumpTarget, 64>,
 }
 
-impl<const N: usize> TextBuilder<N> {
-    pub fn new() -> Result<TextBuilder<N>, AllocError> {
-        let mut o = TextBuilder {
-            code: CodeBuilder {
-                pages: Default::default(),
-                offset: 0,
-            },
+impl<'a, const N: usize> TextBuilder<'a, N> {
+    pub fn new(
+        code: &'a mut CodeBuilder<N>,
+        store: &'a Store,
+        module: &'a Module,
+        func: &'a Func,
+    ) -> TextBuilder<'a, N> {
+        TextBuilder {
+            code,
+            module,
+            func,
             control_frames: Default::default(),
             else_frames: Default::default(),
-        };
+            store,
+        }
+    }
 
-        o.code.add_page()?;
-        Ok(o)
+    pub fn func(&self) -> &Func {
+        &self.func
+    }
+
+    pub fn get_func_ref(&self, x: FuncIdx) -> Result<FuncRef, ValidationError> {
+        self.module.get_func_ref(x)
+    }
+
+    /// Compute the offset in 32-bit words of a local variable given its index
+    pub fn get_local(&self, x: LocalIdx) -> Result<LocalVariable, ValidationError> {
+        if x.0 > 0xFFFF {
+            return Err(ValidationError::LocalIdxOutOfRange);
+        }
+
+        let x = x.0 as u16;
+
+        let signature = self
+            .module
+            .types
+            .get(self.func.ty.0 as usize)
+            .ok_or(ValidationError::TypeIdxOutOfRange)?;
+
+        // Search for the variable and compute it's offset
+        let mut current_offset = 0usize;
+        let mut current_index = 0;
+
+        // Check the parameters first
+        for (i, p_ty) in signature.params.iter().enumerate() {
+            if x == i as u16 {
+                // This offset is the offset from the start of the parameters list
+                // We need to convert this offset to be relative to the frame pointer
+                // which is immediately after the final parameter
+                let frame_offset =
+                    (((current_offset / 4) as i32) - (self.func.parameter_size as i32)) as i16;
+
+                return Ok(LocalVariable {
+                    frame_offset,
+                    ty: *p_ty,
+                });
+            }
+
+            current_offset += p_ty.size();
+            current_index += 1;
+        }
+
+        // Skip over the fp/lr on the stack
+        current_offset = 0;
+
+        // Now check the local variables
+        for (n, ty) in &self.func.locals {
+            if current_index + n > x {
+                // This bucket has the local variable
+                // Compute it's offset as a word index from the frame
+                let offset = current_offset + ty.size() * (x - current_index) as usize;
+                return Ok(LocalVariable {
+                    // Add 2 to skip over fp and lr
+                    frame_offset: ((offset / 4) as i16) + 2,
+                    ty: *ty,
+                });
+            }
+
+            let section_size = *n as usize * ty.size();
+            current_offset += section_size;
+            current_index += n;
+        }
+
+        // No more locals
+        Err(ValidationError::LocalIdxOutOfRange)
+    }
+
+    /// Look up a global variable given its index
+    /// If we are computing a constant expression, globals can only refer to imported globals
+    pub fn get_global(&self, x: GlobalIdx) -> Result<GlobalVariable, ValidationError> {
+        let imported_idx = self
+            .module
+            .imports
+            .iter()
+            .filter_map(|i| match &i {
+                Import::Global { module, index } => Some(Ref::ExternalRef(ExternalRef {
+                    module: *module,
+                    index: *index,
+                })),
+                Import::HostGlobal { module, index } => Some(Ref::HostRef(HostRef {
+                    module: *module,
+                    index: *index,
+                })),
+                _ => None,
+            })
+            .skip(x.0 as usize)
+            .next()
+            .unwrap_or(Ref::Ref(
+                (x.0 as usize - self.module.global_import_count()) as u16,
+            ));
+
+        match imported_idx {
+            // This index is one of the WASM defined globals
+            Ref::Ref(idx) => {
+                let g = self
+                    .module
+                    .globals
+                    .get(idx as usize)
+                    .ok_or(ValidationError::GlobalIdxOutOfRange)?;
+
+                Ok(GlobalVariable {
+                    reference: Ref::Ref(idx),
+                    ty: g.type_.ty,
+                    mutable: g.type_.mutable,
+                })
+            }
+            // This index refers to an imported global
+            Ref::HostRef(host_ref) => {
+                // Unwrap() should be fine since the imports are already resolved
+                let module = self
+                    .store
+                    .host_modules
+                    .get(host_ref.module.0 as usize)
+                    .unwrap();
+
+                let global = module.globals.get(host_ref.index as usize).unwrap();
+
+                Ok(GlobalVariable {
+                    reference: Ref::HostRef(host_ref),
+                    ty: global.value.ty(),
+                    mutable: global.value.mutable(),
+                })
+            }
+            Ref::ExternalRef(external_ref) => {
+                let module = self
+                    .store
+                    .modules
+                    .get(external_ref.module.0 as usize)
+                    .unwrap();
+
+                let global = module.globals.get(external_ref.index as usize).unwrap();
+
+                Ok(GlobalVariable {
+                    reference: Ref::ExternalRef(external_ref),
+                    ty: global.type_.ty,
+                    mutable: global.type_.mutable,
+                })
+            }
+        }
     }
 
     pub fn pc(&self) -> JumpTarget {
@@ -305,7 +482,7 @@ impl<const N: usize> TextBuilder<N> {
 
             // Handle if-without-else case: if this is an if block and else_frames has an entry,
             // it means no else_() was called, so we need to back-patch the IF sentinel here
-            if last.is_if() && !self.else_frames.is_empty() {
+            if last.is_if() && self.else_frames.len() > 0 {
                 let Some(else_addr) = self.else_frames.pop() else {
                     return Err(ValidationError::InvalidElseBlock);
                 };
@@ -394,6 +571,40 @@ impl<const N: usize> TextBuilder<N> {
         self.code.push((op as u16) << 8)
     }
 
+    pub(crate) fn push(&mut self, word: u16) -> Result<(), AllocError> {
+        self.code.push(word)
+    }
+
+    /// Emit an instruction with an 8-bit operand
+    pub(crate) fn push_with_operand(&mut self, op: u8, operand: u8) -> Result<(), AllocError> {
+        self.code.push((op as u16) << 8 | (operand as u16))
+    }
+
+    pub(crate) fn push_local(&mut self, op: u8, l: LocalVariable) -> Result<(), ValidationError> {
+        self.code.push(((op as u16) << 8) | (l.ty as u8 as u16))?;
+        self.code.push(l.frame_offset as u16)?;
+        Ok(())
+    }
+
+    // pub(crate) fn push_global(&mut self, op: u8, g: GlobalVariable) -> Result<(), ValidationError> {
+    //     let module = g.reference.module.0;
+    //     if module >= 0x80 {
+    //         // The final bit is reserved for the size type
+    //         return Err(ValidationError::IdxTooLarge);
+    //     }
+    //
+    //     let ty_enc = match g.ty {
+    //         ValType::I32 | ValType::F32 => 0x0,
+    //         ValType::I64 | ValType::F64 => 0x80,
+    //     };
+    //
+    //     self.code
+    //         .push(((op as u16) << 8) | ty_enc as u16 | module as u16)?;
+    //
+    //     self.code.push(g.reference.index)?;
+    //     Ok(())
+    // }
+
     /// Emit an instruction with an 8-bit or 16-bit index operand.
     ///
     /// Encoding:
@@ -433,6 +644,20 @@ impl<const N: usize> TextBuilder<N> {
         }
     }
 
+    pub(crate) fn push_32(&mut self, i: u32) -> Result<(), AllocError> {
+        self.code.push(i as u16)?;
+        self.code.push((i >> 16) as u16)?;
+        Ok(())
+    }
+
+    pub(crate) fn push_64(&mut self, i: u64) -> Result<(), AllocError> {
+        self.code.push(i as u16)?;
+        self.code.push((i >> 16) as u16)?;
+        self.code.push((i >> 32) as u16)?;
+        self.code.push((i >> 48) as u16)?;
+        Ok(())
+    }
+
     /// Push an operation with an 8-bit inline or 32-bit extended operand.
     ///
     /// Encoding:
@@ -446,8 +671,7 @@ impl<const N: usize> TextBuilder<N> {
         } else {
             // Extended encoding: 0xFF is sentinel, read full 32-bit value from next 2 words
             self.code.push(((op as u16) << 8) | 0xFF)?;
-            self.code.push(i as u16)?;
-            self.code.push((i >> 16) as u16)?;
+            self.push_32(i)?;
         }
 
         Ok(())
@@ -466,10 +690,7 @@ impl<const N: usize> TextBuilder<N> {
         } else {
             // Extended encoding: 0xFF is sentinel, read full 64-bit value from next 4 words
             self.code.push(((op as u16) << 8) | 0xFF)?;
-            self.code.push(i as u16)?;
-            self.code.push((i >> 16) as u16)?;
-            self.code.push((i >> 32) as u16)?;
-            self.code.push((i >> 48) as u16)?;
+            self.push_64(i)?;
         }
 
         Ok(())

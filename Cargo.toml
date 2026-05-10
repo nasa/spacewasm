@@ -20,9 +20,17 @@ path = "src/lib.rs"
 [dependencies]
 libm = "0.2.16"
 
+[dev-dependencies]
+wast = "248.0.0"
+
 [profile.release]
 opt-level = 3
 lto = true
-debug = "none"
-panic = "abort"
-strip = true
+debug = "full"
+panic = "unwind"
+codegen-units = 1
+
+[profile.bench]
+opt-level = 3
+lto = true
+codegen-units = 1
