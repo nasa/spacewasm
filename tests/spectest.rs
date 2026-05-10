@@ -1,9 +1,11 @@
 use spacewasm::{
-    global_allocator, AllocError, Allocator,
-    InnerVec, MemoryStatistics, ReaderError, Stream,
+    global_allocator, vec, AllocError, Allocator, GlobalValue, GlobalValueError, HostFunction,
+    HostGlobal, HostModule, InnerVec, MemoryStatistics, ReaderError, Store, Stream, ValType, Value,
 };
 use std::alloc::Layout;
+use std::ops::ControlFlow;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
 use wast::parser::{self, ParseBuffer};
 use wast::{Wast, WastDirective};
 
@@ -54,6 +56,30 @@ impl ByteStream {
     }
 }
 
+struct StaticGlobal {
+    value: Mutex<Value>,
+    ty: ValType,
+}
+
+impl GlobalValue for StaticGlobal {
+    fn write(&self, value: Value) -> Result<(), GlobalValueError> {
+        *self.value.lock().unwrap() = value;
+        Ok(())
+    }
+
+    fn read(&self) -> Result<Value, GlobalValueError> {
+        Ok(*self.value.lock().unwrap())
+    }
+
+    fn ty(&self) -> ValType {
+        self.ty
+    }
+
+    fn mutable(&self) -> bool {
+        false
+    }
+}
+
 impl Stream for ByteStream {
     fn read(&mut self) -> Result<Option<InnerVec<u8>>, ReaderError> {
         if self.consumed {
@@ -89,6 +115,75 @@ fn run_wast_test_file_inner(file_name: &str) -> Result<(), String> {
         .map_err(|e| format!("failed to create parse buffer: {}", e))?;
 
     let wast: Wast = parser::parse(&buf).map_err(|e| format!("failed to parse wast: {}", e))?;
+
+    let mut store = Store::new(
+        2,
+        [HostModule {
+            name: "spectest",
+            globals: vec![
+                HostGlobal {
+                    name: "global_i32",
+                    value: spacewasm::Box::new(StaticGlobal {
+                        value: Mutex::new(Value::I32(666)),
+                        ty: ValType::I32,
+                    })
+                    .unwrap()
+                    .into_global_value_dyn(),
+                },
+                HostGlobal {
+                    name: "global_i64",
+                    value: spacewasm::Box::new(StaticGlobal {
+                        value: Mutex::new(Value::I64(666)),
+                        ty: ValType::I64,
+                    })
+                    .unwrap()
+                    .into_global_value_dyn(),
+                },
+                HostGlobal {
+                    name: "global_f32",
+                    value: spacewasm::Box::new(StaticGlobal {
+                        value: Mutex::new(Value::F32(666.6)),
+                        ty: ValType::F32,
+                    })
+                    .unwrap()
+                    .into_global_value_dyn(),
+                },
+                HostGlobal {
+                    name: "global_f64",
+                    value: spacewasm::Box::new(StaticGlobal {
+                        value: Mutex::new(Value::F64(666.6)),
+                        ty: ValType::F64,
+                    })
+                    .unwrap()
+                    .into_global_value_dyn(),
+                },
+            ],
+            functions: vec![
+                HostFunction::new("print", "".into(), "".into(), |_, _| {
+                    ControlFlow::Continue(None)
+                }),
+                HostFunction::new("print_i32", "i".into(), "".into(), |_, _| {
+                    ControlFlow::Continue(None)
+                }),
+                HostFunction::new("print_i64", "I".into(), "".into(), |_, _| {
+                    ControlFlow::Continue(None)
+                }),
+                HostFunction::new("print_f32", "f".into(), "".into(), |_, _| {
+                    ControlFlow::Continue(None)
+                }),
+                HostFunction::new("print_f64", "d".into(), "".into(), |_, _| {
+                    ControlFlow::Continue(None)
+                }),
+                HostFunction::new("print_i32_f32", "if".into(), "".into(), |_, _| {
+                    ControlFlow::Continue(None)
+                }),
+                HostFunction::new("print_f64_f64", "dd".into(), "".into(), |_, _| {
+                    ControlFlow::Continue(None)
+                }),
+            ],
+        }],
+    )
+    .unwrap();
 
     for dir in wast.directives {
         match dir {
