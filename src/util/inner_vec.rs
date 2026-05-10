@@ -151,7 +151,7 @@ mod proof_harness {
         }
     }
 
-    /// INVARIANT 1: len ≤ capacity is maintained by all operations
+    /// len ≤ capacity is maintained by all operations
     #[kani::proof]
     fn verify_len_never_exceeds_capacity() {
         unsafe {
@@ -181,7 +181,7 @@ mod proof_harness {
         }
     }
 
-    /// INVARIANT 2: Pointer arithmetic ptr.add(i) for i < capacity stays in bounds
+    /// Pointer arithmetic ptr.add(i) for i < capacity stays in bounds
     #[kani::proof]
     fn verify_pointer_arithmetic_in_bounds() {
         unsafe {
@@ -205,7 +205,7 @@ mod proof_harness {
         }
     }
 
-    /// INVARIANT 3: No integer overflows in len or offset calculations
+    /// No integer overflows in len or offset calculations
     #[kani::proof]
     fn verify_no_integer_overflow() {
         unsafe {
@@ -234,7 +234,7 @@ mod proof_harness {
         }
     }
 
-    /// INVARIANT 4: Null pointer (capacity=0) handled safely in all operations
+    /// Null pointer (capacity=0) handled safely in all operations
     #[kani::proof]
     fn verify_null_pointer_safety() {
         // Zero-capacity vec with null pointer
@@ -260,7 +260,7 @@ mod proof_harness {
         assert_eq!(vec.capacity(), 0);
     }
 
-    /// INVARIANT 5: push writes only at valid index after len < capacity check
+    /// push writes only at valid index after len < capacity check
     #[kani::proof]
     fn verify_push_writes_at_correct_index() {
         unsafe {
@@ -288,7 +288,7 @@ mod proof_harness {
         }
     }
 
-    /// INVARIANT 6: pop reads only from initialized memory [0, len)
+    /// pop reads only from initialized memory [0, len)
     #[kani::proof]
     #[kani::unwind(4)]  // Limit loop unrolling
     fn verify_pop_reads_initialized_memory() {
@@ -323,7 +323,7 @@ mod proof_harness {
         }
     }
 
-    /// INVARIANT 7: Deref creates slice only over initialized region [0, len)
+    /// Deref creates slice only over initialized region [0, len)
     #[kani::proof]
     #[kani::unwind(4)]  // Limit loop unrolling
     fn verify_deref_only_initialized_region() {
@@ -356,7 +356,7 @@ mod proof_harness {
         }
     }
 
-    /// INVARIANT 8: Each value should be dropped exactly once
+    /// Each value should be dropped exactly once
     #[kani::proof]
     fn verify_values_dropped_once() {
         unsafe {
@@ -398,7 +398,7 @@ mod proof_harness {
         }
     }
 
-    /// INVARIANT 9: drops ≤ (original_len - current_len)
+    /// drops ≤ (original_len - current_len)
     #[kani::proof]
     fn verify_iter_invalidates_vec() {
         unsafe {
