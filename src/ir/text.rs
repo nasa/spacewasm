@@ -343,65 +343,69 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
             .imports
             .iter()
             .filter_map(|i| match &i {
-                Import::Global { module, index } => Some(Ref {
+                Import::Global { module, index } => Some(Ref::ExternalRef(ExternalRef {
                     module: *module,
                     index: *index,
-                }),
+                })),
+                Import::HostGlobal { module, index } => Some(Ref::HostRef(HostRef {
+                    module: *module,
+                    index: *index,
+                })),
                 _ => None,
             })
             .skip(x.0 as usize)
-            .next();
+            .next()
+            .unwrap_or(Ref::Ref(
+                (x.0 as usize - self.module.global_import_count()) as u16,
+            ));
 
         match imported_idx {
             // This index is one of the WASM defined globals
-            None => {
-                let idx = x.0 as usize - self.module.global_import_count();
+            Ref::Ref(idx) => {
                 let g = self
                     .module
                     .globals
-                    .get(idx)
+                    .get(idx as usize)
                     .ok_or(ValidationError::GlobalIdxOutOfRange)?;
 
-                // We are storing internal globals on the stack
-                // Compute the memory offset of this global
-                let offset_bytes = self
-                    .module
-                    .globals
-                    .iter()
-                    .take(idx)
-                    .fold(0, |n, g| n + g.type_.ty.size());
-
                 Ok(GlobalVariable {
-                    reference: Ref {
-                        module: ModuleRef::current(), // this is an internal global
-                        index: (offset_bytes / 4) as u16,
-                    },
+                    reference: Ref::Ref(idx),
                     ty: g.type_.ty,
                     mutable: g.type_.mutable,
                 })
             }
             // This index refers to an imported global
-            Some(i_ref) => match self.module.module_ref(self.store, i_ref.module) {
-                StoreModule::Host(hm) => {
-                    let global = hm
-                        .globals
-                        .get(i_ref.index as usize)
-                        .ok_or(ValidationError::GlobalIdxOutOfRange)?;
-                    Ok(GlobalVariable {
-                        reference: i_ref,
-                        ty: global.value.ty(),
-                        mutable: global.value.mutable(),
-                    })
-                }
-                StoreModule::Module(wm) => {
-                    let f = wm.globals.get(i_ref.index as usize).unwrap();
-                    Ok(GlobalVariable {
-                        reference: i_ref,
-                        ty: f.type_.ty,
-                        mutable: f.type_.mutable,
-                    })
-                }
-            },
+            Ref::HostRef(host_ref) => {
+                // Unwrap() should be fine since the imports are already resolved
+                let module = self
+                    .store
+                    .host_modules
+                    .get(host_ref.module.0 as usize)
+                    .unwrap();
+
+                let global = module.globals.get(host_ref.index as usize).unwrap();
+
+                Ok(GlobalVariable {
+                    reference: Ref::HostRef(host_ref),
+                    ty: global.value.ty(),
+                    mutable: global.value.mutable(),
+                })
+            }
+            Ref::ExternalRef(external_ref) => {
+                let module = self
+                    .store
+                    .modules
+                    .get(external_ref.module.0 as usize)
+                    .unwrap();
+
+                let global = module.globals.get(external_ref.index as usize).unwrap();
+
+                Ok(GlobalVariable {
+                    reference: Ref::ExternalRef(external_ref),
+                    ty: global.type_.ty,
+                    mutable: global.type_.mutable,
+                })
+            }
         }
     }
 
@@ -582,24 +586,24 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
         Ok(())
     }
 
-    pub(crate) fn push_global(&mut self, op: u8, g: GlobalVariable) -> Result<(), ValidationError> {
-        let module = g.reference.module.0;
-        if module >= 0x80 {
-            // The final bit is reserved for the size type
-            return Err(ValidationError::IdxTooLarge);
-        }
-
-        let ty_enc = match g.ty {
-            ValType::I32 | ValType::F32 => 0x0,
-            ValType::I64 | ValType::F64 => 0x80,
-        };
-
-        self.code
-            .push(((op as u16) << 8) | ty_enc as u16 | module as u16)?;
-
-        self.code.push(g.reference.index)?;
-        Ok(())
-    }
+    // pub(crate) fn push_global(&mut self, op: u8, g: GlobalVariable) -> Result<(), ValidationError> {
+    //     let module = g.reference.module.0;
+    //     if module >= 0x80 {
+    //         // The final bit is reserved for the size type
+    //         return Err(ValidationError::IdxTooLarge);
+    //     }
+    //
+    //     let ty_enc = match g.ty {
+    //         ValType::I32 | ValType::F32 => 0x0,
+    //         ValType::I64 | ValType::F64 => 0x80,
+    //     };
+    //
+    //     self.code
+    //         .push(((op as u16) << 8) | ty_enc as u16 | module as u16)?;
+    //
+    //     self.code.push(g.reference.index)?;
+    //     Ok(())
+    // }
 
     /// Emit an instruction with an 8-bit or 16-bit index operand.
     ///

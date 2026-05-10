@@ -60,6 +60,7 @@ pub enum ValidationError {
     InvalidCodeSectionFunctionCount,
     VecTooLong,
     IdxTooLarge,
+    ModuleIdxTooLarge,
     MemAlignTooLarge,
     IllegalMemoryGrow,
     InvalidElementOffset,
@@ -90,9 +91,11 @@ pub enum ValidationError {
     TooManyLocals,
     InvalidConstInstruction,
     BrTableHasTooManyCases,
+    GlboalTypeMismatch,
     TableImportsNotSupportedYet, // TODO(tumbar) Implement dynamic linking
     MemoryImportsNotSupportedYet, // TODO(tumbar) Implement implement shared memory
     FunctionCallsAcrossModuleNotSupportedYet, // TODO(tumbar) Implement module context isolation
+    GlobalsAcrossModuleNotSupportedYet, // TODO(tumbar) Implement module context isolation
     InvalidConstantExpr(ConstantExprError),
     AllocError(AllocError),
     ReaderError(ReaderError),

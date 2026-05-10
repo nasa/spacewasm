@@ -45,20 +45,24 @@ impl InterpreterState {
         assert_eq!(self.fp, 0);
 
         for global in &m.globals {
-            match global.init {
-                Value::I32(i) => {
-                    self.stack.write_u32(self.sp, i as u32);
+            match global.type_.ty {
+                ValType::I32 => {
+                    let i = global.init as u32;
+                    self.stack.write_u32(self.sp, i);
                     self.sp += 1;
                 }
-                Value::I64(i) => {
-                    self.stack.write_u64(self.sp, i as u64);
+                ValType::I64 => {
+                    let i = global.init;
+                    self.stack.write_u64(self.sp, i);
                     self.sp += 2;
                 }
-                Value::F32(z) => {
+                ValType::F32 => {
+                    let z = f32::from_bits(global.init as u32);
                     self.stack.write_f32(self.sp, z);
                     self.sp += 1;
                 }
-                Value::F64(z) => {
+                ValType::F64 => {
+                    let z = f64::from_bits(global.init);
                     self.stack.write_f64(self.sp, z);
                     self.sp += 2;
                 }
@@ -935,13 +939,11 @@ impl<'module> IrVisitor for Interpreter<'module> {
 
     fn call_host(
         &self,
-        module: ModuleRef,
+        module: HostModuleRef,
         x: u16,
         state: &mut Self::State,
     ) -> Result<(), Self::Error> {
-        let StoreModule::Host(m) = self.module.module_ref(&self.store, module) else {
-            unreachable!()
-        };
+        let m = &self.store.host_modules[module.0 as usize];
         let f = &m.functions[x as usize];
 
         let mut sv: StaticVec<Value, 8> = StaticVec::new();
@@ -1031,13 +1033,9 @@ impl<'module> IrVisitor for Interpreter<'module> {
             }
             FuncRef::HostFunc { module, index } => {
                 // Make sure the type matches our expectations (runtime validation)
-                let StoreModule::Host(m) = self.module.module_ref(&self.store, module) else {
-                    unreachable!()
-                };
+                let m = &self.store.host_modules[module.0 as usize];
                 let f = &m.functions[index as usize];
-                if f.params() != f_expected.params[..]
-                    || f.returns() != f_expected.returns[..]
-                {
+                if f.params() != f_expected.params[..] || f.returns() != f_expected.returns[..] {
                     return Err(InstructionError::InvalidTableFunctionType);
                 }
 
@@ -1106,20 +1104,17 @@ impl<'module> IrVisitor for Interpreter<'module> {
         Ok(())
     }
 
-    fn global_get(
-        &self,
-        ty: ValType,
-        addr: u16,
-        state: &mut Self::State,
-    ) -> Result<(), Self::Error> {
-        match ty {
+    fn global_get(&self, idx: u16, state: &mut Self::State) -> Result<(), Self::Error> {
+        let g = &self.module.globals[idx as usize];
+
+        match g.type_.ty {
             ValType::I32 | ValType::F32 => {
-                let val = state.stack.read_u32(addr as usize);
+                let val = state.stack.read_u32(g.addr as usize);
                 state.stack.write_u32(state.sp, val);
                 state.sp += 1;
             }
             ValType::I64 | ValType::F64 => {
-                let val = state.stack.read_u64(addr as usize);
+                let val = state.stack.read_u64(g.addr as usize);
                 state.stack.write_u64(state.sp, val);
                 state.sp += 2;
             }
@@ -1130,15 +1125,11 @@ impl<'module> IrVisitor for Interpreter<'module> {
 
     fn global_get_host(
         &self,
-        module: ModuleRef,
-        _ty: ValType,
+        module: HostModuleRef,
         index: u16,
         state: &mut Self::State,
     ) -> Result<(), Self::Error> {
-        let StoreModule::Host(m) = self.module.module_ref(&self.store, module) else {
-            unreachable!()
-        };
-
+        let m = &self.store.host_modules[module.0 as usize];
         match m.globals[index as usize]
             .value
             .read()
@@ -1165,22 +1156,18 @@ impl<'module> IrVisitor for Interpreter<'module> {
         Ok(())
     }
 
-    fn global_set(
-        &self,
-        ty: ValType,
-        addr: u16,
-        state: &mut Self::State,
-    ) -> Result<(), Self::Error> {
-        match ty {
+    fn global_set(&self, idx: u16, state: &mut Self::State) -> Result<(), Self::Error> {
+        let g = &self.module.globals[idx as usize];
+        match g.type_.ty {
             ValType::I32 | ValType::F32 => {
                 state.sp -= 1;
                 let val = state.stack.read_u32(state.sp);
-                state.stack.write_u32(addr as usize, val);
+                state.stack.write_u32(g.addr as usize, val);
             }
             ValType::I64 | ValType::F64 => {
                 state.sp -= 2;
                 let val = state.stack.read_u64(state.sp);
-                state.stack.write_u64(addr as usize, val);
+                state.stack.write_u64(g.addr as usize, val);
             }
         }
 
@@ -1189,17 +1176,13 @@ impl<'module> IrVisitor for Interpreter<'module> {
 
     fn global_set_host(
         &self,
-        module: ModuleRef,
-        ty: ValType,
+        module: HostModuleRef,
         index: u16,
         state: &mut Self::State,
     ) -> Result<(), Self::Error> {
-        let StoreModule::Host(m) = self.module.module_ref(&self.store, module) else {
-            unreachable!()
-        };
-
+        let m = &self.store.host_modules[module.0 as usize];
         let g = &m.globals[index as usize];
-        match ty {
+        match g.value.ty() {
             ValType::I32 => {
                 state.sp -= 1;
                 let val = state.stack.read_u32(state.sp) as i32;

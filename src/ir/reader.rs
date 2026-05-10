@@ -146,10 +146,14 @@ impl<'code> Code<'code> {
             }
             CALL => {
                 let idx = self.read(pc).unwrap();
+                let is_host = (imm & 0x80) != 0;
                 if imm == 0 {
                     visitor.call(idx, state)?;
+                } else if is_host {
+                    visitor.call_host(HostModuleRef(imm & 0x7F), idx, state)?
                 } else {
-                    visitor.call_host(ModuleRef(imm), idx, state)?;
+                    // TODO(tumbar) Implement external WASM function calls
+                    unimplemented!()
                 }
             }
             CALL_INDIRECT => {
@@ -166,36 +170,33 @@ impl<'code> Code<'code> {
             LOCAL_SET => instruction!(local_set, local),
             LOCAL_TEE => instruction!(local_tee, local),
             GLOBAL_GET => {
-                let ty = match imm & 0x80 {
-                    0 => ValType::I32,
-                    _ => ValType::I64,
+                let index = if imm == 0xFF {
+                    self.read(pc).unwrap()
+                } else {
+                    imm as u16
                 };
 
-                let module = imm & 0x7F;
-                let index = self.read(pc).unwrap();
-
-                if module == 0 {
-                    visitor.global_get(ty, index, state)?;
-                } else {
-                    visitor.global_get_host(ModuleRef(module), ty, index, state)?;
-                }
+                visitor.global_get(index, state)?;
             }
             GLOBAL_SET => {
-                let ty = match imm & 0x80 {
-                    0 => ValType::I32,
-                    _ => ValType::I64,
+                let index = if imm == 0xFF {
+                    self.read(pc).unwrap()
+                } else {
+                    imm as u16
                 };
 
-                let module = imm & 0x7F;
-                let index = self.read(pc).unwrap();
-
-                if module == 0 {
-                    visitor.global_set(ty, index, state)?;
-                } else {
-                    visitor.global_set_host(ModuleRef(module), ty, index, state)?;
-                }
+                visitor.global_set(index, state)?;
             }
-
+            GLOBAL_GET_HOST => {
+                let module = HostModuleRef(imm);
+                let index = self.read(pc).unwrap();
+                visitor.global_get_host(module, index, state)?;
+            }
+            GLOBAL_SET_HOST => {
+                let module = HostModuleRef(imm);
+                let index = self.read(pc).unwrap();
+                visitor.global_set_host(module, index, state)?;
+            }
             // Memory instructions - loads
             I32_LOAD => instruction!(i32_load, MemArg),
             I64_LOAD => instruction!(i64_load, MemArg),

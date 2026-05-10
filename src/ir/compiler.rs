@@ -115,20 +115,30 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
     fn call(&self, x: FuncIdx, state: &mut Self::State) -> Result<(), Self::Error> {
         let f_ref = state.get_func_ref(x)?;
         match f_ref {
-            FuncRef::Func(i) => {
+            FuncRef::Func(index) => {
                 state.push_with_operand(CALL, 0)?;
-                state.push(i)?;
-                Ok(())
-            }
-            FuncRef::HostFunc { module, index } => {
-                assert!(module.0 >= 1);
-                state.push_with_operand(CALL, module.0)?;
                 state.push(index)?;
                 Ok(())
             }
-            FuncRef::ExternFunc { .. } => {
+            FuncRef::HostFunc { module, index } => {
+                if module.0 >= 0x80 {
+                    return Err(ValidationError::ModuleIdxTooLarge);
+                }
+
+                state.push_with_operand(CALL, 0x80 | module.0)?;
+                state.push(index)?;
+                Ok(())
+            }
+            FuncRef::ExternFunc { module, index } => {
+                if module.0 >= 0x80 {
+                    return Err(ValidationError::ModuleIdxTooLarge);
+                }
+
+                state.push_with_operand(CALL, module.0)?;
+                state.push(index)?;
+
                 // TODO(tumbar) We do not yet support calling WASM functions across modules
-                //              This would require isolation of memory, instruction and (stack?)
+                //              This would require isolation of memory and instruction (and stack?)
                 //              space.
                 Err(ValidationError::FunctionCallsAcrossModuleNotSupportedYet)
             }
@@ -161,8 +171,22 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
 
     fn global_get(&self, x: GlobalIdx, state: &mut Self::State) -> Result<(), Self::Error> {
         let g = state.get_global(x)?;
-        state.push_global(GLOBAL_GET, g)?;
-        Ok(())
+        match g.reference {
+            Ref::Ref(idx) => {
+                state.push_8_or_16(GLOBAL_GET, idx as u32)?;
+                Ok(())
+            }
+            Ref::ExternalRef(r) => {
+                state.push_with_operand(GLOBAL_GET_EXTERNAL, r.module.0)?;
+                state.push(r.index)?;
+                Err(ValidationError::GlobalsAcrossModuleNotSupportedYet)
+            }
+            Ref::HostRef(r) => {
+                state.push_with_operand(GLOBAL_GET_HOST, r.module.0)?;
+                state.push(r.index)?;
+                Ok(())
+            }
+        }
     }
 
     fn global_set(&self, x: GlobalIdx, state: &mut Self::State) -> Result<(), Self::Error> {
@@ -170,8 +194,22 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
         if !g.mutable {
             Err(ValidationError::GlobalIsNotMutable)
         } else {
-            state.push_global(GLOBAL_SET, g)?;
-            Ok(())
+            match g.reference {
+                Ref::Ref(idx) => {
+                    state.push_8_or_16(GLOBAL_SET, idx as u32)?;
+                    Ok(())
+                }
+                Ref::ExternalRef(r) => {
+                    state.push_with_operand(GLOBAL_SET_EXTERNAL, r.module.0)?;
+                    state.push(r.index)?;
+                    Err(ValidationError::GlobalsAcrossModuleNotSupportedYet)
+                }
+                Ref::HostRef(r) => {
+                    state.push_with_operand(GLOBAL_SET_HOST, r.module.0)?;
+                    state.push(r.index)?;
+                    Ok(())
+                }
+            }
         }
     }
 }

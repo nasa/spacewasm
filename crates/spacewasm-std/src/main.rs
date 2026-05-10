@@ -1,10 +1,10 @@
 use spacewasm::{
     vec, Box, ExportDesc, FuncRef, HostFunction, HostFunctionPause, HostModule,
-    InterpreterResult, Memory, SectionKind, Store, StoreModule, Value,
+    InterpreterResult, Memory, SectionKind, Store, Value,
 };
 use spacewasm_std::FileStream;
 use std::alloc::Layout;
-use std::ops::{ControlFlow, Deref};
+use std::ops::ControlFlow;
 
 fn main() {
     let fprime_core = HostModule {
@@ -109,11 +109,7 @@ fn main() {
         )],
     };
 
-    let mut store = Store::new(3).unwrap();
-    store
-        .0
-        .push(Box::new(StoreModule::Host(fprime_core)).unwrap());
-    store.0.push(Box::new(StoreModule::Host(env)).unwrap());
+    let mut store = Store::new(3, [fprime_core, env]).unwrap();
 
     std::env::args().skip(1).for_each(|path| {
         let file = std::fs::File::open(path).expect("failed to open file");
@@ -169,12 +165,8 @@ fn main() {
 
                 eprintln!("Heap size: {}", heap_size);
 
-                store.0.push(Box::new(StoreModule::Module(module)).unwrap());
-
-                let StoreModule::Module(module) = store.0.get(store.0.len() - 1).unwrap().deref()
-                else {
-                    unreachable!()
-                };
+                store.modules.push(Box::new(module).unwrap());
+                let module = store.modules.last().unwrap();
 
                 let mut state = spacewasm::InterpreterState::new(
                     1024,

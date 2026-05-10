@@ -19,6 +19,14 @@ pub const LOCAL_SET: u8 = 0x21;
 pub const LOCAL_TEE: u8 = 0x22;
 pub const GLOBAL_GET: u8 = 0x23;
 pub const GLOBAL_SET: u8 = 0x24;
+
+// IR start
+pub const GLOBAL_GET_HOST: u8 = 0x25;
+pub const GLOBAL_SET_HOST: u8 = 0x26;
+pub const GLOBAL_GET_EXTERNAL: u8 = 0x27;
+pub const GLOBAL_SET_EXTERNAL: u8 = 0x1C;
+// IR end
+
 pub const I32_LOAD: u8 = 0x28;
 pub const I64_LOAD: u8 = 0x29;
 pub const F32_LOAD: u8 = 0x2A;

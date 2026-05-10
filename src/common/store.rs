@@ -1,34 +1,19 @@
 use crate::util::Vec;
-use crate::{AllocError, Box, Func, HostFunction, HostModule, Module};
+use crate::{AllocError, Box, HostModule, Module};
 
-pub enum StoreModule {
-    Host(HostModule),
-    Module(Module),
-}
-
-impl StoreModule {
-    pub fn name(&self) -> &str {
-        match self {
-            StoreModule::Host(m) => m.name,
-            StoreModule::Module(m) => &m.name,
-        }
-    }
-}
-
-pub struct Store(pub Vec<Box<StoreModule>>);
-
-pub enum StoreFunction<'store> {
-    Host(HostFunction),
-    Function {
-        /// The parent module
-        module: &'store Module,
-        /// The wasm function
-        func: &'store Func,
-    },
+pub struct Store {
+    pub modules: Vec<Box<Module>>,
+    pub host_modules: Vec<HostModule>,
 }
 
 impl Store {
-    pub fn new(max_modules: usize) -> Result<Self, AllocError> {
-        Ok(Store(Vec::new(max_modules as u32)?))
+    pub fn new<const N: usize>(
+        max_modules: usize,
+        host_modules: [HostModule; N],
+    ) -> Result<Self, AllocError> {
+        Ok(Store {
+            modules: Vec::new(max_modules as u32)?,
+            host_modules: Vec::from_array(host_modules)?,
+        })
     }
 }

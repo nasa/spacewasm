@@ -77,13 +77,17 @@ impl Module {
         }
 
         // Make sure that the module name is not a duplicate in the store
-        if let Some(_) = store.0.iter().find(|m| m.name() == name) {
+        if let Some(_) = store.modules.iter().find(|m| m.name == name) {
+            return Err(ValidationError::DuplicateModuleName.into());
+        }
+
+        if let Some(_) = store.host_modules.iter().find(|m| m.name == name) {
             return Err(ValidationError::DuplicateModuleName.into());
         }
 
         let mut module = Module {
             name: name.try_into()?,
-            index: store.0.len(),
+            index: store.modules.len(),
             types: Vec::zero(),
             functions: Vec::zero(),
             text: Vec::zero(),
@@ -219,10 +223,6 @@ impl Module {
             match f {
                 Import::Func { module, index } => {
                     if x.0 == n {
-                        // Module 0 indicates the current module which
-                        // doesn't make sense for an import
-                        assert_ne!(module.0, 0);
-
                         // We are at the proper index, this is our function
                         // This import has already been resolved to an embedded function
                         return Ok(FuncRef::ExternFunc {
@@ -233,12 +233,8 @@ impl Module {
 
                     n += 1;
                 }
-                Import::FuncHost { module, index } => {
+                Import::HostFunc { module, index } => {
                     if x.0 == n {
-                        // Module 0 indicates the current module which
-                        // doesn't make sense for an import
-                        assert_ne!(module.0, 0);
-
                         return Ok(FuncRef::HostFunc {
                             module: *module,
                             index: *index,
@@ -266,7 +262,7 @@ impl Module {
             .iter()
             .filter(|f| match f {
                 Import::Func { .. } => true,
-                Import::FuncHost { .. } => true,
+                Import::HostFunc { .. } => true,
                 _ => false,
             })
             .count()
@@ -277,19 +273,19 @@ impl Module {
             .iter()
             .filter(|f| match f {
                 Import::Global { .. } => true,
-                Import::GlobalHost { .. } => true,
+                Import::HostGlobal { .. } => true,
                 _ => false,
             })
             .count()
     }
 
-    pub fn module_ref<'store>(
+    pub fn wasm_module_ref<'store>(
         &self,
         store: &'store Store,
-        module_ref: ModuleRef,
-    ) -> &'store StoreModule {
+        module_ref: ExternalModuleRef,
+    ) -> &'store Module {
         let mod_idx = self.index - (module_ref.0 as usize);
-        &store.0[mod_idx]
+        &store.modules[mod_idx]
     }
 }
 
@@ -491,21 +487,65 @@ impl MemorySection {
 
 pub struct Global {
     pub type_: GlobalType,
-    pub init: Value,
+
+    /// Address of the global relative to the start of the stack.
+    /// All internal globals are written in order. This address is an
+    /// index of 32-bit stack words.
+    pub addr: u16,
+
+    /// Raw 8-byte value that should be written to initialize the variable.
+    /// Look at [type_] to see if we should write 32-bits or 64-bits of this value
+    pub init: u64,
 }
 
 impl Global {
-    pub fn read(wasm: &mut Reader) -> Result<Self, ValidationError> {
+    pub fn read(wasm: &mut Reader, addr: u16) -> Result<Self, ValidationError> {
         let type_ = GlobalType::read(wasm)?;
         let init = Expr::read_constant(wasm)?;
-        Ok(Global { type_, init })
+        let init = match init {
+            Value::I32(i) => {
+                if type_.ty != ValType::I32 {
+                    return Err(ValidationError::GlboalTypeMismatch);
+                }
+
+                i as u64
+            }
+            Value::I64(i) => {
+                if type_.ty != ValType::I64 {
+                    return Err(ValidationError::GlboalTypeMismatch);
+                }
+
+                i as u64
+            }
+            Value::F32(z) => {
+                if type_.ty != ValType::F32 {
+                    return Err(ValidationError::GlboalTypeMismatch);
+                }
+
+                z.to_bits() as u64
+            }
+            Value::F64(z) => {
+                if type_.ty != ValType::F64 {
+                    return Err(ValidationError::GlboalTypeMismatch);
+                }
+
+                z.to_bits()
+            }
+        };
+
+        Ok(Global { type_, addr, init })
     }
 }
 
 pub struct GlobalSection;
 impl GlobalSection {
     pub fn read(wasm: &mut Reader) -> Result<Vec<Global>, ValidationError> {
-        wasm.read_vec(|r| Global::read(r))
+        let mut addr = 0;
+        wasm.read_vec(|r| {
+            let g = Global::read(r, addr)?;
+            addr += (g.type_.ty.size() / 4) as u16;
+            Ok(g)
+        })
     }
 }
 

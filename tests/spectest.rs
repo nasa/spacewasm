@@ -1,13 +1,11 @@
 use spacewasm::{
-    global_allocator, AllocError, Allocator, Code, ExportDesc, InnerVec, InterpreterResult, InterpreterState,
-    Memory, MemoryStatistics, Module, ModuleImports, ReaderError, Stream, Value,
+    global_allocator, AllocError, Allocator,
+    InnerVec, MemoryStatistics, ReaderError, Stream,
 };
 use std::alloc::Layout;
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use wast::core::{NanPattern, WastArgCore, WastRetCore};
 use wast::parser::{self, ParseBuffer};
-use wast::{QuoteWat, Wast, WastArg, WastDirective, WastExecute, WastInvoke, WastRet, Wat};
+use wast::{Wast, WastDirective};
 
 struct RustSystemAllocator {
     total: AtomicUsize,
@@ -94,15 +92,13 @@ fn run_wast_test_file_inner(file_name: &str) -> Result<(), String> {
 
     for dir in wast.directives {
         match dir {
-            WastDirective::Module(m) => {
-
-            }
-            WastDirective::ModuleDefinition(d) => {
-
-            }
-            WastDirective::ModuleInstance { span, instance, module } => {
-
-            }
+            WastDirective::Module(m) => {}
+            WastDirective::ModuleDefinition(d) => {}
+            WastDirective::ModuleInstance {
+                span,
+                instance,
+                module,
+            } => {}
             WastDirective::AssertMalformed { .. } => {}
             WastDirective::AssertInvalid { .. } => {}
             WastDirective::AssertInvalidCustom { .. } => {}

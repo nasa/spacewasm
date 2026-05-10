@@ -1,10 +1,10 @@
 use spacewasm::{
     ExportDesc, FuncRef, HostFunction, HostModule, InstructionError, InterpreterResult, Memory,
-    Store, StoreModule, Value,
+    Store, Value,
 };
 use spacewasm_std::FileStream;
 use std::alloc::Layout;
-use std::ops::{ControlFlow, Deref};
+use std::ops::ControlFlow;
 use std::time::Instant;
 
 fn main() {
@@ -39,22 +39,15 @@ fn main() {
         )],
     };
 
-    let mut store = Store::new(2).unwrap();
-    store
-        .0
-        .push(spacewasm::Box::new(StoreModule::Host(env)).unwrap());
+    let mut store = Store::new(2, [env]).unwrap();
 
     let file = std::fs::File::open("benches/coremark-minimal.wasm")
         .expect("failed to open coremark-minimal.wasm");
     let module = spacewasm::Module::new::<256>("coremark", &mut FileStream::new(file), &store)
         .expect("failed to parse wasm module");
 
-    store
-        .0
-        .push(spacewasm::Box::new(StoreModule::Module(module)).unwrap());
-    let StoreModule::Module(module) = store.0.get(store.0.len() - 1).unwrap().deref() else {
-        unreachable!()
-    };
+    store.modules.push(spacewasm::Box::new(module).unwrap());
+    let module = store.modules.last().unwrap();
 
     let mem = &module.memories[0];
     let heap_size = (mem.0.min as usize) * 65536;
