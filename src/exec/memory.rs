@@ -19,6 +19,7 @@ impl Memory {
     }
 
     pub fn from(ptr: *mut u8, size: usize) -> Memory {
+        unsafe { ptr.write_bytes(0, size) };
         Memory { ptr, size }
     }
 
