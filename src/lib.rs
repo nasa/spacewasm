@@ -36,7 +36,7 @@ mod tests {
         }
     }
 
-    static mut ALLOC_IMPL: RustSystemAllocator = (RustSystemAllocator {});
+    static mut ALLOC_IMPL: RustSystemAllocator = RustSystemAllocator;
     #[allow(unused_unsafe)]
     static mut GLOBAL_ALLOCATOR: *mut RustSystemAllocator = unsafe { &raw mut ALLOC_IMPL };
     #[unsafe(no_mangle)]
@@ -45,7 +45,7 @@ mod tests {
         align: usize,
         err: *mut u32,
     ) -> *mut u8 {
-        let Ok(layout) = core::alloc::Layout::from_size_align(size, align) else {
+        let Ok(layout) = Layout::from_size_align(size, align) else {
             unsafe {
                 *err = AllocError::InvalidLayout.into();
             }
@@ -64,7 +64,7 @@ mod tests {
     }
     #[unsafe(no_mangle)]
     pub unsafe extern "C" fn __spacewasm_dealloc(ptr: *mut u8, size: usize, align: usize) {
-        let layout = core::alloc::Layout::from_size_align(size, align).unwrap();
+        let layout = Layout::from_size_align(size, align).unwrap();
         unsafe { (*GLOBAL_ALLOCATOR).dealloc(ptr, layout) }
     }
     #[unsafe(no_mangle)]
