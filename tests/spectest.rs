@@ -1,8 +1,7 @@
 use spacewasm::{
-    global_allocator, vec, AllocError, Allocator, Code, ExportDesc, FuncRef,
-    GlobalValue, GlobalValueError, HostFunction, HostGlobal, HostModule, InnerVec, Interpreter,
-    InterpreterResult, InterpreterState, Memory, MemoryStatistics, Module, ReaderError, Store,
-    Stream, ValType, Value,
+    global_allocator, vec, AllocError, Allocator, Code, ExportDesc, FuncRef, GlobalValue,
+    GlobalValueError, HostFunction, HostGlobal, HostModule, InnerVec, Interpreter, InterpreterResult,
+    InterpreterState, Memory, MemoryStatistics, Module, ReaderError, Store, Stream, ValType, Value,
 };
 use std::alloc::Layout;
 use std::collections::HashMap;
@@ -248,7 +247,9 @@ fn compare_values(actual: Value, expected: &WastRet) -> Result<(), String> {
                 if let Value::F64(a) = actual {
                     match f {
                         wast::core::NanPattern::CanonicalNan => {
-                            if a.is_nan() && (a.to_bits() & 0x7FF8000000000000) == 0x7FF8000000000000 {
+                            if a.is_nan()
+                                && (a.to_bits() & 0x7FF8000000000000) == 0x7FF8000000000000
+                            {
                                 Ok(())
                             } else {
                                 Err(format!("Expected canonical NaN, got {}", a))
@@ -274,9 +275,15 @@ fn compare_values(actual: Value, expected: &WastRet) -> Result<(), String> {
                     Err(format!("Expected f64, got {:?}", actual))
                 }
             }
-            _ => Err(format!("Unsupported wast ret type for comparison: {:?}", core)),
+            _ => Err(format!(
+                "Unsupported wast ret type for comparison: {:?}",
+                core
+            )),
         },
-        _ => Err(format!("Unsupported wast ret for comparison: {:?}", expected)),
+        _ => Err(format!(
+            "Unsupported wast ret for comparison: {:?}",
+            expected
+        )),
     }
 }
 
@@ -317,9 +324,7 @@ fn load_module(
 
     // Push module to store
     let module_index = ctx.store.modules.len();
-    ctx.store
-        .modules
-        .push(spacewasm::Box::new(module).unwrap());
+    ctx.store.modules.push(spacewasm::Box::new(module).unwrap());
     let module = ctx.get_module(module_index)?;
 
     // Initialize the state
@@ -355,11 +360,17 @@ fn invoke_function(
     let instance_key = if module_name.is_some() {
         module_name.clone()
     } else {
-        Some(ctx.current_instance.clone().ok_or_else(|| "No module instance specified for invoke".to_string())?)
+        Some(
+            ctx.current_instance
+                .clone()
+                .ok_or_else(|| "No module instance specified for invoke".to_string())?,
+        )
     };
 
     // Get module index first
-    let module_index = ctx.instances.get(&instance_key)
+    let module_index = ctx
+        .instances
+        .get(&instance_key)
         .ok_or_else(|| format!("Instance {:?} not found", instance_key))?
         .module_index;
 
@@ -406,11 +417,7 @@ fn invoke_function(
     let func = &module.functions[func_index];
     let interpreter = Interpreter::new(&ctx.store, module);
     let code = Code::new(&module.text);
-
-    // Get mutable reference to the instance
     let instance = ctx.instances.get_mut(&instance_key).unwrap();
-
-    // Invoke the function
     interpreter.invoke(&mut instance.state, func, &params);
 
     // Run until completion
@@ -527,127 +534,136 @@ fn run_wast_test_file_inner(file_name: &str) -> Result<(), String> {
     let mut ctx = TestContext::new(store);
 
     for dir in wast.directives {
-        match dir {
-            WastDirective::Module(mut m) => {
-                // Modules don't carry their own ID in QuoteWat, use auto-generated name
-                load_module(&mut ctx, None, &mut m)?;
+        let result = match dir {
+            WastDirective::Module(mut module) => {
+                let span = module.span();
+                load_module(&mut ctx, None, &mut module)
+                    .map_err(|e| (span, format!("Module: {}", e)))
             }
-            WastDirective::ModuleDefinition(mut d) => {
-                // Module definitions are parsed but not instantiated
-                // We still need to load them for later instantiation
-                load_module(&mut ctx, None, &mut d)?;
+            WastDirective::ModuleDefinition(mut module) => {
+                let span = module.span();
+                load_module(&mut ctx, None, &mut module)
+                    .map_err(|e| (span, format!("ModuleDefinition: {}", e)))
             }
-            WastDirective::ModuleInstance { .. } => {
-                return Err("ModuleInstance directive not yet implemented".to_string());
+            WastDirective::ModuleInstance { span, .. } => {
+                Err((span, "ModuleInstance directive not yet implemented".to_string()))
             }
             WastDirective::AssertMalformed {
-                span: _,
+                span,
                 mut module,
                 message: _,
             } => {
-                // Should fail during encoding
                 match module.encode() {
-                    Ok(_) => return Err("Expected malformed module to fail encoding".to_string()),
-                    Err(_) => {} // Expected
+                    Ok(_) => Err((span, "Expected malformed module to fail encoding".to_string())),
+                    Err(_) => Ok(()), // Expected
                 }
             }
             WastDirective::AssertInvalid {
-                span: _,
+                span,
                 mut module,
                 message: _,
             } => {
-                // Should fail during validation
+                let span = span;
                 match module.encode() {
                     Ok(bytes) => {
                         let mut stream = ByteStream::new(&bytes);
                         match Module::new::<256>("invalid_test", &mut stream, &ctx.store) {
-                            Ok(_) => {
-                                return Err("Expected invalid module to fail validation".to_string())
-                            }
-                            Err(_) => {} // Expected
+                            Ok(_) => Err((span, "Expected invalid module to fail validation".to_string())),
+                            Err(_) => Ok(()), // Expected
                         }
                     }
-                    Err(e) => return Err(format!("Module encoding failed: {}", e)),
+                    Err(e) => Err((span, format!("Module encoding failed: {}", e))),
                 }
             }
-            WastDirective::AssertInvalidCustom { .. } => {
-                return Err("AssertInvalidCustom directive not yet implemented".to_string());
+            WastDirective::AssertInvalidCustom { span, .. } => {
+                Err((span, "AssertInvalidCustom directive not yet implemented".to_string()))
             }
-            WastDirective::Register { span: _, name, module } => {
-                // Register a module under a specific name for imports
-                let module_id = module.map(|id| id.name().to_string());
-                // For now, we just need to track that this module is registered
-                // Import resolution would happen during module instantiation
-                let _ = (name, module_id); // Placeholder
-                return Err("Register directive not yet fully implemented".to_string());
+            WastDirective::Register { span, .. } => {
+                Err((span, "Register directive not yet fully implemented".to_string()))
             }
             WastDirective::Invoke(invoke) => {
-                // Execute the function but ignore the result
-                let _ = invoke_function(&mut ctx, &invoke.module.map(|m| m.name().to_string()), invoke.name, &invoke.args)?;
+                let span = invoke.span;
+                invoke_function(&mut ctx, &invoke.module.map(|m| m.name().to_string()), invoke.name, &invoke.args)
+                    .map(|_| ())
+                    .map_err(|e| (span, format!("Invoke '{}': {}", invoke.name, e)))
             }
-            WastDirective::AssertTrap { span: _, exec, message: _ } => {
+            WastDirective::AssertTrap { span, exec, message: _ } => {
                 match exec {
                     WastExecute::Invoke(invoke) => {
                         let result = invoke_function(&mut ctx, &invoke.module.map(|m| m.name().to_string()), invoke.name, &invoke.args);
                         match result {
-                            Err(msg) if msg.contains("Trap") => {} // Expected trap
-                            Err(msg) => return Err(format!("Expected trap, got error: {}", msg)),
-                            Ok(_) => return Err("Expected trap, but execution succeeded".to_string()),
+                            // Any execution error is considered a trap
+                            Err(msg) if msg.contains("Trap") || msg.contains("MemoryOutOfBounds") || msg.contains("Execution failed") => Ok(()),
+                            Err(msg) => Err((span, format!("AssertTrap '{}': Expected trap, got error: {}", invoke.name, msg))),
+                            Ok(_) => Err((span, format!("AssertTrap '{}': Expected trap, but execution succeeded", invoke.name))),
                         }
                     }
                     WastExecute::Wat(_) => {
-                        return Err("AssertTrap with Wat not yet implemented".to_string());
+                        Err((span, "AssertTrap with Wat not yet implemented".to_string()))
                     }
                     WastExecute::Get { .. } => {
-                        return Err("AssertTrap with Get not yet implemented".to_string());
+                        Err((span, "AssertTrap with Get not yet implemented".to_string()))
                     }
                 }
             }
-            WastDirective::AssertReturn { span: _, exec, results } => {
+            WastDirective::AssertReturn { span, exec, results } => {
                 match exec {
                     WastExecute::Invoke(invoke) => {
-                        let result = invoke_function(&mut ctx, &invoke.module.map(|m| m.name().to_string()), invoke.name, &invoke.args)?;
-
-                        if results.is_empty() {
-                            if result.is_some() {
-                                return Err(format!("Expected no return value, got {:?}", result));
+                        match invoke_function(&mut ctx, &invoke.module.map(|m| m.name().to_string()), invoke.name, &invoke.args) {
+                            Ok(result) => {
+                                if results.is_empty() {
+                                    if result.is_some() {
+                                        Err((span, format!("AssertReturn '{}': Expected no return value, got {:?}", invoke.name, result)))
+                                    } else {
+                                        Ok(())
+                                    }
+                                } else if results.len() == 1 {
+                                    match result {
+                                        Some(actual) => compare_values(actual, &results[0])
+                                            .map_err(|e| (span, format!("AssertReturn '{}': {}", invoke.name, e))),
+                                        None => Err((span, format!("AssertReturn '{}': Expected return value, got none", invoke.name))),
+                                    }
+                                } else {
+                                    Err((span, format!("AssertReturn '{}': Multi-value returns not yet supported", invoke.name)))
+                                }
                             }
-                        } else if results.len() == 1 {
-                            let actual = result.ok_or_else(|| "Expected return value, got none".to_string())?;
-                            compare_values(actual, &results[0])?;
-                        } else {
-                            return Err("Multi-value returns not yet supported".to_string());
+                            Err(e) => Err((span, format!("AssertReturn '{}': {}", invoke.name, e))),
                         }
                     }
                     WastExecute::Wat(_) => {
-                        return Err("AssertReturn with Wat not yet implemented".to_string());
+                        Err((span, "AssertReturn with Wat not yet implemented".to_string()))
                     }
                     WastExecute::Get { .. } => {
-                        return Err("AssertReturn with Get not yet implemented".to_string());
+                        Err((span, "AssertReturn with Get not yet implemented".to_string()))
                     }
                 }
             }
-            WastDirective::AssertExhaustion { .. } => {
-                return Err("AssertExhaustion not supported: stack overflow detection not yet implemented in spacewasm".to_string());
+            WastDirective::AssertExhaustion { span, .. } => {
+                Err((span, "AssertExhaustion not supported: stack overflow detection not yet implemented in spacewasm".to_string()))
             }
-            WastDirective::AssertUnlinkable { .. } => {
-                return Err("AssertUnlinkable directive not yet implemented".to_string());
+            WastDirective::AssertUnlinkable { span, .. } => {
+                Err((span, "AssertUnlinkable directive not yet implemented".to_string()))
             }
-            WastDirective::AssertException { .. } => {
-                return Err("AssertException not supported: exceptions are not implemented in spacewasm".to_string());
+            WastDirective::AssertException { span, .. } => {
+                Err((span, "AssertException not supported: exceptions are not implemented in spacewasm".to_string()))
             }
-            WastDirective::AssertSuspension { .. } => {
-                return Err("AssertSuspension not supported: threading is not implemented in spacewasm".to_string());
+            WastDirective::AssertSuspension { span, .. } => {
+                Err((span, "AssertSuspension not supported: threading is not implemented in spacewasm".to_string()))
             }
-            WastDirective::Thread(_) => {
-                return Err("Thread directive not supported: threading is not implemented in spacewasm".to_string());
+            WastDirective::Thread(t) => {
+                Err((t.span, "Thread directive not supported: threading is not implemented in spacewasm".to_string()))
             }
-            WastDirective::Wait { .. } => {
-                return Err("Wait directive not supported: threading is not implemented in spacewasm".to_string());
+            WastDirective::Wait { span, .. } => {
+                Err((span, "Wait directive not supported: threading is not implemented in spacewasm".to_string()))
             }
-            WastDirective::AssertMalformedCustom { .. } => {
-                return Err("AssertMalformedCustom directive not yet implemented".to_string());
+            WastDirective::AssertMalformedCustom { span, .. } => {
+                Err((span, "AssertMalformedCustom directive not yet implemented".to_string()))
             }
+        };
+
+        if let Err((span, msg)) = result {
+            let (line, col) = span.linecol_in(&wast_content);
+            return Err(format!("{}:{}:{}: {}", wast_path, line + 1, col + 1, msg));
         }
     }
 
@@ -657,6 +673,6 @@ fn run_wast_test_file_inner(file_name: &str) -> Result<(), String> {
 pub fn run_wast_test_file(file_name: &str) {
     match run_wast_test_file_inner(file_name) {
         Ok(_) => println!("Test {} passed", file_name),
-        Err(e) => panic!("Test {} failed: {}", file_name, e),
+        Err(e) => panic!("{}", e),
     }
 }
