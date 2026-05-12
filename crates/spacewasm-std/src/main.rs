@@ -1,5 +1,5 @@
 use spacewasm::{
-    vec, Box, ExportDesc, FuncRef, HostFunction, HostFunctionPause, HostModule,
+    vec, Box, ExportDesc, FuncRef, HostFunction, HostFunctionBreak, HostModule,
     InterpreterResult, InterpreterRunner, Memory, SectionKind, Store, Value,
 };
 use spacewasm_std::FileStream;
@@ -26,7 +26,7 @@ fn main() {
                 let s: &str = core::str::from_utf8(f).unwrap();
 
                 eprintln!("PANIC {}:{}", s, line_no);
-                ControlFlow::Break(HostFunctionPause::Trap)
+                ControlFlow::Break(HostFunctionBreak::Trap)
             }),
             HostFunction::new("rsleep", "I".into(), "".into(), |_, a| {
                 eprintln!("RSLEEP {:?}", a.get(0));

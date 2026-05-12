@@ -44,7 +44,7 @@ impl HostGlobal {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HostFunctionPause {
+pub enum HostFunctionBreak {
     /// Halt execution due to an error
     Trap,
 
@@ -52,7 +52,7 @@ pub enum HostFunctionPause {
     Pause,
 }
 
-pub type HostFunctionResult = ControlFlow<HostFunctionPause, Option<Value>>;
+pub type HostFunctionResult = ControlFlow<HostFunctionBreak, Option<Value>>;
 
 #[derive(Copy, Clone)]
 pub struct HostValList(&'static str);

@@ -91,12 +91,10 @@ impl AddAssign<u32> for JumpTarget {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InterpreterResult {
-    /// Reached the end of the program
-    Finished,
     /// No more fuel (ran to instruction bound)
     OutOfFuel,
     /// An instruction requested a pause or failed
-    Instruction(InstructionError),
+    Instruction(InterpreterBreak),
     /// Failed to read an instruction from memory
     ReaderError(IrReaderError),
 }
@@ -180,7 +178,7 @@ pub trait InterpreterRunner {
     ) -> InterpreterResult;
 }
 
-impl<T: IrVisitor<State = InterpreterState, Error = InstructionError>> InterpreterRunner for T {
+impl<T: IrVisitor<State = InterpreterState, Error = InterpreterBreak>> InterpreterRunner for T {
     fn run(
         &self,
         code: &Code,
@@ -226,13 +224,13 @@ impl RawValue {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InstructionError {
-    /// The program has completed
-    Finished(RawValue),
-    /// The program has been aborted
-    Trap,
-    /// An instruction or host function has requested the interpreter to pause
-    Pause,
+pub enum TrapReason {
+    /// Triggered by unreachable instruction
+    Unreachable,
+    /// A host function has noted an unrecoverable failure
+    Host,
+    ///
+    DivideByZero,
     /// An indirect call tried to map to a table function out of range
     InvalidTableIndex,
     /// The function type in an indirect call does not match the function pointer's type
@@ -247,17 +245,27 @@ pub enum InstructionError {
     MemoryOutOfBounds,
 }
 
-impl From<MemoryOutOfBounds> for InstructionError {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InterpreterBreak {
+    /// The program has completed
+    Finished(RawValue),
+    /// The program has been aborted
+    Trap(TrapReason),
+    /// An instruction or host function has requested the interpreter to pause
+    Pause,
+}
+
+impl From<MemoryOutOfBounds> for InterpreterBreak {
     fn from(_: MemoryOutOfBounds) -> Self {
-        InstructionError::MemoryOutOfBounds
+        InterpreterBreak::Trap(TrapReason::MemoryOutOfBounds)
     }
 }
 
-impl From<HostFunctionPause> for InstructionError {
-    fn from(err: HostFunctionPause) -> Self {
+impl From<HostFunctionBreak> for InterpreterBreak {
+    fn from(err: HostFunctionBreak) -> Self {
         match err {
-            HostFunctionPause::Trap => InstructionError::Trap,
-            HostFunctionPause::Pause => InstructionError::Pause,
+            HostFunctionBreak::Trap => InterpreterBreak::Trap(TrapReason::Host),
+            HostFunctionBreak::Pause => InterpreterBreak::Pause,
         }
     }
 }
@@ -373,11 +381,11 @@ macro_rules! instruction {
 }
 
 impl<'module> BaseVisitor for Interpreter<'module> {
-    type Error = InstructionError;
+    type Error = InterpreterBreak;
     type State = InterpreterState;
 
     fn unreachable(&self, _: &mut Self::State) -> Result<(), Self::Error> {
-        Err(InstructionError::Trap)
+        Err(InterpreterBreak::Trap(TrapReason::Unreachable))
     }
 
     fn nop(&self, _: &mut Self::State) -> Result<(), Self::Error> {
@@ -652,8 +660,20 @@ impl<'module> BaseVisitor for Interpreter<'module> {
     instruction!(i32_add, i32, i32 -> i32, a, b, a.wrapping_add(b));
     instruction!(i32_sub, i32, i32 -> i32, a, b, a.wrapping_sub(b));
     instruction!(i32_mul, i32, i32 -> i32, a, b, a.wrapping_mul(b));
-    instruction!(i32_div_s, i32, i32 -> i32, a, b, a.wrapping_div(b));
-    instruction!(i32_div_u, i32, i32 -> i32, a, b, (a as u32).wrapping_div(b as u32) as i32);
+    instruction!(i32_div_s, i32, i32 -> i32, a, b, {
+        if b == 0 {
+            return Err(InterpreterBreak::Trap(TrapReason::DivideByZero))
+        } else {
+            a.wrapping_div(b)
+        }
+    });
+    instruction!(i32_div_u, i32, i32 -> i32, a, b, {
+        if b == 0 {
+            return Err(InterpreterBreak::Trap(TrapReason::DivideByZero))
+        } else {
+            (a as u32).wrapping_div(b as u32)
+        }
+    } as i32);
     instruction!(i32_rem_s, i32, i32 -> i32, a, b, a.wrapping_rem(b));
     instruction!(i32_rem_u, i32, i32 -> i32, a, b, (a as u32).wrapping_rem(b as u32) as i32);
     instruction!(i32_and, i32, i32 -> i32, a, b, a & b);
@@ -670,8 +690,20 @@ impl<'module> BaseVisitor for Interpreter<'module> {
     instruction!(i64_add, i64, i64 -> i64, a, b, a.wrapping_add(b));
     instruction!(i64_sub, i64, i64 -> i64, a, b, a.wrapping_sub(b));
     instruction!(i64_mul, i64, i64 -> i64, a, b, a.wrapping_mul(b));
-    instruction!(i64_div_s, i64, i64 -> i64, a, b, a.wrapping_div(b));
-    instruction!(i64_div_u, i64, i64 -> i64, a, b, (a as u64).wrapping_div(b as u64) as i64);
+    instruction!(i64_div_s, i64, i64 -> i64, a, b, {
+        if b == 0 {
+            return Err(InterpreterBreak::Trap(TrapReason::DivideByZero))
+        } else {
+            a.wrapping_div(b)
+        }
+    });
+    instruction!(i64_div_u, i64, i64 -> i64, a, b, {
+        if b == 0 {
+            return Err(InterpreterBreak::Trap(TrapReason::DivideByZero))
+        } else {
+            (a as u64).wrapping_div(b as u64) as i64
+        }
+    });
     instruction!(i64_rem_s, i64, i64 -> i64, a, b, a.wrapping_rem(b));
     instruction!(i64_rem_u, i64, i64 -> i64, a, b, (a as u64).wrapping_rem(b as u64) as i64);
     instruction!(i64_and, i64, i64 -> i64, a, b, a & b);
@@ -895,7 +927,8 @@ impl<'module> IrVisitor for Interpreter<'module> {
     ) -> Result<(), Self::Error> {
         state.sp -= 1;
         let v = state.stack.read_u32(state.sp);
-        let addr = cases(v as u16).map_err(|_| InstructionError::BrTableLookupFailed)?;
+        let addr =
+            cases(v as u16).map_err(|_| InterpreterBreak::Trap(TrapReason::BrTableLookupFailed))?;
 
         state.pc = addr;
         Ok(())
@@ -934,7 +967,7 @@ impl<'module> IrVisitor for Interpreter<'module> {
                 _ => unreachable!(),
             };
 
-            Err(InstructionError::Finished(return_value))
+            Err(InterpreterBreak::Finished(return_value))
         } else {
             state.sp = parameter_start + return_size;
             state.pc = return_pc + 2; // +2 to skip over the call or call_indirect
@@ -1022,7 +1055,7 @@ impl<'module> IrVisitor for Interpreter<'module> {
         let f_expected = &self.module.types[x.0 as usize];
 
         if i >= self.module.table.len() {
-            return Err(InstructionError::InvalidTableIndex);
+            return Err(InterpreterBreak::Trap(TrapReason::InvalidTableIndex));
         }
 
         // Look up the internal or host function
@@ -1036,7 +1069,7 @@ impl<'module> IrVisitor for Interpreter<'module> {
                 let f_actual = &self.module.types[f.ty.0 as usize];
 
                 if f_actual.params != f_expected.params || f_actual.returns != f_expected.returns {
-                    return Err(InstructionError::InvalidTableFunctionType);
+                    return Err(InterpreterBreak::Trap(TrapReason::InvalidTableFunctionType));
                 }
 
                 // Call the function
@@ -1048,7 +1081,7 @@ impl<'module> IrVisitor for Interpreter<'module> {
                 let m = &self.store.host_modules[module.0 as usize];
                 let f = &m.functions[index as usize];
                 if f.params() != f_expected.params[..] || f.returns() != f_expected.returns[..] {
-                    return Err(InstructionError::InvalidTableFunctionType);
+                    return Err(InterpreterBreak::Trap(TrapReason::InvalidTableFunctionType));
                 }
 
                 self.call_host(module, i as u16, state)
@@ -1145,7 +1178,7 @@ impl<'module> IrVisitor for Interpreter<'module> {
         match m.globals[index as usize]
             .value
             .read()
-            .or(Err(InstructionError::GlobalGetFailed))?
+            .or(Err(InterpreterBreak::Trap(TrapReason::GlobalGetFailed)))?
         {
             Value::I32(i) => {
                 state.stack.write_u32(state.sp, i as u32);
@@ -1216,7 +1249,7 @@ impl<'module> IrVisitor for Interpreter<'module> {
                 g.value.write(Value::F64(f))
             }
         }
-        .or(Err(InstructionError::GlobalSetFailed))
+        .or(Err(InterpreterBreak::Trap(TrapReason::GlobalSetFailed)))
     }
 }
 

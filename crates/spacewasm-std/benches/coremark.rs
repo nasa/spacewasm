@@ -1,5 +1,5 @@
 use spacewasm::{
-    ExportDesc, FuncRef, HostFunction, HostModule, InstructionError, InterpreterResult,
+    ExportDesc, FuncRef, HostFunction, HostModule, InterpreterBreak, InterpreterResult,
     InterpreterRunner, Memory, Store, Value,
 };
 use spacewasm_std::FileStream;
@@ -107,7 +107,7 @@ fn main() {
     // "Call f32 run() function. It should take 12..20 seconds to execute and return a CoreMark result."
     // "if res > 1: print(f'Result: {res:.3f}') else: print('Error')"
     match result {
-        InterpreterResult::Instruction(InstructionError::Finished(raw_value)) => {
+        InterpreterResult::Instruction(InterpreterBreak::Finished(raw_value)) => {
             // The run function returns f32, so interpret the bits as float
             let coremark_score = f32::from_bits(raw_value.0 as u32);
 
