@@ -1,6 +1,4 @@
-use crate::{
-    FuncIdx, GlobalIdx, JumpTarget, LabelIdx, LocalIdx, MemArg, ResultType, TypeIdx, ValType,
-};
+use crate::{FuncIdx, GlobalIdx, JumpTarget, LabelIdx, LocalIdx, MemArg, ResultType, TypeIdx, ValType};
 
 /// A convenience macro for defining the visitor function for a decoded
 /// WebAssembly instruction from any intermediate representation.

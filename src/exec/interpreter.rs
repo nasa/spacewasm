@@ -164,8 +164,24 @@ impl<'store> Interpreter<'store> {
 
         self.call_impl(f, state);
     }
+}
 
-    pub fn run(
+/// This is a meta-trait that provides an auto implementation of run() for all IrVisitors
+/// of a certain shape.
+///
+/// For all types that implement [IrVisitor<State = InterpreterState, Error = InstructionError>],
+/// this trait will be implemented to execute instructions given the state and store.
+pub trait InterpreterRunner {
+    fn run(
+        &self,
+        code: &Code,
+        state: &mut InterpreterState,
+        n_instructions: usize,
+    ) -> InterpreterResult;
+}
+
+impl<T: IrVisitor<State = InterpreterState, Error = InstructionError>> InterpreterRunner for T {
+    fn run(
         &self,
         code: &Code,
         state: &mut InterpreterState,
@@ -176,8 +192,6 @@ impl<'store> Interpreter<'store> {
             let old_pc = state.pc;
             let mut pc = state.pc;
 
-            // extern crate std;
-            // std::eprint!("PC = {} ", pc.0);
             let i_res = code.visit_instruction(state, &mut pc, self);
             if old_pc != state.pc {
                 // We jumped, leave the PC
@@ -185,8 +199,6 @@ impl<'store> Interpreter<'store> {
                 // Increment the program counter
                 state.pc = pc;
             }
-
-            // std::eprintln!(" => POST PC = {}", state.pc.0);
 
             match i_res {
                 Ok(_) => {}

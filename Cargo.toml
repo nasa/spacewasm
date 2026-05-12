@@ -23,6 +23,9 @@ libm = "0.2.16"
 [dev-dependencies]
 wast = "248.0.0"
 
+[patch.crates-io]
+wasm-encoder = { path = "../wasm-tools/crates/wasm-encoder" }
+
 [profile.release]
 opt-level = 3
 lto = true

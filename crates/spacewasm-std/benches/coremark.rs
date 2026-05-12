@@ -1,6 +1,6 @@
 use spacewasm::{
-    ExportDesc, FuncRef, HostFunction, HostModule, InstructionError, InterpreterResult, Memory,
-    Store, Value,
+    ExportDesc, FuncRef, HostFunction, HostModule, InstructionError, InterpreterResult,
+    InterpreterRunner, Memory, Store, Value,
 };
 use spacewasm_std::FileStream;
 use std::alloc::Layout;

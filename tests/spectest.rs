@@ -1,7 +1,8 @@
 use spacewasm::{
     AllocError, Allocator, Code, ExportDesc, FuncRef, GlobalValue, GlobalValueError, HostFunction,
-    HostGlobal, HostModule, InnerVec, Interpreter, InterpreterResult, InterpreterState, Memory,
-    MemoryStatistics, Module, ReaderError, Store, Stream, ValType, Value, global_allocator, vec,
+    HostGlobal, HostModule, InnerVec, Interpreter, InterpreterResult, InterpreterRunner,
+    InterpreterState, Memory, MemoryStatistics, Module, ReaderError, Store, Stream, ValType, Value,
+    global_allocator, vec,
 };
 use std::alloc::Layout;
 use std::collections::HashMap;
@@ -318,8 +319,7 @@ fn load_module(
     };
 
     // Allocate memory
-    let memory_ptr = unsafe { std::alloc::alloc(Layout::from_size_align(heap_size, 64).unwrap()) };
-    let memory = Memory::from(memory_ptr, heap_size);
+    let memory = Memory::new(heap_size);
 
     // Create interpreter state
     let mut state = InterpreterState::new(1024, memory);
@@ -464,7 +464,7 @@ pub fn run_wast_test_file(file_name: &str) {
     let wast: Wast = parser::parse(&buf).expect("failed to parse wast");
 
     let store = Store::new(
-        500, // Allow many modules for spec tests (const.wast has 402 modules!)
+        500,
         [HostModule {
             name: "spectest",
             globals: vec![
