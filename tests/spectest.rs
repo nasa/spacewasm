@@ -520,7 +520,7 @@ fn trap_reason_to_string(reason: TrapReason) -> &'static str {
     }
 }
 
-fn check_decode_error(line: u32, err: ParseError, text: String) {
+fn check_decode_error(filename: &str, line: u32, err: ParseError, text: String) {
     match (err.err.err, text.as_str()) {
         (ValidationError::MalformedInteger, "integer too large")
         | (ValidationError::MalformedInteger, "integer representation too long") => {}
@@ -532,16 +532,16 @@ fn check_decode_error(line: u32, err: ParseError, text: String) {
         err => {
             assert!(
                 false,
-                "Expected malformed module at line {line} with error '{text}' got {err:?}"
+                "{filename}:{line} Could not match expected error text '{text}' with error {err:?}"
             )
         }
     }
 }
 
-pub fn run_wast_test_file(file_name: &str) {
+pub fn run_wast_test_file(test_name: &str) {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    let test_dir = format!("{}/tests/spectest/wasm-1.0/{}", manifest_dir, file_name);
-    let json_path = format!("{}/{}.json", test_dir, file_name);
+    let test_dir = format!("{}/tests/spectest/wasm-1.0/{}", manifest_dir, test_name);
+    let json_path = format!("{}/{}.json", test_dir, test_name);
 
     let json_content = std::fs::read_to_string(&json_path)
         .unwrap_or_else(|e| panic!("Failed to read JSON file: {}: {e}", json_path));
@@ -689,17 +689,18 @@ pub fn run_wast_test_file(file_name: &str) {
                 // Skip text format tests as we only handle binary WASM
                 if module_type != "text" {
                     let wasm_path = format!("{test_dir}/{filename}");
+                    let wast_path = format!("{test_dir}/{test_name}.wast");
                     let wasm_bytes = std::fs::read(&wasm_path).unwrap();
                     let mut stream = ByteStream::new(&wasm_bytes);
 
                     let err = Module::new::<256>("malformed_test", &mut stream, &ctx.store)
                         .err()
                         .expect(
-                            format!("Line {line}: Expected malformed module to fail with {text}")
+                            format!("{wast_path}:{line}: Expected malformed module to fail with '{text}'")
                                 .as_str(),
                         );
 
-                    check_decode_error(line, err, text);
+                    check_decode_error(&wast_path, line, err, text);
                 }
             }
             Command::AssertInvalid {
