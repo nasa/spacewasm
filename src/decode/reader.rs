@@ -190,7 +190,7 @@ impl<'wasm> Reader<'wasm> {
         let has_next_byte = byte & CONTINUATION_BIT > 0;
         let padding_bits_are_not_zero = byte & PADDING_IN_LAST_BYTE_BIT_MASK > 0;
         if has_next_byte || padding_bits_are_not_zero {
-            return Err(ValidationError::MalformedVariableLengthInteger);
+            return Err(ValidationError::MalformedInteger);
         }
 
         Ok(result)
@@ -256,7 +256,7 @@ impl<'wasm> Reader<'wasm> {
         // there can only be a maximum number of 5 bytes for a 32-bit integer
         let has_next_byte = byte & CONTINUATION_BIT > 0;
         if has_next_byte {
-            return Err(ValidationError::MalformedVariableLengthInteger);
+            return Err(ValidationError::MalformedInteger);
         }
 
         // Verify that the padding and sign bits are either all ones or all
@@ -270,7 +270,7 @@ impl<'wasm> Reader<'wasm> {
             == PADDING_AND_SIGN_BITMASK.count_ones()
             || number_of_ones_in_padding_and_sign_bits == 0;
         if !padding_bits_match_sign_bit {
-            return Err(ValidationError::MalformedVariableLengthInteger);
+            return Err(ValidationError::MalformedInteger);
         }
 
         Ok(result)
@@ -329,7 +329,7 @@ impl<'wasm> Reader<'wasm> {
         // there can only be a maximum number of 5 bytes for a 33-bit integer
         let has_next_byte = byte & CONTINUATION_BIT > 0;
         if has_next_byte {
-            return Err(ValidationError::MalformedVariableLengthInteger);
+            return Err(ValidationError::MalformedInteger);
         }
 
         // Verify that the padding and sign bits are either all ones or all
@@ -343,7 +343,7 @@ impl<'wasm> Reader<'wasm> {
             == PADDING_AND_SIGN_BITMASK.count_ones()
             || number_of_ones_in_padding_and_sign_bits == 0;
         if !padding_bits_match_sign_bit {
-            return Err(ValidationError::MalformedVariableLengthInteger);
+            return Err(ValidationError::MalformedInteger);
         }
 
         u32::try_from(result).map_err(|_| ValidationError::I33IsNegative)
@@ -447,7 +447,7 @@ impl<'wasm> Reader<'wasm> {
         // there can only be a maximum number of 10 bytes for a 64-bit integer
         let has_next_byte = byte & CONTINUATION_BIT > 0;
         if has_next_byte {
-            return Err(ValidationError::MalformedVariableLengthInteger);
+            return Err(ValidationError::MalformedInteger);
         }
 
         // Verify that the padding and sign bits are either all ones or all
@@ -461,7 +461,7 @@ impl<'wasm> Reader<'wasm> {
             == PADDING_AND_SIGN_BITMASK.count_ones()
             || number_of_ones_in_padding_and_sign_bits == 0;
         if !padding_bits_match_sign_bit {
-            return Err(ValidationError::MalformedVariableLengthInteger);
+            return Err(ValidationError::MalformedInteger);
         }
 
         Ok(result)

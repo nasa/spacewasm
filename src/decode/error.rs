@@ -37,7 +37,7 @@ impl SectionDecodeError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ValidationError {
     Eof,
-    MalformedVariableLengthInteger,
+    MalformedInteger,
     I33IsNegative,
     MalformedMagic,
     MalformedVersion,

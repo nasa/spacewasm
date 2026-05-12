@@ -3,7 +3,7 @@ use spacewasm::{
     global_allocator, vec, AllocError, Allocator, Code, ExportDesc, FuncRef, GlobalValue,
     GlobalValueError, HostFunction, HostGlobal, HostModule, InnerVec, Interpreter,
     InterpreterBreak, InterpreterResult, InterpreterRunner, InterpreterState, Memory, MemoryStatistics, Module,
-    ReaderError, Store, Stream, TrapReason, ValType, Value,
+    ParseError, ReaderError, Store, Stream, TrapReason, ValType, ValidationError, Value,
 };
 use std::alloc::Layout;
 use std::collections::HashMap;
@@ -217,10 +217,7 @@ impl TestContext {
 }
 
 fn parse_value(spec: &ValueSpec) -> Value {
-    let value_str = spec
-        .value
-        .as_ref()
-        .expect("Missing value field in spec");
+    let value_str = spec.value.as_ref().expect("Missing value field in spec");
     match spec.ty.as_str() {
         "i32" => Value::I32(
             value_str
@@ -360,9 +357,7 @@ fn load_module(ctx: &mut TestContext, module_name: Option<String>, wasm_bytes: &
 
     // Push module to store
     let module_index = ctx.store.modules.len();
-    ctx.store
-        .modules
-        .push(spacewasm::Box::new(module).unwrap());
+    ctx.store.modules.push(spacewasm::Box::new(module).unwrap());
     let module = ctx.get_module(module_index);
 
     // Initialize the state
@@ -525,6 +520,24 @@ fn trap_reason_to_string(reason: TrapReason) -> &'static str {
     }
 }
 
+fn check_decode_error(line: u32, err: ParseError, text: String) {
+    match (err.err.err, text.as_str()) {
+        (ValidationError::MalformedInteger, "integer too large")
+        | (ValidationError::MalformedInteger, "integer representation too long") => {}
+        (ValidationError::MalformedMagic, "magic header not detected") => {}
+        (ValidationError::MalformedVersion, "unknown binary version") => {}
+        (ValidationError::ExpectedTerminal(0), "zero byte expected") => {}
+        (ValidationError::Eof, "unexpected end") => {}
+        (ValidationError::TooManyLocals, "too many locals") => {}
+        err => {
+            assert!(
+                false,
+                "Expected malformed module at line {line} with error '{text}' got {err:?}"
+            )
+        }
+    }
+}
+
 pub fn run_wast_test_file(file_name: &str) {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let test_dir = format!("{}/tests/spectest/wasm-1.0/{}", manifest_dir, file_name);
@@ -660,9 +673,7 @@ pub fn run_wast_test_file(file_name: &str) {
                 } => match invoke_function(&mut ctx, &module, &field, &args) {
                     Err(InterpreterBreak::Trap(reason))
                         if text == trap_reason_to_string(reason) => {}
-                    Err(err) => panic!(
-                        "Line {line}: Expected trap '{text}', got error: {err:?}"
-                    ),
+                    Err(err) => panic!("Line {line}: Expected trap '{text}', got error: {err:?}"),
                     Ok(_) => panic!("Line {line}: Expected trap '{text}', but execution succeeded"),
                 },
                 Action::Get { .. } => {
@@ -673,17 +684,22 @@ pub fn run_wast_test_file(file_name: &str) {
                 line,
                 filename,
                 module_type,
-                ..
+                text,
             } => {
                 // Skip text format tests as we only handle binary WASM
                 if module_type != "text" {
                     let wasm_path = format!("{test_dir}/{filename}");
                     let wasm_bytes = std::fs::read(&wasm_path).unwrap();
                     let mut stream = ByteStream::new(&wasm_bytes);
-                    assert!(
-                        Module::new::<256>("malformed_test", &mut stream, &ctx.store).is_err(),
-                        "Line {line}: Expected malformed module to fail"
-                    );
+
+                    let err = Module::new::<256>("malformed_test", &mut stream, &ctx.store)
+                        .err()
+                        .expect(
+                            format!("Line {line}: Expected malformed module to fail with {text}")
+                                .as_str(),
+                        );
+
+                    check_decode_error(line, err, text);
                 }
             }
             Command::AssertInvalid {
@@ -712,7 +728,9 @@ pub fn run_wast_test_file(file_name: &str) {
                 as_name,
             } => {
                 // Register maps an alias to a module instance
-                let instance_key = name.map(Some).unwrap_or_else(|| ctx.current_instance.clone());
+                let instance_key = name
+                    .map(Some)
+                    .unwrap_or_else(|| ctx.current_instance.clone());
                 assert!(
                     instance_key.is_some(),
                     "Line {line}: No instance to register"
