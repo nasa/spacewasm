@@ -619,6 +619,7 @@ pub fn run_wast_test_file(test_name: &str) {
     .unwrap();
 
     let mut ctx = TestContext::new(store);
+    let wast_path = format!("{test_dir}/{test_name}.wast");
 
     for command in test_file.commands {
         match command {
@@ -629,7 +630,7 @@ pub fn run_wast_test_file(test_name: &str) {
             } => {
                 let wasm_path = format!("{test_dir}/{filename}");
                 let wasm_bytes = std::fs::read(&wasm_path)
-                    .unwrap_or_else(|e| panic!("Line {line}: Failed to read {wasm_path}: {e}"));
+                    .unwrap_or_else(|e| panic!("{wasm_path}:{line}: Failed to read module: {e}"));
                 load_module(&mut ctx, name, &wasm_bytes);
             }
             Command::AssertReturn {
@@ -644,7 +645,7 @@ pub fn run_wast_test_file(test_name: &str) {
                         args,
                     } => match invoke_function(&mut ctx, &module, &field, &args) {
                         Ok(val) => val,
-                        Err(e) => panic!("Line {line}: Invoke '{field}' failed: {e:?}"),
+                        Err(e) => panic!("{wast_path}:{line}: Invoke '{field}' failed: {e:?}"),
                     },
                     Action::Get { .. } => {
                         // Skip Get actions for now as they're not fully implemented
@@ -658,11 +659,12 @@ pub fn run_wast_test_file(test_name: &str) {
                         "Line {line}: Expected no return value, got {result:?}"
                     );
                 } else if expected.len() == 1 {
-                    let actual = result
-                        .unwrap_or_else(|| panic!("Line {line}: Expected return value, got none"));
+                    let actual = result.unwrap_or_else(|| {
+                        panic!("{wast_path}:{line}: Expected return value, got none")
+                    });
                     compare_values(actual, &expected[0]);
                 } else {
-                    panic!("Line {line}: Multi-value returns not yet supported");
+                    panic!("{wast_path}:{line}: Multi-value returns not yet supported");
                 }
             }
             Command::AssertTrap { line, action, text } => match action {
@@ -673,8 +675,12 @@ pub fn run_wast_test_file(test_name: &str) {
                 } => match invoke_function(&mut ctx, &module, &field, &args) {
                     Err(InterpreterBreak::Trap(reason))
                         if text == trap_reason_to_string(reason) => {}
-                    Err(err) => panic!("Line {line}: Expected trap '{text}', got error: {err:?}"),
-                    Ok(_) => panic!("Line {line}: Expected trap '{text}', but execution succeeded"),
+                    Err(err) => {
+                        panic!("{wast_path}:{line}: Expected trap '{text}', got error: {err:?}")
+                    }
+                    Ok(_) => panic!(
+                        "{wast_path}:{line}: Expected trap '{text}', but execution succeeded"
+                    ),
                 },
                 Action::Get { .. } => {
                     panic!("Get actions not implemented yet")
@@ -689,7 +695,6 @@ pub fn run_wast_test_file(test_name: &str) {
                 // Skip text format tests as we only handle binary WASM
                 if module_type != "text" {
                     let wasm_path = format!("{test_dir}/{filename}");
-                    let wast_path = format!("{test_dir}/{test_name}.wast");
                     let wasm_bytes = std::fs::read(&wasm_path).unwrap();
                     let mut stream = ByteStream::new(&wasm_bytes);
 
@@ -716,7 +721,7 @@ pub fn run_wast_test_file(test_name: &str) {
                     let mut stream = ByteStream::new(&wasm_bytes);
                     assert!(
                         Module::new::<256>("invalid_test", &mut stream, &ctx.store).is_err(),
-                        "Line {line}: Expected invalid module to fail validation"
+                        "{wast_path}:{line}: Expected invalid module to fail validation"
                     );
                 }
             }
@@ -734,7 +739,7 @@ pub fn run_wast_test_file(test_name: &str) {
                     .unwrap_or_else(|| ctx.current_instance.clone());
                 assert!(
                     instance_key.is_some(),
-                    "Line {line}: No instance to register"
+                    "{wast_path}:{line}: No instance to register"
                 );
                 ctx.registry.insert(as_name, instance_key);
             }
@@ -745,7 +750,7 @@ pub fn run_wast_test_file(test_name: &str) {
                     args,
                 } => {
                     if let Err(e) = invoke_function(&mut ctx, &module, &field, &args) {
-                        panic!("Line {line}: Action invoke '{field}' failed: {e:?}");
+                        panic!("{wast_path}:{line}: Action invoke '{field}' failed: {e:?}");
                     }
                 }
                 Action::Get { .. } => {
