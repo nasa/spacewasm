@@ -1,3 +1,9 @@
+mod visitor;
+pub use visitor::*;
+
+mod store;
+pub use store::*;
+
 mod reader;
 pub use reader::*;
 
@@ -26,3 +32,16 @@ mod code;
 pub use code::*;
 
 mod constant;
+
+mod compiler;
+pub use compiler::*;
+
+mod text;
+pub use text::*;
+
+mod ir_reader;
+pub use ir_reader::*;
+
+#[cfg(test)]
+mod compiler_tests;
+

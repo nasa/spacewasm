@@ -41,7 +41,7 @@ impl Default for TextPage {
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub struct JumpTarget(pub u32);
 
-impl core::ops::Add<u32> for JumpTarget {
+impl ::core::ops::Add<u32> for JumpTarget {
     type Output = JumpTarget;
     fn add(self, rhs: u32) -> JumpTarget {
         JumpTarget(self.0 + rhs)

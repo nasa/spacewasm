@@ -1,5 +1,5 @@
 use crate::*;
-use core::marker::PhantomData;
+use ::core::marker::PhantomData;
 
 pub struct Compiler<'a, const N: usize> {
     _marker: PhantomData<&'a ()>,

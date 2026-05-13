@@ -1,5 +1,5 @@
 use crate::*;
-use core::ops::{AddAssign, ControlFlow};
+use ::core::ops::{AddAssign, ControlFlow};
 
 pub struct InterpreterState {
     pub pc: JumpTarget,
@@ -167,8 +167,6 @@ impl<'store> Interpreter<'store> {
 /// For all types that implement [IrVisitor<State = InterpreterState, Error = InstructionError>],
 /// this trait will be implemented to execute instructions given the state and store.
 pub trait InterpreterRunner {
-    
-
     fn run(
         &self,
         code: &Code,

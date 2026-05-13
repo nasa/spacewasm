@@ -1,7 +1,5 @@
-mod spectest;
-use spectest::*;
-
-mod inspector;
+mod util;
+use util::run_wast_test_file;
 
 #[test]
 fn address() {
@@ -25,7 +23,7 @@ fn float_literals() {
 
 #[test]
 fn if_() {
-run_wast_test_file("if");
+    run_wast_test_file("if");
 }
 
 #[test]
@@ -115,7 +113,7 @@ fn float_misc() {
 
 #[test]
 fn inline_module() {
-run_wast_test_file("inline-module");
+    run_wast_test_file("inline-module");
 }
 
 #[test]
@@ -160,7 +158,7 @@ fn int_exprs() {
 
 #[test]
 fn loop_() {
-run_wast_test_file("loop");
+    run_wast_test_file("loop");
 }
 
 #[test]

@@ -1,6 +1,6 @@
 use crate::alloc::AllocError;
-use crate::decode::constant::ConstantExprError;
-use crate::decode::ReaderError;
+use crate::core::constant::ConstantExprError;
+use crate::core::ReaderError;
 use crate::SectionKind;
 
 #[derive(Debug, Clone)]

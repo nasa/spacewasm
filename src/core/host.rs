@@ -1,6 +1,6 @@
 use crate::util::Vec;
 use crate::*;
-use core::ops::ControlFlow;
+use ::core::ops::ControlFlow;
 
 pub struct GlobalValueError;
 
@@ -32,7 +32,7 @@ impl<T: GlobalValue> Box<T> {
         T: GlobalValue + 'static,
     {
         let ptr = self.as_mut_ptr() as *mut dyn GlobalValue;
-        core::mem::forget(self); // Prevent double free
+        ::core::mem::forget(self); // Prevent double free
         unsafe { Box::from_raw(GlobalAllocator, ptr) }
     }
 }

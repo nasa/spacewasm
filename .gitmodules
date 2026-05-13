@@ -1,6 +1,3 @@
 [submodule "tests/spec"]
-	path = tests/spec
-	url = git@github.com:WebAssembly/spec.git
-[submodule "tests/spectest"]
 	path = tests/spectest
 	url = git@github.com:WasmEdge/wasmedge-spectest.git

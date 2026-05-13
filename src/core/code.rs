@@ -1,4 +1,4 @@
-use crate::decode::constant::ConstantCompiler;
+use crate::core::constant::ConstantCompiler;
 use crate::*;
 
 #[derive(Clone)]
@@ -21,8 +21,7 @@ impl Expr {
         store: &Store,
         module: &Module,
         ctx: &Func,
-    ) -> Result<Self, ValidationError>
-    {
+    ) -> Result<Self, ValidationError> {
         let e = Expr(builder.pc());
         wasm.read_code(
             &Compiler::<'_, N>::new(),
@@ -77,7 +76,7 @@ impl Module {
         let start = wasm.offset();
 
         let empty_f = self.functions[i].clone();
-        let mut f = core::mem::replace(&mut self.functions[i], empty_f);
+        let mut f = ::core::mem::replace(&mut self.functions[i], empty_f);
 
         f.locals = wasm.read_vec(|w| {
             let n = w.read_u32()?;
@@ -104,7 +103,7 @@ impl Module {
         f.local_size = size_in_words as u16;
         f.expr = Expr::read(wasm, builder, store, self, &f)?;
 
-        let _ = core::mem::replace(&mut self.functions[i], f);
+        let _ = ::core::mem::replace(&mut self.functions[i], f);
 
         let end = wasm.offset();
         if (end - start) as u32 != size {
@@ -153,7 +152,7 @@ impl<'wasm> Reader<'wasm> {
             }};
         }
 
-        use crate::decode::opcode::*;
+        use crate::core::opcode::*;
         loop {
             match self.read_u8()? {
                 // Control instructions

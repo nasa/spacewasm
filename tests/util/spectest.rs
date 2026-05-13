@@ -1,4 +1,3 @@
-use crate::inspector::Inspector;
 use serde::{Deserialize, Serialize};
 use spacewasm::{
     global_allocator, vec, AllocError, Allocator, Code, ExportDesc, FuncRef, GlobalValue,
@@ -14,6 +13,8 @@ use std::panic::catch_unwind;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+
+use super::inspector::Inspector;
 
 #[derive(Debug, Deserialize, Serialize)]
 struct TestFile {

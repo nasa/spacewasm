@@ -95,7 +95,7 @@ impl<'code> Code<'code> {
             }};
         }
 
-        use crate::decode::opcode::*;
+        use crate::core::opcode::*;
         match opcode {
             // Control instructions
             UNREACHABLE => instruction!(unreachable),
