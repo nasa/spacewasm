@@ -91,7 +91,7 @@ pub enum ValidationError {
     TooManyLocals,
     InvalidConstInstruction,
     BrTableHasTooManyCases,
-    GlboalTypeMismatch,
+    GlobalTypeMismatch,
     TableImportsNotSupportedYet, // TODO(tumbar) Implement dynamic linking
     MemoryImportsNotSupportedYet, // TODO(tumbar) Implement implement shared memory
     FunctionCallsAcrossModuleNotSupportedYet, // TODO(tumbar) Implement module context isolation

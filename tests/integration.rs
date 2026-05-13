@@ -1,6 +1,8 @@
 mod spectest;
 use spectest::*;
 
+mod inspector;
+
 #[test]
 fn address() {
     run_wast_test_file("address");

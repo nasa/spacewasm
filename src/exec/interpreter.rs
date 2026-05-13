@@ -135,9 +135,6 @@ impl<'store> Interpreter<'store> {
     /// Warning! If this is being used as an interrupt rather than an entry point,
     /// make sure that the function does not return any values as that will cause stack pollution!
     pub fn invoke(&self, state: &mut InterpreterState, f: &Func, params: &[Value]) {
-        // extern crate std;
-        // std::eprintln!("invoke PC = {}", f.expr.0.0);
-
         for p in params {
             // TODO(tumbar) Validate input parameters
             match p {
@@ -170,6 +167,8 @@ impl<'store> Interpreter<'store> {
 /// For all types that implement [IrVisitor<State = InterpreterState, Error = InstructionError>],
 /// this trait will be implemented to execute instructions given the state and store.
 pub trait InterpreterRunner {
+    
+
     fn run(
         &self,
         code: &Code,

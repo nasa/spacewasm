@@ -1,6 +1,6 @@
-extern crate std;
-
-use crate::{
+use std::cell::RefCell;
+use std::rc::Rc;
+use spacewasm::{
     BaseVisitor, FuncIdx, GlobalIdx, HostModuleRef, IrVisitor, JumpTarget, LabelIdx, LocalIdx,
     LocalVariable, MemArg, ResultType, TypeIdx, WasmVisitor,
 };
@@ -9,7 +9,7 @@ macro_rules! visit_fn {
     // No additional parameters
     ($name:ident) => {
         fn $name(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-            std::eprintln!("{}()", stringify!($name));
+            self.out.borrow_mut().push(format!("{}()", stringify!($name)));
             self.v.$name(state)
         }
     };
@@ -17,7 +17,7 @@ macro_rules! visit_fn {
     // With additional parameters
     ($name:ident, $($param:ident : $ty:ty),+) => {
         fn $name(&self, $($param: $ty),+, state: &mut Self::State) -> Result<(), Self::Error> {
-            std::eprintln!("{}{:?}", stringify!($name), ($((stringify!($param), &$param),)+));
+            self.out.borrow_mut().push(format!("{}{:?}", stringify!($name), ($((stringify!($param), &$param),)+)));
             self.v.$name($($param,)+ state)
         }
     };
@@ -25,6 +25,7 @@ macro_rules! visit_fn {
 
 pub struct Inspector<'a, S, E, T: BaseVisitor<State = S, Error = E>> {
     pub v: &'a T,
+    pub out: Rc<RefCell<Vec<String>>>,
 }
 
 impl<'a, S, E, T: BaseVisitor<State = S, Error = E>> BaseVisitor for Inspector<'a, S, E, T> {
@@ -256,7 +257,7 @@ impl<'a, S, E, T: BaseVisitor<State = S, Error = E> + IrVisitor> IrVisitor
         cases: impl FnOnce(u16) -> Result<JumpTarget, ()>,
         state: &mut Self::State,
     ) -> Result<(), Self::Error> {
-        std::eprintln!("br_table()");
+        eprintln!("br_table()");
         self.v.br_table(cases, state)
     }
 

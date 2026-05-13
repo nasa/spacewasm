@@ -190,7 +190,7 @@ impl<'wasm> Reader<'wasm> {
                 BR_TABLE => {
                     // TODO(tumbar) How do we expose maximum switch cases?
                     //              I definitely don't want to support 2^32-1...
-                    let lut: StaticVec<_, 64> = self
+                    let lut: StaticVec<_, 128> = self
                         .read_vec_stack(LabelIdx::read)
                         .or(Err(ValidationError::BrTableHasTooManyCases))?;
                     let default_ = LabelIdx::read(self)?;

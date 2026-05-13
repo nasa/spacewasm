@@ -105,6 +105,7 @@ impl Module {
 
         let mut last_section: SectionKind = SectionKind::Custom;
         let mut builder = CodeBuilder::<N>::new();
+        let mut seen_code_section = false;
 
         loop {
             let section_ty = match SectionKind::read(wasm) {
@@ -125,6 +126,10 @@ impl Module {
                 }
 
                 last_section = section_ty;
+            }
+
+            if section_ty == SectionKind::Code {
+                seen_code_section = true;
             }
 
             let section_size = wasm.read_u32()? as usize;
@@ -154,6 +159,11 @@ impl Module {
             if section_length != section_size {
                 return Err(ValidationError::MalformedSectionSize.with_section(section_ty));
             }
+        }
+
+        // If we have a function section we should also have a code section and vis versa
+        if !seen_code_section && module.functions.len() > 0 {
+            return Err(ValidationError::InvalidCodeSectionFunctionCount.into());
         }
 
         let (text, text_offset) = builder.finish()?;
@@ -505,28 +515,28 @@ impl Global {
         let init = match init {
             Value::I32(i) => {
                 if type_.ty != ValType::I32 {
-                    return Err(ValidationError::GlboalTypeMismatch);
+                    return Err(ValidationError::GlobalTypeMismatch);
                 }
 
                 i as u64
             }
             Value::I64(i) => {
                 if type_.ty != ValType::I64 {
-                    return Err(ValidationError::GlboalTypeMismatch);
+                    return Err(ValidationError::GlobalTypeMismatch);
                 }
 
                 i as u64
             }
             Value::F32(z) => {
                 if type_.ty != ValType::F32 {
-                    return Err(ValidationError::GlboalTypeMismatch);
+                    return Err(ValidationError::GlobalTypeMismatch);
                 }
 
                 z.to_bits() as u64
             }
             Value::F64(z) => {
                 if type_.ty != ValType::F64 {
-                    return Err(ValidationError::GlboalTypeMismatch);
+                    return Err(ValidationError::GlobalTypeMismatch);
                 }
 
                 z.to_bits()

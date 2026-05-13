@@ -464,7 +464,7 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
             while next != JumpTarget::SENTINEL {
                 // Bound our loops to not go into an infinite cycle
                 n += 1;
-                if n > 100 {
+                if n > 200 {
                     return Err(ValidationError::PossibleBackpatchCycle);
                 }
 

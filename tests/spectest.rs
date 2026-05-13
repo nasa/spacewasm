@@ -1,3 +1,4 @@
+use crate::inspector::Inspector;
 use serde::{Deserialize, Serialize};
 use spacewasm::{
     global_allocator, vec, AllocError, Allocator, Code, ExportDesc, FuncRef, GlobalValue,
@@ -6,10 +7,13 @@ use spacewasm::{
     ParseError, ReaderError, Store, Stream, TrapReason, ValType, ValidationError, Value,
 };
 use std::alloc::Layout;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ops::ControlFlow;
+use std::panic::catch_unwind;
+use std::rc::Rc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Deserialize, Serialize)]
 struct TestFile {
@@ -272,26 +276,26 @@ fn compare_values(actual: Value, expected: &ValueSpec) {
             let Value::F32(a) = actual else {
                 panic!("Expected f32, got {actual:?}");
             };
-            let bits = value_str.parse::<u32>().expect("failed to parse f32 bits");
-            let e = f32::from_bits(bits);
 
-            // Handle NaN comparisons
-            if e.is_nan() && a.is_nan() {
-                // Both are NaN, check if bits match exactly
-                assert_eq!(
-                    a.to_bits(),
-                    bits,
-                    "Expected f32 NaN with bits {:08x}, got {:08x}",
-                    bits,
-                    a.to_bits()
-                );
+            let (e, arithmetic_nan) = match value_str.as_str() {
+                "nan:arithmetic" => (f32::NAN, true),
+                "nan:canonical" => (f32::NAN, false),
+                _ => (
+                    f32::from_bits(value_str.parse::<u32>().expect("failed to parse f32 bits")),
+                    false,
+                ),
+            };
+
+            if arithmetic_nan {
+                assert!(a.is_nan(), "Expected NaN f32, got {actual:?}");
             } else {
+                // Handle exact comparisons
                 assert_eq!(
                     a.to_bits(),
-                    bits,
+                    e.to_bits(),
                     "Expected f32 {} ({:08x}), got {} ({:08x})",
                     e,
-                    bits,
+                    e.to_bits(),
                     a,
                     a.to_bits()
                 );
@@ -301,26 +305,26 @@ fn compare_values(actual: Value, expected: &ValueSpec) {
             let Value::F64(a) = actual else {
                 panic!("Expected f64, got {actual:?}");
             };
-            let bits = value_str.parse::<u64>().expect("failed to parse f64 bits");
-            let e = f64::from_bits(bits);
 
-            // Handle NaN comparisons
-            if e.is_nan() && a.is_nan() {
-                // Both are NaN, check if bits match exactly
-                assert_eq!(
-                    a.to_bits(),
-                    bits,
-                    "Expected f64 NaN with bits {:016x}, got {:016x}",
-                    bits,
-                    a.to_bits()
-                );
+            let (e, arithmetic_nan) = match value_str.as_str() {
+                "nan:arithmetic" => (f64::NAN, true),
+                "nan:canonical" => (f64::NAN, false),
+                _ => (
+                    f64::from_bits(value_str.parse::<u64>().expect("failed to parse f64 bits")),
+                    false,
+                ),
+            };
+
+            if arithmetic_nan {
+                assert!(a.is_nan(), "Expected NaN f64, got {actual:?}");
             } else {
+                // Handle exact comparisons
                 assert_eq!(
                     a.to_bits(),
-                    bits,
-                    "Expected f64 {} ({:016x}), got {} ({:016x})",
+                    e.to_bits(),
+                    "Expected f64 {} ({:08x}), got {} ({:08x})",
                     e,
-                    bits,
+                    e.to_bits(),
                     a,
                     a.to_bits()
                 );
@@ -386,6 +390,7 @@ fn invoke_function(
     module_name: &Option<String>,
     func_name: &str,
     args: &[ValueSpec],
+    test_log: Rc<RefCell<Vec<String>>>,
 ) -> Result<Option<Value>, InterpreterBreak> {
     // Resolve module name through registry if needed
     let resolved_module = if let Some(name) = module_name {
@@ -460,10 +465,20 @@ fn invoke_function(
     let instance = ctx.instances.get_mut(&instance_key).unwrap();
     interpreter.invoke(&mut instance.state, func, &params);
 
+    let test_runner = Inspector {
+        v: &interpreter,
+        out: test_log,
+    };
+
+    test_runner
+        .out
+        .borrow_mut()
+        .push(format!("invoke {}({:?})", func_name, params));
+
     // Run until completion
     let mut result = InterpreterResult::OutOfFuel;
     while result == InterpreterResult::OutOfFuel {
-        result = interpreter.run(&code, &mut instance.state, usize::MAX);
+        result = test_runner.run(&code, &mut instance.state, usize::MAX);
     }
 
     // Check the result
@@ -520,27 +535,164 @@ fn trap_reason_to_string(reason: TrapReason) -> &'static str {
     }
 }
 
-fn check_decode_error(filename: &str, line: u32, err: ParseError, text: String) {
+fn check_decode_error(err: ParseError, text: String) {
     match (err.err.err, text.as_str()) {
-        (ValidationError::MalformedInteger, "integer too large")
-        | (ValidationError::MalformedInteger, "integer representation too long") => {}
+        (
+            ValidationError::MalformedInteger,
+            "integer too large" | "integer representation too long",
+        ) => {}
         (ValidationError::MalformedMagic, "magic header not detected") => {}
         (ValidationError::MalformedVersion, "unknown binary version") => {}
         (ValidationError::ExpectedTerminal(0), "zero byte expected") => {}
-        (ValidationError::Eof, "unexpected end") => {}
+        (
+            ValidationError::Eof,
+            "unexpected end" | "length out of bounds" | "unexpected end of section or function",
+        ) => {}
         (ValidationError::TooManyLocals, "too many locals") => {}
+        (ValidationError::MalformedUtf8, "malformed UTF-8 encoding") => {}
+        (
+            ValidationError::InvalidCodeSectionFunctionCount,
+            "function and code section have inconsistent lengths",
+        ) => {}
+        (ValidationError::MalformedSectionSize, "section size mismatch") => {}
         err => {
             assert!(
                 false,
-                "{filename}:{line} Could not match expected error text '{text}' with error {err:?}"
+                "Could not match expected error text '{text}' with error {err:?}"
             )
         }
     }
 }
 
-pub fn run_wast_test_file(test_name: &str) {
-    let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    let test_dir = format!("{}/tests/spectest/wasm-1.0/{}", manifest_dir, test_name);
+fn run_wast_command(
+    command: Command,
+    test_dir: &str,
+    ctx: &mut TestContext,
+    log: Rc<RefCell<Vec<String>>>,
+) {
+    match command {
+        Command::Module { name, filename, .. } => {
+            let wasm_path = format!("{test_dir}/{filename}");
+            let wasm_bytes =
+                std::fs::read(&wasm_path).unwrap_or_else(|e| panic!("Failed to read module: {e}"));
+            load_module(ctx, name, &wasm_bytes);
+        }
+        Command::AssertReturn {
+            action, expected, ..
+        } => {
+            let result = match action {
+                Action::Invoke {
+                    module,
+                    field,
+                    args,
+                } => match invoke_function(ctx, &module, &field, &args, log) {
+                    Ok(val) => val,
+                    Err(e) => {
+                        panic!("Invoke '{field}' failed: {e:?}")
+                    }
+                },
+                Action::Get { .. } => {
+                    // Skip Get actions for now as they're not fully implemented
+                    return;
+                }
+            };
+
+            if expected.is_empty() {
+                assert!(result.is_none(), "Expected no return value, got {result:?}");
+            } else if expected.len() == 1 {
+                let actual = result.unwrap_or_else(|| panic!("Expected return value, got none"));
+                compare_values(actual, &expected[0]);
+            } else {
+                panic!("Multi-value returns not yet supported");
+            }
+        }
+        Command::AssertTrap { action, text, .. } => match action {
+            Action::Invoke {
+                module,
+                field,
+                args,
+            } => match invoke_function(ctx, &module, &field, &args, log) {
+                Err(InterpreterBreak::Trap(reason)) if text == trap_reason_to_string(reason) => {}
+                Err(err) => {
+                    panic!("Expected trap '{text}', got error: {err:?}")
+                }
+                Ok(_) => {
+                    panic!("Expected trap '{text}', but execution succeeded")
+                }
+            },
+            Action::Get { .. } => {
+                panic!("Get actions not implemented yet")
+            }
+        },
+        Command::AssertMalformed {
+            filename,
+            module_type,
+            text,
+            ..
+        } => {
+            // Skip text format tests as we only handle binary WASM
+            if module_type != "text" {
+                let wasm_path = format!("{test_dir}/{filename}");
+                let wasm_bytes = std::fs::read(&wasm_path).unwrap();
+                let mut stream = ByteStream::new(&wasm_bytes);
+
+                let err = Module::new::<256>("malformed_test", &mut stream, &ctx.store)
+                    .err()
+                    .expect(format!("Expected malformed module to fail with '{text}'").as_str());
+
+                check_decode_error(err, text);
+            }
+        }
+        Command::AssertInvalid {
+            filename,
+            module_type,
+            text,
+            ..
+        } => {
+            if module_type != "text" {
+                let wasm_path = format!("{test_dir}/{filename}");
+                let wasm_bytes = std::fs::read(&wasm_path)
+                    .unwrap_or_else(|e| panic!("Failed to read {wasm_path}: {e}"));
+                let mut stream = ByteStream::new(&wasm_bytes);
+                let err = Module::new::<256>("malformed_test", &mut stream, &ctx.store)
+                    .err()
+                    .expect(format!("Expected invalid module to fail with '{text}'").as_str());
+
+                check_decode_error(err, text);
+            }
+        }
+        Command::AssertExhaustion { .. } => {
+            // Skip exhaustion tests as stack overflow detection is not implemented
+        }
+        Command::Register { name, as_name, .. } => {
+            // Register maps an alias to a module instance
+            let instance_key = name
+                .map(Some)
+                .unwrap_or_else(|| ctx.current_instance.clone());
+            assert!(instance_key.is_some(), "No instance to register");
+            ctx.registry.insert(as_name, instance_key);
+        }
+        Command::Action { action, .. } => match action {
+            Action::Invoke {
+                module,
+                field,
+                args,
+            } => {
+                invoke_function(ctx, &module, &field, &args, log).unwrap();
+            }
+            Action::Get { .. } => {
+                // Skip Get actions for now
+            }
+        },
+    }
+}
+
+fn run_wast_test_file_inner(
+    test_dir: &str,
+    test_name: &str,
+    wast_line: Arc<Mutex<Option<u32>>>,
+    subtest_log: Arc<Mutex<Option<Rc<RefCell<Vec<String>>>>>>,
+) {
     let json_path = format!("{}/{}.json", test_dir, test_name);
 
     let json_content = std::fs::read_to_string(&json_path)
@@ -619,144 +771,65 @@ pub fn run_wast_test_file(test_name: &str) {
     .unwrap();
 
     let mut ctx = TestContext::new(store);
-    let wast_path = format!("{test_dir}/{test_name}.wast");
 
     for command in test_file.commands {
-        match command {
-            Command::Module {
-                line,
-                name,
-                filename,
-            } => {
-                let wasm_path = format!("{test_dir}/{filename}");
-                let wasm_bytes = std::fs::read(&wasm_path)
-                    .unwrap_or_else(|e| panic!("{wasm_path}:{line}: Failed to read module: {e}"));
-                load_module(&mut ctx, name, &wasm_bytes);
-            }
-            Command::AssertReturn {
-                line,
-                action,
-                expected,
-            } => {
-                let result = match action {
-                    Action::Invoke {
-                        module,
-                        field,
-                        args,
-                    } => match invoke_function(&mut ctx, &module, &field, &args) {
-                        Ok(val) => val,
-                        Err(e) => panic!("{wast_path}:{line}: Invoke '{field}' failed: {e:?}"),
-                    },
-                    Action::Get { .. } => {
-                        // Skip Get actions for now as they're not fully implemented
-                        continue;
-                    }
-                };
+        let test_log = Rc::new(RefCell::new(Vec::<String>::new()));
+        *subtest_log.lock().unwrap() = Some(test_log.clone());
+        *wast_line.lock().unwrap() = match &command {
+            Command::Module { line, .. }
+            | Command::AssertReturn { line, .. }
+            | Command::AssertTrap { line, .. }
+            | Command::AssertMalformed { line, .. }
+            | Command::AssertInvalid { line, .. }
+            | Command::AssertExhaustion { line, .. }
+            | Command::Register { line, .. }
+            | Command::Action { line, .. } => Some(*line),
+        };
 
-                if expected.is_empty() {
-                    assert!(
-                        result.is_none(),
-                        "Line {line}: Expected no return value, got {result:?}"
-                    );
-                } else if expected.len() == 1 {
-                    let actual = result.unwrap_or_else(|| {
-                        panic!("{wast_path}:{line}: Expected return value, got none")
-                    });
-                    compare_values(actual, &expected[0]);
-                } else {
-                    panic!("{wast_path}:{line}: Multi-value returns not yet supported");
-                }
-            }
-            Command::AssertTrap { line, action, text } => match action {
-                Action::Invoke {
-                    module,
-                    field,
-                    args,
-                } => match invoke_function(&mut ctx, &module, &field, &args) {
-                    Err(InterpreterBreak::Trap(reason))
-                        if text == trap_reason_to_string(reason) => {}
-                    Err(err) => {
-                        panic!("{wast_path}:{line}: Expected trap '{text}', got error: {err:?}")
-                    }
-                    Ok(_) => panic!(
-                        "{wast_path}:{line}: Expected trap '{text}', but execution succeeded"
-                    ),
-                },
-                Action::Get { .. } => {
-                    panic!("Get actions not implemented yet")
-                }
-            },
-            Command::AssertMalformed {
-                line,
-                filename,
-                module_type,
-                text,
-            } => {
-                // Skip text format tests as we only handle binary WASM
-                if module_type != "text" {
-                    let wasm_path = format!("{test_dir}/{filename}");
-                    let wasm_bytes = std::fs::read(&wasm_path).unwrap();
-                    let mut stream = ByteStream::new(&wasm_bytes);
+        run_wast_command(command, &test_dir, &mut ctx, test_log);
 
-                    let err = Module::new::<256>("malformed_test", &mut stream, &ctx.store)
-                        .err()
-                        .expect(
-                            format!("{wast_path}:{line}: Expected malformed module to fail with '{text}'")
-                                .as_str(),
-                        );
+        *subtest_log.lock().unwrap() = None;
+        *wast_line.lock().unwrap() = None;
+    }
+}
 
-                    check_decode_error(&wast_path, line, err, text);
-                }
-            }
-            Command::AssertInvalid {
-                line,
-                filename,
-                module_type,
-                ..
-            } => {
-                if module_type != "text" {
-                    let wasm_path = format!("{test_dir}/{filename}");
-                    let wasm_bytes = std::fs::read(&wasm_path)
-                        .unwrap_or_else(|e| panic!("Failed to read {wasm_path}: {e}"));
-                    let mut stream = ByteStream::new(&wasm_bytes);
-                    assert!(
-                        Module::new::<256>("invalid_test", &mut stream, &ctx.store).is_err(),
-                        "{wast_path}:{line}: Expected invalid module to fail validation"
-                    );
-                }
-            }
-            Command::AssertExhaustion { .. } => {
-                // Skip exhaustion tests as stack overflow detection is not implemented
-            }
-            Command::Register {
-                line,
-                name,
-                as_name,
-            } => {
-                // Register maps an alias to a module instance
-                let instance_key = name
-                    .map(Some)
-                    .unwrap_or_else(|| ctx.current_instance.clone());
-                assert!(
-                    instance_key.is_some(),
-                    "{wast_path}:{line}: No instance to register"
-                );
-                ctx.registry.insert(as_name, instance_key);
-            }
-            Command::Action { line, action } => match action {
-                Action::Invoke {
-                    module,
-                    field,
-                    args,
-                } => {
-                    if let Err(e) = invoke_function(&mut ctx, &module, &field, &args) {
-                        panic!("{wast_path}:{line}: Action invoke '{field}' failed: {e:?}");
+pub fn run_wast_test_file(test_name: &str) {
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let test_dir = format!("{}/tests/spectest/wasm-1.0/{}", manifest_dir, test_name);
+    let wast_path = format!("{test_dir}/{test_name}.wast");
+
+    let wast_line = Arc::new(Mutex::new(None));
+    let subtest_log = Arc::new(Mutex::new(None));
+
+    match catch_unwind(|| {
+        run_wast_test_file_inner(&test_dir, test_name, wast_line.clone(), subtest_log.clone())
+    }) {
+        Ok(_) => {}
+        Err(err) => {
+            if let Some(log) = &*subtest_log.lock().unwrap() {
+                let log_lines = log.borrow();
+                if log_lines.len() > 0 {
+                    eprintln!("Subtest failed, dumping invoke log");
+                    for line in log_lines.iter() {
+                        eprintln!("{}", line);
                     }
+                    eprintln!("========")
                 }
-                Action::Get { .. } => {
-                    // Skip Get actions for now
-                }
-            },
+            }
+
+            let msg = if let Some(s) = err.downcast_ref::<&'static str>() {
+                s.to_string()
+            } else if let Some(s) = err.downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "Unknown panic payload".to_string()
+            };
+
+            if let Some(line_no) = *wast_line.lock().unwrap() {
+                panic!("{wast_path}:{line_no}: {msg}")
+            } else {
+                panic!("{wast_path}: {msg}")
+            }
         }
     }
 }
