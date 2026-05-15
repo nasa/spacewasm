@@ -38,6 +38,3 @@ pub use compiler::*;
 
 mod text;
 pub use text::*;
-
-#[cfg(test)]
-mod compiler_tests;

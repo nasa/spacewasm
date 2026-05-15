@@ -560,6 +560,7 @@ fn check_decode_error(err: ParseError, text: String) {
         (ValidationError::MemoryImportsNotSupportedYet, "multiple memories") => {}
         (ValidationError::AlignmentLargerThanType, "alignment must not be larger than natural") => {
         }
+        (ValidationError::TypeMismatch, "type mismatch") => {}
         err => {
             assert!(
                 false,

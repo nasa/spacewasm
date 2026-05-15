@@ -470,14 +470,17 @@ impl Func {
             .ok_or(ValidationError::TypeIdxOutOfRange)?;
 
         let parameter_size = ty.params.iter().fold(0, |sum, a_ty| sum + a_ty.size()) / 4;
-        let return_size = ty.returns.iter().fold(0, |sum, a_ty| sum + a_ty.size()) / 4;
+
+        let return_ty = if ty.returns.len() > 1 {
+            return Err(ValidationError::FunctionReturnsTooLarge);
+        } else if ty.returns.len() == 0 {
+            None
+        } else {
+            Some(ty.returns[0].clone())
+        };
 
         if parameter_size > 0xFFFF {
             return Err(ValidationError::FunctionParametersTooLarge);
-        }
-
-        if return_size > 0xFF {
-            return Err(ValidationError::FunctionReturnsTooLarge);
         }
 
         Ok(Func {
@@ -485,7 +488,7 @@ impl Func {
             stack_usage: 0,
             local_size: 0,
             parameter_size: parameter_size as u16,
-            return_size: return_size as u8,
+            return_ty,
             locals: Vec::zero(),
             expr: Expr::zero(),
         })
@@ -704,7 +707,7 @@ impl CodeSection {
 }
 
 pub struct Data {
-    pub offset: usize,
+    pub offset: u32,
     pub init: Vec<u8>,
 }
 
@@ -724,14 +727,16 @@ impl Data {
                     return Err(ValidationError::InvalidNegativeMemOffset);
                 }
 
-                i as usize
+                i as u32
             }
             Value::I64(i) => {
                 if i < 0 {
                     return Err(ValidationError::InvalidNegativeMemOffset);
+                } else if i > (u32::MAX as i64) {
+                    return Err(ValidationError::InvalidMemOffset)
                 }
 
-                i as usize
+                i as u32
             }
             Value::F32(_) => return Err(ValidationError::InvalidMemOffsetType),
             Value::F64(_) => return Err(ValidationError::InvalidMemOffsetType),

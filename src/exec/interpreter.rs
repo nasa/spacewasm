@@ -71,7 +71,7 @@ impl InterpreterState {
         }
 
         for data in &m.data {
-            self.ram.store(data.offset, &data.init)?;
+            self.ram.store(data.offset as usize, &data.init)?;
         }
 
         self.fp = self.sp as u32;
