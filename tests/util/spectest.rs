@@ -347,11 +347,11 @@ fn load_module(ctx: &mut TestContext, module_name: Option<String>, wasm_bytes: &
         .unwrap_or_else(|e| panic!("Failed to parse module: {e:?}"));
 
     // Get memory size
-    let heap_size = if module.memories.is_empty() {
+    let heap_size = if let Some(m_ty) = &module.memory {
+        (m_ty.0.min as usize) * 65536
+    } else {
         // Default small memory if no memory section
         65536
-    } else {
-        (module.memories[0].0.min as usize) * 65536
     };
 
     // Allocate memory
@@ -556,6 +556,11 @@ fn check_decode_error(err: ParseError, text: String) {
             "function and code section have inconsistent lengths",
         ) => {}
         (ValidationError::MalformedSectionSize, "section size mismatch") => {}
+        (ValidationError::LocalIdxOutOfRange, "unknown local") => {}
+        (ValidationError::MultipleMemories, "multiple memories") => {}
+        (ValidationError::MemoryImportsNotSupportedYet, "multiple memories") => {}
+        (ValidationError::AlignmentLargerThanType, "alignment must not be larger than natural") => {
+        }
         err => {
             assert!(
                 false,

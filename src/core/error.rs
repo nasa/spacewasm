@@ -53,7 +53,7 @@ pub enum ValidationError {
     MalformedImportExportDesc(u8),
     InvalidSectionOrdering(SectionKind, SectionKind),
     DuplicateSection(SectionKind),
-    InvalidZeroMaxLimit,
+    InvalidMaxLimit,
     ExpectedTerminal(u8),
     InvalidOpcode(u8),
     MalformedCodeSize,
@@ -72,6 +72,7 @@ pub enum ValidationError {
     InvalidLabelIndex,
     InvalidElseBlock,
     InvalidEndBlock,
+    MultipleMemories,
     PossibleBackpatchCycle,
     PageFault,
     InstructionOutsideOfFunction,
@@ -92,6 +93,7 @@ pub enum ValidationError {
     InvalidConstInstruction,
     BrTableHasTooManyCases,
     GlobalTypeMismatch,
+    AlignmentLargerThanType,
     TableImportsNotSupportedYet, // TODO(tumbar) Implement dynamic linking
     MemoryImportsNotSupportedYet, // TODO(tumbar) Implement implement shared memory
     FunctionCallsAcrossModuleNotSupportedYet, // TODO(tumbar) Implement module context isolation

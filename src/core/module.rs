@@ -6,7 +6,7 @@ pub struct Module {
     pub types: Vec<FuncType>,
     pub functions: Vec<Func>,
     pub table: Vec<FuncRef>,
-    pub memories: Vec<MemType>,
+    pub memory: Option<MemType>,
     pub globals: Vec<Global>,
     pub imports: Vec<Import>,
     pub exports: Vec<Export>,
@@ -92,7 +92,7 @@ impl Module {
             functions: Vec::zero(),
             text: Vec::zero(),
             table: Vec::zero(),
-            memories: Vec::zero(),
+            memory: None,
             globals: Vec::zero(),
             imports: Vec::zero(),
             exports: Vec::zero(),
@@ -200,7 +200,7 @@ impl Module {
                 self.table = TableSection::read(wasm)?;
             }
             Memory => {
-                self.memories = MemorySection::read(wasm)?;
+                self.memory = MemorySection::read(wasm)?;
             }
             Global => {
                 self.globals = GlobalSection::read(wasm)?;
@@ -490,8 +490,15 @@ impl TableSection {
 
 pub struct MemorySection;
 impl MemorySection {
-    pub fn read(wasm: &mut Reader) -> Result<Vec<MemType>, ValidationError> {
-        wasm.read_vec(MemType::read)
+    pub fn read(wasm: &mut Reader) -> Result<Option<MemType>, ValidationError> {
+        let len = wasm.read_u32()?;
+        if len > 1 {
+            Err(ValidationError::MultipleMemories)
+        } else if len == 0 {
+            Ok(None)
+        } else {
+            Ok(Some(MemType::read(wasm)?))
+        }
     }
 }
 

@@ -44,4 +44,3 @@ pub use ir_reader::*;
 
 #[cfg(test)]
 mod compiler_tests;
-

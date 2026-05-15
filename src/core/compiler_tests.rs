@@ -16,7 +16,7 @@ mod tests {
             types: crate::Vec::zero(),
             functions: crate::Vec::zero(),
             table: crate::Vec::zero(),
-            memories: crate::Vec::zero(),
+            memory: None,
             globals: crate::Vec::zero(),
             data: crate::Vec::zero(),
             start: None,
@@ -227,7 +227,12 @@ mod tests {
         );
 
         // Special case for call_host with two parameters
-        fn handle_call_host(&self, _module: HostModuleRef, _idx: u16, _: &mut Self::State) -> Result<(), ()> {
+        fn handle_call_host(
+            &self,
+            _module: HostModuleRef,
+            _idx: u16,
+            _: &mut Self::State,
+        ) -> Result<(), ()> {
             panic!("Unexpected: call_host")
         }
 
@@ -238,11 +243,21 @@ mod tests {
         );
 
         // Special cases for host globals with two parameters
-        fn handle_global_get_host(&self, _module: HostModuleRef, _idx: u16, _: &mut Self::State) -> Result<(), ()> {
+        fn handle_global_get_host(
+            &self,
+            _module: HostModuleRef,
+            _idx: u16,
+            _: &mut Self::State,
+        ) -> Result<(), ()> {
             panic!("Unexpected: global_get_host")
         }
 
-        fn handle_global_set_host(&self, _module: HostModuleRef, _idx: u16, _: &mut Self::State) -> Result<(), ()> {
+        fn handle_global_set_host(
+            &self,
+            _module: HostModuleRef,
+            _idx: u16,
+            _: &mut Self::State,
+        ) -> Result<(), ()> {
             panic!("Unexpected: global_set_host")
         }
     }
@@ -566,11 +581,7 @@ mod tests {
                 struct Handler;
                 impl TestHandler for Handler {
                     type State = Cell<Option<u16>>;
-                    fn $handler_method(
-                        &self,
-                        idx: u16,
-                        state: &mut Self::State,
-                    ) -> Result<(), ()> {
+                    fn $handler_method(&self, idx: u16, state: &mut Self::State) -> Result<(), ()> {
                         state.set(Some(idx));
                         Ok(())
                     }
@@ -999,7 +1010,10 @@ mod tests {
     /// Note: The 'else' instruction is tested separately in test_if_else.
     #[test]
     fn test_control_flow_and_variables() {
-        use crate::{FuncIdx, GlobalIdx, HostFunction, HostValList, LabelIdx, LocalIdx, ResultType, WasmVisitor};
+        use crate::{
+            FuncIdx, GlobalIdx, HostFunction, HostValList, LabelIdx, LocalIdx, ResultType,
+            WasmVisitor,
+        };
         use core::ops::ControlFlow;
 
         let mut code_builder = CodeBuilder::<4>::new();
@@ -1263,7 +1277,12 @@ mod tests {
                 Ok(())
             }
 
-            fn handle_call_host(&self, _module: HostModuleRef, _idx: u16, _: &mut Self::State) -> Result<(), ()> {
+            fn handle_call_host(
+                &self,
+                _module: HostModuleRef,
+                _idx: u16,
+                _: &mut Self::State,
+            ) -> Result<(), ()> {
                 // module should be HostModuleRef(0), idx should be 0
                 self.counts.call_host.set(self.counts.call_host.get() + 1);
                 Ok(())

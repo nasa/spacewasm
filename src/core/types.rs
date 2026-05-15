@@ -116,8 +116,10 @@ impl Limit {
                 let min = wasm.read_u32()?;
 
                 // Note: We are disabling `max` memory size since we don't support memory.grow
-                let _: core::num::NonZero<u32> = core::num::NonZero::new(wasm.read_u32()?)
-                    .ok_or(ValidationError::InvalidZeroMaxLimit)?;
+                let max = wasm.read_u32()?;
+                if max < min {
+                    return Err(ValidationError::InvalidMaxLimit);
+                }
 
                 Ok(Limit {
                     min,

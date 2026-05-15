@@ -3,7 +3,6 @@ use spacewasm::{
     InterpreterRunner, Memory, Store, Value,
 };
 use spacewasm_std::FileStream;
-use std::alloc::Layout;
 use std::ops::ControlFlow;
 use std::time::Instant;
 
@@ -49,15 +48,13 @@ fn main() {
     store.modules.push(spacewasm::Box::new(module).unwrap());
     let module = store.modules.last().unwrap();
 
-    let mem = &module.memories[0];
-    let heap_size = (mem.0.min as usize) * 65536;
-    let mut state = spacewasm::InterpreterState::new(
-        1024,
-        Memory::from(
-            unsafe { std::alloc::alloc(Layout::from_size_align(heap_size, 64).unwrap()) },
-            heap_size,
-        ),
-    );
+    let heap_size = if let Some(spacewasm::MemType(spacewasm::Limit { min })) = module.memory {
+        min
+    } else {
+        0
+    } * 65536;
+
+    let mut state = spacewasm::InterpreterState::new(1024, Memory::new(heap_size as usize));
     state.initialize(&module).unwrap();
 
     let export = module

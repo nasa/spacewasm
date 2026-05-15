@@ -1,9 +1,9 @@
-use std::cell::RefCell;
-use std::rc::Rc;
 use spacewasm::{
     BaseVisitor, FuncIdx, GlobalIdx, HostModuleRef, IrVisitor, JumpTarget, LabelIdx, LocalIdx,
     LocalVariable, MemArg, ResultType, TypeIdx, WasmVisitor,
 };
+use std::cell::RefCell;
+use std::rc::Rc;
 
 macro_rules! visit_fn {
     // No additional parameters
@@ -257,7 +257,7 @@ impl<'a, S, E, T: BaseVisitor<State = S, Error = E> + IrVisitor> IrVisitor
         cases: impl FnOnce(u16) -> Result<JumpTarget, ()>,
         state: &mut Self::State,
     ) -> Result<(), Self::Error> {
-        eprintln!("br_table()");
+        self.out.borrow_mut().push("br_table()".to_string());
         self.v.br_table(cases, state)
     }
 
