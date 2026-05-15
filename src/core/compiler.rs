@@ -254,6 +254,7 @@ impl<'a, const N: usize> BaseVisitor for Compiler<'a, N> {
     instruction!(i64_store32, I64_STORE32, mem, 4);
 
     instruction!(memory_size, MEMORY_SIZE);
+    // instruction!(memory_grow, MEMORY_GROW);
 
     fn memory_grow(&self, state: &mut Self::State) -> Result<(), Self::Error> {
         let _ = state;

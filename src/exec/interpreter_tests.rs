@@ -25,7 +25,6 @@ mod tests {
             text: crate::Vec::zero(),
             wasm_size: 0,
             final_page_offset: 0,
-            memory_usage: Default::default(),
         }
     }
 

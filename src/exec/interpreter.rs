@@ -1,6 +1,6 @@
+use crate::exec::ir_reader::{IrReader, IrReaderError};
 use crate::*;
 use ::core::ops::{AddAssign, ControlFlow};
-use crate::exec::ir_reader::{IrReader, IrReaderError};
 
 pub struct InterpreterState {
     pub pc: JumpTarget,

@@ -226,6 +226,7 @@ impl<'code> IrReader<'code> {
 
             // Memory instructions - size/grow
             MEMORY_SIZE => instruction!(memory_size),
+            MEMORY_GROW => instruction!(memory_grow),
 
             // Numeric instructions - const
             I32_CONST => {

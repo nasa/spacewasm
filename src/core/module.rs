@@ -2,7 +2,7 @@ use crate::*;
 
 pub struct Module {
     pub name: String,
-    pub index: usize,
+    pub index: u32,
     pub types: Vec<FuncType>,
     pub functions: Vec<Func>,
     pub table: Vec<FuncRef>,
@@ -13,9 +13,8 @@ pub struct Module {
     pub data: Vec<Data>,
     pub start: Option<FuncIdx>,
     pub text: Vec<Box<TextPage>>,
-    pub wasm_size: usize,
-    pub final_page_offset: usize,
-    pub memory_usage: [MemoryStatistics; SectionKind::N as usize],
+    pub wasm_size: u32,
+    pub final_page_offset: u32,
 }
 
 pub trait CustomSectionHandler {
@@ -51,12 +50,40 @@ impl Module {
     ) -> Result<Module, ParseError> {
         let mut wasm = Reader::new(stream);
 
-        Module::read::<N>(name, &mut wasm, store, &mut DefaultCustomSectionHandler).map_err(|err| {
-            ParseError {
-                offset: wasm.offset() as u32,
-                err: err.into(),
-            }
+        Module::read::<N>(
+            name,
+            &mut wasm,
+            store,
+            &mut DefaultCustomSectionHandler,
+            None,
+        )
+        .map_err(|err| ParseError {
+            offset: wasm.offset() as u32,
+            err: err.into(),
         })
+    }
+
+    pub fn new_with_statistics<const N: usize>(
+        name: &str,
+        stream: &mut dyn Stream,
+        store: &Store,
+    ) -> Result<(Module, [MemoryStatistics; SectionKind::N as usize]), ParseError> {
+        let mut wasm = Reader::new(stream);
+        let mut stats: [MemoryStatistics; SectionKind::N as usize] = Default::default();
+
+        let m = Module::read::<N>(
+            name,
+            &mut wasm,
+            store,
+            &mut DefaultCustomSectionHandler,
+            Some(&mut stats),
+        )
+        .map_err(|err| ParseError {
+            offset: wasm.offset() as u32,
+            err: err.into(),
+        })?;
+
+        Ok((m, stats))
     }
 
     fn read<const N: usize>(
@@ -64,6 +91,7 @@ impl Module {
         wasm: &mut Reader,
         store: &Store,
         custom_handler: &mut dyn CustomSectionHandler,
+        mut stats: Option<&mut [MemoryStatistics; SectionKind::N as usize]>,
     ) -> Result<Module, SectionDecodeError> {
         let magic = wasm.strip_bytes::<4>()?;
         if magic != [0x00, 0x61, 0x73, 0x6D] {
@@ -87,7 +115,7 @@ impl Module {
 
         let mut module = Module {
             name: name.try_into()?,
-            index: store.modules.len(),
+            index: store.modules.len() as u32,
             types: Vec::zero(),
             functions: Vec::zero(),
             text: Vec::zero(),
@@ -100,7 +128,6 @@ impl Module {
             start: None,
             wasm_size: 0,
             final_page_offset: 0,
-            memory_usage: Default::default(),
         };
 
         let mut last_section: SectionKind = SectionKind::Custom;
@@ -151,7 +178,9 @@ impl Module {
             let memory_after = GlobalAllocator.memory_statistics();
 
             // Compute the memory usage delta to track per-section usage
-            module.memory_usage[section_ty as usize] += memory_after - memory_before;
+            if let Some(stats) = &mut stats {
+                stats[section_ty as usize] += memory_after - memory_before;
+            }
 
             // Validate we actually read the entire section
             let section_end = wasm.offset();
@@ -168,8 +197,8 @@ impl Module {
 
         let (text, text_offset) = builder.finish()?;
         module.text = text;
-        module.wasm_size = wasm.offset();
-        module.final_page_offset = text_offset;
+        module.wasm_size = wasm.offset() as u32;
+        module.final_page_offset = text_offset as u32;
         Ok(module)
     }
 
@@ -294,7 +323,7 @@ impl Module {
         store: &'store Store,
         module_ref: ExternalModuleRef,
     ) -> &'store Module {
-        let mod_idx = self.index - (module_ref.0 as usize);
+        let mod_idx = (self.index as usize) - (module_ref.0 as usize);
         &store.modules[mod_idx]
     }
 }
@@ -358,6 +387,9 @@ impl CustomSection {
         let name_str = ::core::str::from_utf8(&name).map_err(|_| ValidationError::MalformedUtf8)?;
 
         let name_length = wasm.offset() - start;
+        if name_length > size {
+            return Err(ValidationError::MalformedSectionSize);
+        }
 
         handler.custom_section(name_str, size - name_length, wasm)
     }
