@@ -39,8 +39,5 @@ pub use compiler::*;
 mod text;
 pub use text::*;
 
-mod ir_reader;
-pub use ir_reader::*;
-
 #[cfg(test)]
 mod compiler_tests;

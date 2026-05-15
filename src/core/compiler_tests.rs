@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::{
-        BaseVisitor, Code, CodeBuilder, Compiler, HostModule, HostModuleRef, InterpreterState,
+        BaseVisitor, CodeBuilder, Compiler, HostModule, HostModuleRef, InterpreterState, IrReader,
         IrVisitor, JumpTarget, LocalVariable, MemArg, Module, Store, TextBuilder, TypeIdx,
     };
     use core::cell::Cell;
@@ -444,12 +444,12 @@ mod tests {
         }
 
         let (pages, _) = code_builder.finish().unwrap();
-        let code = Code::new(&pages);
+        let reader = IrReader::new(&pages);
         let visitor = TestVisitor(handler);
         let mut state = initial_state;
 
         let mut pc = JumpTarget(0);
-        code.visit_instruction(&mut state, &mut pc, &visitor)
+        reader.visit_instruction(&mut state, &mut pc, &visitor)
             .unwrap();
         assert_fn(state);
     }
@@ -961,7 +961,7 @@ mod tests {
             }
         }
 
-        let code = Code::new(&pages);
+        let reader = IrReader::new(&pages);
         let handler = ElseTestHandler {
             if_count: Rc::new(Cell::new(0)),
             br_count: Rc::new(Cell::new(0)),
@@ -972,7 +972,7 @@ mod tests {
         let mut pc = JumpTarget(0);
         loop {
             let visitor = TestVisitor(handler.clone());
-            match code.visit_instruction(&mut state, &mut pc, &visitor) {
+            match reader.visit_instruction(&mut state, &mut pc, &visitor) {
                 Ok(_) => {}
                 Err(_) => break,
             }
@@ -1295,7 +1295,7 @@ mod tests {
             }
         }
 
-        let code = Code::new(&pages);
+        let reader = IrReader::new(&pages);
         let handler = ReadHandler {
             counts: InstructionCounts {
                 local_get: Rc::new(Cell::new(0)),
@@ -1319,7 +1319,7 @@ mod tests {
         let mut pc = JumpTarget(0);
         loop {
             let visitor = TestVisitor(handler.clone());
-            match code.visit_instruction(&mut state, &mut pc, &visitor) {
+            match reader.visit_instruction(&mut state, &mut pc, &visitor) {
                 Ok(_) => {}
                 Err(_) => break,
             }

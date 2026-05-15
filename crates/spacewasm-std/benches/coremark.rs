@@ -81,13 +81,12 @@ fn main() {
     );
     interpreter.invoke(&mut state, func, &[]);
 
-    let code = spacewasm::Code::new(&module.text);
     let bench_start = Instant::now();
 
     eprintln!("Starting execution...");
     let mut result = InterpreterResult::OutOfFuel;
     while result == InterpreterResult::OutOfFuel {
-        result = interpreter.run(&code, &mut state, usize::MAX)
+        result = interpreter.run(&module.text, &mut state, usize::MAX)
     }
     let elapsed = bench_start.elapsed();
 

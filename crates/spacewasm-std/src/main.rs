@@ -194,10 +194,9 @@ fn main() {
 
                 eprintln!("====");
 
-                let code = spacewasm::Code::new(&module.text);
                 let mut result = InterpreterResult::OutOfFuel;
                 while result == InterpreterResult::OutOfFuel {
-                    result = interpreter.run(&code, &mut state, usize::MAX)
+                    result = interpreter.run(&module.text, &mut state, usize::MAX)
                 }
 
                 eprintln!("Interpreter result: {:?}", result)

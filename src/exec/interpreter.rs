@@ -1,5 +1,6 @@
 use crate::*;
 use ::core::ops::{AddAssign, ControlFlow};
+use crate::exec::ir_reader::{IrReader, IrReaderError};
 
 pub struct InterpreterState {
     pub pc: JumpTarget,
@@ -169,7 +170,7 @@ impl<'store> Interpreter<'store> {
 pub trait InterpreterRunner {
     fn run(
         &self,
-        code: &Code,
+        code: &[Box<TextPage>],
         state: &mut InterpreterState,
         n_instructions: usize,
     ) -> InterpreterResult;
@@ -178,16 +179,18 @@ pub trait InterpreterRunner {
 impl<T: IrVisitor<State = InterpreterState, Error = InterpreterBreak>> InterpreterRunner for T {
     fn run(
         &self,
-        code: &Code,
+        code: &[Box<TextPage>],
         state: &mut InterpreterState,
         n_instructions: usize,
     ) -> InterpreterResult {
+        let reader = IrReader::new(code);
+
         // Run up to n instructions
         for _ in 0..n_instructions {
             let old_pc = state.pc;
             let mut pc = state.pc;
 
-            let i_res = code.visit_instruction(state, &mut pc, self);
+            let i_res = reader.visit_instruction(state, &mut pc, self);
             if old_pc != state.pc {
                 // We jumped, leave the PC
             } else {

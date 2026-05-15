@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use spacewasm::{
-    global_allocator, vec, AllocError, Allocator, Code, ExportDesc, FuncRef, GlobalValue,
+    global_allocator, vec, AllocError, Allocator, ExportDesc, FuncRef, GlobalValue,
     GlobalValueError, HostFunction, HostGlobal, HostModule, InnerVec, Interpreter,
     InterpreterBreak, InterpreterResult, InterpreterRunner, InterpreterState, Memory, MemoryStatistics, Module,
     ParseError, ReaderError, Store, Stream, TrapReason, ValType, ValidationError, Value,
@@ -462,7 +462,6 @@ fn invoke_function(
     let module = ctx.store.modules.get(module_index).unwrap();
     let func = &module.functions[func_index];
     let interpreter = Interpreter::new(&ctx.store, module);
-    let code = Code::new(&module.text);
     let instance = ctx.instances.get_mut(&instance_key).unwrap();
     interpreter.invoke(&mut instance.state, func, &params);
 
@@ -479,7 +478,7 @@ fn invoke_function(
     // Run until completion
     let mut result = InterpreterResult::OutOfFuel;
     while result == InterpreterResult::OutOfFuel {
-        result = test_runner.run(&code, &mut instance.state, usize::MAX);
+        result = test_runner.run(&module.text, &mut instance.state, usize::MAX);
     }
 
     // Check the result
