@@ -19,6 +19,10 @@ impl Stack {
         }
     }
 
+    pub(crate) fn len(&self) -> usize {
+        self.size
+    }
+
     #[inline]
     fn check_bounds(&self, addr: usize, word_n: usize) {
         // TODO(tumbar) Allow this assertion to be disabled via feature flag. We can already check

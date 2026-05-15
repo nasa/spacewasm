@@ -463,7 +463,7 @@ fn invoke_function(
     let func = &module.functions[func_index];
     let interpreter = Interpreter::new(&ctx.store, module);
     let instance = ctx.instances.get_mut(&instance_key).unwrap();
-    interpreter.invoke(&mut instance.state, func, &params);
+    interpreter.invoke(&mut instance.state, func, &params)?;
 
     let test_runner = Inspector {
         v: &interpreter,
@@ -532,6 +532,7 @@ fn trap_reason_to_string(reason: TrapReason) -> &'static str {
         TrapReason::GlobalGetFailed => unreachable!(),
         TrapReason::GlobalSetFailed => unreachable!(),
         TrapReason::MemoryOutOfBounds => "out of bounds memory access",
+        TrapReason::StackOverflow => "stack overflow",
     }
 }
 

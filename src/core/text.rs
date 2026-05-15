@@ -244,6 +244,10 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
         self.module
     }
 
+    pub fn stack_usage(&self) -> u16 {
+        self.stack_highwater
+    }
+
     /// Compute the offset in 32-bit words of a local variable given its index
     pub fn get_local(&self, x: LocalIdx) -> Result<LocalVariable, ValidationError> {
         if x.0 > 0xFFFF {

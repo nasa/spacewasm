@@ -21,14 +21,12 @@ impl Expr {
         store: &Store,
         module: &Module,
         ctx: &Func,
-    ) -> Result<Self, ValidationError> {
+    ) -> Result<(Self, u16), ValidationError> {
         let e = Expr(builder.pc());
-        wasm.read_code(
-            &Compiler::<'_, N>::new(),
-            &mut TextBuilder::new(builder, store, module, ctx),
-        )?;
+        let tb = &mut TextBuilder::new(builder, store, module, ctx);
+        wasm.read_code(&Compiler::<'_, N>::new(), tb)?;
 
-        Ok(e)
+        Ok((e, tb.stack_usage()))
     }
 }
 
@@ -101,7 +99,7 @@ impl Module {
         }
 
         f.local_size = size_in_words as u16;
-        f.expr = Expr::read(wasm, builder, store, self, &f)?;
+        (f.expr, f.stack_usage) = Expr::read(wasm, builder, store, self, &f)?;
 
         let _ = ::core::mem::replace(&mut self.functions[i], f);
 

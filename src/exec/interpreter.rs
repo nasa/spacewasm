@@ -105,7 +105,13 @@ impl<'store> Interpreter<'store> {
         Interpreter { store, module }
     }
 
-    fn call_impl(&self, f: &Func, state: &mut InterpreterState) {
+    fn call_impl(&self, f: &Func, state: &mut InterpreterState) -> Result<(), InterpreterBreak> {
+        // Make sure we have enough stack space for the function call
+        let required_stack_space = f.stack_usage as usize + 2 + f.local_size as usize;
+        if state.stack.len() < state.sp + required_stack_space {
+            return Err(InterpreterBreak::Trap(TrapReason::StackOverflow));
+        }
+
         // The arguments are already at the top of the stack
         // We need to push the frame pointer and the return instruction pointer to the stack
         // We also encode the parameter size into the stack frame so that the return can unwind the stack
@@ -130,12 +136,14 @@ impl<'store> Interpreter<'store> {
 
         // Jump to the function's execution point
         state.pc = f.expr.0;
+
+        Ok(())
     }
 
     /// Invoke a function with some parameters
     /// Warning! If this is being used as an interrupt rather than an entry point,
     /// make sure that the function does not return any values as that will cause stack pollution!
-    pub fn invoke(&self, state: &mut InterpreterState, f: &Func, params: &[Value]) {
+    pub fn invoke(&self, state: &mut InterpreterState, f: &Func, params: &[Value]) -> Result<(), InterpreterBreak> {
         for p in params {
             // TODO(tumbar) Validate input parameters
             match p {
@@ -158,7 +166,7 @@ impl<'store> Interpreter<'store> {
             }
         }
 
-        self.call_impl(f, state);
+        self.call_impl(f, state)
     }
 }
 
@@ -243,6 +251,8 @@ pub enum TrapReason {
     GlobalSetFailed,
     /// A memory operation is out of bounds
     MemoryOutOfBounds,
+    /// Ran out of stack space
+    StackOverflow,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -976,10 +986,8 @@ impl<'module> IrVisitor for Interpreter<'module> {
     }
 
     fn call(&self, x: u16, state: &mut Self::State) -> Result<(), Self::Error> {
-        // TODO(tumbar) Check stack usage
         let f = &self.module.functions[x as usize];
-        self.call_impl(f, state);
-        Ok(())
+        self.call_impl(f, state)
     }
 
     fn call_host(
@@ -1073,8 +1081,7 @@ impl<'module> IrVisitor for Interpreter<'module> {
                 }
 
                 // Call the function
-                self.call_impl(f, state);
-                Ok(())
+                self.call_impl(f, state)
             }
             FuncRef::HostFunc { module, index } => {
                 // Make sure the type matches our expectations (runtime validation)
