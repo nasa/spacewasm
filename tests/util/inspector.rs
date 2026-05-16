@@ -1,32 +1,36 @@
-use crate::{
-    FuncIdx, GlobalIdx, JumpTarget, LabelIdx, LocalIdx, MemArg, ResultType, TypeIdx, ValType,
+use spacewasm::{
+    BaseVisitor, FuncIdx, GlobalIdx, HostModuleRef, IrVisitor, JumpTarget, LabelIdx, LocalIdx,
+    LocalVariable, MemArg, ResultType, TypeIdx, WasmVisitor,
 };
+use std::cell::RefCell;
+use std::rc::Rc;
 
-/// A convenience macro for defining the visitor function for a decoded
-/// WebAssembly instruction from any intermediate representation.
 macro_rules! visit_fn {
     // No additional parameters
     ($name:ident) => {
-        fn $name(&self, state: &mut Self::State) -> Result<(), Self::Error>;
+        fn $name(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+            self.out.borrow_mut().push(format!("{}()", stringify!($name)));
+            self.v.$name(state)
+        }
     };
 
     // With additional parameters
     ($name:ident, $($param:ident : $ty:ty),+) => {
-        fn $name(&self, $($param: $ty),+, state: &mut Self::State) -> Result<(), Self::Error>;
+        fn $name(&self, $($param: $ty),+, state: &mut Self::State) -> Result<(), Self::Error> {
+            self.out.borrow_mut().push(format!("{}{:?}", stringify!($name), ($((stringify!($param), &$param),)+)));
+            self.v.$name($($param,)+ state)
+        }
     };
 }
 
-/// An abstraction over WASM IR and internal IR.
-/// This trait can be used to index, compile and execute either form of IR
-/// with the same common implementation. The decoding and traversal code will
-/// call into this visitor and is IR specific. This trait is purely for operating
-/// on decoded WebAssembly instructions.
-///
-/// Note: This visitor does not handle the control-flow instructions since those are
-///       IR-specific. See [WasmVisitor] and [IrVisitor]
-pub trait BaseVisitor {
-    type Error;
-    type State;
+pub struct Inspector<'a, S, E, T: BaseVisitor<State = S, Error = E>> {
+    pub v: &'a T,
+    pub out: Rc<RefCell<Vec<String>>>,
+}
+
+impl<'a, S, E, T: BaseVisitor<State = S, Error = E>> BaseVisitor for Inspector<'a, S, E, T> {
+    type Error = E;
+    type State = S;
 
     // Control instructions
     visit_fn!(unreachable);
@@ -217,9 +221,9 @@ pub trait BaseVisitor {
     visit_fn!(f64_reinterpret_i64);
 }
 
-/// An abstraction over WASM Bytecode.
-/// Used to implement validation and compilation of WASM bytecode.
-pub trait WasmVisitor: BaseVisitor {
+impl<'a, S, E, T: BaseVisitor<State = S, Error = E> + WasmVisitor> WasmVisitor
+    for Inspector<'a, S, E, T>
+{
     visit_fn!(enter_block, block_type: ResultType);
     visit_fn!(exit_block);
     visit_fn!(finish);
@@ -242,56 +246,23 @@ pub trait WasmVisitor: BaseVisitor {
     visit_fn!(global_set, x: GlobalIdx);
 }
 
-#[derive(Debug)]
-pub struct LocalVariable {
-    // Offset of the local variable in 32-bit words
-    // Function parameters are negative relative to the FP
-    // Locals are positive relative to FP + 2
-    pub frame_offset: i16,
-
-    // Variable's type
-    pub ty: ValType,
-}
-
-/// An index offset from the current module.
-/// Module imports can only refer to modules loaded before it.
-/// References store a relative offset from the 'current' module. 0 indicates the current module.
-#[derive(Debug, Clone, Copy)]
-pub struct ExternalModuleRef(pub u8);
-
-#[derive(Debug, Clone, Copy)]
-pub struct HostModuleRef(pub u8);
-
-impl HostModuleRef {
-    /// Construct a new module reference given the absolute index to the module and the store.
-    pub fn new(module_index: usize) -> HostModuleRef {
-        HostModuleRef(module_index as u8)
-    }
-}
-
-/// A reference to a function in the WASM store
-#[derive(Debug, Clone, Copy)]
-pub enum FuncRef {
-    /// A function in the current WASM module
-    Func(u16),
-    /// A host function in another WASM module
-    HostFunc { module: HostModuleRef, index: u16 },
-    /// A function in another WASM module
-    ExternFunc { module: ExternalModuleRef, index: u16 },
-}
-
-/// An abstraction over IR Bytecode.
-/// Used to implement the interpreter.
-pub trait IrVisitor: BaseVisitor {
+impl<'a, S, E, T: BaseVisitor<State = S, Error = E> + IrVisitor> IrVisitor
+    for Inspector<'a, S, E, T>
+{
     visit_fn!(if_, false_address: JumpTarget);
     visit_fn!(br, addr: JumpTarget);
     visit_fn!(br_if, true_address: JumpTarget);
-    visit_fn!(br_table, cases: impl FnOnce(u16) -> Result<JumpTarget, ()>);
+    fn br_table(
+        &self,
+        cases: impl FnOnce(u16) -> Result<JumpTarget, ()>,
+        state: &mut Self::State,
+    ) -> Result<(), Self::Error> {
+        self.out.borrow_mut().push("br_table()".to_string());
+        self.v.br_table(cases, state)
+    }
 
     visit_fn!(return_, return_size: u8);
     visit_fn!(call, x: u16);
-    // TODO(tumbar) Support calling functions across WASM modules
-    // visit_fn!(call_external, module: WasmModuleRef, x: u16);
     visit_fn!(call_host, module: HostModuleRef, x: u16);
     visit_fn!(call_indirect, x: TypeIdx);
 
@@ -300,7 +271,7 @@ pub trait IrVisitor: BaseVisitor {
     visit_fn!(local_set, l: LocalVariable);
     visit_fn!(local_tee, l: LocalVariable);
     visit_fn!(global_get, idx: u16);
-    visit_fn!(global_set, idx: u16);
     visit_fn!(global_get_host, module: HostModuleRef, index: u16);
+    visit_fn!(global_set, idx: u16);
     visit_fn!(global_set_host, module: HostModuleRef, index: u16);
 }

@@ -41,7 +41,7 @@ impl Default for TextPage {
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub struct JumpTarget(pub u32);
 
-impl core::ops::Add<u32> for JumpTarget {
+impl ::core::ops::Add<u32> for JumpTarget {
     type Output = JumpTarget;
     fn add(self, rhs: u32) -> JumpTarget {
         JumpTarget(self.0 + rhs)
@@ -150,6 +150,8 @@ impl<const N: usize> CodeBuilder<N> {
         }
     }
 
+    /// Move all the text pages into a heap vector with the used size.
+    /// This consumes the builder and returns the pages and the used size.
     pub fn finish(self) -> Result<(Vec<Box<TextPage>>, usize), AllocError> {
         let mut v = Vec::new(self.pages.len() as u32)?;
         for i in self.pages {
@@ -218,6 +220,7 @@ impl<const N: usize> CodeBuilder<N> {
         }
     }
 
+    /// Read a single IR word at a given address.
     fn read(&mut self, address: JumpTarget) -> Result<u16, ValidationError> {
         let page_index = address.page();
         let offset = address.offset();
@@ -310,7 +313,6 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
             current_index += 1;
         }
 
-        // Skip over the fp/lr on the stack
         current_offset = 0;
 
         // Now check the local variables
@@ -464,7 +466,7 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
             while next != JumpTarget::SENTINEL {
                 // Bound our loops to not go into an infinite cycle
                 n += 1;
-                if n > 100 {
+                if n > 200 {
                     return Err(ValidationError::PossibleBackpatchCycle);
                 }
 

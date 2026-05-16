@@ -11,14 +11,14 @@ pub struct MemoryOutOfBounds;
 
 impl Memory {
     pub fn new(size: usize) -> Memory {
-        Memory {
-            ptr: unsafe { GlobalAllocator.alloc(Layout::from_size_align(size, 16).unwrap()) }
-                .unwrap(),
+        Memory::from(
+            unsafe { GlobalAllocator.alloc(Layout::from_size_align(size, 16).unwrap()) }.unwrap(),
             size,
-        }
+        )
     }
 
     pub fn from(ptr: *mut u8, size: usize) -> Memory {
+        unsafe { ptr.write_bytes(0, size) };
         Memory { ptr, size }
     }
 

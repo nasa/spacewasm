@@ -1,8 +1,8 @@
 #[cfg(test)]
 mod tests {
     use crate::{
-        BaseVisitor, Code, CodeBuilder, Compiler, GlobalVariable, InterpreterState, IrVisitor,
-        JumpTarget, LocalVariable, MemArg, Module, TextBuilder, TypeIdx,
+        BaseVisitor, CodeBuilder, Compiler, HostModule, HostModuleRef, InterpreterState, IrReader,
+        IrVisitor, JumpTarget, LocalVariable, MemArg, Module, Store, TextBuilder, TypeIdx,
     };
     use core::cell::Cell;
 
@@ -12,10 +12,11 @@ mod tests {
     fn create_test_module() -> Module {
         Module {
             name: "test".try_into().unwrap(),
+            index: 0,
             types: crate::Vec::zero(),
             functions: crate::Vec::zero(),
             table: crate::Vec::zero(),
-            memories: crate::Vec::zero(),
+            memory: None,
             globals: crate::Vec::zero(),
             data: crate::Vec::zero(),
             start: None,
@@ -26,6 +27,11 @@ mod tests {
             final_page_offset: 0,
             memory_usage: Default::default(),
         }
+    }
+
+    /// Helper to create a minimal store for testing
+    fn create_test_store() -> Store {
+        Store::new(1, []).unwrap()
     }
 
     /// Helper to create a minimal function for testing
@@ -89,6 +95,15 @@ mod tests {
             $(
                 fn $visitor_name(&self, $param_name: $ty, state: &mut Self::State) -> Result<(), Self::Error> {
                     self.0.$handler_name($param_name, state)
+                }
+            )*
+        };
+
+        // Methods with two typed parameters
+        (two_param: $(($visitor_name:ident => $handler_name:ident, $param1:ident: $ty1:ty, $param2:ident: $ty2:ty)),* $(,)?) => {
+            $(
+                fn $visitor_name(&self, $param1: $ty1, $param2: $ty2, state: &mut Self::State) -> Result<(), Self::Error> {
+                    self.0.$handler_name($param1, $param2, state)
                 }
             )*
         };
@@ -208,14 +223,43 @@ mod tests {
 
         // IrVisitor - other control (typed params)
         handler_methods!(one_param:
-            (handle_return, u8), (handle_call, u16), (handle_call_host, u16), (handle_call_indirect, TypeIdx),
+            (handle_return, u8), (handle_call, u16), (handle_call_indirect, TypeIdx),
         );
+
+        // Special case for call_host with two parameters
+        fn handle_call_host(
+            &self,
+            _module: HostModuleRef,
+            _idx: u16,
+            _: &mut Self::State,
+        ) -> Result<(), ()> {
+            panic!("Unexpected: call_host")
+        }
 
         // IrVisitor - variables (typed params)
         handler_methods!(one_param:
             (handle_local_get, LocalVariable), (handle_local_set, LocalVariable), (handle_local_tee, LocalVariable),
-            (handle_global_get, GlobalVariable), (handle_global_set, GlobalVariable),
+            (handle_global_get, u16), (handle_global_set, u16),
         );
+
+        // Special cases for host globals with two parameters
+        fn handle_global_get_host(
+            &self,
+            _module: HostModuleRef,
+            _idx: u16,
+            _: &mut Self::State,
+        ) -> Result<(), ()> {
+            panic!("Unexpected: global_get_host")
+        }
+
+        fn handle_global_set_host(
+            &self,
+            _module: HostModuleRef,
+            _idx: u16,
+            _: &mut Self::State,
+        ) -> Result<(), ()> {
+            panic!("Unexpected: global_set_host")
+        }
     }
 
     /// Wrapper that delegates BaseVisitor and IrVisitor to TestHandler
@@ -355,14 +399,25 @@ mod tests {
         // Other control
         delegate_methods!(one_param:
             (return_ => handle_return, n: u8), (call => handle_call, idx: u16),
-            (call_host => handle_call_host, idx: u16), (call_indirect => handle_call_indirect, ty: TypeIdx),
+            (call_indirect => handle_call_indirect, ty: TypeIdx),
+        );
+
+        // call_host with two parameters
+        delegate_methods!(two_param:
+            (call_host => handle_call_host, module: HostModuleRef, idx: u16),
         );
 
         // Variables
         delegate_methods!(one_param:
             (local_get => handle_local_get, var: LocalVariable), (local_set => handle_local_set, var: LocalVariable),
             (local_tee => handle_local_tee, var: LocalVariable),
-            (global_get => handle_global_get, var: GlobalVariable), (global_set => handle_global_set, var: GlobalVariable),
+            (global_get => handle_global_get, idx: u16), (global_set => handle_global_set, idx: u16),
+        );
+
+        // Host globals with two parameters
+        delegate_methods!(two_param:
+            (global_get_host => handle_global_get_host, module: HostModuleRef, idx: u16),
+            (global_set_host => handle_global_set_host, module: HostModuleRef, idx: u16),
         );
     }
 
@@ -371,29 +426,30 @@ mod tests {
     fn test_instruction<H, S, F, A>(handler: H, initial_state: S, compile: F, assert_fn: A)
     where
         H: TestHandler<State = S>,
-        for<'a, 'b> F: FnOnce(
+        for<'a> F: FnOnce(
             &'a Compiler<'a, 4>,
-            &'b mut TextBuilder<'a, 'a, 4>,
+            &'a mut TextBuilder<'a, 4>,
         ) -> Result<(), crate::ValidationError>,
         A: FnOnce(S),
     {
         let mut code_builder = CodeBuilder::<4>::new();
+        let store = create_test_store();
         let module = create_test_module();
         let func = create_test_func();
         let compiler = Compiler::<4>::new();
 
         {
-            let mut text_builder = TextBuilder::new(&mut code_builder, &module, &func);
+            let mut text_builder = TextBuilder::new(&mut code_builder, &store, &module, &func);
             compile(&compiler, &mut text_builder).unwrap();
         }
 
         let (pages, _) = code_builder.finish().unwrap();
-        let code = Code::new(&pages);
+        let reader = IrReader::new(&pages);
         let visitor = TestVisitor(handler);
         let mut state = initial_state;
 
         let mut pc = JumpTarget(0);
-        code.visit_instruction(&mut state, &mut pc, &visitor)
+        reader.visit_instruction(&mut state, &mut pc, &visitor)
             .unwrap();
         assert_fn(state);
     }
@@ -518,48 +574,25 @@ mod tests {
             }
         };
 
-        // GlobalVariable instruction - verify global access
-        (global: $test_name:ident, $handler_method:ident, $compiler_method:ident, $index:expr, $ty:expr, $is_imported:expr) => {
+        // GlobalIdx instruction - verify global access (using u16 index)
+        (global: $test_name:ident, $handler_method:ident, $compiler_method:ident, $index:expr) => {
             #[test]
             fn $test_name() {
                 struct Handler;
                 impl TestHandler for Handler {
-                    type State = Cell<(bool, u32, crate::ValType, bool)>;
-                    fn $handler_method(
-                        &self,
-                        var: GlobalVariable,
-                        state: &mut Self::State,
-                    ) -> Result<(), ()> {
-                        let idx = match var.reference {
-                            crate::GlobalVariableRef::Internal(i) => i,
-                            crate::GlobalVariableRef::Imported(i) => i,
-                        };
-                        let is_imported =
-                            matches!(var.reference, crate::GlobalVariableRef::Imported(_));
-                        state.set((true, idx, var.ty, is_imported));
+                    type State = Cell<Option<u16>>;
+                    fn $handler_method(&self, idx: u16, state: &mut Self::State) -> Result<(), ()> {
+                        state.set(Some(idx));
                         Ok(())
                     }
                 }
 
-                let test_var = GlobalVariable {
-                    reference: if $is_imported {
-                        crate::GlobalVariableRef::Imported($index)
-                    } else {
-                        crate::GlobalVariableRef::Internal($index)
-                    },
-                    ty: $ty,
-                    mutable: true,
-                };
                 test_instruction(
                     Handler,
-                    Cell::new((false, 0, crate::ValType::I32, false)),
-                    |compiler, text| compiler.$compiler_method(test_var, text),
+                    Cell::new(None),
+                    |compiler, text| compiler.$compiler_method(crate::GlobalIdx($index), text),
                     |state| {
-                        let (called, idx, ty, is_imported) = state.get();
-                        assert!(called);
-                        assert_eq!(idx, $index);
-                        assert_eq!(ty, $ty);
-                        assert_eq!(is_imported, $is_imported);
+                        assert_eq!(state.get(), Some($index));
                     },
                 );
             }
@@ -855,6 +888,7 @@ mod tests {
         use crate::{ResultType, WasmVisitor};
 
         let mut code_builder = CodeBuilder::<4>::new();
+        let store = create_test_store();
         let mut module = create_test_module();
 
         let mut types = crate::Vec::new(1).unwrap();
@@ -868,7 +902,7 @@ mod tests {
         let compiler = Compiler::<4>::new();
 
         {
-            let mut text_builder = TextBuilder::new(&mut code_builder, &module, &func);
+            let mut text_builder = TextBuilder::new(&mut code_builder, &store, &module, &func);
 
             // Test if/else structure with code in both branches
             compiler.i32_const(1, &mut text_builder).unwrap(); // Condition
@@ -917,15 +951,17 @@ mod tests {
             }
 
             fn handle_return(&self, _: u8, _: &mut Self::State) -> Result<(), ()> {
-                Ok(())
+                // Return Err to signal the end of execution
+                Err(())
             }
 
             fn handle_unreachable(&self, _: &mut Self::State) -> Result<(), ()> {
-                Ok(())
+                // Return Err to signal execution should stop
+                Err(())
             }
         }
 
-        let code = Code::new(&pages);
+        let reader = IrReader::new(&pages);
         let handler = ElseTestHandler {
             if_count: Rc::new(Cell::new(0)),
             br_count: Rc::new(Cell::new(0)),
@@ -936,7 +972,7 @@ mod tests {
         let mut pc = JumpTarget(0);
         loop {
             let visitor = TestVisitor(handler.clone());
-            match code.visit_instruction(&mut state, &mut pc, &visitor) {
+            match reader.visit_instruction(&mut state, &mut pc, &visitor) {
                 Ok(_) => {}
                 Err(_) => break,
             }
@@ -974,10 +1010,39 @@ mod tests {
     /// Note: The 'else' instruction is tested separately in test_if_else.
     #[test]
     fn test_control_flow_and_variables() {
-        use crate::{FuncIdx, GlobalIdx, LabelIdx, LocalIdx, ResultType, WasmVisitor};
+        use crate::{
+            FuncIdx, GlobalIdx, HostFunction, HostValList, LabelIdx, LocalIdx, ResultType,
+            WasmVisitor,
+        };
         use core::ops::ControlFlow;
 
         let mut code_builder = CodeBuilder::<4>::new();
+
+        // Create host function first
+        fn dummy_host_fn(
+            _: &mut InterpreterState,
+            _args: &[crate::Value],
+        ) -> crate::HostFunctionResult {
+            ControlFlow::Continue(None)
+        }
+
+        let host_func = HostFunction::new(
+            "imported_fn",
+            HostValList::new(""),
+            HostValList::new(""),
+            dummy_host_fn,
+        );
+
+        // Create store with host module
+        let mut host_functions = crate::Vec::new(1).unwrap();
+        host_functions.push(host_func);
+
+        let host_module = HostModule {
+            name: "env",
+            functions: host_functions,
+            globals: crate::Vec::zero(),
+        };
+        let store = Store::new(1, [host_module]).unwrap();
 
         // Create module with globals and imports
         let mut module = create_test_module();
@@ -1004,49 +1069,25 @@ mod tests {
                 ty: crate::ValType::I32,
                 mutable: true,
             },
-            init: crate::Value::I32(0),
+            addr: 0,
+            init: 0,
         });
         globals.push(crate::Global {
             type_: crate::GlobalType {
                 ty: crate::ValType::I64,
                 mutable: true,
             },
-            init: crate::Value::I64(0),
+            addr: 1,
+            init: 0,
         });
         module.globals = globals;
 
-        // Setup module imports - add an imported function
-        static EMPTY_PARAMS: &[crate::ValType] = &[];
-        static EMPTY_RETURNS: &[crate::ValType] = &[];
-
-        fn dummy_host_fn(
-            _: &mut InterpreterState,
-            _args: &[crate::Value],
-        ) -> crate::HostFunctionResult {
-            ControlFlow::Continue(None)
-        }
-
-        let host_func = crate::HostFunction::new(
-            "env",
-            "imported_fn",
-            EMPTY_PARAMS,
-            EMPTY_RETURNS,
-            dummy_host_fn,
-        );
-
-        // Create a long-lived slice containing the host function
-        let host_funcs = [host_func];
-        let imports = ModuleImports {
-            functions: &host_funcs,
-            memories: &[],
-            globals: &[],
-        };
-
-        module.module_imports = imports;
-
         // Add Import entries to indicate which function indices are imported
         let mut imports = crate::Vec::new(1).unwrap();
-        imports.push(crate::Import::Func(0)); // Function index 0 is imported (host_funcs[0])
+        imports.push(crate::Import::HostFunc {
+            module: HostModuleRef(0),
+            index: 0,
+        });
         module.imports = imports;
 
         // Create function with locals
@@ -1065,7 +1106,7 @@ mod tests {
 
         // Compile a sequence of instructions testing all control flow and variable operations
         {
-            let mut text_builder = TextBuilder::new(&mut code_builder, &module, &func);
+            let mut text_builder = TextBuilder::new(&mut code_builder, &store, &module, &func);
 
             // Test local variable operations
             compiler.local_get(LocalIdx(0), &mut text_builder).unwrap();
@@ -1185,12 +1226,12 @@ mod tests {
                 Ok(())
             }
 
-            fn handle_global_get(&self, _: GlobalVariable, _: &mut Self::State) -> Result<(), ()> {
+            fn handle_global_get(&self, _: u16, _: &mut Self::State) -> Result<(), ()> {
                 self.counts.global_get.set(self.counts.global_get.get() + 1);
                 Ok(())
             }
 
-            fn handle_global_set(&self, _: GlobalVariable, _: &mut Self::State) -> Result<(), ()> {
+            fn handle_global_set(&self, _: u16, _: &mut Self::State) -> Result<(), ()> {
                 self.counts.global_set.set(self.counts.global_set.get() + 1);
                 Ok(())
             }
@@ -1226,28 +1267,35 @@ mod tests {
 
             fn handle_return(&self, _: u8, _: &mut Self::State) -> Result<(), ()> {
                 self.counts.return_.set(self.counts.return_.get() + 1);
-                Ok(())
+                // Return Err to signal the end of execution
+                Err(())
             }
 
-            fn handle_call(&self, idx: u16, _: &mut Self::State) -> Result<(), ()> {
-                assert_eq!(idx, 0);
+            fn handle_call(&self, _idx: u16, _: &mut Self::State) -> Result<(), ()> {
+                // idx should be the internal function index (after subtracting imports)
                 self.counts.call.set(self.counts.call.get() + 1);
                 Ok(())
             }
 
-            fn handle_call_host(&self, idx: u16, _: &mut Self::State) -> Result<(), ()> {
-                assert_eq!(idx, 0);
+            fn handle_call_host(
+                &self,
+                _module: HostModuleRef,
+                _idx: u16,
+                _: &mut Self::State,
+            ) -> Result<(), ()> {
+                // module should be HostModuleRef(0), idx should be 0
                 self.counts.call_host.set(self.counts.call_host.get() + 1);
                 Ok(())
             }
 
             // Allow unreachable instructions (might be generated by compiler for certain control flow)
             fn handle_unreachable(&self, _: &mut Self::State) -> Result<(), ()> {
+                // Just count it, don't stop the loop
                 Ok(())
             }
         }
 
-        let code = Code::new(&pages);
+        let reader = IrReader::new(&pages);
         let handler = ReadHandler {
             counts: InstructionCounts {
                 local_get: Rc::new(Cell::new(0)),
@@ -1271,7 +1319,7 @@ mod tests {
         let mut pc = JumpTarget(0);
         loop {
             let visitor = TestVisitor(handler.clone());
-            match code.visit_instruction(&mut state, &mut pc, &visitor) {
+            match reader.visit_instruction(&mut state, &mut pc, &visitor) {
                 Ok(_) => {}
                 Err(_) => break,
             }

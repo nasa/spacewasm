@@ -1,5 +1,5 @@
 use crate::*;
-use core::marker::PhantomData;
+use ::core::marker::PhantomData;
 
 pub struct Compiler<'a, const N: usize> {
     _marker: PhantomData<&'a ()>,
@@ -23,8 +23,12 @@ macro_rules! instruction {
     };
 
     // An instruction with a MemArg operand
-    ($name:ident, $opcode:expr, mem) => {
+    ($name:ident, $opcode:expr, mem, $size:expr) => {
         fn $name(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
+            if (1 << m.align) > $size {
+                return Err(ValidationError::AlignmentLargerThanType);
+            }
+
             state.push_mem($opcode, m)?;
             Ok(())
         }
@@ -224,32 +228,33 @@ impl<'a, const N: usize> BaseVisitor for Compiler<'a, N> {
     instruction!(drop, DROP);
     instruction!(select, SELECT);
 
-    instruction!(i32_load, I32_LOAD, mem);
-    instruction!(i64_load, I64_LOAD, mem);
-    instruction!(f32_load, F32_LOAD, mem);
-    instruction!(f64_load, F64_LOAD, mem);
-    instruction!(i32_load8_s, I32_LOAD8_S, mem);
-    instruction!(i32_load8_u, I32_LOAD8_U, mem);
-    instruction!(i32_load16_s, I32_LOAD16_S, mem);
-    instruction!(i32_load16_u, I32_LOAD16_U, mem);
-    instruction!(i64_load8_s, I64_LOAD8_S, mem);
-    instruction!(i64_load8_u, I64_LOAD8_U, mem);
-    instruction!(i64_load16_s, I64_LOAD16_S, mem);
-    instruction!(i64_load16_u, I64_LOAD16_U, mem);
-    instruction!(i64_load32_s, I64_LOAD32_S, mem);
-    instruction!(i64_load32_u, I64_LOAD32_U, mem);
+    instruction!(i32_load, I32_LOAD, mem, 4);
+    instruction!(i64_load, I64_LOAD, mem, 8);
+    instruction!(f32_load, F32_LOAD, mem, 4);
+    instruction!(f64_load, F64_LOAD, mem, 8);
+    instruction!(i32_load8_s, I32_LOAD8_S, mem, 1);
+    instruction!(i32_load8_u, I32_LOAD8_U, mem, 1);
+    instruction!(i32_load16_s, I32_LOAD16_S, mem, 2);
+    instruction!(i32_load16_u, I32_LOAD16_U, mem, 2);
+    instruction!(i64_load8_s, I64_LOAD8_S, mem, 1);
+    instruction!(i64_load8_u, I64_LOAD8_U, mem, 1);
+    instruction!(i64_load16_s, I64_LOAD16_S, mem, 2);
+    instruction!(i64_load16_u, I64_LOAD16_U, mem, 2);
+    instruction!(i64_load32_s, I64_LOAD32_S, mem, 4);
+    instruction!(i64_load32_u, I64_LOAD32_U, mem, 4);
 
-    instruction!(i32_store, I32_STORE, mem);
-    instruction!(i64_store, I64_STORE, mem);
-    instruction!(f32_store, F32_STORE, mem);
-    instruction!(f64_store, F64_STORE, mem);
-    instruction!(i32_store8, I32_STORE8, mem);
-    instruction!(i32_store16, I32_STORE16, mem);
-    instruction!(i64_store8, I64_STORE8, mem);
-    instruction!(i64_store16, I64_STORE16, mem);
-    instruction!(i64_store32, I64_STORE32, mem);
+    instruction!(i32_store, I32_STORE, mem, 4);
+    instruction!(i64_store, I64_STORE, mem, 8);
+    instruction!(f32_store, F32_STORE, mem, 4);
+    instruction!(f64_store, F64_STORE, mem, 8);
+    instruction!(i32_store8, I32_STORE8, mem, 1);
+    instruction!(i32_store16, I32_STORE16, mem, 2);
+    instruction!(i64_store8, I64_STORE8, mem, 1);
+    instruction!(i64_store16, I64_STORE16, mem, 2);
+    instruction!(i64_store32, I64_STORE32, mem, 4);
 
     instruction!(memory_size, MEMORY_SIZE);
+    // instruction!(memory_grow, MEMORY_GROW);
 
     fn memory_grow(&self, state: &mut Self::State) -> Result<(), Self::Error> {
         let _ = state;

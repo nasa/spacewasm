@@ -1,6 +1,6 @@
 use crate::util::Vec;
 use crate::*;
-use core::ops::ControlFlow;
+use ::core::ops::ControlFlow;
 
 pub struct GlobalValueError;
 
@@ -32,7 +32,7 @@ impl<T: GlobalValue> Box<T> {
         T: GlobalValue + 'static,
     {
         let ptr = self.as_mut_ptr() as *mut dyn GlobalValue;
-        core::mem::forget(self); // Prevent double free
+        ::core::mem::forget(self); // Prevent double free
         unsafe { Box::from_raw(GlobalAllocator, ptr) }
     }
 }
@@ -44,7 +44,7 @@ impl HostGlobal {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HostFunctionPause {
+pub enum HostFunctionBreak {
     /// Halt execution due to an error
     Trap,
 
@@ -52,7 +52,7 @@ pub enum HostFunctionPause {
     Pause,
 }
 
-pub type HostFunctionResult = ControlFlow<HostFunctionPause, Option<Value>>;
+pub type HostFunctionResult = ControlFlow<HostFunctionBreak, Option<Value>>;
 
 #[derive(Copy, Clone)]
 pub struct HostValList(&'static str);

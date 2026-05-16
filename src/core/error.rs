@@ -1,6 +1,6 @@
 use crate::alloc::AllocError;
-use crate::decode::constant::ConstantExprError;
-use crate::decode::ReaderError;
+use crate::core::constant::ConstantExprError;
+use crate::core::ReaderError;
 use crate::SectionKind;
 
 #[derive(Debug, Clone)]
@@ -37,7 +37,7 @@ impl SectionDecodeError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ValidationError {
     Eof,
-    MalformedVariableLengthInteger,
+    MalformedInteger,
     I33IsNegative,
     MalformedMagic,
     MalformedVersion,
@@ -53,7 +53,7 @@ pub enum ValidationError {
     MalformedImportExportDesc(u8),
     InvalidSectionOrdering(SectionKind, SectionKind),
     DuplicateSection(SectionKind),
-    InvalidZeroMaxLimit,
+    InvalidMaxLimit,
     ExpectedTerminal(u8),
     InvalidOpcode(u8),
     MalformedCodeSize,
@@ -72,6 +72,7 @@ pub enum ValidationError {
     InvalidLabelIndex,
     InvalidElseBlock,
     InvalidEndBlock,
+    MultipleMemories,
     PossibleBackpatchCycle,
     PageFault,
     InstructionOutsideOfFunction,
@@ -91,7 +92,8 @@ pub enum ValidationError {
     TooManyLocals,
     InvalidConstInstruction,
     BrTableHasTooManyCases,
-    GlboalTypeMismatch,
+    GlobalTypeMismatch,
+    AlignmentLargerThanType,
     TableImportsNotSupportedYet, // TODO(tumbar) Implement dynamic linking
     MemoryImportsNotSupportedYet, // TODO(tumbar) Implement implement shared memory
     FunctionCallsAcrossModuleNotSupportedYet, // TODO(tumbar) Implement module context isolation

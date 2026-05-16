@@ -8,11 +8,11 @@ pub enum IrReaderError {
     InvalidCallType(u8),
 }
 
-pub struct Code<'code>(&'code [Box<TextPage>]);
+pub struct IrReader<'code>(&'code [Box<TextPage>]);
 
-impl<'code> Code<'code> {
+impl<'code> IrReader<'code> {
     pub fn new(code: &'code [Box<TextPage>]) -> Self {
-        Code(code)
+        IrReader(code)
     }
 
     fn read(&self, address: &mut JumpTarget) -> Result<u16, IrReaderError> {
@@ -95,7 +95,7 @@ impl<'code> Code<'code> {
             }};
         }
 
-        use crate::decode::opcode::*;
+        use crate::core::opcode::*;
         match opcode {
             // Control instructions
             UNREACHABLE => instruction!(unreachable),
@@ -226,6 +226,7 @@ impl<'code> Code<'code> {
 
             // Memory instructions - size/grow
             MEMORY_SIZE => instruction!(memory_size),
+            MEMORY_GROW => instruction!(memory_grow),
 
             // Numeric instructions - const
             I32_CONST => {

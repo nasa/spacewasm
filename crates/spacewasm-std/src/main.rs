@@ -1,9 +1,9 @@
 use spacewasm::{
-    vec, Box, ExportDesc, FuncRef, HostFunction, HostFunctionPause, HostModule,
-    InterpreterResult, Memory, SectionKind, Store, Value,
+    Box, ExportDesc, FuncRef, HostFunction, HostFunctionBreak, HostModule, InterpreterResult,
+    InterpreterRunner, Memory, SectionKind, Store, Value, vec,
 };
 use spacewasm_std::FileStream;
-use std::alloc::Layout;
+use std::alloc::{Layout, alloc};
 use std::ops::ControlFlow;
 
 fn main() {
@@ -26,7 +26,7 @@ fn main() {
                 let s: &str = core::str::from_utf8(f).unwrap();
 
                 eprintln!("PANIC {}:{}", s, line_no);
-                ControlFlow::Break(HostFunctionPause::Trap)
+                ControlFlow::Break(HostFunctionBreak::Trap)
             }),
             HostFunction::new("rsleep", "I".into(), "".into(), |_, a| {
                 eprintln!("RSLEEP {:?}", a.get(0));
@@ -113,10 +113,14 @@ fn main() {
 
     std::env::args().skip(1).for_each(|path| {
         let file = std::fs::File::open(path).expect("failed to open file");
-        match spacewasm::Module::new::<256>("main", &mut FileStream::new(file), &store) {
-            Ok(module) => {
+        match spacewasm::Module::new_with_statistics::<256>(
+            "main",
+            &mut FileStream::new(file),
+            &store,
+        ) {
+            Ok((module, stats)) => {
                 let mut total: usize = 0;
-                for (i, section) in module.memory_usage.iter().enumerate() {
+                for (i, section) in stats.iter().enumerate() {
                     let section_kind = SectionKind::convert(i as u8).unwrap();
                     eprintln!("{:?}: {} bytes", section_kind, section.total_bytes);
                     total += section.total_bytes as usize;
@@ -137,9 +141,9 @@ fn main() {
                 eprintln!("Code pages: {}", module.text.len());
                 eprintln!(
                     "Code word usage (16-bits): {} / {} ({:.2}%)",
-                    full_page_usage + module.final_page_offset,
+                    full_page_usage + module.final_page_offset as usize,
                     module.text.len() * 256,
-                    100.0 * ((full_page_usage + module.final_page_offset) as f64)
+                    100.0 * ((full_page_usage + module.final_page_offset as usize) as f64)
                         / (module.text.len() * 256) as f64
                 );
                 eprintln!(
@@ -160,21 +164,20 @@ fn main() {
                     }
                 }
 
-                let mem = &module.memories[0];
-                let heap_size = (mem.0.min as usize) * 65536;
-
-                eprintln!("Heap size: {}", heap_size);
-
                 store.modules.push(Box::new(module).unwrap());
                 let module = store.modules.last().unwrap();
+                let heap_size =
+                    if let Some(spacewasm::MemType(spacewasm::Limit { min })) = module.memory {
+                        min
+                    } else {
+                        0
+                    } * 65536;
 
                 let mut state = spacewasm::InterpreterState::new(
                     1024,
                     Memory::from(
-                        unsafe {
-                            std::alloc::alloc(Layout::from_size_align(heap_size, 64).unwrap())
-                        },
-                        heap_size,
+                        unsafe { alloc(Layout::from_size_align(heap_size as usize, 16).unwrap()) },
+                        heap_size as usize,
                     ),
                 );
 
@@ -201,10 +204,9 @@ fn main() {
 
                 eprintln!("====");
 
-                let code = spacewasm::Code::new(&module.text);
                 let mut result = InterpreterResult::OutOfFuel;
                 while result == InterpreterResult::OutOfFuel {
-                    result = interpreter.run(&code, &mut state, usize::MAX)
+                    result = interpreter.run(&module.text, &mut state, usize::MAX)
                 }
 
                 eprintln!("Interpreter result: {:?}", result)

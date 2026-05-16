@@ -1,9 +1,8 @@
 use spacewasm::{
-    ExportDesc, FuncRef, HostFunction, HostModule, InstructionError, InterpreterResult, Memory,
-    Store, Value,
+    ExportDesc, FuncRef, HostFunction, HostModule, InterpreterBreak, InterpreterResult,
+    InterpreterRunner, Memory, Store, Value,
 };
 use spacewasm_std::FileStream;
-use std::alloc::Layout;
 use std::ops::ControlFlow;
 use std::time::Instant;
 
@@ -49,15 +48,13 @@ fn main() {
     store.modules.push(spacewasm::Box::new(module).unwrap());
     let module = store.modules.last().unwrap();
 
-    let mem = &module.memories[0];
-    let heap_size = (mem.0.min as usize) * 65536;
-    let mut state = spacewasm::InterpreterState::new(
-        1024,
-        Memory::from(
-            unsafe { std::alloc::alloc(Layout::from_size_align(heap_size, 64).unwrap()) },
-            heap_size,
-        ),
-    );
+    let heap_size = if let Some(spacewasm::MemType(spacewasm::Limit { min })) = module.memory {
+        min
+    } else {
+        0
+    } * 65536;
+
+    let mut state = spacewasm::InterpreterState::new(1024, Memory::new(heap_size as usize));
     state.initialize(&module).unwrap();
 
     let export = module
@@ -84,13 +81,12 @@ fn main() {
     );
     interpreter.invoke(&mut state, func, &[]);
 
-    let code = spacewasm::Code::new(&module.text);
     let bench_start = Instant::now();
 
     eprintln!("Starting execution...");
     let mut result = InterpreterResult::OutOfFuel;
     while result == InterpreterResult::OutOfFuel {
-        result = interpreter.run(&code, &mut state, usize::MAX)
+        result = interpreter.run(&module.text, &mut state, usize::MAX)
     }
     let elapsed = bench_start.elapsed();
 
@@ -107,7 +103,7 @@ fn main() {
     // "Call f32 run() function. It should take 12..20 seconds to execute and return a CoreMark result."
     // "if res > 1: print(f'Result: {res:.3f}') else: print('Error')"
     match result {
-        InterpreterResult::Instruction(InstructionError::Finished(raw_value)) => {
+        InterpreterResult::Instruction(InterpreterBreak::Finished(raw_value)) => {
             // The run function returns f32, so interpret the bits as float
             let coremark_score = f32::from_bits(raw_value.0 as u32);
 
