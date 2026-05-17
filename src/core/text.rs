@@ -82,6 +82,8 @@ enum ControlFrame {
         stack_start: u16,
         patch_target: JumpTarget,
     },
+    UnreachableBlock,
+    UnreachableIf,
 }
 
 /// The decoded representation of a global variable
@@ -393,29 +395,41 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
 
     /// Enter a forward control block (block statement).
     pub(crate) fn enter_block(&mut self, result: ResultType) -> Result<(), ValidationError> {
-        self.control_frames
-            .push(ControlFrame::Block {
-                result,
-                stack_start: self.value_stack.len() as u16,
-                patch_target: JumpTarget::SENTINEL,
-            })
-            .or(Err(ValidationError::ControlFlowTooDeep))
+        if self.unreachable {
+            self.control_frames
+                .push(ControlFrame::UnreachableBlock)
+                .or(Err(ValidationError::ControlFlowTooDeep))
+        } else {
+            self.control_frames
+                .push(ControlFrame::Block {
+                    result,
+                    stack_start: self.value_stack.len() as u16,
+                    patch_target: JumpTarget::SENTINEL,
+                })
+                .or(Err(ValidationError::ControlFlowTooDeep))
+        }
     }
 
     /// Enter a forward control block for an if statement.
     ///
     /// This is tracked separately to handle if-without-else cases properly.
     pub(crate) fn enter_if_block(&mut self, result: ResultType) -> Result<(), ValidationError> {
-        self.control_frames
-            .push(ControlFrame::If {
-                result,
-                stack_start: self.value_stack.len() as u16,
-                patch_target: self.pc(),
-            })
-            .or(Err(ValidationError::ControlFlowTooDeep))?;
+        if self.unreachable {
+            self.control_frames
+                .push(ControlFrame::UnreachableIf)
+                .or(Err(ValidationError::ControlFlowTooDeep))
+        } else {
+            self.control_frames
+                .push(ControlFrame::If {
+                    result,
+                    stack_start: self.value_stack.len() as u16,
+                    patch_target: self.pc(),
+                })
+                .or(Err(ValidationError::ControlFlowTooDeep))?;
 
-        self.write_32(JumpTarget::SENTINEL.0)?;
-        Ok(())
+            self.write_32(JumpTarget::SENTINEL.0)?;
+            Ok(())
+        }
     }
 
     /// Mark the start of an else block for an if statement.
@@ -426,16 +440,24 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
     pub(crate) fn enter_else_block(&mut self) -> Result<(), ValidationError> {
         // The top control frame should be the parent if statement
         // Pop it off the stack to backpatch the if statement
-        let Some(ControlFrame::If {
-            result,
-            stack_start,
-            patch_target,
-        }) = self.control_frames.pop()
-        else {
-            return Err(ValidationError::InvalidElseBlock);
+        let (result, stack_start, patch_target) = match self.control_frames.pop() {
+            Some(ControlFrame::If {
+                result,
+                stack_start,
+                patch_target,
+            }) => (result, stack_start, patch_target),
+            Some(ControlFrame::UnreachableIf) => {
+                self.control_frames.push(ControlFrame::UnreachableBlock)?;
+                self.unreachable = true;
+                return Ok(());
+            }
+            _ => return Err(ValidationError::InvalidElseBlock),
         };
 
         self.validate_block_result(result, stack_start)?;
+
+        // Reset the value stack to the beginning of the if block for the else branch
+        self.value_stack.truncate(stack_start as usize);
 
         // We can't backpatch the entire 'then' block since labels inside should branch
         // after the end of the if/else statement.
@@ -477,7 +499,7 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
         self.control_frames.push(ControlFrame::Else {
             result,
             stack_start,
-            patch_target: JumpTarget::SENTINEL,
+            patch_target,
         })?;
 
         // Clear unreachable flag since we are entering a new control block
@@ -488,13 +510,19 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
 
     /// Enter a backward control block (loop statement).
     pub(crate) fn enter_loop(&mut self, result: ResultType) -> Result<(), ValidationError> {
-        self.control_frames
-            .push(ControlFrame::Loop {
-                result,
-                target: self.code.pc(),
-                stack_start: self.value_stack.len() as u16,
-            })
-            .or(Err(ValidationError::ControlFlowTooDeep))
+        if self.unreachable {
+            self.control_frames
+                .push(ControlFrame::UnreachableBlock)
+                .or(Err(ValidationError::ControlFlowTooDeep))
+        } else {
+            self.control_frames
+                .push(ControlFrame::Loop {
+                    result,
+                    target: self.code.pc(),
+                    stack_start: self.value_stack.len() as u16,
+                })
+                .or(Err(ValidationError::ControlFlowTooDeep))
+        }
     }
 
     /// Backpatch jump-targets previously written in the IR with a real location.
@@ -579,6 +607,12 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
                 // Clear unreachable flag since we are entering a new control block
                 self.unreachable = false;
             }
+            ControlFrame::UnreachableBlock => {
+                self.unreachable = true;
+            }
+            ControlFrame::UnreachableIf => {
+                self.unreachable = true;
+            }
         }
         Ok(())
     }
@@ -637,36 +671,63 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
                     self.code.push((target.0 >> 16) as u16)?;
                     (*result, *stack_start)
                 }
+                ControlFrame::UnreachableBlock | ControlFrame::UnreachableIf => return Ok(()),
             };
 
-            self.validate_block_result(result, stack_start)?;
+            // For branch instructions, we only need to validate that the top of the stack
+            // matches the label's arity, not the entire stack.
+            if !self.unreachable {
+                if let Some(ty) = result.0 {
+                    // The label expects one value on top of the stack.
+                    // The stack must have at least stack_start values plus the result value
+                    if (self.value_stack.len() as u16) < stack_start + 1 {
+                        return Err(ValidationError::StackUnderflow);
+                    }
+                    // Check that the top of the stack matches the expected type
+                    let got = *self.value_stack.last().unwrap();
+                    if got != ty {
+                        return Err(ValidationError::TypeMismatch);
+                    }
+                } else {
+                    // The label expects no result values
+                    // The stack must have at least stack_start values
+                    if (self.value_stack.len() as u16) < stack_start {
+                        return Err(ValidationError::StackUnderflow);
+                    }
+                }
+            }
 
             Ok(())
         }
     }
 
     pub(crate) fn validate_block_result(
-        &self,
+        &mut self,
         result: ResultType,
         mut expected_stack_height: u16,
     ) -> Result<(), ValidationError> {
         if self.unreachable {
-            return Ok(());
-        }
+            // Stack is polymorphic
+            // Reset the stack height and push the expected type
+            self.value_stack.truncate(expected_stack_height as usize);
+            if let Some(ty) = result.0 {
+                self.value_stack.push(ty)?;
+            }
+        } else {
+            if let Some(ty) = result.0 {
+                expected_stack_height += 1;
+                let Some(got) = self.value_stack.last() else {
+                    return Err(ValidationError::BlockResultTypeMismatch);
+                };
 
-        if let Some(ty) = result.0 {
-            expected_stack_height += 1;
-            let Some(got) = self.value_stack.last() else {
-                return Err(ValidationError::BlockResultTypeMismatch);
-            };
+                if *got != ty {
+                    return Err(ValidationError::BlockResultTypeMismatch);
+                }
+            }
 
-            if *got != ty {
+            if self.value_stack.len() != expected_stack_height as usize {
                 return Err(ValidationError::BlockResultTypeMismatch);
             }
-        }
-
-        if self.value_stack.len() != expected_stack_height as usize {
-            return Err(ValidationError::BlockResultTypeMismatch);
         }
 
         Ok(())

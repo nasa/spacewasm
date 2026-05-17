@@ -1,9 +1,10 @@
 use serde::{Deserialize, Serialize};
 use spacewasm::{
-    global_allocator, vec, AllocError, Allocator, ExportDesc, FuncRef, GlobalValue,
-    GlobalValueError, HostFunction, HostGlobal, HostModule, InnerVec, Interpreter,
-    InterpreterBreak, InterpreterResult, InterpreterRunner, InterpreterState, Memory, MemoryStatistics, Module,
-    ParseError, ReaderError, Store, Stream, TrapReason, ValType, ValidationError, Value,
+    global_allocator, vec, AllocError, Allocator, CompilerOptions, ExportDesc, FuncRef,
+    GlobalValue, GlobalValueError, HostFunction, HostGlobal, HostModule, InnerVec,
+    Interpreter, InterpreterBreak, InterpreterResult, InterpreterRunner, InterpreterState, Memory,
+    MemoryStatistics, Module, ParseError, ReaderError, Store, TrapReason, ValType, ValidationError,
+    Value, WasmStream,
 };
 use std::alloc::Layout;
 use std::cell::RefCell;
@@ -166,7 +167,7 @@ impl GlobalValue for StaticGlobal {
     }
 }
 
-impl Stream for ByteStream {
+impl WasmStream for ByteStream {
     fn read(&mut self) -> Result<Option<InnerVec<u8>>, ReaderError> {
         if self.consumed {
             return Ok(None);
@@ -343,8 +344,15 @@ fn load_module(ctx: &mut TestContext, module_name: Option<String>, wasm_bytes: &
     let internal_name = format!("module_{}", ctx.store.modules.len());
 
     // Parse and validate the module
-    let module = Module::new::<256>(&internal_name, &mut stream, &ctx.store)
-        .unwrap_or_else(|e| panic!("Failed to parse module: {e:?}"));
+    let module = Module::new::<256>(
+        &internal_name,
+        &mut stream,
+        &ctx.store,
+        CompilerOptions {
+            allow_memory_grow: true,
+        },
+    )
+    .unwrap_or_else(|e| panic!("Failed to parse module: {e:?}"));
 
     // Get memory size
     let heap_size = if let Some(m_ty) = &module.memory {
@@ -643,9 +651,16 @@ fn run_wast_command(
                 let wasm_bytes = std::fs::read(&wasm_path).unwrap();
                 let mut stream = ByteStream::new(&wasm_bytes);
 
-                let err = Module::new::<256>("malformed_test", &mut stream, &ctx.store)
-                    .err()
-                    .expect(format!("Expected malformed module to fail with '{text}'").as_str());
+                let err = Module::new::<256>(
+                    "malformed_test",
+                    &mut stream,
+                    &ctx.store,
+                    CompilerOptions {
+                        allow_memory_grow: true,
+                    },
+                )
+                .err()
+                .expect(format!("Expected malformed module to fail with '{text}'").as_str());
 
                 check_decode_error(err, text);
             }
@@ -661,9 +676,16 @@ fn run_wast_command(
                 let wasm_bytes = std::fs::read(&wasm_path)
                     .unwrap_or_else(|e| panic!("Failed to read {wasm_path}: {e}"));
                 let mut stream = ByteStream::new(&wasm_bytes);
-                let err = Module::new::<256>("malformed_test", &mut stream, &ctx.store)
-                    .err()
-                    .expect(format!("Expected invalid module to fail with '{text}'").as_str());
+                let err = Module::new::<256>(
+                    "malformed_test",
+                    &mut stream,
+                    &ctx.store,
+                    CompilerOptions {
+                        allow_memory_grow: true,
+                    },
+                )
+                .err()
+                .expect(format!("Expected invalid module to fail with '{text}'").as_str());
 
                 check_decode_error(err, text);
             }

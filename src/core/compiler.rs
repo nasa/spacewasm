@@ -1,14 +1,22 @@
 use crate::*;
 use ::core::marker::PhantomData;
 
+#[derive(Debug, Default, Copy, Clone)]
+pub struct CompilerOptions {
+    /// Allow compiling memory.grow instructions into IR
+    pub allow_memory_grow: bool,
+}
+
 pub struct Compiler<'a, const N: usize> {
     _marker: PhantomData<&'a ()>,
+    options: CompilerOptions,
 }
 
 impl<'a, const N: usize> Compiler<'a, N> {
-    pub fn new() -> Compiler<'a, N> {
+    pub fn new(options: CompilerOptions) -> Compiler<'a, N> {
         Compiler {
             _marker: Default::default(),
+            options,
         }
     }
 }
@@ -70,8 +78,7 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
         block_type: ResultType,
         state: &mut Self::State,
     ) -> Result<(), Self::Error> {
-        state.enter_block(block_type)?;
-        Ok(())
+        state.enter_block(block_type)
     }
 
     fn exit_block(&self, state: &mut Self::State) -> Result<(), Self::Error> {
@@ -79,13 +86,11 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
     }
 
     fn finish(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        self.return_(state)?;
-        Ok(())
+        self.return_(state)
     }
 
     fn loop_(&self, block_type: ResultType, state: &mut Self::State) -> Result<(), Self::Error> {
-        state.enter_loop(block_type)?;
-        Ok(())
+        state.enter_loop(block_type)
     }
 
     fn if_(&self, block_type: ResultType, state: &mut Self::State) -> Result<(), Self::Error> {
@@ -358,9 +363,12 @@ impl<'a, const N: usize> BaseVisitor for Compiler<'a, N> {
 
     fn memory_grow(&self, state: &mut Self::State) -> Result<(), Self::Error> {
         validate!(state, (I32) -> (I32));
-
-        // Memory grow is not a legal instruction in SpaceWASM
-        Err(ValidationError::IllegalMemoryGrow)
+        if self.options.allow_memory_grow {
+            state.instr(MEMORY_GROW)?;
+            Ok(())
+        } else {
+            Err(ValidationError::IllegalMemoryGrow)
+        }
     }
 
     fn i32_const(&self, n: i32, state: &mut Self::State) -> Result<(), Self::Error> {

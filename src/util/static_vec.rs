@@ -7,6 +7,13 @@ pub struct StaticVec<T: Sized, const N: usize> {
     len: u32,
 }
 
+impl<T: Sized, const N: usize> StaticVec<T, N> {
+    pub(crate) fn truncate(&mut self, new_len: usize) {
+        assert!(new_len <= self.len as usize);
+        self.len = new_len as u32;
+    }
+}
+
 impl<T: Sized, const N: usize> Default for StaticVec<T, N> {
     fn default() -> Self {
         Self {

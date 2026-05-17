@@ -45,8 +45,9 @@ impl CustomSectionHandler for DefaultCustomSectionHandler {
 impl Module {
     pub fn new<const N: usize>(
         name: &str,
-        stream: &mut dyn Stream,
+        stream: &mut dyn WasmStream,
         store: &Store,
+        compiler_options: CompilerOptions,
     ) -> Result<Module, ParseError> {
         let mut wasm = Reader::new(stream);
 
@@ -56,6 +57,7 @@ impl Module {
             store,
             &mut DefaultCustomSectionHandler,
             None,
+            compiler_options,
         )
         .map_err(|err| ParseError {
             offset: wasm.offset() as u32,
@@ -65,8 +67,9 @@ impl Module {
 
     pub fn new_with_statistics<const N: usize>(
         name: &str,
-        stream: &mut dyn Stream,
+        stream: &mut dyn WasmStream,
         store: &Store,
+        compiler_options: CompilerOptions,
     ) -> Result<(Module, [MemoryStatistics; SectionKind::N as usize]), ParseError> {
         let mut wasm = Reader::new(stream);
         let mut stats: [MemoryStatistics; SectionKind::N as usize] = Default::default();
@@ -77,6 +80,7 @@ impl Module {
             store,
             &mut DefaultCustomSectionHandler,
             Some(&mut stats),
+            compiler_options
         )
         .map_err(|err| ParseError {
             offset: wasm.offset() as u32,
@@ -92,6 +96,7 @@ impl Module {
         store: &Store,
         custom_handler: &mut dyn CustomSectionHandler,
         mut stats: Option<&mut [MemoryStatistics; SectionKind::N as usize]>,
+        compiler_options: CompilerOptions,
     ) -> Result<Module, SectionDecodeError> {
         let magic = wasm.strip_bytes::<4>()?;
         if magic != [0x00, 0x61, 0x73, 0x6D] {
@@ -172,6 +177,7 @@ impl Module {
                     section_ty,
                     custom_handler,
                     &mut builder,
+                    compiler_options
                 )
                 .map_err(|e| e.with_section(section_ty))?;
 
@@ -210,6 +216,7 @@ impl Module {
         section_ty: SectionKind,
         custom_handler: &mut dyn CustomSectionHandler,
         code_builder: &mut CodeBuilder<PN>,
+        compiler_options: CompilerOptions
     ) -> Result<(), ValidationError> {
         use SectionKind::*;
         match section_ty {
@@ -244,7 +251,7 @@ impl Module {
                 ElementSection::read(wasm, self)?;
             }
             Code => {
-                CodeSection::read::<PN>(wasm, code_builder, store, self)?;
+                CodeSection::read::<PN>(wasm, code_builder, store, self, compiler_options)?;
             }
             Data => {
                 self.data = DataSection::read(wasm)?;
@@ -692,6 +699,7 @@ impl CodeSection {
         builder: &mut CodeBuilder<N>,
         store: &Store,
         module: &mut Module,
+        compiler_options: CompilerOptions,
     ) -> Result<(), ValidationError> {
         let n = wasm.read_u32()?;
         if n as usize != module.functions.len() {
@@ -699,7 +707,7 @@ impl CodeSection {
         }
 
         for i in 0..n as usize {
-            module.read_function_code(wasm, store, builder, i)?;
+            module.read_function_code(wasm, store, builder, i, compiler_options)?;
         }
 
         Ok(())

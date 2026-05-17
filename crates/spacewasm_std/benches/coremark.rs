@@ -1,8 +1,8 @@
 use spacewasm::{
-    ExportDesc, FuncRef, HostFunction, HostModule, InterpreterBreak, InterpreterResult,
-    InterpreterRunner, Memory, Store, Value,
+    CompilerOptions, ExportDesc, FuncRef, HostFunction, HostModule, InterpreterBreak,
+    InterpreterResult, InterpreterRunner, Memory, Store, Value,
 };
-use spacewasm_std::FileStream;
+use spacewasm_util::FileStream;
 use std::ops::ControlFlow;
 use std::time::Instant;
 
@@ -42,8 +42,13 @@ fn main() {
 
     let file = std::fs::File::open("benches/coremark-minimal.wasm")
         .expect("failed to open coremark-minimal.wasm");
-    let module = spacewasm::Module::new::<256>("coremark", &mut FileStream::new(file), &store)
-        .expect("failed to parse wasm module");
+    let module = spacewasm::Module::new::<256>(
+        "coremark",
+        &mut FileStream::new(file),
+        &store,
+        CompilerOptions::default(),
+    )
+    .expect("failed to parse wasm module");
 
     store.modules.push(spacewasm::Box::new(module).unwrap());
     let module = store.modules.last().unwrap();

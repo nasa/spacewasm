@@ -1,7 +1,7 @@
 /// WASM Reader
 /// This file implements some basic WASM reading capabilities such
 /// as LEB128 (variable width integer encoding).
-use crate::{Allocator, CircularBuffer, GlobalAllocator, StaticVec, ValidationError, Vec, Chunk, Stream};
+use crate::{Allocator, CircularBuffer, GlobalAllocator, StaticVec, ValidationError, Vec, Chunk, WasmStream};
 
 
 /// Wasm encodes integers according to the LEB128 format, which specifies that
@@ -20,7 +20,7 @@ const INTEGER_BIT_FLAG: u8 = !CONTINUATION_BIT;
 /// This reader cannot backtrack. The code that calls into the reader must
 /// allocate and copy data that should be retained as it is read.
 pub struct Reader<'wasm> {
-    stream: &'wasm mut dyn Stream,
+    stream: &'wasm mut dyn WasmStream,
     /// Number of bytes we've already extracted from the next chunk and
     /// placed in the circular buffer
     chunk_used: usize,
@@ -39,7 +39,7 @@ pub struct Reader<'wasm> {
 }
 
 impl<'wasm> Reader<'wasm> {
-    pub fn new(stream: &'wasm mut dyn Stream) -> Self {
+    pub fn new(stream: &'wasm mut dyn WasmStream) -> Self {
         Self {
             stream,
             chunk_used: 0,

@@ -91,7 +91,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "spacewasm-std"
+name = "spacewasm_std"
+version = "0.1.0"
+dependencies = [
+ "spacewasm",
+ "spacewasm_util",
+]
+
+[[package]]
+name = "spacewasm_util"
 version = "0.1.0"
 dependencies = [
  "spacewasm",

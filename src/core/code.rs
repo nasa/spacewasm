@@ -21,10 +21,11 @@ impl Expr {
         store: &Store,
         module: &Module,
         ctx: &Func,
+        compiler_options: CompilerOptions,
     ) -> Result<(Self, u16), ValidationError> {
         let e = Expr(builder.pc());
         let tb = &mut TextBuilder::new(builder, store, module, ctx);
-        wasm.read_code(&Compiler::<'_, N>::new(), tb)?;
+        wasm.read_code(&Compiler::<'_, N>::new(compiler_options), tb)?;
 
         Ok((e, tb.stack_usage()))
     }
@@ -69,6 +70,7 @@ impl Module {
         store: &Store,
         builder: &mut CodeBuilder<N>,
         i: usize,
+        compiler_options: CompilerOptions,
     ) -> Result<(), ValidationError> {
         let size = wasm.read_u32()?;
         let start = wasm.offset();
@@ -99,7 +101,19 @@ impl Module {
         }
 
         f.local_size = size_in_words as u16;
-        (f.expr, f.stack_usage) = Expr::read(wasm, builder, store, self, &f)?;
+        let f_ty = &self.types[f.ty.0 as usize];
+
+        let name = self.exports.iter().find_map(|e| {
+            if let ExportDesc::Func(func) = e.desc && (func.0 as usize) == i {
+                Some(e.name.as_ref())
+            } else {
+                None
+            }
+        }).unwrap_or("<unnamed>");
+        extern crate std;
+        std::eprintln!("function {name}: {:?} -> {:?}", f_ty.params, f_ty.returns);
+        (f.expr, f.stack_usage) = Expr::read(wasm, builder, store, self, &f, compiler_options)?;
+        std::eprintln!("end function");
 
         let _ = ::core::mem::replace(&mut self.functions[i], f);
 
