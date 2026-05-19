@@ -1,5 +1,5 @@
 use spacewasm::{
-    BaseVisitor, FuncIdx, GlobalIdx, HostModuleRef, IrVisitor, JumpTarget, LabelIdx, LocalIdx,
+    BaseVisitor, FuncIdx, GlobalIdx, HostModuleRef, IrVisitor, LabelIdx, LabelTarget, LocalIdx,
     LocalVariable, MemArg, ResultType, TypeIdx, WasmVisitor,
 };
 use std::cell::RefCell;
@@ -249,16 +249,17 @@ impl<'a, S, E, T: BaseVisitor<State = S, Error = E> + WasmVisitor> WasmVisitor
 impl<'a, S, E, T: BaseVisitor<State = S, Error = E> + IrVisitor> IrVisitor
     for Inspector<'a, S, E, T>
 {
-    visit_fn!(if_, false_address: JumpTarget);
-    visit_fn!(br, addr: JumpTarget);
-    visit_fn!(br_if, true_address: JumpTarget);
+    visit_fn!(if_, false_address: LabelTarget);
+    visit_fn!(br, addr: LabelTarget);
+    visit_fn!(br_if, true_address: LabelTarget);
     fn br_table(
         &self,
-        cases: impl FnOnce(u16) -> Result<JumpTarget, ()>,
+        n: u32,
+        cases: impl FnOnce(u32) -> LabelTarget,
         state: &mut Self::State,
     ) -> Result<(), Self::Error> {
-        self.out.borrow_mut().push("br_table()".to_string());
-        self.v.br_table(cases, state)
+        self.out.borrow_mut().push(format!("br_table(n={:?})", n));
+        self.v.br_table(n, cases, state)
     }
 
     visit_fn!(return_, return_size: u8);

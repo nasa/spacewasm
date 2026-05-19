@@ -1,6 +1,6 @@
 use crate::exec::ir_reader::{IrReader, IrReaderError};
 use crate::*;
-use ::core::ops::{AddAssign, ControlFlow};
+use ::core::ops::ControlFlow;
 
 pub struct InterpreterState {
     pub pc: JumpTarget,
@@ -84,12 +84,6 @@ pub struct Interpreter<'store> {
     pub module: &'store Module,
 }
 
-impl AddAssign<u32> for JumpTarget {
-    fn add_assign(&mut self, rhs: u32) {
-        self.0.add_assign(rhs);
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InterpreterResult {
     /// No more fuel (ran to instruction bound)
@@ -140,10 +134,63 @@ impl<'store> Interpreter<'store> {
         Ok(())
     }
 
+    /// This function performs an unconditional branch to a resolved label target.
+    ///
+    /// Label targets use a relative offset from their location in the IR. The program
+    /// counter is not in the same position as the label target offset is assuming.
+    /// For this reason there is an additional label_pc_offset needed to compute the final
+    /// program counter to jump to.
+    ///
+    /// # Arguments
+    ///
+    /// * `label_pc_offset`: Number of IR words between the current PC (instruction start)
+    ///                      and this label target.
+    /// * `addr`: Resolved label target to jump to
+    /// * `state`: Current interpreter state
+    ///
+    /// returns: Result<(), InterpreterBreak>
+    fn br_impl(
+        &self,
+        label_pc_offset: JumpOffset,
+        addr: LabelTarget,
+        state: &mut InterpreterState,
+    ) -> Result<(), InterpreterBreak> {
+        let depth = addr.depth() as usize;
+        state.sp -= depth;
+
+        // Copy the results to the stack location we are switching to
+        match addr.arity() {
+            LabelArity::None => {}
+            LabelArity::I32 => {
+                let w = state.stack.read_u32(state.sp + depth - 1);
+                state.stack.write_u32(state.sp, w);
+                state.sp += 1;
+            }
+            LabelArity::I64 => {
+                let w1 = state.stack.read_u32(state.sp + depth - 2);
+                let w2 = state.stack.read_u32(state.sp + depth - 1);
+
+                state.stack.write_u32(state.sp, w1);
+                state.stack.write_u32(state.sp + 1, w2);
+
+                state.sp += 2;
+            }
+        }
+
+        state.pc += label_pc_offset;
+        state.pc += addr.jump();
+        Ok(())
+    }
+
     /// Invoke a function with some parameters
     /// Warning! If this is being used as an interrupt rather than an entry point,
     /// make sure that the function does not return any values as that will cause stack pollution!
-    pub fn invoke(&self, state: &mut InterpreterState, f: &Func, params: &[Value]) -> Result<(), InterpreterBreak> {
+    pub fn invoke(
+        &self,
+        state: &mut InterpreterState,
+        f: &Func,
+        params: &[Value],
+    ) -> Result<(), InterpreterBreak> {
         for p in params {
             // TODO(tumbar) Validate input parameters
             match p {
@@ -243,8 +290,6 @@ pub enum TrapReason {
     InvalidTableIndex,
     /// The function type in an indirect call does not match the function pointer's type
     InvalidTableFunctionType,
-    /// A dynamic br_table lookup was out of bounds
-    BrTableLookupFailed,
     /// An imported global could not be read
     GlobalGetFailed,
     /// An imported global could not be set
@@ -905,26 +950,27 @@ impl<'module> BaseVisitor for Interpreter<'module> {
 }
 
 impl<'module> IrVisitor for Interpreter<'module> {
-    fn if_(&self, false_address: JumpTarget, state: &mut Self::State) -> Result<(), Self::Error> {
+    fn if_(&self, false_address: LabelTarget, state: &mut Self::State) -> Result<(), Self::Error> {
         state.sp -= 1;
         let v = state.stack.read_u32(state.sp);
         if v == 0 {
-            state.pc = false_address;
+            // No need to perform any result copies or stack truncation
+            state.pc += JumpOffset::offset(1);
+            state.pc += false_address.jump();
         }
 
         Ok(())
     }
 
-    fn br(&self, addr: JumpTarget, state: &mut Self::State) -> Result<(), Self::Error> {
-        state.pc = addr;
-        Ok(())
+    fn br(&self, addr: LabelTarget, state: &mut Self::State) -> Result<(), Self::Error> {
+        self.br_impl(JumpOffset::offset(1), addr, state)
     }
 
-    fn br_if(&self, true_address: JumpTarget, state: &mut Self::State) -> Result<(), Self::Error> {
+    fn br_if(&self, true_address: LabelTarget, state: &mut Self::State) -> Result<(), Self::Error> {
         state.sp -= 1;
         let v = state.stack.read_u32(state.sp);
         if v != 0 {
-            state.pc = true_address;
+            self.br_impl(JumpOffset::offset(1), true_address, state)?;
         }
 
         Ok(())
@@ -932,15 +978,23 @@ impl<'module> IrVisitor for Interpreter<'module> {
 
     fn br_table(
         &self,
-        cases: impl FnOnce(u16) -> Result<JumpTarget, ()>,
+        n: u32,
+        cases: impl FnOnce(u32) -> LabelTarget,
         state: &mut Self::State,
     ) -> Result<(), Self::Error> {
         state.sp -= 1;
         let v = state.stack.read_u32(state.sp);
-        let addr =
-            cases(v as u16).map_err(|_| InterpreterBreak::Trap(TrapReason::BrTableLookupFailed))?;
+        let label = cases(v);
 
-        state.pc = addr;
+        if v < n {
+            // A standard case, compute the offset from the current PC
+            // Instruction opcode + default case (2 words) + previous cases (each 2 words)
+            self.br_impl(JumpOffset::offset(1 + 2 + (2 * v as i32)), label, state)?;
+        } else {
+            // The default case, constant offset
+            self.br_impl(JumpOffset::offset(1), label, state)?;
+        }
+
         Ok(())
     }
 

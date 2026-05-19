@@ -536,7 +536,6 @@ fn trap_reason_to_string(reason: TrapReason) -> &'static str {
         TrapReason::DivideByZero => "integer divide by zero",
         TrapReason::InvalidTableIndex => "out of bounds table access",
         TrapReason::InvalidTableFunctionType => "indirect call type mismatch",
-        TrapReason::BrTableLookupFailed => "out of bounds table access",
         TrapReason::GlobalGetFailed => unreachable!(),
         TrapReason::GlobalSetFailed => unreachable!(),
         TrapReason::MemoryOutOfBounds => "out of bounds memory access",
@@ -570,6 +569,7 @@ fn check_decode_error(err: ParseError, text: String) {
         (ValidationError::AlignmentLargerThanType, "alignment must not be larger than natural") => {
         }
         (ValidationError::TypeMismatch, "type mismatch") => {}
+        (ValidationError::BlockResultTypeMismatch, "type mismatch") => {}
         err => {
             assert!(
                 false,

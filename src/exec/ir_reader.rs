@@ -1,4 +1,5 @@
 use crate::*;
+use ::core::ops::AddAssign;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IrReaderError {
@@ -9,6 +10,13 @@ pub enum IrReaderError {
 }
 
 pub struct IrReader<'code>(&'code [Box<TextPage>]);
+
+impl AddAssign<i32> for JumpTarget {
+    fn add_assign(&mut self, rhs: i32) {
+        let a = (self.0 as i32) + rhs;
+        self.0 = a as u32;
+    }
+}
 
 impl<'code> IrReader<'code> {
     pub fn new(code: &'code [Box<TextPage>]) -> Self {
@@ -103,38 +111,55 @@ impl<'code> IrReader<'code> {
 
             IF => {
                 let false_address = self.read_u32(pc).unwrap();
-                visitor.if_(JumpTarget(false_address), state)?;
+                visitor.if_(false_address.into(), state)?;
             }
 
             BR => {
                 let address = self.read_u32(pc).unwrap();
-                visitor.br(JumpTarget(address), state)?;
+                visitor.br(address.into(), state)?;
             }
 
             BR_IF => {
                 let true_address = self.read_u32(pc).unwrap();
-                visitor.br_if(JumpTarget(true_address), state)?;
+                visitor.br_if(true_address.into(), state)?;
             }
 
             BR_TABLE => {
                 let n = if imm == 0xFF {
-                    self.read(pc).unwrap()
+                    self.read(pc).unwrap() as u32
                 } else {
-                    imm as u16
+                    imm as u32
                 };
 
                 let default_ = self.read_u32(pc).unwrap();
 
                 visitor.br_table(
+                    n,
                     |case_| {
                         if case_ < n {
-                            let Ok(addr) = self.read_u32(pc) else {
-                                return Err(());
-                            };
+                            // Read & dump the cases before the selected index
+                            for _ in 0..case_ {
+                                self.read_u32(pc).unwrap();
+                            }
 
-                            Ok(JumpTarget(addr))
+                            // Read the case target
+                            let lt = self.read_u32(pc).unwrap();
+
+                            // Dump the rest of the cases
+                            if case_ + 1 < n {
+                                for _ in (case_ + 1)..n {
+                                    self.read_u32(pc).unwrap();
+                                }
+                            }
+
+                            lt.into()
                         } else {
-                            Ok(JumpTarget(default_))
+                            // Dump all the cases and return the default
+                            for _ in 0..n {
+                                self.read_u32(pc).unwrap();
+                            }
+
+                            default_.into()
                         }
                     },
                     state,

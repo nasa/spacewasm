@@ -103,7 +103,7 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
     fn else_(&self, state: &mut Self::State) -> Result<(), Self::Error> {
         // Perform an unconditional branch to the end of the 'if'
         state.instr(BR)?;
-        state.write_jump_target(LabelIdx(0))?;
+        state.write_label_target(LabelIdx(0))?;
 
         // Fill in the else branch target
         state.enter_else_block()?;
@@ -113,7 +113,7 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
 
     fn br(&self, l: LabelIdx, state: &mut Self::State) -> Result<(), Self::Error> {
         state.instr(BR)?;
-        state.write_jump_target(l)?;
+        state.write_label_target(l)?;
         state.mark_unreachable();
         Ok(())
     }
@@ -121,7 +121,7 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
     fn br_if(&self, l: LabelIdx, state: &mut Self::State) -> Result<(), Self::Error> {
         state.pop_stack(ValType::I32)?;
         state.instr(BR_IF)?;
-        state.write_jump_target(l)
+        state.write_label_target(l)
     }
 
     fn br_table(
@@ -132,9 +132,9 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
     ) -> Result<(), Self::Error> {
         state.pop_stack(ValType::I32)?;
         state.instr_imm_8_or_16(BR_TABLE, lut.len() as u32)?;
-        state.write_jump_target(default_)?;
+        state.write_label_target(default_)?;
         for l in lut {
-            state.write_jump_target(*l)?;
+            state.write_label_target(*l)?;
         }
 
         state.mark_unreachable();

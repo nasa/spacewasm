@@ -1,4 +1,6 @@
-use crate::{FuncIdx, GlobalIdx, JumpTarget, LabelIdx, LocalIdx, MemArg, ResultType, TypeIdx, ValType};
+use crate::{
+    FuncIdx, GlobalIdx, LabelIdx, LabelTarget, LocalIdx, MemArg, ResultType, TypeIdx, ValType,
+};
 
 /// A convenience macro for defining the visitor function for a decoded
 /// WebAssembly instruction from any intermediate representation.
@@ -275,16 +277,19 @@ pub enum FuncRef {
     /// A host function in another WASM module
     HostFunc { module: HostModuleRef, index: u16 },
     /// A function in another WASM module
-    ExternFunc { module: ExternalModuleRef, index: u16 },
+    ExternFunc {
+        module: ExternalModuleRef,
+        index: u16,
+    },
 }
 
 /// An abstraction over IR Bytecode.
 /// Used to implement the interpreter.
 pub trait IrVisitor: BaseVisitor {
-    visit_fn!(if_, false_address: JumpTarget);
-    visit_fn!(br, addr: JumpTarget);
-    visit_fn!(br_if, true_address: JumpTarget);
-    visit_fn!(br_table, cases: impl FnOnce(u16) -> Result<JumpTarget, ()>);
+    visit_fn!(if_, false_address: LabelTarget);
+    visit_fn!(br, addr: LabelTarget);
+    visit_fn!(br_if, true_address: LabelTarget);
+    visit_fn!(br_table, n: u32, cases: impl FnOnce(u32) -> LabelTarget);
 
     visit_fn!(return_, return_size: u8);
     visit_fn!(call, x: u16);

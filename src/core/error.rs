@@ -65,6 +65,8 @@ pub enum ValidationError {
     ControlFlowTooDeep,
     StackUnderflow,
     StackTooLarge,
+    LabelStackJumpTooDeep,
+    LabelJumpTooLarge,
     TypeMismatch,
     BlockResultTypeMismatch,
     IllegalMemoryGrow,

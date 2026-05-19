@@ -1,4 +1,5 @@
 use crate::*;
+use ::core::ops::AddAssign;
 
 /// # SpaceWASM IR Encoding
 ///
@@ -33,14 +34,144 @@ impl Default for TextPage {
     }
 }
 
+/// A relative offset to jump to from the current program counter
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+pub struct JumpOffset(i32);
+
+impl JumpOffset {
+    pub fn sentinel() -> JumpOffset {
+        JumpOffset(0)
+    }
+
+    pub fn offset(n: i32) -> JumpOffset {
+        JumpOffset(n)
+    }
+
+    pub fn new(current: JumpTarget, to: JumpTarget) -> Result<JumpOffset, ValidationError> {
+        if to == JumpTarget::SENTINEL {
+            Ok(JumpOffset::sentinel())
+        } else {
+            let offset = (to.0 as i32) - (current.0 as i32);
+            let fits = offset == ((offset << (32 - 22)) >> (32 - 22));
+            if !fits {
+                Err(ValidationError::LabelJumpTooLarge)
+            } else {
+                Ok(JumpOffset(offset))
+            }
+        }
+    }
+}
+
+/// A 32-bit value encoding a label's arity, jump address, and stack truncation information
+/// [arity:2][depth:8][offset:22]
+///
+/// Arity is the result type needed by the target block we are jumping to:
+/// arity == 0 (no result)
+/// arity == 1 (I32 / F32)
+/// arity == 2 (I64 / F64)
+/// arity == 3 (unused/invalid)
+///
+/// Depth is the 32-bit width truncation of the stack to perform during this jump.
+///
+/// offset is the pc offset (signed) from the current PC. For forward jumps this will be 0
+/// by default to mark the 'sentinel' jump target.
+///
+#[derive(Clone, Copy)]
+pub struct LabelTarget(u32);
+
+impl ::core::fmt::Debug for LabelTarget {
+    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+        f.debug_struct("LabelTarget")
+            .field("arity", &self.arity())
+            .field("depth", &self.depth())
+            .field("jump", &self.jump())
+            .finish()
+    }
+}
+
+impl From<u32> for LabelTarget {
+    fn from(value: u32) -> Self {
+        LabelTarget(value)
+    }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[repr(u8)]
+pub enum LabelArity {
+    None = 0,
+    I32 = 1,
+    I64 = 2,
+}
+
+impl LabelTarget {
+    fn new(result_type: ResultType, depth: u8, offset: JumpOffset) -> LabelTarget {
+        let rt = match result_type.0 {
+            None => 0,
+            Some(ValType::I32 | ValType::F32) => 1,
+            Some(ValType::I64 | ValType::F64) => 2,
+        };
+
+        LabelTarget((rt << 30) | ((depth as u32) << 22) | (offset.0 as u32) & 0x3FFFFF)
+    }
+
+    pub fn with_jump(self, offset: JumpOffset) -> LabelTarget {
+        LabelTarget(
+            self.0 & 0xFFC00000 // First 10 bits
+                | ((offset.0 as u32) & 0x3FFFFF), // Final 22 bits
+        )
+    }
+
+    /// Extract the jump target from the encoded label target
+    pub fn jump(&self) -> JumpOffset {
+        // The offset is 22-bits
+        let u = self.0 & 0x3FFFFF;
+
+        // Grab the sign bit and move extend it
+        JumpOffset(((u << 10) as i32) >> 10)
+    }
+
+    pub fn is_sentinel(&self) -> bool {
+        self.jump() == JumpOffset(0)
+    }
+
+    /// Number of 32-bit values to move from the current stack to the result stack
+    pub fn arity(&self) -> LabelArity {
+        match (self.0 >> 30) & 0b11 {
+            0 => LabelArity::None,
+            1 => LabelArity::I32,
+            2 => LabelArity::I64,
+            _ => unreachable!(),
+        }
+    }
+
+    /// Number of 32-bit values to drop from the stack
+    pub fn depth(&self) -> u8 {
+        ((self.0 >> 22) & 0xFF) as u8
+    }
+}
+
 /// A 32-bit address into the paged IR code.
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub struct JumpTarget(pub u32);
+
+impl ::core::ops::Add<JumpOffset> for JumpTarget {
+    type Output = JumpTarget;
+    fn add(self, rhs: JumpOffset) -> JumpTarget {
+        JumpTarget(((self.0 as i32) + rhs.0) as u32)
+    }
+}
 
 impl ::core::ops::Add<u32> for JumpTarget {
     type Output = JumpTarget;
     fn add(self, rhs: u32) -> JumpTarget {
         JumpTarget(self.0 + rhs)
+    }
+}
+
+impl AddAssign<JumpOffset> for JumpTarget {
+    fn add_assign(&mut self, rhs: JumpOffset) {
+        let a = (self.0 as i32) + rhs.0;
+        self.0 = a as u32;
     }
 }
 
@@ -110,6 +241,41 @@ impl<const N: usize> CodeBuilder<N> {
             pages: Default::default(),
             offset: 0,
         }
+    }
+
+    fn backpatch(
+        &mut self,
+        start: JumpTarget,
+        mut f: impl FnMut(&mut Self, JumpTarget, LabelTarget) -> Result<(), ValidationError>,
+    ) -> Result<(), ValidationError> {
+        if start == JumpTarget::SENTINEL {
+            return Ok(());
+        }
+
+        let mut next = start;
+
+        // Bound our loops to not go into an infinite cycle
+        let mut n = 0;
+
+        loop {
+            let address = next;
+
+            let lt = LabelTarget(self.read_32(address)?);
+            f(self, address, lt)?;
+
+            if lt.is_sentinel() {
+                break;
+            }
+
+            next = address + lt.jump();
+
+            n += 1;
+            if n > 200 {
+                return Err(ValidationError::PossibleBackpatchCycle);
+            }
+        }
+
+        Ok(())
     }
 
     /// Move all the text pages into a heap vector with the used size.
@@ -182,8 +348,15 @@ impl<const N: usize> CodeBuilder<N> {
         }
     }
 
+    /// Write two IR words at a given address from a single 32-bit value
+    fn write_32(&mut self, address: JumpTarget, value: u32) -> Result<(), ValidationError> {
+        self.write(address, value as u16)?;
+        self.write(address + 1, (value >> 16) as u16)?;
+        Ok(())
+    }
+
     /// Read a single IR word at a given address.
-    fn read(&mut self, address: JumpTarget) -> Result<u16, ValidationError> {
+    fn read(&self, address: JumpTarget) -> Result<u16, ValidationError> {
         let page_index = address.page();
         let offset = address.offset();
 
@@ -192,6 +365,14 @@ impl<const N: usize> CodeBuilder<N> {
         } else {
             Ok(self.pages[page_index].0[offset])
         }
+    }
+
+    /// Read two IR words at a given address into a single 32-bit value
+    fn read_32(&self, address: JumpTarget) -> Result<u32, ValidationError> {
+        let w1 = self.read(address)?;
+        let w2 = self.read(address + 1)?;
+
+        Ok((w1 as u32) | ((w2 as u32) << 16))
     }
 }
 
@@ -427,7 +608,7 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
                 })
                 .or(Err(ValidationError::ControlFlowTooDeep))?;
 
-            self.write_32(JumpTarget::SENTINEL.0)?;
+            self.write_32(LabelTarget::new(result, 0, JumpOffset::sentinel()).0)?;
             Ok(())
         }
     }
@@ -462,39 +643,28 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
         // We can't backpatch the entire 'then' block since labels inside should branch
         // after the end of the if/else statement.
         // We _do_ need to backpatch the single else placeholder though...
-        let mut next = patch_target;
         let mut prev = JumpTarget::SENTINEL;
-        let mut n = 0;
-        while next != JumpTarget::SENTINEL {
-            // Bound our loops to not go into an infinite cycle
-            n += 1;
-            if n > 200 {
-                return Err(ValidationError::PossibleBackpatchCycle);
-            }
-
-            let address = next;
-
-            // Read the next address before we overwrite it
-            let w1 = self.code.read(address)?;
-            let w2 = self.code.read(address + 1)?;
-            next = JumpTarget((w1 as u32) | ((w2 as u32) << 16));
-
-            if next == JumpTarget::SENTINEL {
+        let pc = self.pc();
+        self.code.backpatch(patch_target, |code, address, label| {
+            if label.is_sentinel() {
                 // We have reached the final patch target, this is the else branch placeholder.
                 // Overwrite the next address with our program counter
-                self.code.write(address, self.pc().0 as u16)?;
-                self.code.write(address + 1, (self.pc().0 >> 16) as u16)?;
+                let patched_target = label.with_jump(JumpOffset::new(address, pc)?);
+                code.write_32(address, patched_target.0)?;
 
                 // Update the penultimate patch target to be the new sentinel
+                // If the prev is not the sentinel, there is at least one value in the new chain
                 if prev != JumpTarget::SENTINEL {
-                    self.code.write(prev, JumpTarget::SENTINEL.0 as u16)?;
-                    self.code
-                        .write(prev + 1, (JumpTarget::SENTINEL.0 >> 16) as u16)?;
+                    let old_end = LabelTarget(code.read_32(prev)?);
+                    let new_end = old_end.with_jump(JumpOffset::sentinel());
+                    code.write_32(prev, new_end.0)?;
                 }
+            } else {
+                prev = address;
             }
 
-            prev = address;
-        }
+            Ok(())
+        })?;
 
         self.control_frames.push(ControlFrame::Else {
             result,
@@ -523,36 +693,6 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
                 })
                 .or(Err(ValidationError::ControlFlowTooDeep))
         }
-    }
-
-    /// Backpatch jump-targets previously written in the IR with a real location.
-    /// This function will keep following the temporary jump targets until it reaches a sentinel.
-    fn backpatch(&mut self, start: JumpTarget, to: JumpTarget) -> Result<(), ValidationError> {
-        // Back-patch all the jump targets in the code
-        // We know the first address since it is written in the control frame
-        // All the other addresses are written as placeholders in the code text
-        let mut n = 0;
-        let mut next = start;
-        while next != JumpTarget::SENTINEL {
-            // Bound our loops to not go into an infinite cycle
-            n += 1;
-            if n > 200 {
-                return Err(ValidationError::PossibleBackpatchCycle);
-            }
-
-            let address = next;
-
-            // Read the next address before we overwrite it
-            let w1 = self.code.read(address)?;
-            let w2 = self.code.read(address + 1)?;
-            next = JumpTarget((w1 as u32) | ((w2 as u32) << 16));
-
-            // Overwrite the next address with our program counter
-            self.code.write(address, to.0 as u16)?;
-            self.code.write(address + 1, (to.0 >> 16) as u16)?;
-        }
-
-        Ok(())
     }
 
     /// Exit the current control block and back-patch any forward jump targets.
@@ -601,7 +741,13 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
                 stack_start,
                 patch_target,
             } => {
-                self.backpatch(patch_target, self.pc())?;
+                let pc = self.pc();
+                self.code.backpatch(patch_target, |code, address, label| {
+                    let patched = label.with_jump(JumpOffset::new(address, pc)?);
+                    code.write_32(address, patched.0)?;
+                    Ok(())
+                })?;
+
                 self.validate_block_result(result, stack_start)?;
 
                 // Clear unreachable flag since we are entering a new control block
@@ -631,21 +777,36 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
     /// For backward jumps (loop):
     /// - The target is already known, emit it directly
     ///
-    /// Jump targets are encoded as 2 words (32-bit address).
-    pub(crate) fn write_jump_target(&mut self, label: LabelIdx) -> Result<(), ValidationError> {
+    /// Label targets also encode the arity and stack reset information in the first 10-bits.
+    /// The jump address is encoded in the final 22-bits
+    pub(crate) fn write_label_target(&mut self, label: LabelIdx) -> Result<(), ValidationError> {
         if label.0 as usize >= self.control_frames.len() {
             Err(ValidationError::InvalidLabelIndex)
         } else {
             let idx = self.control_frames.len() - 1 - label.0 as usize;
-            let (result, stack_start) = match &mut self.control_frames[idx] {
+            let pc = self.pc();
+
+            let result = match &mut self.control_frames[idx] {
+                // Backward jump target
                 ControlFrame::Loop {
                     result,
                     stack_start,
                     target,
                 } => {
-                    self.code.push(target.0 as u16)?;
-                    self.code.push((target.0 >> 16) as u16)?;
-                    (*result, *stack_start)
+                    let stack_delta = self.value_stack.len() - *stack_start as usize;
+                    if stack_delta > 0xFF {
+                        return Err(ValidationError::LabelStackJumpTooDeep);
+                    }
+
+                    let lt = LabelTarget::new(
+                        *result,
+                        (stack_delta & 0xFF) as u8,
+                        JumpOffset::new(pc, *target)?,
+                    );
+
+                    self.code.push(lt.0 as u16)?;
+                    self.code.push((lt.0 >> 16) as u16)?;
+                    *result
                 }
                 ControlFrame::Block {
                     result,
@@ -667,33 +828,32 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
                     let target = *patch_target;
                     *patch_target = self.code.pc();
 
-                    self.code.push(target.0 as u16)?;
-                    self.code.push((target.0 >> 16) as u16)?;
-                    (*result, *stack_start)
+                    let stack_delta = self.value_stack.len() - *stack_start as usize;
+                    if stack_delta > 0xFF {
+                        return Err(ValidationError::LabelStackJumpTooDeep);
+                    }
+
+                    let lt = LabelTarget::new(
+                        *result,
+                        (stack_delta & 0xFF) as u8,
+                        JumpOffset::new(pc, target)?,
+                    );
+
+                    self.code.push(lt.0 as u16)?;
+                    self.code.push((lt.0 >> 16) as u16)?;
+                    *result
                 }
                 ControlFrame::UnreachableBlock | ControlFrame::UnreachableIf => return Ok(()),
             };
 
-            // For branch instructions, we only need to validate that the top of the stack
-            // matches the label's arity, not the entire stack.
-            if !self.unreachable {
-                if let Some(ty) = result.0 {
-                    // The label expects one value on top of the stack.
-                    // The stack must have at least stack_start values plus the result value
-                    if (self.value_stack.len() as u16) < stack_start + 1 {
-                        return Err(ValidationError::StackUnderflow);
-                    }
-                    // Check that the top of the stack matches the expected type
-                    let got = *self.value_stack.last().unwrap();
-                    if got != ty {
-                        return Err(ValidationError::TypeMismatch);
-                    }
-                } else {
-                    // The label expects no result values
-                    // The stack must have at least stack_start values
-                    if (self.value_stack.len() as u16) < stack_start {
-                        return Err(ValidationError::StackUnderflow);
-                    }
+            // Make sure we can pull 'result' off the stack
+            if let Some(result) = result.0 {
+                let Some(got) = self.value_stack.last() else {
+                    return Err(ValidationError::BlockResultTypeMismatch);
+                };
+
+                if *got != result {
+                    return Err(ValidationError::BlockResultTypeMismatch);
                 }
             }
 
@@ -780,15 +940,11 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
     ///
     /// Format: `[opcode:8][0x00:8]`
     pub(crate) fn instr(&mut self, op: u8) -> Result<(), AllocError> {
-        extern crate std;
-        std::eprintln!("{} {:?}", opcode_to_string(op), self.value_stack);
         self.code.push((op as u16) << 8)
     }
 
     /// Emit an instruction with an 8-bit operand
     pub(crate) fn instr_imm_8(&mut self, op: u8, operand: u8) -> Result<(), AllocError> {
-        extern crate std;
-        std::eprintln!("{} {:?}", opcode_to_string(op), self.value_stack);
         self.code.push((op as u16) << 8 | (operand as u16))
     }
 
