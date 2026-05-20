@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::{BaseVisitor, Interpreter, InterpreterState, MemArg, Memory, Module, Store};
+    use crate::{BaseVisitor, Interpreter, InterpreterState, IrVisitor, MemArg, Memory, Module, Store, ValType};
 
     extern crate std;
 
@@ -1131,7 +1131,7 @@ mod tests {
         state.stack.write_u32(0, 42);
         state.sp = 1;
 
-        (&interpreter).drop(&mut state).unwrap();
+        (&interpreter).drop(ValType::I32, &mut state).unwrap();
 
         assert_eq!(state.sp, 0);
     }
@@ -1151,7 +1151,7 @@ mod tests {
         state.stack.write_u32(2, 1); // condition (true)
         state.sp = 3;
 
-        (&interpreter).select(&mut state).unwrap();
+        (&interpreter).select(ValType::I32, &mut state).unwrap();
 
         assert_eq!(state.sp, 1);
         assert_eq!(state.stack.read_u32(0), 10);
@@ -1172,7 +1172,7 @@ mod tests {
         state.stack.write_u32(2, 0); // condition (false)
         state.sp = 3;
 
-        (&interpreter).select(&mut state).unwrap();
+        (&interpreter).select(ValType::I32, &mut state).unwrap();
 
         assert_eq!(state.sp, 1);
         assert_eq!(state.stack.read_u32(0), 20);

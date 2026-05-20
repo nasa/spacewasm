@@ -17,6 +17,19 @@ edition.workspace = true
 name = "spacewasm"
 path = "src/lib.rs"
 
+[features]
+default = []
+
+# Use the `std` crate to perform math functions
+# These are provided by the C libm which typically provide the best performance
+# This feature may not be portable on all platforms (depends on support by Rust std)
+std-math = []
+
+# Perform a bounds check on every stack access.
+# This is usually not necessary since stack accesses are already checked up-front
+# by the verifier. Useful for fuzzing/regression testing
+strict-assertions = []
+
 [dependencies]
 libm = "0.2.16"
 

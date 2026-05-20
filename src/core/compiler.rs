@@ -73,6 +73,21 @@ macro_rules! instruction {
 }
 
 impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
+    fn drop(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        let ty = state.pop_stack_t()?;
+        state.instr_imm_8(DROP, ty as u8)?;
+        Ok(())
+    }
+
+    fn select(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        state.pop_stack(ValType::I32)?;
+        let ty = state.pop_stack_t()?;
+        state.pop_stack(ty)?;
+        state.push_stack(ty)?;
+        state.instr_imm_8(SELECT, ty as u8)?;
+        Ok(())
+    }
+
     fn enter_block(
         &self,
         block_type: ResultType,
@@ -316,21 +331,6 @@ impl<'a, const N: usize> BaseVisitor for Compiler<'a, N> {
     fn nop(&self, state: &mut Self::State) -> Result<(), Self::Error> {
         // No op!
         let _ = state;
-        Ok(())
-    }
-
-    fn drop(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        let ty = state.pop_stack_t()?;
-        state.instr_imm_8(DROP, ty as u8)?;
-        Ok(())
-    }
-
-    fn select(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        let ty = state.pop_stack_t()?;
-        state.pop_stack(ty)?;
-        state.pop_stack(ValType::I32)?;
-        state.push_stack(ty)?;
-        state.instr_imm_8(SELECT, ty as u8)?;
         Ok(())
     }
 

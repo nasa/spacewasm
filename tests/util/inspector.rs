@@ -1,7 +1,4 @@
-use spacewasm::{
-    BaseVisitor, FuncIdx, GlobalIdx, HostModuleRef, IrVisitor, LabelIdx, LabelTarget, LocalIdx,
-    LocalVariable, MemArg, ResultType, TypeIdx, WasmVisitor,
-};
+use spacewasm::{BaseVisitor, FuncIdx, GlobalIdx, HostModuleRef, IrVisitor, LabelIdx, LabelTarget, LocalIdx, LocalVariable, MemArg, ResultType, TypeIdx, ValType, WasmVisitor};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -37,10 +34,6 @@ impl<'a, S, E, T: BaseVisitor<State = S, Error = E>> BaseVisitor for Inspector<'
     visit_fn!(nop);
 
     // Control flow is not handled by the base visitor
-
-    // Parametric instructions
-    visit_fn!(drop);
-    visit_fn!(select);
 
     // Memory instructions - loads
     visit_fn!(i32_load, m: MemArg);
@@ -224,6 +217,11 @@ impl<'a, S, E, T: BaseVisitor<State = S, Error = E>> BaseVisitor for Inspector<'
 impl<'a, S, E, T: BaseVisitor<State = S, Error = E> + WasmVisitor> WasmVisitor
     for Inspector<'a, S, E, T>
 {
+
+    // Parametric instructions
+    visit_fn!(drop);
+    visit_fn!(select);
+
     visit_fn!(enter_block, block_type: ResultType);
     visit_fn!(exit_block);
     visit_fn!(finish);
@@ -249,6 +247,10 @@ impl<'a, S, E, T: BaseVisitor<State = S, Error = E> + WasmVisitor> WasmVisitor
 impl<'a, S, E, T: BaseVisitor<State = S, Error = E> + IrVisitor> IrVisitor
     for Inspector<'a, S, E, T>
 {
+    // Parametric instructions
+    visit_fn!(drop, ty: ValType);
+    visit_fn!(select, ty: ValType);
+
     visit_fn!(if_, false_address: LabelTarget);
     visit_fn!(br, addr: LabelTarget);
     visit_fn!(br_if, true_address: LabelTarget);

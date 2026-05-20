@@ -26,6 +26,18 @@ pub enum ValType {
     F64,
 }
 
+impl From<u8> for ValType {
+    fn from(val: u8) -> Self {
+        match val {
+            0 => ValType::I32,
+            1 => ValType::I64,
+            2 => ValType::F32,
+            3 => ValType::F64,
+            _ => unreachable!(),
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Value {
     I32(i32),

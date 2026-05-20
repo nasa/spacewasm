@@ -41,10 +41,6 @@ impl BaseVisitor for ConstantCompiler {
 
     // Control flow is not handled by the base visitor
 
-    // Parametric instructions
-    invalid_constant_fn!(drop);
-    invalid_constant_fn!(select);
-
     // Memory instructions - loads
     invalid_constant_fn!(i32_load, m: MemArg);
     invalid_constant_fn!(i64_load, m: MemArg);
@@ -253,6 +249,10 @@ impl BaseVisitor for ConstantCompiler {
 }
 
 impl WasmVisitor for ConstantCompiler {
+    // Parametric instructions
+    invalid_constant_fn!(drop);
+    invalid_constant_fn!(select);
+
     // Exit the expression
     fn finish(&self, state: &mut Self::State) -> Result<(), Self::Error> {
         if let Some(_) = state {

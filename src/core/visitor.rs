@@ -32,11 +32,7 @@ pub trait BaseVisitor {
     visit_fn!(unreachable);
     visit_fn!(nop);
 
-    // Control flow is not handled by the base visitor
-
-    // Parametric instructions
-    visit_fn!(drop);
-    visit_fn!(select);
+    // Control flow & parametric instructions are not handled by the base visitor
 
     // Memory instructions - loads
     visit_fn!(i32_load, m: MemArg);
@@ -220,6 +216,10 @@ pub trait BaseVisitor {
 /// An abstraction over WASM Bytecode.
 /// Used to implement validation and compilation of WASM bytecode.
 pub trait WasmVisitor: BaseVisitor {
+    // Parametric instructions
+    visit_fn!(drop);
+    visit_fn!(select);
+
     visit_fn!(enter_block, block_type: ResultType);
     visit_fn!(exit_block);
     visit_fn!(finish);
@@ -286,6 +286,10 @@ pub enum FuncRef {
 /// An abstraction over IR Bytecode.
 /// Used to implement the interpreter.
 pub trait IrVisitor: BaseVisitor {
+    // Parametric instructions
+    visit_fn!(drop, ty: ValType);
+    visit_fn!(select, ty: ValType);
+
     visit_fn!(if_, false_address: LabelTarget);
     visit_fn!(br, addr: LabelTarget);
     visit_fn!(br_if, true_address: LabelTarget);

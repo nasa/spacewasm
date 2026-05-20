@@ -1,70 +1,23 @@
 use spacewasm::{
     vec, Box, CompilerOptions, ExportDesc, FuncRef, HostFunction, HostFunctionBreak,
-    HostModule, InterpreterResult, InterpreterRunner, Memory, PageAllocator, SectionKind, Store, Value,
+    HostModule, InterpreterBreak, InterpreterResult, InterpreterRunner, Memory, PageAllocator,
+    SectionKind, Store, ValType, Value,
 };
-use spacewasm_util::{FileStream, OutputStream, RustSystemAllocator};
+use spacewasm_util::{FileStream, RustSystemAllocator};
 use std::alloc::{alloc, Layout};
 use std::ops::ControlFlow;
-use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 spacewasm::global_allocator!(
     PageAllocator<16>,
     PageAllocator::new(&RustSystemAllocator {}, 8192)
 );
 
-#[derive(Clone, Default)]
-struct LogStream {
-    data: Arc<Mutex<Vec<String>>>,
-}
-
-impl OutputStream for LogStream {
-    fn write(&self, line: String) {
-        self.data.lock().unwrap().push(line);
-    }
-}
-
-#[derive(Clone, Default)]
-struct PrintStream;
-
-impl OutputStream for PrintStream {
-    fn write(&self, line: String) {
-        eprintln!("{}", line);
-    }
-}
-
 fn main() {
-    let log = PrintStream::default();
-    let log_c = log.clone();
-
     let path = std::env::args().nth(1).unwrap();
 
-    match std::panic::catch_unwind(move || {
-        main_inner(&path, std::boxed::Box::new(log_c));
-    }) {
-        Ok(_) => {}
-        Err(err) => {
-            // let log_lines = log.data.lock().unwrap();
-            // if log_lines.len() > 0 {
-            //     eprintln!("Subtest failed, dumping invoke log");
-            //     for line in log_lines.iter() {
-            //         eprintln!("{}", line);
-            //     }
-            //     eprintln!("========")
-            // }
+    let start = Instant::now();
 
-            let msg = if let Some(s) = err.downcast_ref::<&'static str>() {
-                s.to_string()
-            } else if let Some(s) = err.downcast_ref::<String>() {
-                s.clone()
-            } else {
-                "Unknown panic payload".to_string()
-            };
-            eprintln!("Panic occurred: {}", msg);
-        }
-    }
-}
-
-fn main_inner(path: &str, out: std::boxed::Box<impl OutputStream>) {
     let fprime_core = HostModule {
         name: "fprime_core",
         globals: vec![],
@@ -153,15 +106,11 @@ fn main_inner(path: &str, out: std::boxed::Box<impl OutputStream>) {
             "clock_ms",
             "".into(),
             "I".into(),
-            |_, _| {
-                let ms = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_millis() as i64;
+            move |_, _| {
+                let elapse = start.elapsed();
+                let ms = elapse.as_secs() * 1000 + (elapse.subsec_nanos() as u64 / 1000_000);
 
-                eprintln!("CLOCK_MS {}", ms);
-
-                ControlFlow::Continue(Some(Value::I64(ms)))
+                ControlFlow::Continue(Some(Value::I64(ms as i64)))
             },
         )],
     };
@@ -271,5 +220,9 @@ fn main_inner(path: &str, out: std::boxed::Box<impl OutputStream>) {
         result = interpreter.run(&module.text, &mut state, usize::MAX)
     }
 
-    eprintln!("Interpreter result: {:?}", result)
+    let InterpreterResult::Instruction(InterpreterBreak::Finished(value)) = result else {
+        panic!("interpreter failed: {:?}", result)
+    };
+
+    eprintln!("Interpreter result: {:?}", value.to_value(ValType::F32))
 }

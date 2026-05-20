@@ -25,10 +25,10 @@ impl Stack {
 
     #[inline]
     fn check_bounds(&self, addr: usize, word_n: usize) {
-        // TODO(tumbar) Allow this assertion to be disabled via feature flag. We can already check
-        //              for stack overflow at the callsite so this simply verifies implementation
-        //              correctness. This is good during development/security fuzzing but not useful
-        //              during runtime.
+        let _ = addr;
+        let _ = word_n;
+
+        #[cfg(feature = "strict-assertions")]
         assert!(
             addr + word_n <= self.size,
             "addr={} word_n={} size={}",

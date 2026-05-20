@@ -84,7 +84,7 @@ fn main() {
         "Running CoreMark run() => ({:?}) -> {:?}\n",
         f_ty.params, f_ty.returns
     );
-    interpreter.invoke(&mut state, func, &[]);
+    interpreter.invoke(&mut state, func, &[]).unwrap();
 
     let bench_start = Instant::now();
 

@@ -8,4 +8,6 @@ mod stack;
 pub use stack::*;
 
 mod ir_reader;
+mod m;
+
 pub use ir_reader::*;

@@ -26,11 +26,22 @@ impl<'code> IrReader<'code> {
     fn read(&self, address: &mut JumpTarget) -> Result<u16, IrReaderError> {
         let page = address.page();
         let offset = address.offset();
-        if page >= self.0.len() || offset >= 256 {
-            Err(IrReaderError::InvalidAddress)
-        } else {
+
+        #[cfg(feature = "strict-assertions")]
+        {
+            if page >= self.0.len() || offset >= 256 {
+                Err(IrReaderError::InvalidAddress)
+            } else {
+                *address += 1;
+                Ok(self.0[page].0[offset])
+            }
+        }
+
+        #[cfg(not(feature = "strict-assertions"))]
+        {
+            let v = unsafe { self.0.get_unchecked(page).0.get_unchecked(offset) };
             *address += 1;
-            Ok(self.0[page].0[offset])
+            Ok(*v)
         }
     }
 
@@ -187,8 +198,12 @@ impl<'code> IrReader<'code> {
             }
 
             // Parametric instructions
-            DROP => instruction!(drop),
-            SELECT => instruction!(select),
+            DROP => {
+                visitor.drop(unsafe { ::core::mem::transmute(imm) }, state)?;
+            },
+            SELECT => {
+                visitor.select(unsafe { ::core::mem::transmute(imm) }, state)?;
+            },
 
             // Variable instructions
             LOCAL_GET => instruction!(local_get, local),

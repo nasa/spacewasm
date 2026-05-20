@@ -1,4 +1,5 @@
 use crate::exec::ir_reader::{IrReader, IrReaderError};
+use crate::exec::m;
 use crate::*;
 use ::core::ops::ControlFlow;
 
@@ -447,24 +448,6 @@ impl<'module> BaseVisitor for Interpreter<'module> {
         Ok(())
     }
 
-    fn drop(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        state.sp -= 1;
-        Ok(())
-    }
-
-    fn select(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        state.sp -= 1;
-        let c = state.stack.read_u32(state.sp);
-        let val2 = state.stack.read_u32(state.sp - 1);
-        let val1 = state.stack.read_u32(state.sp - 2);
-        state.sp -= 2;
-        state
-            .stack
-            .write_u32(state.sp, if c != 0 { val1 } else { val2 });
-        state.sp += 1;
-        Ok(())
-    }
-
     fn i32_load(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
         let addr = state.stack.read_u32(state.sp - 1) as usize;
         let val = state.ram.load_u32(addr + m.offset as usize)?;
@@ -771,32 +754,32 @@ impl<'module> BaseVisitor for Interpreter<'module> {
     instruction!(i64_rotr, i64, i64 -> i64, a, b, a.rotate_right(b as u32));
     instruction!(f32_abs, f32 -> f32, f, if f < 0.0 { -f } else { f });
     instruction!(f32_neg, f32 -> f32, f, -f);
-    instruction!(f32_ceil, f32 -> f32, f, libm::ceilf(f));
-    instruction!(f32_floor, f32 -> f32, f, libm::floorf(f));
-    instruction!(f32_trunc, f32 -> f32, f, libm::truncf(f));
-    instruction!(f32_nearest, f32 -> f32, f, libm::roundf(f));
-    instruction!(f32_sqrt, f32 -> f32, f, libm::sqrtf(f));
+    instruction!(f32_ceil, f32 -> f32, f, m::ceilf(f));
+    instruction!(f32_floor, f32 -> f32, f, m::floorf(f));
+    instruction!(f32_trunc, f32 -> f32, f, m::truncf(f));
+    instruction!(f32_nearest, f32 -> f32, f, m::roundf(f));
+    instruction!(f32_sqrt, f32 -> f32, f, m::sqrtf(f));
     instruction!(f32_add, f32, f32 -> f32, a, b, a + b);
     instruction!(f32_sub, f32, f32 -> f32, a, b, a - b);
     instruction!(f32_mul, f32, f32 -> f32, a, b, a * b);
     instruction!(f32_div, f32, f32 -> f32, a, b, a / b);
-    instruction!(f32_min, f32, f32 -> f32, a, b, libm::fminf(a, b));
-    instruction!(f32_max, f32, f32 -> f32, a, b, libm::fmaxf(a, b));
-    instruction!(f32_copysign, f32, f32 -> f32, a, b, libm::copysignf(a, b));
+    instruction!(f32_min, f32, f32 -> f32, a, b, m::fminf(a, b));
+    instruction!(f32_max, f32, f32 -> f32, a, b, m::fmaxf(a, b));
+    instruction!(f32_copysign, f32, f32 -> f32, a, b, m::copysignf(a, b));
     instruction!(f64_abs, f64 -> f64, f, if f < 0.0 { -f } else { f });
     instruction!(f64_neg, f64 -> f64, f, -f);
-    instruction!(f64_ceil, f64 -> f64, f, libm::ceil(f));
-    instruction!(f64_floor, f64 -> f64, f, libm::floor(f));
-    instruction!(f64_trunc, f64 -> f64, f, libm::trunc(f));
-    instruction!(f64_nearest, f64 -> f64, f, libm::round(f));
-    instruction!(f64_sqrt, f64 -> f64, f, libm::sqrt(f));
+    instruction!(f64_ceil, f64 -> f64, f, m::ceil(f));
+    instruction!(f64_floor, f64 -> f64, f, m::floor(f));
+    instruction!(f64_trunc, f64 -> f64, f, m::trunc(f));
+    instruction!(f64_nearest, f64 -> f64, f, m::round(f));
+    instruction!(f64_sqrt, f64 -> f64, f, m::sqrt(f));
     instruction!(f64_add, f64, f64 -> f64, a, b, a + b);
     instruction!(f64_sub, f64, f64 -> f64, a, b, a - b);
     instruction!(f64_mul, f64, f64 -> f64, a, b, a * b);
     instruction!(f64_div, f64, f64 -> f64, a, b, a / b);
-    instruction!(f64_min, f64, f64 -> f64, a, b, libm::fmin(a, b));
-    instruction!(f64_max, f64, f64 -> f64, a, b, libm::fmax(a, b));
-    instruction!(f64_copysign, f64, f64 -> f64, a, b, libm::copysign(a, b));
+    instruction!(f64_min, f64, f64 -> f64, a, b, m::fmin(a, b));
+    instruction!(f64_max, f64, f64 -> f64, a, b, m::fmax(a, b));
+    instruction!(f64_copysign, f64, f64 -> f64, a, b, m::copysign(a, b));
 
     fn i32_wrap_i64(&self, state: &mut Self::State) -> Result<(), Self::Error> {
         // i64 low word is at [sp-2], high word at [sp-1]
@@ -950,6 +933,50 @@ impl<'module> BaseVisitor for Interpreter<'module> {
 }
 
 impl<'module> IrVisitor for Interpreter<'module> {
+    fn drop(&self, ty: ValType, state: &mut Self::State) -> Result<(), Self::Error> {
+        state.sp -= match ty {
+            ValType::I32 | ValType::F32 => 1,
+            ValType::I64 | ValType::F64 => 2,
+        };
+        Ok(())
+    }
+
+    fn select(&self, ty: ValType, state: &mut Self::State) -> Result<(), Self::Error> {
+        state.sp -= 1;
+        let c = state.stack.read_u32(state.sp);
+
+        match ty {
+            ValType::I32 | ValType::F32 => {
+                if c != 0 {
+                    // Use val1 which is already in the right spot
+                    state.sp -= 1;
+                } else {
+                    // Move val2 to val1's spot
+                    let val2 = state.stack.read_u32(state.sp - 1);
+                    state
+                        .stack
+                        .write_u32(state.sp - 2, val2);
+                    state.sp -= 1;
+                }
+            }
+            ValType::I64 | ValType::F64=> {
+                if c != 0 {
+                    // Use val1 which is already in the right spot
+                    state.sp -= 2;
+                } else {
+                    // Move val2 to val1's spot
+                    let val2 = state.stack.read_u64(state.sp - 2);
+                    state
+                        .stack
+                        .write_u64(state.sp - 4, val2);
+                    state.sp -= 2;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     fn if_(&self, false_address: LabelTarget, state: &mut Self::State) -> Result<(), Self::Error> {
         state.sp -= 1;
         let v = state.stack.read_u32(state.sp);

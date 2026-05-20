@@ -122,11 +122,25 @@ impl Iterator for HostValListIter {
     }
 }
 
-pub struct HostFunction {
+impl<T: Fn(&mut InterpreterState, &[Value]) -> HostFunctionResult> Box<T> {
+    pub fn into_host_function_dyn(
+        mut self,
+    ) -> Box<dyn Fn(&mut InterpreterState, &[Value]) -> HostFunctionResult>
+    where
+        T: Fn(&mut InterpreterState, &[Value]) -> HostFunctionResult + 'static,
+    {
+        let ptr =
+            self.as_mut_ptr() as *mut dyn Fn(&mut InterpreterState, &[Value]) -> HostFunctionResult;
+        ::core::mem::forget(self); // Prevent double free
+        unsafe { Box::from_raw(GlobalAllocator, ptr) }
+    }
+}
+
+pub struct HostFunction{
     name: &'static str,
     params: HostValList,
     returns: HostValList,
-    f: fn(state: &mut InterpreterState, &[Value]) -> HostFunctionResult,
+    f: Box<dyn Fn(&mut InterpreterState, &[Value]) -> HostFunctionResult>,
     param_size: u16,
     return_size: u16,
 }
@@ -143,13 +157,13 @@ impl HostFunction {
         name: &'static str,
         params: HostValList,
         returns: HostValList,
-        f: fn(state: &mut InterpreterState, a: &[Value]) -> HostFunctionResult,
+        f: impl Fn(&mut InterpreterState, &[Value]) -> HostFunctionResult + 'static,
     ) -> Self {
         let mut o = HostFunction {
             name,
             params,
             returns,
-            f,
+            f: Box::new(f).unwrap().into_host_function_dyn(),
             param_size: 0,
             return_size: 0,
         };

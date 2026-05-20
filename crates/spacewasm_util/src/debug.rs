@@ -1,7 +1,4 @@
-use spacewasm::{
-    BaseVisitor, FuncIdx, GlobalIdx, HostModuleRef, IrVisitor, LabelIdx, LabelTarget, LocalIdx,
-    LocalVariable, MemArg, ResultType, TypeIdx, WasmVisitor,
-};
+use spacewasm::{BaseVisitor, FuncIdx, GlobalIdx, HostModuleRef, IrVisitor, LabelIdx, LabelTarget, LocalIdx, LocalVariable, MemArg, ResultType, TypeIdx, ValType, WasmVisitor};
 
 macro_rules! visit_fn {
     // No additional parameters
@@ -41,10 +38,6 @@ impl<'a, ST: OutputStream, S, E, T: BaseVisitor<State = S, Error = E>> BaseVisit
     visit_fn!(nop);
 
     // Control flow is not handled by the base visitor
-
-    // Parametric instructions
-    visit_fn!(drop);
-    visit_fn!(select);
 
     // Memory instructions - loads
     visit_fn!(i32_load, m: MemArg);
@@ -228,6 +221,10 @@ impl<'a, ST: OutputStream, S, E, T: BaseVisitor<State = S, Error = E>> BaseVisit
 impl<'a, ST: OutputStream, S, E, T: BaseVisitor<State = S, Error = E> + WasmVisitor> WasmVisitor
     for Debugger<'a, ST, S, E, T>
 {
+    // Parametric instructions
+    visit_fn!(drop);
+    visit_fn!(select);
+
     visit_fn!(enter_block, block_type: ResultType);
     visit_fn!(exit_block);
     visit_fn!(finish);
@@ -253,6 +250,10 @@ impl<'a, ST: OutputStream, S, E, T: BaseVisitor<State = S, Error = E> + WasmVisi
 impl<'a, ST: OutputStream, S, E, T: BaseVisitor<State = S, Error = E> + IrVisitor> IrVisitor
     for Debugger<'a, ST, S, E, T>
 {
+    // Parametric instructions
+    visit_fn!(drop, ty: ValType);
+    visit_fn!(select, ty: ValType);
+
     visit_fn!(if_, false_address: LabelTarget);
     visit_fn!(br, addr: LabelTarget);
     visit_fn!(br_if, true_address: LabelTarget);

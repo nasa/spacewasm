@@ -570,6 +570,7 @@ fn check_decode_error(err: ParseError, text: String) {
         }
         (ValidationError::TypeMismatch, "type mismatch") => {}
         (ValidationError::BlockResultTypeMismatch, "type mismatch") => {}
+        (ValidationError::InvalidLabelIndex, "unknown label") => {}
         err => {
             assert!(
                 false,

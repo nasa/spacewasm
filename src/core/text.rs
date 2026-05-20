@@ -574,6 +574,21 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
         self.unreachable = true;
     }
 
+    fn control_frame_stack_len(&self) -> usize {
+        let start = match self.control_frames.last() {
+            None => 0,
+            Some(
+                ControlFrame::If { stack_start, .. }
+                | ControlFrame::Else { stack_start, .. }
+                | ControlFrame::Block { stack_start, .. }
+                | ControlFrame::Loop { stack_start, .. },
+            ) => *stack_start as usize,
+            Some(ControlFrame::UnreachableIf) | Some(ControlFrame::UnreachableBlock) => 0,
+        };
+
+        self.value_stack.len() - start
+    }
+
     /// Enter a forward control block (block statement).
     pub(crate) fn enter_block(&mut self, result: ResultType) -> Result<(), ValidationError> {
         if self.unreachable {
@@ -848,6 +863,10 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
 
             // Make sure we can pull 'result' off the stack
             if let Some(result) = result.0 {
+                if self.control_frame_stack_len() == 0 {
+                    return Err(ValidationError::BlockResultTypeMismatch);
+                }
+
                 let Some(got) = self.value_stack.last() else {
                     return Err(ValidationError::BlockResultTypeMismatch);
                 };
@@ -898,6 +917,10 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
             return Ok(ValType::I32);
         }
 
+        if self.control_frame_stack_len() == 0 {
+            return Err(ValidationError::StackUnderflow);
+        }
+
         self.value_stack
             .pop()
             .ok_or(ValidationError::StackUnderflow)
@@ -906,6 +929,10 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
     pub(crate) fn pop_stack(&mut self, ty: ValType) -> Result<(), ValidationError> {
         if self.unreachable {
             return Ok(());
+        }
+
+        if self.control_frame_stack_len() == 0 {
+            return Err(ValidationError::StackUnderflow);
         }
 
         let top_ty = self
