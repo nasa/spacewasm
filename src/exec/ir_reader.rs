@@ -87,17 +87,8 @@ impl<'code> IrReader<'code> {
 
             // An instruction with a local variable reference immediate
             ($name:ident, local) => {{
-                let ty = match imm {
-                    0 => ValType::I32,
-                    1 => ValType::I64,
-                    2 => ValType::F32,
-                    3 => ValType::F64,
-                    _ => Err(IrReaderError::InvalidType).unwrap(),
-                };
-
                 let frame_offset = self.read(pc).unwrap() as i16;
-
-                visitor.$name(LocalVariable { frame_offset, ty }, state)?;
+                visitor.$name(LocalVariable { frame_offset, ty: imm.into() }, state)?;
             }};
 
             // An instruction with a MemArg operand
@@ -199,10 +190,10 @@ impl<'code> IrReader<'code> {
 
             // Parametric instructions
             DROP => {
-                visitor.drop(unsafe { ::core::mem::transmute(imm) }, state)?;
+                visitor.drop(imm.into(), state)?;
             },
             SELECT => {
-                visitor.select(unsafe { ::core::mem::transmute(imm) }, state)?;
+                visitor.select(imm.into(), state)?;
             },
 
             // Variable instructions

@@ -506,7 +506,7 @@ fn invoke_function(
     }
 }
 
-fn trap_reason_to_string(reason: TrapReason) -> &'static str {
+fn check_trap_reason(reason: TrapReason, expected: &'static str) -> &'static str {
     /*
     RuntimeError::Trap(TrapError::DivideBy0) => Ok("integer divide by zero"),
         RuntimeError::Trap(TrapError::UnrepresentableResult) => Ok("integer overflow"),
@@ -530,9 +530,8 @@ fn trap_reason_to_string(reason: TrapReason) -> &'static str {
         RuntimeError::HostFunctionSignatureMismatch => Ok("host function signature mismatch"),
 
      */
-    match reason {
-        TrapReason::Unreachable => "unreachable",
-        TrapReason::Host => unreachable!(),
+    match (reason, expected) {
+        (TrapReason::Unreachable, "unreachable") => {},
         TrapReason::DivideByZero => "integer divide by zero",
         TrapReason::InvalidTableIndex => "out of bounds table access",
         TrapReason::InvalidTableFunctionType => "indirect call type mismatch",
@@ -540,6 +539,12 @@ fn trap_reason_to_string(reason: TrapReason) -> &'static str {
         TrapReason::GlobalSetFailed => unreachable!(),
         TrapReason::MemoryOutOfBounds => "out of bounds memory access",
         TrapReason::StackOverflow => "stack overflow",
+        err => {
+            assert!(
+                false,
+                "Could not match expected error text '{text}' with error {err:?}"
+            )
+        }
     }
 }
 

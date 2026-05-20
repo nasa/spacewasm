@@ -28,6 +28,7 @@ pub enum ValType {
 
 impl From<u8> for ValType {
     fn from(val: u8) -> Self {
+        #[cfg(feature = "strict-assertions")]
         match val {
             0 => ValType::I32,
             1 => ValType::I64,
@@ -35,6 +36,9 @@ impl From<u8> for ValType {
             3 => ValType::F64,
             _ => unreachable!(),
         }
+
+        #[cfg(not(feature = "strict-assertions"))]
+        unsafe { ::core::mem::transmute(val) }
     }
 }
 
