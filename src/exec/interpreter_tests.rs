@@ -1,6 +1,9 @@
 #[cfg(test)]
 mod tests {
-    use crate::{BaseVisitor, Interpreter, InterpreterState, IrVisitor, MemArg, Memory, Module, Store, ValType};
+    use crate::{
+        BaseVisitor, Interpreter, InterpreterState, IrVisitor, MemArg, Memory, Module, Store,
+        ValType,
+    };
 
     extern crate std;
 
@@ -25,6 +28,7 @@ mod tests {
             text: crate::Vec::zero(),
             wasm_size: 0,
             final_page_offset: 0,
+            table_defined: false,
         }
     }
 

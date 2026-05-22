@@ -74,6 +74,8 @@ pub enum ValidationError {
     InvalidElementOffset,
     InvalidElementOutOfBounds,
     InvalidTableIndex,
+    TableNotDefined,
+    InvalidElementCount,
     InvalidMemIndex,
     InvalidMemOffsetType,
     InvalidNegativeMemOffset,

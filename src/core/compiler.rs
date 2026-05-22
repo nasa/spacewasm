@@ -231,6 +231,10 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
     }
 
     fn call_indirect(&self, x: TypeIdx, state: &mut Self::State) -> Result<(), Self::Error> {
+        if !state.module().table_defined {
+            return Err(ValidationError::TableNotDefined);
+        }
+
         state.pop_stack(ValType::I32)?;
         let ty = state
             .module()
@@ -238,7 +242,7 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
             .get(x.0 as usize)
             .ok_or(ValidationError::TypeIdxOutOfRange)?;
 
-        for p in &ty.params {
+        for p in ty.params.iter().rev() {
             state.pop_stack(*p)?;
         }
 

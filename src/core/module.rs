@@ -14,6 +14,7 @@ pub struct Module {
     pub start: Option<FuncIdx>,
     pub text: Vec<Box<TextPage>>,
     pub wasm_size: u32,
+    pub table_defined: bool,
     pub final_page_offset: u32,
 }
 
@@ -80,7 +81,7 @@ impl Module {
             store,
             &mut DefaultCustomSectionHandler,
             Some(&mut stats),
-            compiler_options
+            compiler_options,
         )
         .map_err(|err| ParseError {
             offset: wasm.offset() as u32,
@@ -133,6 +134,7 @@ impl Module {
             start: None,
             wasm_size: 0,
             final_page_offset: 0,
+            table_defined: false,
         };
 
         let mut last_section: SectionKind = SectionKind::Custom;
@@ -177,7 +179,7 @@ impl Module {
                     section_ty,
                     custom_handler,
                     &mut builder,
-                    compiler_options
+                    compiler_options,
                 )
                 .map_err(|e| e.with_section(section_ty))?;
 
@@ -216,7 +218,7 @@ impl Module {
         section_ty: SectionKind,
         custom_handler: &mut dyn CustomSectionHandler,
         code_builder: &mut CodeBuilder<PN>,
-        compiler_options: CompilerOptions
+        compiler_options: CompilerOptions,
     ) -> Result<(), ValidationError> {
         use SectionKind::*;
         match section_ty {
@@ -234,6 +236,7 @@ impl Module {
             }
             Table => {
                 self.table = TableSection::read(wasm)?;
+                self.table_defined = true;
             }
             Memory => {
                 self.memory = MemorySection::read(wasm)?;
@@ -656,6 +659,10 @@ impl Element {
             return Err(ValidationError::InvalidTableIndex);
         }
 
+        if !module.table_defined {
+            return Err(ValidationError::TableNotDefined);
+        }
+
         let Value::I32(offset) = Expr::read_constant(wasm)? else {
             return Err(ValidationError::InvalidElementOffset);
         };
@@ -741,7 +748,7 @@ impl Data {
                 if i < 0 {
                     return Err(ValidationError::InvalidNegativeMemOffset);
                 } else if i > (u32::MAX as i64) {
-                    return Err(ValidationError::InvalidMemOffset)
+                    return Err(ValidationError::InvalidMemOffset);
                 }
 
                 i as u32

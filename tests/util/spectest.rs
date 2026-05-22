@@ -584,6 +584,11 @@ fn check_decode_error(err: ParseError, text: String) {
         (ValidationError::FunctionIdxOutOfRange, "unknown function") => {}
         (ValidationError::FunctionReturnsTooLarge, "invalid result arity") => {}
         (ValidationError::BrTableHasTooManyCases, "br.table has too many cases") => {}
+        (ValidationError::TableNotDefined, "unknown table") => {}
+        (ValidationError::InvalidTableIndex, "malformed value type") => {}
+        (ValidationError::InvalidLabelIndex, "unexpected end of section or function") => {}
+        (ValidationError::MalformedValueType(_), "malformed value type") => {}
+        (ValidationError::DuplicateSection(_), "unexpected content after last section") => {}
         err => {
             assert!(
                 false,
