@@ -1,11 +1,5 @@
 use serde::{Deserialize, Serialize};
-use spacewasm::{
-    global_allocator, vec, AllocError, Allocator, CompilerOptions, ExportDesc, FuncRef,
-    GlobalValue, GlobalValueError, HostFunction, HostGlobal, HostModule, InnerVec,
-    Interpreter, InterpreterBreak, InterpreterResult, InterpreterRunner, InterpreterState, Memory,
-    MemoryStatistics, Module, ParseError, ReaderError, Store, TrapReason, ValType, ValidationError,
-    Value, WasmStream,
-};
+use spacewasm::{global_allocator, vec, AllocError, Allocator, CompilerOptions, ExportDesc, FuncRef, GlobalValue, GlobalValueError, HostFunction, HostGlobal, HostModule, InnerVec, Interpreter, InterpreterBreak, InterpreterResult, InterpreterRunner, InterpreterState, JumpTarget, Memory, MemoryStatistics, Module, ParseError, ReaderError, Store, TrapReason, ValType, ValidationError, Value, WasmStream};
 use std::alloc::Layout;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -471,6 +465,7 @@ fn invoke_function(
     let func = &module.functions[func_index];
     let interpreter = Interpreter::new(&ctx.store, module);
     let instance = ctx.instances.get_mut(&instance_key).unwrap();
+    instance.state.pc = JumpTarget::SENTINEL;
     interpreter.invoke(&mut instance.state, func, &params)?;
 
     let test_runner = Inspector {
@@ -506,7 +501,7 @@ fn invoke_function(
     }
 }
 
-fn check_trap_reason(reason: TrapReason, expected: &'static str) -> &'static str {
+fn check_trap_reason(reason: TrapReason, text: &str) {
     /*
     RuntimeError::Trap(TrapError::DivideBy0) => Ok("integer divide by zero"),
         RuntimeError::Trap(TrapError::UnrepresentableResult) => Ok("integer overflow"),
@@ -530,19 +525,18 @@ fn check_trap_reason(reason: TrapReason, expected: &'static str) -> &'static str
         RuntimeError::HostFunctionSignatureMismatch => Ok("host function signature mismatch"),
 
      */
-    match (reason, expected) {
-        (TrapReason::Unreachable, "unreachable") => {},
-        TrapReason::DivideByZero => "integer divide by zero",
-        TrapReason::InvalidTableIndex => "out of bounds table access",
-        TrapReason::InvalidTableFunctionType => "indirect call type mismatch",
-        TrapReason::GlobalGetFailed => unreachable!(),
-        TrapReason::GlobalSetFailed => unreachable!(),
-        TrapReason::MemoryOutOfBounds => "out of bounds memory access",
-        TrapReason::StackOverflow => "stack overflow",
+    match (reason, text) {
+        (TrapReason::Unreachable, "unreachable") => {}
+        (TrapReason::DivideByZero, "integer divide by zero") => {}
+        (TrapReason::InvalidTableIndex, "out of bounds table access") => {}
+        (TrapReason::InvalidTableFunctionType, "indirect call type mismatch") => {}
+        (TrapReason::MemoryOutOfBounds, "out of bounds memory access") => {}
+        (TrapReason::StackOverflow, "stack overflow") => {}
+        (TrapReason::InvalidTableIndex, "undefined element") => {}
         err => {
             assert!(
                 false,
-                "Could not match expected error text '{text}' with error {err:?}"
+                "Could not match expected trap text '{text}' with error {err:?}"
             )
         }
     }
@@ -576,10 +570,16 @@ fn check_decode_error(err: ParseError, text: String) {
         (ValidationError::TypeMismatch, "type mismatch") => {}
         (ValidationError::BlockResultTypeMismatch, "type mismatch") => {}
         (ValidationError::InvalidLabelIndex, "unknown label") => {}
+        (ValidationError::MalformedSectionSize, "unexpected end") => {}
+        (ValidationError::GlobalIdxOutOfRange, "unknown global") => {}
+        (ValidationError::MalformedSectionId(_), "malformed section id") => {}
+        (ValidationError::VecTooLong, "length out of bounds") => {}
+        (ValidationError::StackUnderflow, "type mismatch") => {}
+        (ValidationError::TypeIdxOutOfRange, "unknown type") => {}
         err => {
             assert!(
                 false,
-                "Could not match expected error text '{text}' with error {err:?}"
+                "Could not match validation error text '{text}' with error {err:?}"
             )
         }
     }
@@ -633,7 +633,7 @@ fn run_wast_command(
                 field,
                 args,
             } => match invoke_function(ctx, &module, &field, &args, log) {
-                Err(InterpreterBreak::Trap(reason)) if text == trap_reason_to_string(reason) => {}
+                Err(InterpreterBreak::Trap(reason)) => check_trap_reason(reason, &text),
                 Err(err) => {
                     panic!("Expected trap '{text}', got error: {err:?}")
                 }

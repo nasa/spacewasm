@@ -156,6 +156,10 @@ impl<'store> Interpreter<'store> {
         addr: LabelTarget,
         state: &mut InterpreterState,
     ) -> Result<(), InterpreterBreak> {
+        if addr.is_sentinel() {
+            return self.return_(addr.arity() as u8, state);
+        }
+
         let depth = addr.depth() as usize;
         state.sp -= depth;
 
@@ -953,22 +957,18 @@ impl<'module> IrVisitor for Interpreter<'module> {
                 } else {
                     // Move val2 to val1's spot
                     let val2 = state.stack.read_u32(state.sp - 1);
-                    state
-                        .stack
-                        .write_u32(state.sp - 2, val2);
+                    state.stack.write_u32(state.sp - 2, val2);
                     state.sp -= 1;
                 }
             }
-            ValType::I64 | ValType::F64=> {
+            ValType::I64 | ValType::F64 => {
                 if c != 0 {
                     // Use val1 which is already in the right spot
                     state.sp -= 2;
                 } else {
                     // Move val2 to val1's spot
                     let val2 = state.stack.read_u64(state.sp - 2);
-                    state
-                        .stack
-                        .write_u64(state.sp - 4, val2);
+                    state.stack.write_u64(state.sp - 4, val2);
                     state.sp -= 2;
                 }
             }

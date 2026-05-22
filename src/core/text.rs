@@ -114,6 +114,10 @@ impl LabelTarget {
         LabelTarget((rt << 30) | ((depth as u32) << 22) | (offset.0 as u32) & 0x3FFFFF)
     }
 
+    fn early_return(result_type: ResultType) -> LabelTarget {
+        Self::new(result_type, 0, JumpOffset::sentinel())
+    }
+
     pub fn with_jump(self, offset: JumpOffset) -> LabelTarget {
         LabelTarget(
             self.0 & 0xFFC00000 // First 10 bits
@@ -795,13 +799,23 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
     /// Label targets also encode the arity and stack reset information in the first 10-bits.
     /// The jump address is encoded in the final 22-bits
     pub(crate) fn write_label_target(&mut self, label: LabelIdx) -> Result<(), ValidationError> {
-        if label.0 as usize >= self.control_frames.len() {
-            Err(ValidationError::InvalidLabelIndex)
+        if label.0 as usize > self.control_frames.len() {
+            return Err(ValidationError::InvalidLabelIndex);
+        }
+
+        let result = if label.0 as usize == self.control_frames.len() {
+            // There is an implicit 'block' for the overall function
+            // Branching to this block acts like an early return
+            let lt = LabelTarget::early_return(ResultType(self.func.return_ty));
+            self.code.push(lt.0 as u16)?;
+            self.code.push((lt.0 >> 16) as u16)?;
+
+            ResultType(self.func.return_ty)
         } else {
             let idx = self.control_frames.len() - 1 - label.0 as usize;
             let pc = self.pc();
 
-            let result = match &mut self.control_frames[idx] {
+            match &mut self.control_frames[idx] {
                 // Backward jump target
                 ControlFrame::Loop {
                     result,
@@ -859,25 +873,25 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
                     *result
                 }
                 ControlFrame::UnreachableBlock | ControlFrame::UnreachableIf => return Ok(()),
-            };
+            }
+        };
 
-            // Make sure we can pull 'result' off the stack
-            if let Some(result) = result.0 {
-                if self.control_frame_stack_len() == 0 {
-                    return Err(ValidationError::BlockResultTypeMismatch);
-                }
-
-                let Some(got) = self.value_stack.last() else {
-                    return Err(ValidationError::BlockResultTypeMismatch);
-                };
-
-                if *got != result {
-                    return Err(ValidationError::BlockResultTypeMismatch);
-                }
+        // Make sure we can pull 'result' off the stack
+        if let Some(result) = result.0 {
+            if self.control_frame_stack_len() == 0 {
+                return Err(ValidationError::BlockResultTypeMismatch);
             }
 
-            Ok(())
+            let Some(got) = self.value_stack.last() else {
+                return Err(ValidationError::BlockResultTypeMismatch);
+            };
+
+            if *got != result {
+                return Err(ValidationError::BlockResultTypeMismatch);
+            }
         }
+
+        Ok(())
     }
 
     pub(crate) fn validate_block_result(
