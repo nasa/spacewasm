@@ -657,7 +657,13 @@ impl<'module> BaseVisitor for Interpreter<'module> {
         Ok(())
     }
 
-    instruction!(memory_grow, unreachable);
+    fn memory_grow(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        // TODO(tumbar) Hook memory growth to the optional host functionality
+        // Always fail the growth
+        // state.stack.write_u32(state.sp - 1, (-1i32) as u32);
+        state.stack.write_u32(state.sp - 1, 1);
+        Ok(())
+    }
 
     fn i32_const(&self, n: i32, state: &mut Self::State) -> Result<(), Self::Error> {
         state.stack.write_u32(state.sp, n as u32);

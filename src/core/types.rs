@@ -38,7 +38,9 @@ impl From<u8> for ValType {
         }
 
         #[cfg(not(feature = "strict-assertions"))]
-        unsafe { ::core::mem::transmute(val) }
+        unsafe {
+            ::core::mem::transmute(val)
+        }
     }
 }
 
@@ -107,7 +109,12 @@ impl FuncType {
                 let params = wasm.read_vec(ValType::read)?;
                 let returns = wasm.read_vec(ValType::read)?;
 
-                Ok(FuncType { params, returns })
+                if returns.len() > 1 {
+                    // Wasm 1.0 does not support multiple returns
+                    Err(ValidationError::FunctionReturnsTooLarge)
+                } else {
+                    Ok(FuncType { params, returns })
+                }
             }
             c => Err(ValidationError::MalformedFunction(c)),
         }

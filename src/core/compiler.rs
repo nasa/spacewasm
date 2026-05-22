@@ -101,6 +101,7 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
     }
 
     fn finish(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        state.validate_block_result(ResultType(state.func().return_ty), 0)?;
         self.return_(state)
     }
 
@@ -136,7 +137,8 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
     fn br_if(&self, l: LabelIdx, state: &mut Self::State) -> Result<(), Self::Error> {
         state.pop_stack(ValType::I32)?;
         state.instr(BR_IF)?;
-        state.write_label_target(l)
+        let _ = state.write_label_target(l)?;
+        Ok(())
     }
 
     fn br_table(
@@ -147,9 +149,12 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
     ) -> Result<(), Self::Error> {
         state.pop_stack(ValType::I32)?;
         state.instr_imm_8_or_16(BR_TABLE, lut.len() as u32)?;
-        state.write_label_target(default_)?;
+        let def_result = state.write_label_target(default_)?;
         for l in lut {
-            state.write_label_target(*l)?;
+            let case_return = state.write_label_target(*l)?;
+            if def_result != case_return {
+                return Err(ValidationError::BlockResultTypeMismatch);
+            }
         }
 
         state.mark_unreachable();

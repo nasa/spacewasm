@@ -69,6 +69,7 @@ pub enum ValidationError {
     LabelJumpTooLarge,
     TypeMismatch,
     BlockResultTypeMismatch,
+    FunctionResultTypeMismatch,
     IllegalMemoryGrow,
     InvalidElementOffset,
     InvalidElementOutOfBounds,

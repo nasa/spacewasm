@@ -580,6 +580,10 @@ fn check_decode_error(err: ParseError, text: String) {
         (ValidationError::VecTooLong, "length out of bounds") => {}
         (ValidationError::StackUnderflow, "type mismatch") => {}
         (ValidationError::TypeIdxOutOfRange, "unknown type") => {}
+        (ValidationError::FunctionResultTypeMismatch, "type mismatch") => {}
+        (ValidationError::FunctionIdxOutOfRange, "unknown function") => {}
+        (ValidationError::FunctionReturnsTooLarge, "invalid result arity") => {}
+        (ValidationError::BrTableHasTooManyCases, "br.table has too many cases") => {}
         err => {
             assert!(
                 false,

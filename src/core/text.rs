@@ -575,6 +575,9 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
     }
 
     pub(crate) fn mark_unreachable(&mut self) {
+        self.value_stack.truncate(
+            self.value_stack.len() - self.control_frame_stack_len()
+        );
         self.unreachable = true;
     }
 
@@ -798,12 +801,15 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
     ///
     /// Label targets also encode the arity and stack reset information in the first 10-bits.
     /// The jump address is encoded in the final 22-bits
-    pub(crate) fn write_label_target(&mut self, label: LabelIdx) -> Result<(), ValidationError> {
+    pub(crate) fn write_label_target(
+        &mut self,
+        label: LabelIdx,
+    ) -> Result<ResultType, ValidationError> {
         if label.0 as usize > self.control_frames.len() {
             return Err(ValidationError::InvalidLabelIndex);
         }
 
-        if label.0 as usize == self.control_frames.len() {
+        let result = if label.0 as usize == self.control_frames.len() {
             // There is an implicit 'block' for the overall function
             // Branching to this block acts like an early return
             let lt = LabelTarget::early_return(ResultType(self.func.return_ty));
@@ -812,7 +818,9 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
 
             // Make sure we can pull 'return type' off the stack
             if let Some(result) = self.func.return_ty {
-                if self.control_frame_stack_len() == 0 {
+                if self.control_frame_stack_len() == 0 && self.unreachable {
+                    return Ok(ResultType(self.func.return_ty));
+                } else if self.control_frame_stack_len() == 0 {
                     return Err(ValidationError::BlockResultTypeMismatch);
                 }
 
@@ -823,6 +831,10 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
                 if *got != result {
                     return Err(ValidationError::BlockResultTypeMismatch);
                 }
+
+                ResultType(Some(result))
+            } else {
+                ResultType(None)
             }
         } else {
             let idx = self.control_frames.len() - 1 - label.0 as usize;
@@ -848,6 +860,7 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
 
                     self.code.push(lt.0 as u16)?;
                     self.code.push((lt.0 >> 16) as u16)?;
+                    ResultType(None)
                 }
                 ControlFrame::Block {
                     result,
@@ -884,8 +897,11 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
                     self.code.push((lt.0 >> 16) as u16)?;
 
                     // Make sure we can pull 'result' off the stack
-                    if let Some(result) = result.0 {
-                        if self.control_frame_stack_len() == 0 {
+                    let result = result.0;
+                    if let Some(result_v) = result {
+                        if self.control_frame_stack_len() == 0 && self.unreachable {
+                            return Ok(ResultType(result));
+                        } else if self.control_frame_stack_len() == 0 {
                             return Err(ValidationError::BlockResultTypeMismatch);
                         }
 
@@ -893,16 +909,20 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
                             return Err(ValidationError::BlockResultTypeMismatch);
                         };
 
-                        if *got != result {
+                        if *got != result_v {
                             return Err(ValidationError::BlockResultTypeMismatch);
                         }
                     }
+
+                    ResultType(result)
                 }
-                ControlFrame::UnreachableBlock | ControlFrame::UnreachableIf => return Ok(()),
+                ControlFrame::UnreachableBlock | ControlFrame::UnreachableIf => {
+                    return Ok(ResultType(None));
+                }
             }
         };
 
-        Ok(())
+        Ok(result)
     }
 
     pub(crate) fn validate_block_result(
@@ -952,11 +972,11 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
     }
 
     pub(crate) fn pop_stack(&mut self, ty: ValType) -> Result<(), ValidationError> {
-        if self.unreachable {
+        if self.control_frame_stack_len() == 0 && self.unreachable {
+            // We are grabing items from the polymorphic stack
+            // This will always succeed
             return Ok(());
-        }
-
-        if self.control_frame_stack_len() == 0 {
+        } else if self.control_frame_stack_len() == 0 {
             return Err(ValidationError::StackUnderflow);
         }
 
