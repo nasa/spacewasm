@@ -803,14 +803,27 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
             return Err(ValidationError::InvalidLabelIndex);
         }
 
-        let result = if label.0 as usize == self.control_frames.len() {
+        if label.0 as usize == self.control_frames.len() {
             // There is an implicit 'block' for the overall function
             // Branching to this block acts like an early return
             let lt = LabelTarget::early_return(ResultType(self.func.return_ty));
             self.code.push(lt.0 as u16)?;
             self.code.push((lt.0 >> 16) as u16)?;
 
-            ResultType(self.func.return_ty)
+            // Make sure we can pull 'return type' off the stack
+            if let Some(result) = self.func.return_ty {
+                if self.control_frame_stack_len() == 0 {
+                    return Err(ValidationError::BlockResultTypeMismatch);
+                }
+
+                let Some(got) = self.value_stack.last() else {
+                    return Err(ValidationError::BlockResultTypeMismatch);
+                };
+
+                if *got != result {
+                    return Err(ValidationError::BlockResultTypeMismatch);
+                }
+            }
         } else {
             let idx = self.control_frames.len() - 1 - label.0 as usize;
             let pc = self.pc();
@@ -835,7 +848,6 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
 
                     self.code.push(lt.0 as u16)?;
                     self.code.push((lt.0 >> 16) as u16)?;
-                    *result
                 }
                 ControlFrame::Block {
                     result,
@@ -870,26 +882,25 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
 
                     self.code.push(lt.0 as u16)?;
                     self.code.push((lt.0 >> 16) as u16)?;
-                    *result
+
+                    // Make sure we can pull 'result' off the stack
+                    if let Some(result) = result.0 {
+                        if self.control_frame_stack_len() == 0 {
+                            return Err(ValidationError::BlockResultTypeMismatch);
+                        }
+
+                        let Some(got) = self.value_stack.last() else {
+                            return Err(ValidationError::BlockResultTypeMismatch);
+                        };
+
+                        if *got != result {
+                            return Err(ValidationError::BlockResultTypeMismatch);
+                        }
+                    }
                 }
                 ControlFrame::UnreachableBlock | ControlFrame::UnreachableIf => return Ok(()),
             }
         };
-
-        // Make sure we can pull 'result' off the stack
-        if let Some(result) = result.0 {
-            if self.control_frame_stack_len() == 0 {
-                return Err(ValidationError::BlockResultTypeMismatch);
-            }
-
-            let Some(got) = self.value_stack.last() else {
-                return Err(ValidationError::BlockResultTypeMismatch);
-            };
-
-            if *got != result {
-                return Err(ValidationError::BlockResultTypeMismatch);
-            }
-        }
 
         Ok(())
     }
@@ -985,8 +996,8 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
     }
 
     /// Emit an instruction with an 8-bit operand
-    pub(crate) fn instr_imm_8(&mut self, op: u8, operand: u8) -> Result<(), AllocError> {
-        self.code.push((op as u16) << 8 | (operand as u16))
+    pub(crate) fn instr_imm_8(&mut self, op: u8, imm: u8) -> Result<(), AllocError> {
+        self.code.push((op as u16) << 8 | (imm as u16))
     }
 
     /// Emit an instruction with an 8-bit or 16-bit index operand.

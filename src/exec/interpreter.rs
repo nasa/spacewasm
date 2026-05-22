@@ -5,6 +5,7 @@ use ::core::ops::ControlFlow;
 
 pub struct InterpreterState {
     pub pc: JumpTarget,
+    pub jumped: bool,
     pub fp: u32,
     pub sp: usize,
     pub stack: Stack,
@@ -25,6 +26,7 @@ impl InterpreterState {
             fp: 0x0,
             stack: Stack::new(stack_size),
             ram,
+            jumped: false,
         }
     }
 
@@ -131,6 +133,7 @@ impl<'store> Interpreter<'store> {
 
         // Jump to the function's execution point
         state.pc = f.expr.0;
+        state.jumped = true;
 
         Ok(())
     }
@@ -184,6 +187,7 @@ impl<'store> Interpreter<'store> {
 
         state.pc += label_pc_offset;
         state.pc += addr.jump();
+        state.jumped = true;
         Ok(())
     }
 
@@ -218,7 +222,9 @@ impl<'store> Interpreter<'store> {
             }
         }
 
-        self.call_impl(f, state)
+        self.call_impl(f, state)?;
+        state.jumped = false;
+        Ok(())
     }
 }
 
@@ -247,12 +253,12 @@ impl<T: IrVisitor<State = InterpreterState, Error = InterpreterBreak>> Interpret
 
         // Run up to n instructions
         for _ in 0..n_instructions {
-            let old_pc = state.pc;
             let mut pc = state.pc;
 
             let i_res = reader.visit_instruction(state, &mut pc, self);
-            if old_pc != state.pc {
+            if state.jumped {
                 // We jumped, leave the PC
+                state.jumped = false;
             } else {
                 // Increment the program counter
                 state.pc = pc;
@@ -374,6 +380,21 @@ macro_rules! instruction {
             let $b = state.stack.read_u32(state.sp) as i32;
             let $a = state.stack.read_u32(state.sp - 1) as i32;
             state.stack.write_u32(state.sp - 1, ($($t)*) as u32);
+            Ok(())
+        }
+    };
+    ($name:ident, i32 -> bool, $i:ident, $( $t:tt )*) => {
+        fn $name(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+            let $i = state.stack.read_u32(state.sp - 1) as i32;
+            state.stack.write_u32(state.sp - 1, if $($t)* { 1 } else { 0 });
+            Ok(())
+        }
+    };
+    ($name:ident, i64 -> bool, $i:ident, $( $t:tt )*) => {
+        fn $name(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+            state.sp -= 1;
+            let $i = state.stack.read_u64(state.sp - 1) as i32;
+            state.stack.write_u32(state.sp - 1, if $($t)* { 1 } else { 0 });
             Ok(())
         }
     };
@@ -662,7 +683,7 @@ impl<'module> BaseVisitor for Interpreter<'module> {
         Ok(())
     }
 
-    instruction!(i32_eqz, i32 -> i32, i, if i == 0 { 1 } else { 0 });
+    instruction!(i32_eqz, i32 -> bool, i, i == 0);
     instruction!(i32_eq, i32, i32 -> bool, a, b, a == b);
     instruction!(i32_ne, i32, i32 -> bool, a, b, a != b);
     instruction!(i32_lt_s, i32, i32 -> bool, a, b, a < b);
@@ -673,7 +694,7 @@ impl<'module> BaseVisitor for Interpreter<'module> {
     instruction!(i32_le_u, i32, i32 -> bool, a, b, (a as u32) <= (b as u32));
     instruction!(i32_ge_s, i32, i32 -> bool, a, b, a >= b);
     instruction!(i32_ge_u, i32, i32 -> bool, a, b, (a as u32) >= (b as u32));
-    instruction!(i64_eqz, i64 -> i64, i, if i == 0 { 1 } else { 0 });
+    instruction!(i64_eqz, i64 -> bool, i, i == 0);
     instruction!(i64_eq, i64, i64 -> bool, a, b, a == b);
     instruction!(i64_ne, i64, i64 -> bool, a, b, a != b);
     instruction!(i64_lt_s, i64, i64 -> bool, a, b, a < b);
@@ -984,6 +1005,7 @@ impl<'module> IrVisitor for Interpreter<'module> {
             // No need to perform any result copies or stack truncation
             state.pc += JumpOffset::offset(1);
             state.pc += false_address.jump();
+            state.jumped = true;
         }
 
         Ok(())
@@ -1050,6 +1072,7 @@ impl<'module> IrVisitor for Interpreter<'module> {
         if return_pc == JumpTarget::SENTINEL {
             state.sp = parameter_start;
             state.pc = JumpTarget::SENTINEL;
+            state.jumped = true;
             let return_value = match return_size {
                 0 => RawValue(0),
                 1 => RawValue(state.stack.read_u32(state.sp) as u64),
@@ -1062,6 +1085,7 @@ impl<'module> IrVisitor for Interpreter<'module> {
         } else {
             state.sp = parameter_start + return_size;
             state.pc = return_pc + 2; // +2 to skip over the call or call_indirect
+            state.jumped = true;
             Ok(())
         }
     }

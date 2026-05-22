@@ -1,6 +1,33 @@
-use spacewasm::{BaseVisitor, FuncIdx, GlobalIdx, HostModuleRef, IrVisitor, LabelIdx, LabelTarget, LocalIdx, LocalVariable, MemArg, ResultType, TypeIdx, ValType, WasmVisitor};
+use spacewasm::{
+    BaseVisitor, FuncIdx, GlobalIdx, HostModuleRef, IrVisitor, LabelIdx, LabelTarget, LocalIdx,
+    LocalVariable, MemArg, ResultType, TypeIdx, ValType, WasmVisitor,
+};
 use std::cell::RefCell;
+use std::collections::VecDeque;
 use std::rc::Rc;
+
+#[derive(Clone)]
+pub struct LimitedVec<T>(VecDeque<T>);
+
+impl<T> LimitedVec<T> {
+    pub fn new() -> Self {
+        LimitedVec(VecDeque::new())
+    }
+
+    pub fn push(&mut self, item: T) {
+        if self.0.len() >= 64 {
+            self.0.pop_front().unwrap();
+        }
+
+        self.0.push_back(item);
+    }
+}
+
+impl<T> From<LimitedVec<T>> for Vec<T> {
+    fn from(value: LimitedVec<T>) -> Self {
+        value.0.into_iter().collect()
+    }
+}
 
 macro_rules! visit_fn {
     // No additional parameters
@@ -22,7 +49,7 @@ macro_rules! visit_fn {
 
 pub struct Inspector<'a, S, E, T: BaseVisitor<State = S, Error = E>> {
     pub v: &'a T,
-    pub out: Rc<RefCell<Vec<String>>>,
+    pub out: Rc<RefCell<LimitedVec<String>>>,
 }
 
 impl<'a, S, E, T: BaseVisitor<State = S, Error = E>> BaseVisitor for Inspector<'a, S, E, T> {
@@ -217,7 +244,6 @@ impl<'a, S, E, T: BaseVisitor<State = S, Error = E>> BaseVisitor for Inspector<'
 impl<'a, S, E, T: BaseVisitor<State = S, Error = E> + WasmVisitor> WasmVisitor
     for Inspector<'a, S, E, T>
 {
-
     // Parametric instructions
     visit_fn!(drop);
     visit_fn!(select);

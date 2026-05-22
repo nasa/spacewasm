@@ -178,11 +178,11 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
                 let f = state.module().functions.get(index as usize).unwrap();
                 let ty = state.module().types.get(f.ty.0 as usize).unwrap();
 
-                for p in &ty.params {
+                for p in ty.params.iter().rev() {
                     state.pop_stack(*p)?;
                 }
 
-                for r in &ty.returns {
+                for r in ty.returns.iter().rev() {
                     state.push_stack(*r)?;
                 }
 

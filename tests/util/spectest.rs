@@ -1,5 +1,11 @@
 use serde::{Deserialize, Serialize};
-use spacewasm::{global_allocator, vec, AllocError, Allocator, CompilerOptions, ExportDesc, FuncRef, GlobalValue, GlobalValueError, HostFunction, HostGlobal, HostModule, InnerVec, Interpreter, InterpreterBreak, InterpreterResult, InterpreterRunner, InterpreterState, JumpTarget, Memory, MemoryStatistics, Module, ParseError, ReaderError, Store, TrapReason, ValType, ValidationError, Value, WasmStream};
+use spacewasm::{
+    global_allocator, vec, AllocError, Allocator, CompilerOptions, ExportDesc, FuncRef,
+    GlobalValue, GlobalValueError, HostFunction, HostGlobal, HostModule, InnerVec,
+    Interpreter, InterpreterBreak, InterpreterResult, InterpreterRunner, InterpreterState, JumpTarget,
+    Memory, MemoryStatistics, Module, ParseError, ReaderError, Store, TrapReason, ValType,
+    ValidationError, Value, WasmStream,
+};
 use std::alloc::Layout;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -9,7 +15,7 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use super::inspector::Inspector;
+use super::inspector::{Inspector, LimitedVec};
 
 #[derive(Debug, Deserialize, Serialize)]
 struct TestFile {
@@ -360,7 +366,7 @@ fn load_module(ctx: &mut TestContext, module_name: Option<String>, wasm_bytes: &
     let memory = Memory::new(heap_size);
 
     // Create interpreter state
-    let mut state = InterpreterState::new(1024, memory);
+    let mut state = InterpreterState::new(65536, memory);
 
     // Push module to store
     let module_index = ctx.store.modules.len();
@@ -393,7 +399,7 @@ fn invoke_function(
     module_name: &Option<String>,
     func_name: &str,
     args: &[ValueSpec],
-    test_log: Rc<RefCell<Vec<String>>>,
+    test_log: Rc<RefCell<LimitedVec<String>>>,
 ) -> Result<Option<Value>, InterpreterBreak> {
     // Resolve module name through registry if needed
     let resolved_module = if let Some(name) = module_name {
@@ -479,10 +485,8 @@ fn invoke_function(
         .push(format!("invoke {}({:?})", func_name, params));
 
     // Run until completion
-    let mut result = InterpreterResult::OutOfFuel;
-    while result == InterpreterResult::OutOfFuel {
-        result = test_runner.run(&module.text, &mut instance.state, usize::MAX);
-    }
+    // Run up to 1-million instructions to catch infinite loops
+    let result = test_runner.run(&module.text, &mut instance.state, 10000000);
 
     // Check the result
     match result {
@@ -497,7 +501,7 @@ fn invoke_function(
         }
         InterpreterResult::Instruction(err) => Err(err),
         InterpreterResult::ReaderError(err) => panic!("Reader error: {err:?}"),
-        InterpreterResult::OutOfFuel => unreachable!(),
+        InterpreterResult::OutOfFuel => panic!("Infinite loop detected"),
     }
 }
 
@@ -589,7 +593,7 @@ fn run_wast_command(
     command: Command,
     test_dir: &str,
     ctx: &mut TestContext,
-    log: Rc<RefCell<Vec<String>>>,
+    log: Rc<RefCell<LimitedVec<String>>>,
 ) {
     match command {
         Command::Module { name, filename, .. } => {
@@ -726,7 +730,7 @@ fn run_wast_test_file_inner(
     test_dir: &str,
     test_name: &str,
     wast_line: Arc<Mutex<Option<u32>>>,
-    subtest_log: Arc<Mutex<Option<Rc<RefCell<Vec<String>>>>>>,
+    subtest_log: Arc<Mutex<Option<Rc<RefCell<LimitedVec<String>>>>>>,
 ) {
     let json_path = format!("{}/{}.json", test_dir, test_name);
 
@@ -808,7 +812,7 @@ fn run_wast_test_file_inner(
     let mut ctx = TestContext::new(store);
 
     for command in test_file.commands {
-        let test_log = Rc::new(RefCell::new(Vec::<String>::new()));
+        let test_log = Rc::new(RefCell::new(LimitedVec::<String>::new()));
         *subtest_log.lock().unwrap() = Some(test_log.clone());
         *wast_line.lock().unwrap() = match &command {
             Command::Module { line, .. }
@@ -842,7 +846,7 @@ pub fn run_wast_test_file(test_name: &str) {
         Ok(_) => {}
         Err(err) => {
             if let Some(log) = &*subtest_log.lock().unwrap() {
-                let log_lines = log.borrow();
+                let log_lines: Vec<String> = log.borrow().clone().into();
                 if log_lines.len() > 0 {
                     eprintln!("Subtest failed, dumping invoke log");
                     for line in log_lines.iter() {
