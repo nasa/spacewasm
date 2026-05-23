@@ -329,6 +329,26 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
             }
         }
     }
+
+    fn i32_reinterpret_f32(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        validate!(state, (F32) -> (I32));
+        Ok(())
+    }
+
+    fn f64_reinterpret_i64(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        validate!(state, (I64) -> (F64));
+        Ok(())
+    }
+
+    fn f32_reinterpret_i32(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        validate!(state, (I32) -> (F32));
+        Ok(())
+    }
+
+    fn i64_reinterpret_f64(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        validate!(state, (F64) -> (I64));
+        Ok(())
+    }
 }
 
 impl<'a, const N: usize> BaseVisitor for Compiler<'a, N> {
@@ -537,24 +557,4 @@ impl<'a, const N: usize> BaseVisitor for Compiler<'a, N> {
     instruction!(f64_convert_i64_s, F64_CONVERT_I64_S, (I64) -> (F64));
     instruction!(f64_convert_i64_u, F64_CONVERT_I64_U, (I64) -> (F64));
     instruction!(f64_promote_f32, F64_PROMOTE_F32, (F32) -> (F64));
-
-    fn i32_reinterpret_f32(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        validate!(state, (F32) -> (I32));
-        Ok(())
-    }
-
-    fn f64_reinterpret_i64(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        validate!(state, (I64) -> (F64));
-        Ok(())
-    }
-
-    fn f32_reinterpret_i32(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        validate!(state, (I32) -> (F32));
-        Ok(())
-    }
-
-    fn i64_reinterpret_f64(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        validate!(state, (F64) -> (I64));
-        Ok(())
-    }
 }

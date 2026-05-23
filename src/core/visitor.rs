@@ -207,10 +207,6 @@ pub trait BaseVisitor {
     visit_fn!(f64_convert_i64_s);
     visit_fn!(f64_convert_i64_u);
     visit_fn!(f64_promote_f32);
-    visit_fn!(i32_reinterpret_f32);
-    visit_fn!(i64_reinterpret_f64);
-    visit_fn!(f32_reinterpret_i32);
-    visit_fn!(f64_reinterpret_i64);
 }
 
 /// An abstraction over WASM Bytecode.
@@ -240,6 +236,12 @@ pub trait WasmVisitor: BaseVisitor {
     visit_fn!(local_tee, x: LocalIdx);
     visit_fn!(global_get, x: GlobalIdx);
     visit_fn!(global_set, x: GlobalIdx);
+
+    // Validation instructions
+    visit_fn!(i32_reinterpret_f32);
+    visit_fn!(i64_reinterpret_f64);
+    visit_fn!(f32_reinterpret_i32);
+    visit_fn!(f64_reinterpret_i64);
 }
 
 #[derive(Debug)]

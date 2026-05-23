@@ -1032,6 +1032,7 @@ impl<'module> BaseVisitor for Interpreter<'module> {
     fn f32_demote_f64(&self, state: &mut Self::State) -> Result<(), Self::Error> {
         state.sp -= 1;
         let f = state.stack.read_f64(state.sp - 1);
+        let f = if f.is_nan() { f64::NAN } else { f };
         state.stack.write_f32(state.sp - 1, f as f32);
         Ok(())
     }
@@ -1064,15 +1065,11 @@ impl<'module> BaseVisitor for Interpreter<'module> {
 
     fn f64_promote_f32(&self, state: &mut Self::State) -> Result<(), Self::Error> {
         let f = state.stack.read_f32(state.sp - 1);
+        let f = if f.is_nan() { f32::NAN } else { f };
         state.stack.write_f64(state.sp - 1, f as f64);
         state.sp += 1;
         Ok(())
     }
-
-    instruction!(i32_reinterpret_f32, unreachable);
-    instruction!(i64_reinterpret_f64, unreachable);
-    instruction!(f32_reinterpret_i32, unreachable);
-    instruction!(f64_reinterpret_i64, unreachable);
 }
 
 impl<'module> IrVisitor for Interpreter<'module> {
