@@ -499,30 +499,30 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
     /// Look up a global variable given its index
     /// If we are computing a constant expression, globals can only refer to imported globals
     pub fn get_global(&self, x: GlobalIdx) -> Result<GlobalVariable, ValidationError> {
-        let imported_idx = self
+        let reference = self
             .module
             .imports
             .iter()
             .filter_map(|i| match &i {
-                Import::Global { module, index } => Some(Ref::ExternalRef(ExternalRef {
+                Import::Global { module, index } => Some(Ref::Extern {
                     module: *module,
                     index: *index,
-                })),
-                Import::HostGlobal { module, index } => Some(Ref::HostRef(HostRef {
+                }),
+                Import::HostGlobal { module, index } => Some(Ref::Host {
                     module: *module,
                     index: *index,
-                })),
+                }),
                 _ => None,
             })
             .skip(x.0 as usize)
             .next()
-            .unwrap_or(Ref::Ref(
+            .unwrap_or(Ref::Module(
                 (x.0 as usize - self.module.global_import_count()) as u16,
             ));
 
-        match imported_idx {
+        match reference {
             // This index is one of the WASM defined globals
-            Ref::Ref(idx) => {
+            Ref::Module(idx) => {
                 let g = self
                     .module
                     .globals
@@ -530,39 +530,30 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
                     .ok_or(ValidationError::GlobalIdxOutOfRange)?;
 
                 Ok(GlobalVariable {
-                    reference: Ref::Ref(idx),
+                    reference,
                     ty: g.type_.ty,
                     mutable: g.type_.mutable,
                 })
             }
             // This index refers to an imported global
-            Ref::HostRef(host_ref) => {
+            Ref::Host { module, index } => {
                 // Unwrap() should be fine since the imports are already resolved
-                let module = self
-                    .store
-                    .host_modules
-                    .get(host_ref.module.0 as usize)
-                    .unwrap();
-
-                let global = module.globals.get(host_ref.index as usize).unwrap();
+                let module = self.store.host_modules.get(module.0 as usize).unwrap();
+                let global = module.globals.get(index as usize).unwrap();
 
                 Ok(GlobalVariable {
-                    reference: Ref::HostRef(host_ref),
+                    reference,
                     ty: global.value.ty(),
                     mutable: global.value.mutable(),
                 })
             }
-            Ref::ExternalRef(external_ref) => {
-                let module = self
-                    .store
-                    .modules
-                    .get(external_ref.module.0 as usize)
-                    .unwrap();
+            Ref::Extern { module, index } => {
+                let module = self.store.modules.get(module.0 as usize).unwrap();
 
-                let global = module.globals.get(external_ref.index as usize).unwrap();
+                let global = module.globals.get(index as usize).unwrap();
 
                 Ok(GlobalVariable {
-                    reference: Ref::ExternalRef(external_ref),
+                    reference,
                     ty: global.type_.ty,
                     mutable: global.type_.mutable,
                 })
@@ -575,9 +566,8 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
     }
 
     pub(crate) fn mark_unreachable(&mut self) {
-        self.value_stack.truncate(
-            self.value_stack.len() - self.control_frame_stack_len()
-        );
+        self.value_stack
+            .truncate(self.value_stack.len() - self.control_frame_stack_len());
         self.unreachable = true;
     }
 

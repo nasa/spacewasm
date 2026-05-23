@@ -9,9 +9,9 @@ impl Expr {
         Expr(JumpTarget(0))
     }
 
-    pub fn read_constant(wasm: &mut Reader) -> Result<Value, ValidationError> {
+    pub fn read_constant(wasm: &mut Reader, store: &Store, module: &Module) -> Result<Value, ValidationError> {
         let mut value: Option<Value> = None;
-        wasm.read_code(&ConstantCompiler, &mut value)?;
+        wasm.read_code(&ConstantCompiler::new(store, module), &mut value)?;
         Ok(value.unwrap())
     }
 
@@ -102,20 +102,27 @@ impl Module {
 
         f.local_size = size_in_words as u16;
         let f_ty = &self.types[f.ty.0 as usize];
-        let name = self.exports.iter().find_map(|e| {
-            if let ExportDesc::Func(func) = e.desc && (func.0 as usize) == i {
-                Some(e.name.as_ref())
-            } else {
-                None
-            }
-        }).unwrap_or("<unnamed>");
-        (f.expr, f.stack_usage) = match Expr::read(wasm, builder, store, self, &f, compiler_options) {
+        let name = self
+            .exports
+            .iter()
+            .find_map(|e| {
+                if let ExportDesc::Func(func) = e.desc
+                    && (func.0 as usize) == i
+                {
+                    Some(e.name.as_ref())
+                } else {
+                    None
+                }
+            })
+            .unwrap_or("<unnamed>");
+        (f.expr, f.stack_usage) = match Expr::read(wasm, builder, store, self, &f, compiler_options)
+        {
             Ok(expr) => expr,
             Err(err) => {
                 extern crate std;
                 std::eprintln!("function {name}: {:?} -> {:?}", f_ty.params, f_ty.returns);
                 std::eprintln!("{err:?}");
-                return Err(err)
+                return Err(err);
             }
         };
 

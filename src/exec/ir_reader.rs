@@ -88,7 +88,13 @@ impl<'code> IrReader<'code> {
             // An instruction with a local variable reference immediate
             ($name:ident, local) => {{
                 let frame_offset = self.read(pc).unwrap() as i16;
-                visitor.$name(LocalVariable { frame_offset, ty: imm.into() }, state)?;
+                visitor.$name(
+                    LocalVariable {
+                        frame_offset,
+                        ty: imm.into(),
+                    },
+                    state,
+                )?;
             }};
 
             // An instruction with a MemArg operand
@@ -191,10 +197,10 @@ impl<'code> IrReader<'code> {
             // Parametric instructions
             DROP => {
                 visitor.drop(imm.into(), state)?;
-            },
+            }
             SELECT => {
                 visitor.select(imm.into(), state)?;
-            },
+            }
 
             // Variable instructions
             LOCAL_GET => instruction!(local_get, local),

@@ -176,9 +176,13 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
     }
 
     fn call(&self, x: FuncIdx, state: &mut Self::State) -> Result<(), Self::Error> {
-        let f_ref = state.module().get_func_ref(x)?;
+        let f_ref = state
+            .module()
+            .get_func_ref(x)
+            .ok_or(ValidationError::FunctionIdxOutOfRange)?;
+
         match f_ref {
-            FuncRef::Func(index) => {
+            Ref::Module(index) => {
                 // Check the call signature
                 let f = state.module().functions.get(index as usize).unwrap();
                 let ty = state.module().types.get(f.ty.0 as usize).unwrap();
@@ -195,7 +199,7 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
                 state.write_16(index)?;
                 Ok(())
             }
-            FuncRef::HostFunc { module, index } => {
+            Ref::Host { module, index } => {
                 if module.0 >= 0x80 {
                     return Err(ValidationError::ModuleIdxTooLarge);
                 }
@@ -214,7 +218,7 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
                 state.write_16(index)?;
                 Ok(())
             }
-            FuncRef::ExternFunc { module, index } => {
+            Ref::Extern { module, index } => {
                 if module.0 >= 0x80 {
                     return Err(ValidationError::ModuleIdxTooLarge);
                 }
@@ -284,18 +288,18 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
         let g = state.get_global(x)?;
         state.push_stack(g.ty)?;
         match g.reference {
-            Ref::Ref(idx) => {
+            Ref::Module(idx) => {
                 state.instr_imm_8_or_16(GLOBAL_GET, idx as u32)?;
                 Ok(())
             }
-            Ref::ExternalRef(r) => {
-                state.instr_imm_8(GLOBAL_GET_EXTERNAL, r.module.0)?;
-                state.write_16(r.index)?;
+            Ref::Extern { module, index } => {
+                state.instr_imm_8(GLOBAL_GET_EXTERNAL, module.0)?;
+                state.write_16(index)?;
                 Err(ValidationError::GlobalsAcrossModuleNotSupportedYet)
             }
-            Ref::HostRef(r) => {
-                state.instr_imm_8(GLOBAL_GET_HOST, r.module.0)?;
-                state.write_16(r.index)?;
+            Ref::Host { module, index } => {
+                state.instr_imm_8(GLOBAL_GET_HOST, module.0)?;
+                state.write_16(index)?;
                 Ok(())
             }
         }
@@ -308,18 +312,18 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
         } else {
             state.pop_stack(g.ty)?;
             match g.reference {
-                Ref::Ref(idx) => {
+                Ref::Module(idx) => {
                     state.instr_imm_8_or_16(GLOBAL_SET, idx as u32)?;
                     Ok(())
                 }
-                Ref::ExternalRef(r) => {
-                    state.instr_imm_8(GLOBAL_SET_EXTERNAL, r.module.0)?;
-                    state.write_16(r.index)?;
+                Ref::Extern { module, index } => {
+                    state.instr_imm_8(GLOBAL_SET_EXTERNAL, module.0)?;
+                    state.write_16(index)?;
                     Err(ValidationError::GlobalsAcrossModuleNotSupportedYet)
                 }
-                Ref::HostRef(r) => {
-                    state.instr_imm_8(GLOBAL_SET_HOST, r.module.0)?;
-                    state.write_16(r.index)?;
+                Ref::Host { module, index } => {
+                    state.instr_imm_8(GLOBAL_SET_HOST, module.0)?;
+                    state.write_16(index)?;
                     Ok(())
                 }
             }

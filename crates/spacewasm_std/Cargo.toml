@@ -6,7 +6,7 @@ authors.workspace = true
 edition.workspace = true
 
 [dependencies]
-spacewasm = { path = "../..", features = ["std-math"] }
+spacewasm = { path = "../.." }
 spacewasm_util = { path = "../spacewasm_util" }
 
 [[bench]]

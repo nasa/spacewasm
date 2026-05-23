@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use spacewasm::{
     global_allocator, vec, AllocError, Allocator, CompilerOptions, ConstantExprError, ExportDesc,
-    FuncRef, GlobalValue, GlobalValueError, HostFunction, HostGlobal, HostModule,
+    Ref, GlobalValue, GlobalValueError, HostFunction, HostGlobal, HostModule,
     InnerVec, Interpreter, InterpreterBreak, InterpreterResult, InterpreterRunner, InterpreterState,
     JumpTarget, Memory, MemoryStatistics, Module, ParseError, ReaderError, Store, TrapReason,
     ValType, ValidationError, Value, WasmStream,
@@ -457,7 +457,7 @@ fn invoke_function(
             .expect(&format!("Function {} not found in exports", func_name));
 
         let func_index = match func_ref {
-            FuncRef::Func(idx) => idx as usize,
+            Ref::Module(idx) => idx as usize,
             _ => panic!("Function {} is not a function export", func_name),
         };
 
@@ -604,6 +604,11 @@ fn check_decode_error(err: ParseError, text: String) {
             "constant expression required",
         ) => {}
         (ValidationError::FunctionImportOutOfRange, "unknown type") => {}
+        (ValidationError::GlobalTypeMismatch, "type mismatch") => {}
+        (ValidationError::InvalidConstantExpr(ConstantExprError::AlreadyHasValue), "type mismatch") => {}
+        (ValidationError::InvalidConstantExpr(ConstantExprError::NoValue), "type mismatch") => {}
+        (ValidationError::InvalidConstantExpr(ConstantExprError::InvalidGlobal), "unknown global") => {}
+        (ValidationError::ExpectedConstOrVar(_), "malformed mutability") => {}
         err => {
             assert!(
                 false,

@@ -269,15 +269,15 @@ impl HostModuleRef {
     }
 }
 
-/// A reference to a function in the WASM store
+/// A reference to a symbol in the WASM store
 #[derive(Debug, Clone, Copy)]
-pub enum FuncRef {
-    /// A function in the current WASM module
-    Func(u16),
-    /// A host function in another WASM module
-    HostFunc { module: HostModuleRef, index: u16 },
-    /// A function in another WASM module
-    ExternFunc {
+pub enum Ref {
+    /// A symbol in the current WASM module
+    Module(u16),
+    /// A symbol in an external host module
+    Host { module: HostModuleRef, index: u16 },
+    /// A symbol in another WASM module
+    Extern {
         module: ExternalModuleRef,
         index: u16,
     },

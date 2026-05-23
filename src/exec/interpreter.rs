@@ -1,5 +1,4 @@
 use crate::exec::ir_reader::{IrReader, IrReaderError};
-use crate::exec::m;
 use crate::*;
 use ::core::ops::ControlFlow;
 
@@ -760,7 +759,13 @@ impl<'module> BaseVisitor for Interpreter<'module> {
             a.wrapping_rem(b)
         }
     });
-    instruction!(i32_rem_u, i32, i32 -> i32, a, b, (a as u32).wrapping_rem(b as u32) as i32);
+    instruction!(i32_rem_u, i32, i32 -> i32, a, b, {
+        if b == 0 {
+            return Err(InterpreterBreak::Trap(TrapReason::DivideByZero))
+        } else {
+            (a as u32).wrapping_rem(b as u32) as i32
+        }
+    });
     instruction!(i32_and, i32, i32 -> i32, a, b, a & b);
     instruction!(i32_or, i32, i32 -> i32, a, b, a | b);
     instruction!(i32_xor, i32, i32 -> i32, a, b, a ^ b);
@@ -789,8 +794,20 @@ impl<'module> BaseVisitor for Interpreter<'module> {
             (a as u64).wrapping_div(b as u64) as i64
         }
     });
-    instruction!(i64_rem_s, i64, i64 -> i64, a, b, a.wrapping_rem(b));
-    instruction!(i64_rem_u, i64, i64 -> i64, a, b, (a as u64).wrapping_rem(b as u64) as i64);
+    instruction!(i64_rem_s, i64, i64 -> i64, a, b, {
+        if b == 0 {
+            return Err(InterpreterBreak::Trap(TrapReason::DivideByZero))
+        } else {
+            a.wrapping_rem(b)
+        }
+    });
+    instruction!(i64_rem_u, i64, i64 -> i64, a, b, {
+        if b == 0 {
+            return Err(InterpreterBreak::Trap(TrapReason::DivideByZero))
+        } else {
+            (a as u64).wrapping_rem(b as u64) as i64
+        }
+    });
     instruction!(i64_and, i64, i64 -> i64, a, b, a & b);
     instruction!(i64_or, i64, i64 -> i64, a, b, a | b);
     instruction!(i64_xor, i64, i64 -> i64, a, b, a ^ b);
@@ -799,34 +816,34 @@ impl<'module> BaseVisitor for Interpreter<'module> {
     instruction!(i64_shr_u, i64, i64 -> i64, a, b, (a as u64).wrapping_shr(b as u32) as i64);
     instruction!(i64_rotl, i64, i64 -> i64, a, b, a.rotate_left(b as u32));
     instruction!(i64_rotr, i64, i64 -> i64, a, b, a.rotate_right(b as u32));
-    instruction!(f32_abs, f32 -> f32, f, if f < 0.0 { -f } else { f });
+    instruction!(f32_abs, f32 -> f32, f, libm::fabsf(f));
     instruction!(f32_neg, f32 -> f32, f, -f);
-    instruction!(f32_ceil, f32 -> f32, f, m::ceilf(f));
-    instruction!(f32_floor, f32 -> f32, f, m::floorf(f));
-    instruction!(f32_trunc, f32 -> f32, f, m::truncf(f));
-    instruction!(f32_nearest, f32 -> f32, f, m::roundf(f));
-    instruction!(f32_sqrt, f32 -> f32, f, m::sqrtf(f));
+    instruction!(f32_ceil, f32 -> f32, f, libm::ceilf(f));
+    instruction!(f32_floor, f32 -> f32, f, libm::floorf(f));
+    instruction!(f32_trunc, f32 -> f32, f, libm::truncf(f));
+    instruction!(f32_nearest, f32 -> f32, f, libm::rintf(f));
+    instruction!(f32_sqrt, f32 -> f32, f, libm::sqrtf(f));
     instruction!(f32_add, f32, f32 -> f32, a, b, a + b);
     instruction!(f32_sub, f32, f32 -> f32, a, b, a - b);
     instruction!(f32_mul, f32, f32 -> f32, a, b, a * b);
     instruction!(f32_div, f32, f32 -> f32, a, b, a / b);
-    instruction!(f32_min, f32, f32 -> f32, a, b, m::fminf(a, b));
-    instruction!(f32_max, f32, f32 -> f32, a, b, m::fmaxf(a, b));
-    instruction!(f32_copysign, f32, f32 -> f32, a, b, m::copysignf(a, b));
-    instruction!(f64_abs, f64 -> f64, f, if f < 0.0 { -f } else { f });
+    instruction!(f32_min, f32, f32 -> f32, a, b, libm::fminf(a, b));
+    instruction!(f32_max, f32, f32 -> f32, a, b, libm::fmaxf(a, b));
+    instruction!(f32_copysign, f32, f32 -> f32, a, b, libm::copysignf(a, b));
+    instruction!(f64_abs, f64 -> f64, f, libm::fabs(f));
     instruction!(f64_neg, f64 -> f64, f, -f);
-    instruction!(f64_ceil, f64 -> f64, f, m::ceil(f));
-    instruction!(f64_floor, f64 -> f64, f, m::floor(f));
-    instruction!(f64_trunc, f64 -> f64, f, m::trunc(f));
-    instruction!(f64_nearest, f64 -> f64, f, m::round(f));
-    instruction!(f64_sqrt, f64 -> f64, f, m::sqrt(f));
+    instruction!(f64_ceil, f64 -> f64, f, libm::ceil(f));
+    instruction!(f64_floor, f64 -> f64, f, libm::floor(f));
+    instruction!(f64_trunc, f64 -> f64, f, libm::trunc(f));
+    instruction!(f64_nearest, f64 -> f64, f, libm::rint(f));
+    instruction!(f64_sqrt, f64 -> f64, f, libm::sqrt(f));
     instruction!(f64_add, f64, f64 -> f64, a, b, a + b);
     instruction!(f64_sub, f64, f64 -> f64, a, b, a - b);
     instruction!(f64_mul, f64, f64 -> f64, a, b, a * b);
     instruction!(f64_div, f64, f64 -> f64, a, b, a / b);
-    instruction!(f64_min, f64, f64 -> f64, a, b, m::fmin(a, b));
-    instruction!(f64_max, f64, f64 -> f64, a, b, m::fmax(a, b));
-    instruction!(f64_copysign, f64, f64 -> f64, a, b, m::copysign(a, b));
+    instruction!(f64_min, f64, f64 -> f64, a, b, libm::fmin(a, b));
+    instruction!(f64_max, f64, f64 -> f64, a, b, libm::fmax(a, b));
+    instruction!(f64_copysign, f64, f64 -> f64, a, b, libm::copysign(a, b));
 
     fn i32_wrap_i64(&self, state: &mut Self::State) -> Result<(), Self::Error> {
         // i64 low word is at [sp-2], high word at [sp-1]
@@ -1275,7 +1292,7 @@ impl<'module> IrVisitor for Interpreter<'module> {
         // Look up the internal or host function
         let f_ref = self.module.table[i];
         match f_ref {
-            FuncRef::Func(fi) => {
+            Ref::Module(fi) => {
                 let f = &self.module.functions[fi as usize];
 
                 // Validate the function is the proper type
@@ -1289,7 +1306,7 @@ impl<'module> IrVisitor for Interpreter<'module> {
                 // Call the function
                 self.call_impl(f, state)
             }
-            FuncRef::HostFunc { module, index } => {
+            Ref::Host { module, index } => {
                 // Make sure the type matches our expectations (runtime validation)
                 let m = &self.store.host_modules[module.0 as usize];
                 let f = &m.functions[index as usize];
@@ -1300,7 +1317,7 @@ impl<'module> IrVisitor for Interpreter<'module> {
                 self.call_host(module, i as u16, state)
             }
             // TODO(tumbar) This is currently disallowed at compile time
-            FuncRef::ExternFunc { .. } => unreachable!(),
+            Ref::Extern { .. } => unreachable!(),
         }
     }
 

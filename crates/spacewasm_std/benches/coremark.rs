@@ -1,5 +1,5 @@
 use spacewasm::{
-    CompilerOptions, ExportDesc, FuncRef, HostFunction, HostModule, InterpreterBreak,
+    CompilerOptions, ExportDesc, Ref, HostFunction, HostModule, InterpreterBreak,
     InterpreterResult, InterpreterRunner, Memory, Store, Value,
 };
 use spacewasm_util::FileStream;
@@ -69,7 +69,7 @@ fn main() {
         .expect("no run function found");
     let func = match export.desc {
         ExportDesc::Func(fi) => {
-            let FuncRef::Func(fdi) = module.get_func_ref(fi).unwrap() else {
+            let Ref::Module(fdi) = module.get_func_ref(fi).unwrap() else {
                 panic!("invalid function ref")
             };
             module.functions.get(fdi as usize).unwrap()

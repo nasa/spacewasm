@@ -1,7 +1,7 @@
 use spacewasm::{
-    vec, Box, CompilerOptions, ExportDesc, FuncRef, HostFunction, HostFunctionBreak,
+    vec, Box, CompilerOptions, ExportDesc, HostFunction, HostFunctionBreak,
     HostModule, InterpreterBreak, InterpreterResult, InterpreterRunner, Memory, PageAllocator,
-    SectionKind, Store, ValType, Value,
+    Ref, SectionKind, Store, ValType, Value,
 };
 use spacewasm_util::{FileStream, RustSystemAllocator};
 use std::alloc::{alloc, Layout};
@@ -202,7 +202,7 @@ fn main() {
 
     let interpreter = spacewasm::Interpreter::new(&store, module);
 
-    let FuncRef::Func(fi) = module.get_func_ref(fi).unwrap() else {
+    let Ref::Module(fi) = module.get_func_ref(fi).unwrap() else {
         panic!()
     };
     let f = &module.functions[fi as usize];
