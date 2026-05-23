@@ -461,13 +461,6 @@ macro_rules! instruction {
             Ok(())
         }
     };
-    ($name:ident, unreachable) => {
-        fn $name(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-            // This instruction does not exist in the IR
-            let _ = state;
-            unreachable!()
-        }
-    };
 }
 
 impl<'module> BaseVisitor for Interpreter<'module> {
