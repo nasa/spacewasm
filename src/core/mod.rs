@@ -32,6 +32,7 @@ mod code;
 pub use code::*;
 
 mod constant;
+pub use constant::*;
 
 mod compiler;
 pub use compiler::*;

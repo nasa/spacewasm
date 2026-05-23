@@ -109,10 +109,15 @@ impl Module {
                 None
             }
         }).unwrap_or("<unnamed>");
-        extern crate std;
-        std::eprintln!("function {name}: {:?} -> {:?}", f_ty.params, f_ty.returns);
-        (f.expr, f.stack_usage) = Expr::read(wasm, builder, store, self, &f, compiler_options)?;
-        std::eprintln!("end function");
+        (f.expr, f.stack_usage) = match Expr::read(wasm, builder, store, self, &f, compiler_options) {
+            Ok(expr) => expr,
+            Err(err) => {
+                extern crate std;
+                std::eprintln!("function {name}: {:?} -> {:?}", f_ty.params, f_ty.returns);
+                std::eprintln!("{err:?}");
+                return Err(err)
+            }
+        };
 
         let _ = ::core::mem::replace(&mut self.functions[i], f);
 

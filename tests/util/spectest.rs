@@ -1,10 +1,10 @@
 use serde::{Deserialize, Serialize};
 use spacewasm::{
-    global_allocator, vec, AllocError, Allocator, CompilerOptions, ExportDesc, FuncRef,
-    GlobalValue, GlobalValueError, HostFunction, HostGlobal, HostModule, InnerVec,
-    Interpreter, InterpreterBreak, InterpreterResult, InterpreterRunner, InterpreterState, JumpTarget,
-    Memory, MemoryStatistics, Module, ParseError, ReaderError, Store, TrapReason, ValType,
-    ValidationError, Value, WasmStream,
+    global_allocator, vec, AllocError, Allocator, CompilerOptions, ConstantExprError, ExportDesc,
+    FuncRef, GlobalValue, GlobalValueError, HostFunction, HostGlobal, HostModule,
+    InnerVec, Interpreter, InterpreterBreak, InterpreterResult, InterpreterRunner, InterpreterState,
+    JumpTarget, Memory, MemoryStatistics, Module, ParseError, ReaderError, Store, TrapReason,
+    ValType, ValidationError, Value, WasmStream,
 };
 use std::alloc::Layout;
 use std::cell::RefCell;
@@ -50,6 +50,12 @@ enum Command {
         module_type: String,
     },
     AssertInvalid {
+        line: u32,
+        filename: String,
+        text: String,
+        module_type: String,
+    },
+    AssertUnlinkable {
         line: u32,
         filename: String,
         text: String,
@@ -537,6 +543,8 @@ fn check_trap_reason(reason: TrapReason, text: &str) {
         (TrapReason::MemoryOutOfBounds, "out of bounds memory access") => {}
         (TrapReason::StackOverflow, "stack overflow") => {}
         (TrapReason::InvalidTableIndex, "undefined element") => {}
+        (TrapReason::UnrepresentableResult, "integer overflow") => {}
+        (TrapReason::BadConversionToInteger, "invalid conversion to integer") => {}
         err => {
             assert!(
                 false,
@@ -589,6 +597,13 @@ fn check_decode_error(err: ParseError, text: String) {
         (ValidationError::InvalidLabelIndex, "unexpected end of section or function") => {}
         (ValidationError::MalformedValueType(_), "malformed value type") => {}
         (ValidationError::DuplicateSection(_), "unexpected content after last section") => {}
+        (ValidationError::GlobalIsNotMutable, "immutable global") => {}
+        (ValidationError::InvalidElementOffset, "type mismatch") => {}
+        (
+            ValidationError::InvalidConstantExpr(ConstantExprError::InvalidConstantInstruction),
+            "constant expression required",
+        ) => {}
+        (ValidationError::FunctionImportOutOfRange, "unknown type") => {}
         err => {
             assert!(
                 false,
@@ -707,6 +722,28 @@ fn run_wast_command(
                 .expect(format!("Expected invalid module to fail with '{text}'").as_str());
 
                 check_decode_error(err, text);
+            }
+        }
+        Command::AssertUnlinkable {
+            filename,
+            module_type,
+            text: _text,
+            ..
+        } => {
+            if module_type != "text" {
+                let wasm_path = format!("{test_dir}/{filename}");
+                let wasm_bytes = std::fs::read(&wasm_path)
+                    .unwrap_or_else(|e| panic!("Failed to read {wasm_path}: {e}"));
+                let mut stream = ByteStream::new(&wasm_bytes);
+                Module::new::<256>(
+                    "malformed_test",
+                    &mut stream,
+                    &ctx.store,
+                    CompilerOptions {
+                        allow_memory_grow: true,
+                    },
+                )
+                .unwrap();
             }
         }
         Command::AssertExhaustion { .. } => {
@@ -831,7 +868,8 @@ fn run_wast_test_file_inner(
             | Command::AssertInvalid { line, .. }
             | Command::AssertExhaustion { line, .. }
             | Command::Register { line, .. }
-            | Command::Action { line, .. } => Some(*line),
+            | Command::Action { line, .. }
+            | Command::AssertUnlinkable { line, .. } => Some(*line),
         };
 
         run_wast_command(command, &test_dir, &mut ctx, test_log);

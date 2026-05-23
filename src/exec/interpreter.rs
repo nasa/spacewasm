@@ -309,6 +309,10 @@ pub enum TrapReason {
     MemoryOutOfBounds,
     /// Ran out of stack space
     StackOverflow,
+    /// Attempting to convert Inf to integer
+    UnrepresentableResult,
+    /// Attempting to convert NaN to integer
+    BadConversionToInteger,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -333,6 +337,12 @@ impl From<HostFunctionBreak> for InterpreterBreak {
             HostFunctionBreak::Trap => InterpreterBreak::Trap(TrapReason::Host),
             HostFunctionBreak::Pause => InterpreterBreak::Pause,
         }
+    }
+}
+
+impl From<TrapReason> for InterpreterBreak {
+    fn from(err: TrapReason) -> Self {
+        InterpreterBreak::Trap(err)
     }
 }
 
@@ -743,7 +753,13 @@ impl<'module> BaseVisitor for Interpreter<'module> {
             (a as u32).wrapping_div(b as u32)
         }
     } as i32);
-    instruction!(i32_rem_s, i32, i32 -> i32, a, b, a.wrapping_rem(b));
+    instruction!(i32_rem_s, i32, i32 -> i32, a, b, {
+        if b == 0 {
+            return Err(InterpreterBreak::Trap(TrapReason::DivideByZero))
+        } else {
+            a.wrapping_rem(b)
+        }
+    });
     instruction!(i32_rem_u, i32, i32 -> i32, a, b, (a as u32).wrapping_rem(b as u32) as i32);
     instruction!(i32_and, i32, i32 -> i32, a, b, a & b);
     instruction!(i32_or, i32, i32 -> i32, a, b, a | b);
@@ -821,12 +837,32 @@ impl<'module> BaseVisitor for Interpreter<'module> {
 
     fn i32_trunc_f32_s(&self, state: &mut Self::State) -> Result<(), Self::Error> {
         let f = state.stack.read_f32(state.sp - 1);
+        if f.is_infinite() {
+            return Err(TrapReason::UnrepresentableResult.into());
+        }
+        if f.is_nan() {
+            return Err(TrapReason::BadConversionToInteger.into());
+        }
+        if f >= 2147483648.0f32 || f <= -2147483904.0f32 {
+            return Err(TrapReason::UnrepresentableResult.into());
+        }
+
         state.stack.write_u32(state.sp - 1, f as i32 as u32);
         Ok(())
     }
 
     fn i32_trunc_f32_u(&self, state: &mut Self::State) -> Result<(), Self::Error> {
         let f = state.stack.read_f32(state.sp - 1);
+        if f.is_infinite() {
+            return Err(TrapReason::UnrepresentableResult.into());
+        }
+        if f.is_nan() {
+            return Err(TrapReason::BadConversionToInteger.into());
+        }
+        if f >= 4294967296.0f32 || f <= -1.0f32 {
+            return Err(TrapReason::UnrepresentableResult.into());
+        }
+
         state.stack.write_u32(state.sp - 1, f as u32);
         Ok(())
     }
@@ -834,6 +870,15 @@ impl<'module> BaseVisitor for Interpreter<'module> {
     fn i32_trunc_f64_s(&self, state: &mut Self::State) -> Result<(), Self::Error> {
         state.sp -= 1;
         let f = state.stack.read_f64(state.sp - 1);
+        if f.is_infinite() {
+            return Err(TrapReason::UnrepresentableResult.into());
+        }
+        if f.is_nan() {
+            return Err(TrapReason::BadConversionToInteger.into());
+        }
+        if f >= 2147483648.0f64 || f <= -2147483649.0f64 {
+            return Err(TrapReason::UnrepresentableResult.into());
+        }
         state.stack.write_u32(state.sp - 1, f as i32 as u32);
         Ok(())
     }
@@ -841,6 +886,16 @@ impl<'module> BaseVisitor for Interpreter<'module> {
     fn i32_trunc_f64_u(&self, state: &mut Self::State) -> Result<(), Self::Error> {
         state.sp -= 1;
         let f = state.stack.read_f64(state.sp - 1);
+        if f.is_infinite() {
+            return Err(TrapReason::UnrepresentableResult.into());
+        }
+        if f.is_nan() {
+            return Err(TrapReason::BadConversionToInteger.into());
+        }
+        if f >= 4294967296.0f64 || f <= -1.0f64 {
+            return Err(TrapReason::UnrepresentableResult.into());
+        }
+
         state.stack.write_u32(state.sp - 1, f as u32);
         Ok(())
     }
@@ -863,6 +918,16 @@ impl<'module> BaseVisitor for Interpreter<'module> {
 
     fn i64_trunc_f32_s(&self, state: &mut Self::State) -> Result<(), Self::Error> {
         let f = state.stack.read_f32(state.sp - 1);
+        if f.is_infinite() {
+            return Err(TrapReason::UnrepresentableResult.into());
+        }
+        if f.is_nan() {
+            return Err(TrapReason::BadConversionToInteger.into());
+        }
+        if f >= 9223372036854775808.0f32 || f <= -9223373136366403584.0f32 {
+            return Err(TrapReason::UnrepresentableResult.into());
+        }
+
         let i = f as i64 as u64;
         state.stack.write_u64(state.sp - 1, i);
         state.sp += 1;
@@ -871,6 +936,16 @@ impl<'module> BaseVisitor for Interpreter<'module> {
 
     fn i64_trunc_f32_u(&self, state: &mut Self::State) -> Result<(), Self::Error> {
         let f = state.stack.read_f32(state.sp - 1);
+        if f.is_infinite() {
+            return Err(TrapReason::UnrepresentableResult.into());
+        }
+        if f.is_nan() {
+            return Err(TrapReason::BadConversionToInteger.into());
+        }
+        if f >= 18446744073709551616.0f32 || f <= -1.0f32 {
+            return Err(TrapReason::UnrepresentableResult.into());
+        }
+
         let u = f as u64;
         state.stack.write_u64(state.sp - 1, u);
         state.sp += 1;
@@ -879,6 +954,16 @@ impl<'module> BaseVisitor for Interpreter<'module> {
 
     fn i64_trunc_f64_s(&self, state: &mut Self::State) -> Result<(), Self::Error> {
         let f = state.stack.read_f64(state.sp - 2);
+        if f.is_infinite() {
+            return Err(TrapReason::UnrepresentableResult.into());
+        }
+        if f.is_nan() {
+            return Err(TrapReason::BadConversionToInteger.into());
+        }
+        if f >= 9223372036854775808.0f64 || f <= -9223372036854777856.0f64 {
+            return Err(TrapReason::UnrepresentableResult.into());
+        }
+
         let i = f as i64 as u64;
         state.stack.write_u64(state.sp - 2, i);
         Ok(())
@@ -886,6 +971,16 @@ impl<'module> BaseVisitor for Interpreter<'module> {
 
     fn i64_trunc_f64_u(&self, state: &mut Self::State) -> Result<(), Self::Error> {
         let f = state.stack.read_f64(state.sp - 2);
+        if f.is_infinite() {
+            return Err(TrapReason::UnrepresentableResult.into());
+        }
+        if f.is_nan() {
+            return Err(TrapReason::BadConversionToInteger.into());
+        }
+        if f >= 18446744073709551616.0f64 || f <= -1.0f64 {
+            return Err(TrapReason::UnrepresentableResult.into());
+        }
+
         let u = f as u64;
         state.stack.write_u64(state.sp - 2, u);
         Ok(())

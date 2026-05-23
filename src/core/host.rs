@@ -37,12 +37,6 @@ impl<T: GlobalValue> Box<T> {
     }
 }
 
-impl HostGlobal {
-    pub fn matches(&self, name: &str) -> bool {
-        self.name == name
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HostFunctionBreak {
     /// Halt execution due to an error
