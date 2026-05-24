@@ -9,9 +9,9 @@ impl Expr {
         Expr(JumpTarget(0))
     }
 
-    pub fn read_constant(wasm: &mut Reader) -> Result<Value, ValidationError> {
+    pub fn read_constant(wasm: &mut Reader, store: &Store, module: &Module) -> Result<Value, ValidationError> {
         let mut value: Option<Value> = None;
-        wasm.read_code(&ConstantCompiler, &mut value)?;
+        wasm.read_code(&ConstantCompiler::new(store, module), &mut value)?;
         Ok(value.unwrap())
     }
 
@@ -21,14 +21,13 @@ impl Expr {
         store: &Store,
         module: &Module,
         ctx: &Func,
-    ) -> Result<Self, ValidationError> {
+        compiler_options: CompilerOptions,
+    ) -> Result<(Self, u16), ValidationError> {
         let e = Expr(builder.pc());
-        wasm.read_code(
-            &Compiler::<'_, N>::new(),
-            &mut TextBuilder::new(builder, store, module, ctx),
-        )?;
+        let tb = &mut TextBuilder::new(builder, store, module, ctx);
+        wasm.read_code(&Compiler::<'_, N>::new(compiler_options), tb)?;
 
-        Ok(e)
+        Ok((e, tb.stack_usage()))
     }
 }
 
@@ -54,7 +53,7 @@ pub struct Func {
     pub parameter_size: u16,
 
     /// Return value size in 32-bit words
-    pub return_size: u8,
+    pub return_ty: Option<ValType>,
 
     /// Local variables allocated in this functions frame
     /// Read in the code section
@@ -71,6 +70,7 @@ impl Module {
         store: &Store,
         builder: &mut CodeBuilder<N>,
         i: usize,
+        compiler_options: CompilerOptions,
     ) -> Result<(), ValidationError> {
         let size = wasm.read_u32()?;
         let start = wasm.offset();
@@ -101,7 +101,30 @@ impl Module {
         }
 
         f.local_size = size_in_words as u16;
-        f.expr = Expr::read(wasm, builder, store, self, &f)?;
+        let f_ty = &self.types[f.ty.0 as usize];
+        let name = self
+            .exports
+            .iter()
+            .find_map(|e| {
+                if let ExportDesc::Func(func) = e.desc
+                    && (func.0 as usize) == i
+                {
+                    Some(e.name.as_ref())
+                } else {
+                    None
+                }
+            })
+            .unwrap_or("<unnamed>");
+        (f.expr, f.stack_usage) = match Expr::read(wasm, builder, store, self, &f, compiler_options)
+        {
+            Ok(expr) => expr,
+            Err(err) => {
+                extern crate std;
+                std::eprintln!("function {name}: {:?} -> {:?}", f_ty.params, f_ty.returns);
+                std::eprintln!("{err:?}");
+                return Err(err);
+            }
+        };
 
         let _ = ::core::mem::replace(&mut self.functions[i], f);
 

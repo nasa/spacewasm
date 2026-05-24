@@ -26,6 +26,24 @@ pub enum ValType {
     F64,
 }
 
+impl From<u8> for ValType {
+    fn from(val: u8) -> Self {
+        #[cfg(feature = "strict-assertions")]
+        match val {
+            0 => ValType::I32,
+            1 => ValType::I64,
+            2 => ValType::F32,
+            3 => ValType::F64,
+            _ => unreachable!(),
+        }
+
+        #[cfg(not(feature = "strict-assertions"))]
+        unsafe {
+            ::core::mem::transmute(val)
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Value {
     I32(i32),
@@ -91,7 +109,12 @@ impl FuncType {
                 let params = wasm.read_vec(ValType::read)?;
                 let returns = wasm.read_vec(ValType::read)?;
 
-                Ok(FuncType { params, returns })
+                if returns.len() > 1 {
+                    // Wasm 1.0 does not support multiple returns
+                    Err(ValidationError::FunctionReturnsTooLarge)
+                } else {
+                    Ok(FuncType { params, returns })
+                }
             }
             c => Err(ValidationError::MalformedFunction(c)),
         }

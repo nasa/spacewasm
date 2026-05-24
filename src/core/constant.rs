@@ -1,9 +1,18 @@
 use crate::{
-    BaseVisitor, FuncIdx, GlobalIdx, LabelIdx, LocalIdx, MemArg, ResultType, TypeIdx, Value,
-    WasmVisitor,
+    BaseVisitor, FuncIdx, GlobalIdx, LabelIdx, LocalIdx, MemArg, Module, Ref, ResultType, Store,
+    TypeIdx, Value, WasmVisitor,
 };
 
-pub struct ConstantCompiler;
+pub struct ConstantCompiler<'a> {
+    store: &'a Store,
+    module: &'a Module,
+}
+
+impl<'a> ConstantCompiler<'a> {
+    pub fn new(store: &'a Store, module: &'a Module) -> Self {
+        Self { store, module }
+    }
+}
 
 macro_rules! invalid_constant_fn {
     // No additional parameters
@@ -29,9 +38,10 @@ pub enum ConstantExprError {
     InvalidConstantInstruction,
     AlreadyHasValue,
     NoValue,
+    InvalidGlobal,
 }
 
-impl BaseVisitor for ConstantCompiler {
+impl<'a> BaseVisitor for ConstantCompiler<'a> {
     type Error = ConstantExprError;
     type State = Option<Value>;
 
@@ -40,10 +50,6 @@ impl BaseVisitor for ConstantCompiler {
     invalid_constant_fn!(nop);
 
     // Control flow is not handled by the base visitor
-
-    // Parametric instructions
-    invalid_constant_fn!(drop);
-    invalid_constant_fn!(select);
 
     // Memory instructions - loads
     invalid_constant_fn!(i32_load, m: MemArg);
@@ -246,13 +252,13 @@ impl BaseVisitor for ConstantCompiler {
     invalid_constant_fn!(f64_convert_i64_s);
     invalid_constant_fn!(f64_convert_i64_u);
     invalid_constant_fn!(f64_promote_f32);
-    invalid_constant_fn!(i32_reinterpret_f32);
-    invalid_constant_fn!(i64_reinterpret_f64);
-    invalid_constant_fn!(f32_reinterpret_i32);
-    invalid_constant_fn!(f64_reinterpret_i64);
 }
 
-impl WasmVisitor for ConstantCompiler {
+impl<'a> WasmVisitor for ConstantCompiler<'a> {
+    // Parametric instructions
+    invalid_constant_fn!(drop);
+    invalid_constant_fn!(select);
+
     // Exit the expression
     fn finish(&self, state: &mut Self::State) -> Result<(), Self::Error> {
         if let Some(_) = state {
@@ -279,6 +285,57 @@ impl WasmVisitor for ConstantCompiler {
     invalid_constant_fn!(local_get, x: LocalIdx);
     invalid_constant_fn!(local_set, x: LocalIdx);
     invalid_constant_fn!(local_tee, x: LocalIdx);
-    invalid_constant_fn!(global_get, x: GlobalIdx);
+
+    fn global_get(&self, x: GlobalIdx, state: &mut Self::State) -> Result<(), Self::Error> {
+        let v = match self
+            .module
+            .get_global_ref(x)
+            .ok_or(ConstantExprError::InvalidGlobal)?
+        {
+            Ref::Module(idx) => self
+                .module
+                .globals
+                .get(idx as usize)
+                .ok_or(ConstantExprError::InvalidGlobal)?
+                .value(),
+            Ref::Host { module, index } => {
+                // Look up the host module/global and read its value
+                self.store
+                    .host_modules
+                    .get(module.0 as usize)
+                    .ok_or(ConstantExprError::InvalidGlobal)?
+                    .globals
+                    .get(index as usize)
+                    .ok_or(ConstantExprError::InvalidGlobal)?
+                    .value
+                    .read()
+                    .ok()
+                    .ok_or(ConstantExprError::InvalidGlobal)?
+            }
+            Ref::Extern { module, index } => {
+                // Look up the external wasm module and read the globals value
+                self.store
+                    .modules
+                    .get(module.0 as usize)
+                    .ok_or(ConstantExprError::InvalidGlobal)?
+                    .globals
+                    .get(index as usize)
+                    .ok_or(ConstantExprError::InvalidGlobal)?
+                    .value()
+            }
+        };
+
+        let before = state.replace(v);
+        if let Some(_) = before {
+            Err(ConstantExprError::AlreadyHasValue)
+        } else {
+            Ok(())
+        }
+    }
+
     invalid_constant_fn!(global_set, x: GlobalIdx);
+    invalid_constant_fn!(i32_reinterpret_f32);
+    invalid_constant_fn!(i64_reinterpret_f64);
+    invalid_constant_fn!(f32_reinterpret_i32);
+    invalid_constant_fn!(f64_reinterpret_i64);
 }

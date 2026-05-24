@@ -1,4 +1,5 @@
 use crate::*;
+use ::core::ops::AddAssign;
 
 /// # SpaceWASM IR Encoding
 ///
@@ -33,13 +34,136 @@ impl Default for TextPage {
     }
 }
 
-/// A 32-bit address into the paged IR code.
+/// A relative offset to jump to from the current program counter
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+pub struct JumpOffset(i32);
+
+impl JumpOffset {
+    pub fn sentinel() -> JumpOffset {
+        JumpOffset(0)
+    }
+
+    pub fn offset(n: i32) -> JumpOffset {
+        JumpOffset(n)
+    }
+
+    pub fn new(current: JumpTarget, to: JumpTarget) -> Result<JumpOffset, ValidationError> {
+        if to == JumpTarget::SENTINEL {
+            Ok(JumpOffset::sentinel())
+        } else {
+            let offset = (to.0 as i32) - (current.0 as i32);
+            let fits = offset == ((offset << (32 - 22)) >> (32 - 22));
+            if !fits {
+                Err(ValidationError::LabelJumpTooLarge)
+            } else {
+                Ok(JumpOffset(offset))
+            }
+        }
+    }
+}
+
+/// A 32-bit value encoding a label's arity, jump address, and stack truncation information
+/// [arity:2][depth:8][offset:22]
 ///
-/// Format: `[reserved:2][page_index:22][offset:8]`
-/// - `page_index`: which page (0-4M pages supported)
-/// - `offset`: word index within the page (0-255)
+/// Arity is the result type needed by the target block we are jumping to:
+/// arity == 0 (no result)
+/// arity == 1 (I32 / F32)
+/// arity == 2 (I64 / F64)
+/// arity == 3 (unused/invalid)
+///
+/// Depth is the 32-bit width truncation of the stack to perform during this jump.
+///
+/// offset is the pc offset (signed) from the current PC. For forward jumps this will be 0
+/// by default to mark the 'sentinel' jump target.
+///
+#[derive(Clone, Copy)]
+pub struct LabelTarget(u32);
+
+impl ::core::fmt::Debug for LabelTarget {
+    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+        f.debug_struct("LabelTarget")
+            .field("arity", &self.arity())
+            .field("depth", &self.depth())
+            .field("jump", &self.jump())
+            .finish()
+    }
+}
+
+impl From<u32> for LabelTarget {
+    fn from(value: u32) -> Self {
+        LabelTarget(value)
+    }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[repr(u8)]
+pub enum LabelArity {
+    None = 0,
+    I32 = 1,
+    I64 = 2,
+}
+
+impl LabelTarget {
+    fn new(result_type: ResultType, depth: u8, offset: JumpOffset) -> LabelTarget {
+        let rt = match result_type.0 {
+            None => 0,
+            Some(ValType::I32 | ValType::F32) => 1,
+            Some(ValType::I64 | ValType::F64) => 2,
+        };
+
+        LabelTarget((rt << 30) | ((depth as u32) << 22) | (offset.0 as u32) & 0x3FFFFF)
+    }
+
+    fn early_return(result_type: ResultType) -> LabelTarget {
+        Self::new(result_type, 0, JumpOffset::sentinel())
+    }
+
+    pub fn with_jump(self, offset: JumpOffset) -> LabelTarget {
+        LabelTarget(
+            self.0 & 0xFFC00000 // First 10 bits
+                | ((offset.0 as u32) & 0x3FFFFF), // Final 22 bits
+        )
+    }
+
+    /// Extract the jump target from the encoded label target
+    pub fn jump(&self) -> JumpOffset {
+        // The offset is 22-bits
+        let u = self.0 & 0x3FFFFF;
+
+        // Grab the sign bit and move extend it
+        JumpOffset(((u << 10) as i32) >> 10)
+    }
+
+    pub fn is_sentinel(&self) -> bool {
+        self.jump() == JumpOffset(0)
+    }
+
+    /// Number of 32-bit values to move from the current stack to the result stack
+    pub fn arity(&self) -> LabelArity {
+        match (self.0 >> 30) & 0b11 {
+            0 => LabelArity::None,
+            1 => LabelArity::I32,
+            2 => LabelArity::I64,
+            _ => unreachable!(),
+        }
+    }
+
+    /// Number of 32-bit values to drop from the stack
+    pub fn depth(&self) -> u8 {
+        ((self.0 >> 22) & 0xFF) as u8
+    }
+}
+
+/// A 32-bit address into the paged IR code.
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub struct JumpTarget(pub u32);
+
+impl ::core::ops::Add<JumpOffset> for JumpTarget {
+    type Output = JumpTarget;
+    fn add(self, rhs: JumpOffset) -> JumpTarget {
+        JumpTarget(((self.0 as i32) + rhs.0) as u32)
+    }
+}
 
 impl ::core::ops::Add<u32> for JumpTarget {
     type Output = JumpTarget;
@@ -48,11 +172,16 @@ impl ::core::ops::Add<u32> for JumpTarget {
     }
 }
 
+impl AddAssign<JumpOffset> for JumpTarget {
+    fn add_assign(&mut self, rhs: JumpOffset) {
+        let a = (self.0 as i32) + rhs.0;
+        self.0 = a as u32;
+    }
+}
+
 impl JumpTarget {
     /// Sentinel value used to mark the end of a linked list of jump addresses.
-    /// Uses 0x3FFF_FFFF (all 1s in the 30-bit address space) so it never conflicts
-    /// with the control bits (bits 30-31) or valid addresses (24-bit page index).
-    pub const SENTINEL: JumpTarget = JumpTarget(0x3FFF_FFFFu32);
+    pub const SENTINEL: JumpTarget = JumpTarget(0xFFFF_FFFFu32);
 
     /// Extract the page index (upper 24 bits).
     pub fn page(&self) -> usize {
@@ -66,62 +195,30 @@ impl JumpTarget {
 }
 
 /// A control flow frame tracking jump targets for blocks, loops, and if-else statements.
-///
-/// Bit layout in the JumpTarget:
-/// - Bit 31 (MSB): forward (0) vs backward (1) jump
-/// - Bit 30: is_if flag (1 if this is an if block)
-/// - Bits 0-29: jump target address
-///
-/// For forward jumps, the address field maintains a linked list of all locations
-/// that need to be back-patched when the block ends.
 #[derive(Clone, Copy)]
-struct ControlFrame(JumpTarget);
-
-impl ControlFrame {
-    /// Create a forward control frame (block statement).
-    fn forward(jt: JumpTarget) -> ControlFrame {
-        assert!(jt.0 < 0x4000_0000); // 30-bit address space
-        ControlFrame(jt)
-    }
-
-    /// Create a forward control frame for an if statement.
-    fn forward_if(jt: JumpTarget) -> ControlFrame {
-        assert!(jt.0 < 0x4000_0000); // 30-bit address space
-        ControlFrame(JumpTarget(jt.0 | 0x4000_0000)) // Set is_if bit
-    }
-
-    /// Create a backward control frame (loop statement).
-    ///
-    /// The jump target is already known (the start of the loop), so no back-patching
-    /// is needed. Sets the MSB to mark this as a backward jump.
-    fn backward(jt: JumpTarget) -> ControlFrame {
-        assert!(jt.0 < 0x4000_0000); // 30-bit address space
-        ControlFrame(JumpTarget(jt.0 | 0x8000_0000))
-    }
-
-    /// Check if this is a forward control frame (needs back-patching).
-    fn is_forward(&self) -> bool {
-        (self.0.0 & 0x8000_0000) == 0
-    }
-
-    /// Check if this is an if block.
-    fn is_if(&self) -> bool {
-        (self.0.0 & 0x4000_0000) != 0
-    }
-
-    /// Get the jump target address, stripping the control bits.
-    fn address(&self) -> JumpTarget {
-        JumpTarget(self.0.0 & 0x3FFF_FFFF)
-    }
-
-    /// Update the address for a forward control frame (used to maintain the linked list).
-    ///
-    /// Preserves the control bits while updating the address.
-    fn set_address(&mut self, addr: JumpTarget) {
-        assert!(self.is_forward()); // Cannot set address on backward branch
-        assert!(addr.0 < 0x4000_0000); // Address exceeds 30-bit limit
-        self.0.0 = addr.0 | (self.0.0 & 0xC000_0000); // Preserve both control bits
-    }
+enum ControlFrame {
+    Loop {
+        result: ResultType,
+        stack_start: u16,
+        target: JumpTarget,
+    },
+    Block {
+        result: ResultType,
+        stack_start: u16,
+        patch_target: JumpTarget,
+    },
+    If {
+        result: ResultType,
+        stack_start: u16,
+        patch_target: JumpTarget,
+    },
+    Else {
+        result: ResultType,
+        stack_start: u16,
+        patch_target: JumpTarget,
+    },
+    UnreachableBlock,
+    UnreachableIf,
 }
 
 /// The decoded representation of a global variable
@@ -148,6 +245,41 @@ impl<const N: usize> CodeBuilder<N> {
             pages: Default::default(),
             offset: 0,
         }
+    }
+
+    fn backpatch(
+        &mut self,
+        start: JumpTarget,
+        mut f: impl FnMut(&mut Self, JumpTarget, LabelTarget) -> Result<(), ValidationError>,
+    ) -> Result<(), ValidationError> {
+        if start == JumpTarget::SENTINEL {
+            return Ok(());
+        }
+
+        let mut next = start;
+
+        // Bound our loops to not go into an infinite cycle
+        let mut n = 0;
+
+        loop {
+            let address = next;
+
+            let lt = LabelTarget(self.read_32(address)?);
+            f(self, address, lt)?;
+
+            if lt.is_sentinel() {
+                break;
+            }
+
+            next = address + lt.jump();
+
+            n += 1;
+            if n > 200 {
+                return Err(ValidationError::PossibleBackpatchCycle);
+            }
+        }
+
+        Ok(())
     }
 
     /// Move all the text pages into a heap vector with the used size.
@@ -220,8 +352,15 @@ impl<const N: usize> CodeBuilder<N> {
         }
     }
 
+    /// Write two IR words at a given address from a single 32-bit value
+    fn write_32(&mut self, address: JumpTarget, value: u32) -> Result<(), ValidationError> {
+        self.write(address, value as u16)?;
+        self.write(address + 1, (value >> 16) as u16)?;
+        Ok(())
+    }
+
     /// Read a single IR word at a given address.
-    fn read(&mut self, address: JumpTarget) -> Result<u16, ValidationError> {
+    fn read(&self, address: JumpTarget) -> Result<u16, ValidationError> {
         let page_index = address.page();
         let offset = address.offset();
 
@@ -230,6 +369,14 @@ impl<const N: usize> CodeBuilder<N> {
         } else {
             Ok(self.pages[page_index].0[offset])
         }
+    }
+
+    /// Read two IR words at a given address into a single 32-bit value
+    fn read_32(&self, address: JumpTarget) -> Result<u32, ValidationError> {
+        let w1 = self.read(address)?;
+        let w2 = self.read(address + 1)?;
+
+        Ok((w1 as u32) | ((w2 as u32) << 16))
     }
 }
 
@@ -248,7 +395,9 @@ pub struct TextBuilder<'a, const N: usize> {
     module: &'a Module,
     func: &'a Func,
     control_frames: StaticVec<ControlFrame, 64>,
-    else_frames: StaticVec<JumpTarget, 64>,
+    value_stack: StaticVec<ValType, 512>,
+    unreachable: bool,
+    stack_highwater: u16,
 }
 
 impl<'a, const N: usize> TextBuilder<'a, N> {
@@ -260,20 +409,30 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
     ) -> TextBuilder<'a, N> {
         TextBuilder {
             code,
+            store,
             module,
             func,
             control_frames: Default::default(),
-            else_frames: Default::default(),
-            store,
+            value_stack: Default::default(),
+            unreachable: false,
+            stack_highwater: 0,
         }
     }
 
-    pub fn func(&self) -> &Func {
-        &self.func
+    pub fn store(&self) -> &'a Store {
+        self.store
     }
 
-    pub fn get_func_ref(&self, x: FuncIdx) -> Result<FuncRef, ValidationError> {
-        self.module.get_func_ref(x)
+    pub fn func(&self) -> &'a Func {
+        self.func
+    }
+
+    pub fn module(&self) -> &'a Module {
+        self.module
+    }
+
+    pub fn stack_usage(&self) -> u16 {
+        self.stack_highwater
     }
 
     /// Compute the offset in 32-bit words of a local variable given its index
@@ -340,30 +499,30 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
     /// Look up a global variable given its index
     /// If we are computing a constant expression, globals can only refer to imported globals
     pub fn get_global(&self, x: GlobalIdx) -> Result<GlobalVariable, ValidationError> {
-        let imported_idx = self
+        let reference = self
             .module
             .imports
             .iter()
             .filter_map(|i| match &i {
-                Import::Global { module, index } => Some(Ref::ExternalRef(ExternalRef {
+                Import::Global { module, index } => Some(Ref::Extern {
                     module: *module,
                     index: *index,
-                })),
-                Import::HostGlobal { module, index } => Some(Ref::HostRef(HostRef {
+                }),
+                Import::HostGlobal { module, index } => Some(Ref::Host {
                     module: *module,
                     index: *index,
-                })),
+                }),
                 _ => None,
             })
             .skip(x.0 as usize)
             .next()
-            .unwrap_or(Ref::Ref(
+            .unwrap_or(Ref::Module(
                 (x.0 as usize - self.module.global_import_count()) as u16,
             ));
 
-        match imported_idx {
+        match reference {
             // This index is one of the WASM defined globals
-            Ref::Ref(idx) => {
+            Ref::Module(idx) => {
                 let g = self
                     .module
                     .globals
@@ -371,39 +530,30 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
                     .ok_or(ValidationError::GlobalIdxOutOfRange)?;
 
                 Ok(GlobalVariable {
-                    reference: Ref::Ref(idx),
+                    reference,
                     ty: g.type_.ty,
                     mutable: g.type_.mutable,
                 })
             }
             // This index refers to an imported global
-            Ref::HostRef(host_ref) => {
+            Ref::Host { module, index } => {
                 // Unwrap() should be fine since the imports are already resolved
-                let module = self
-                    .store
-                    .host_modules
-                    .get(host_ref.module.0 as usize)
-                    .unwrap();
-
-                let global = module.globals.get(host_ref.index as usize).unwrap();
+                let module = self.store.host_modules.get(module.0 as usize).unwrap();
+                let global = module.globals.get(index as usize).unwrap();
 
                 Ok(GlobalVariable {
-                    reference: Ref::HostRef(host_ref),
+                    reference,
                     ty: global.value.ty(),
                     mutable: global.value.mutable(),
                 })
             }
-            Ref::ExternalRef(external_ref) => {
-                let module = self
-                    .store
-                    .modules
-                    .get(external_ref.module.0 as usize)
-                    .unwrap();
+            Ref::Extern { module, index } => {
+                let module = self.store.modules.get(module.0 as usize).unwrap();
 
-                let global = module.globals.get(external_ref.index as usize).unwrap();
+                let global = module.globals.get(index as usize).unwrap();
 
                 Ok(GlobalVariable {
-                    reference: Ref::ExternalRef(external_ref),
+                    reference,
                     ty: global.type_.ty,
                     mutable: global.type_.mutable,
                 })
@@ -415,24 +565,146 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
         self.code.pc()
     }
 
+    pub(crate) fn mark_unreachable(&mut self) {
+        self.value_stack
+            .truncate(self.value_stack.len() - self.control_frame_stack_len());
+        self.unreachable = true;
+    }
+
+    fn control_frame_stack_len(&self) -> usize {
+        let start = match self.control_frames.last() {
+            None => 0,
+            Some(
+                ControlFrame::If { stack_start, .. }
+                | ControlFrame::Else { stack_start, .. }
+                | ControlFrame::Block { stack_start, .. }
+                | ControlFrame::Loop { stack_start, .. },
+            ) => *stack_start as usize,
+            Some(ControlFrame::UnreachableIf) | Some(ControlFrame::UnreachableBlock) => 0,
+        };
+
+        self.value_stack.len() - start
+    }
+
     /// Enter a forward control block (block statement).
-    pub(crate) fn enter_forward_block(&mut self) -> Result<(), AllocError> {
-        self.control_frames
-            .push(ControlFrame::forward(JumpTarget::SENTINEL).into())
+    pub(crate) fn enter_block(&mut self, result: ResultType) -> Result<(), ValidationError> {
+        if self.unreachable {
+            self.control_frames
+                .push(ControlFrame::UnreachableBlock)
+                .or(Err(ValidationError::ControlFlowTooDeep))
+        } else {
+            self.control_frames
+                .push(ControlFrame::Block {
+                    result,
+                    stack_start: self.value_stack.len() as u16,
+                    patch_target: JumpTarget::SENTINEL,
+                })
+                .or(Err(ValidationError::ControlFlowTooDeep))
+        }
     }
 
     /// Enter a forward control block for an if statement.
     ///
     /// This is tracked separately to handle if-without-else cases properly.
-    pub(crate) fn enter_forward_if_block(&mut self) -> Result<(), AllocError> {
-        self.control_frames
-            .push(ControlFrame::forward_if(JumpTarget::SENTINEL).into())
+    pub(crate) fn enter_if_block(&mut self, result: ResultType) -> Result<(), ValidationError> {
+        if self.unreachable {
+            self.control_frames
+                .push(ControlFrame::UnreachableIf)
+                .or(Err(ValidationError::ControlFlowTooDeep))
+        } else {
+            self.control_frames
+                .push(ControlFrame::If {
+                    result,
+                    stack_start: self.value_stack.len() as u16,
+                    patch_target: self.pc(),
+                })
+                .or(Err(ValidationError::ControlFlowTooDeep))?;
+
+            self.write_32(LabelTarget::new(result, 0, JumpOffset::sentinel()).0)?;
+            Ok(())
+        }
+    }
+
+    /// Mark the start of an else block for an if statement.
+    ///
+    /// Emits placeholder words (0x3FFF_FFFF sentinel) that will be back-patched
+    /// with the else branch target address when `finish_else` is called.
+    /// The current PC is saved so we know where to back-patch.
+    pub(crate) fn enter_else_block(&mut self) -> Result<(), ValidationError> {
+        // The top control frame should be the parent if statement
+        // Pop it off the stack to backpatch the if statement
+        let (result, stack_start, patch_target) = match self.control_frames.pop() {
+            Some(ControlFrame::If {
+                result,
+                stack_start,
+                patch_target,
+            }) => (result, stack_start, patch_target),
+            Some(ControlFrame::UnreachableIf) => {
+                self.control_frames.push(ControlFrame::UnreachableBlock)?;
+                self.unreachable = true;
+                return Ok(());
+            }
+            _ => return Err(ValidationError::InvalidElseBlock),
+        };
+
+        self.validate_block_result(result, stack_start)?;
+
+        // Reset the value stack to the beginning of the if block for the else branch
+        self.value_stack.truncate(stack_start as usize);
+
+        // We can't backpatch the entire 'then' block since labels inside should branch
+        // after the end of the if/else statement.
+        // We _do_ need to backpatch the single else placeholder though...
+        let mut prev = JumpTarget::SENTINEL;
+        let pc = self.pc();
+        self.code.backpatch(patch_target, |code, address, label| {
+            if label.is_sentinel() {
+                // We have reached the final patch target, this is the else branch placeholder.
+                // Overwrite the next address with our program counter
+                let patched_target = label.with_jump(JumpOffset::new(address, pc)?);
+                code.write_32(address, patched_target.0)?;
+
+                // Update the penultimate patch target to be the new sentinel
+                // If the prev is not the sentinel, there is at least one value in the new chain
+                if prev != JumpTarget::SENTINEL {
+                    let old_end = LabelTarget(code.read_32(prev)?);
+                    let new_end = old_end.with_jump(JumpOffset::sentinel());
+                    code.write_32(prev, new_end.0)?;
+                }
+            } else {
+                prev = address;
+            }
+
+            Ok(())
+        })?;
+
+        self.control_frames.push(ControlFrame::Else {
+            result,
+            stack_start,
+            patch_target,
+        })?;
+
+        // Clear unreachable flag since we are entering a new control block
+        self.unreachable = false;
+
+        Ok(())
     }
 
     /// Enter a backward control block (loop statement).
-    pub(crate) fn enter_backward_block(&mut self) -> Result<(), AllocError> {
-        self.control_frames
-            .push(ControlFrame::backward(self.code.pc()).into())
+    pub(crate) fn enter_loop(&mut self, result: ResultType) -> Result<(), ValidationError> {
+        if self.unreachable {
+            self.control_frames
+                .push(ControlFrame::UnreachableBlock)
+                .or(Err(ValidationError::ControlFlowTooDeep))
+        } else {
+            self.control_frames
+                .push(ControlFrame::Loop {
+                    result,
+                    target: self.code.pc(),
+                    stack_start: self.value_stack.len() as u16,
+                })
+                .or(Err(ValidationError::ControlFlowTooDeep))
+        }
     }
 
     /// Exit the current control block and back-patch any forward jump targets.
@@ -455,77 +727,51 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
             return Err(ValidationError::InvalidEndBlock);
         };
 
-        if last.is_forward() {
-            let pc = self.code.pc();
-            let mut next = last.address();
-
-            // Back-patch all the jump targets in the code
-            // We know the first address since it is written in the control frame
-            // All the other addresses are written as placeholders in the code text
-            let mut n = 0;
-            while next != JumpTarget::SENTINEL {
-                // Bound our loops to not go into an infinite cycle
-                n += 1;
-                if n > 200 {
-                    return Err(ValidationError::PossibleBackpatchCycle);
-                }
-
-                let address = next;
-
-                // Read the next address before we overwrite it
-                let w1 = self.code.read(address)?;
-                let w2 = self.code.read(address + 1)?;
-                next = JumpTarget((w1 as u32) | ((w2 as u32) << 16));
-
-                // Overwrite the next address with our program counter
-                self.code.write(address, pc.0 as u16)?;
-                self.code.write(address + 1, (pc.0 >> 16) as u16)?;
+        match last {
+            // Backward control frame, no need to back-patch
+            ControlFrame::Loop {
+                result,
+                stack_start,
+                target: _,
+            } => {
+                self.validate_block_result(result, stack_start)?;
+                self.unreachable = false;
             }
-
-            // Handle if-without-else case: if this is an if block and else_frames has an entry,
-            // it means no else_() was called, so we need to back-patch the IF sentinel here
-            if last.is_if() && self.else_frames.len() > 0 {
-                let Some(else_addr) = self.else_frames.pop() else {
-                    return Err(ValidationError::InvalidElseBlock);
-                };
-                // Back-patch the IF instruction's jump target to point to end of block (current PC)
-                self.code.write(else_addr, pc.0 as u16)?;
-                self.code.write(else_addr + 1, (pc.0 >> 16) as u16)?;
+            // Forward control frames need to be backpatched
+            ControlFrame::Block {
+                result,
+                stack_start,
+                patch_target,
             }
-        } else {
-            // We don't need to do any back-patching here
-            // Backward control frames already knew their start address
+            | ControlFrame::If {
+                result,
+                stack_start,
+                patch_target,
+            }
+            | ControlFrame::Else {
+                result,
+                stack_start,
+                patch_target,
+            } => {
+                let pc = self.pc();
+                self.code.backpatch(patch_target, |code, address, label| {
+                    let patched = label.with_jump(JumpOffset::new(address, pc)?);
+                    code.write_32(address, patched.0)?;
+                    Ok(())
+                })?;
+
+                self.validate_block_result(result, stack_start)?;
+
+                // Clear unreachable flag since we are entering a new control block
+                self.unreachable = false;
+            }
+            ControlFrame::UnreachableBlock => {
+                self.unreachable = true;
+            }
+            ControlFrame::UnreachableIf => {
+                self.unreachable = true;
+            }
         }
-
-        Ok(())
-    }
-
-    /// Mark the start of an else block for an if statement.
-    ///
-    /// Emits placeholder words (0x3FFF_FFFF sentinel) that will be back-patched
-    /// with the else branch target address when `finish_else` is called.
-    /// The current PC is saved so we know where to back-patch.
-    pub(crate) fn start_else(&mut self) -> Result<(), AllocError> {
-        self.else_frames.push(self.code.pc())?;
-
-        // Write the sentinel placeholder (will be back-patched with else target)
-        self.code.push(0xFFFF)?;
-        self.code.push(0x3FFF)?;
-        Ok(())
-    }
-
-    /// Finish the else block by back-patching the else branch target.
-    ///
-    /// Overwrites the placeholder emitted by `start_else` with the current PC
-    /// (the start of the else block).
-    pub(crate) fn finish_else(&mut self) -> Result<(), ValidationError> {
-        let Some(frame) = self.else_frames.pop() else {
-            return Err(ValidationError::InvalidElseBlock);
-        };
-
-        let pc = self.code.pc();
-        self.code.write(frame, pc.0 as u16)?;
-        self.code.write(frame + 1, (pc.0 >> 16) as u16)?;
         Ok(())
     }
 
@@ -543,85 +789,242 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
     /// For backward jumps (loop):
     /// - The target is already known, emit it directly
     ///
-    /// Jump targets are encoded as 2 words (32-bit address).
-    pub(crate) fn push_jump_target(&mut self, label: LabelIdx) -> Result<(), ValidationError> {
-        if label.0 as usize >= self.control_frames.len() {
-            Err(ValidationError::InvalidLabelIndex)
+    /// Label targets also encode the arity and stack reset information in the first 10-bits.
+    /// The jump address is encoded in the final 22-bits
+    pub(crate) fn write_label_target(
+        &mut self,
+        label: LabelIdx,
+    ) -> Result<ResultType, ValidationError> {
+        if label.0 as usize > self.control_frames.len() {
+            return Err(ValidationError::InvalidLabelIndex);
+        }
+
+        let result = if label.0 as usize == self.control_frames.len() {
+            // There is an implicit 'block' for the overall function
+            // Branching to this block acts like an early return
+            let lt = LabelTarget::early_return(ResultType(self.func.return_ty));
+            self.code.push(lt.0 as u16)?;
+            self.code.push((lt.0 >> 16) as u16)?;
+
+            // Make sure we can pull 'return type' off the stack
+            if let Some(result) = self.func.return_ty {
+                if self.control_frame_stack_len() == 0 && self.unreachable {
+                    return Ok(ResultType(self.func.return_ty));
+                } else if self.control_frame_stack_len() == 0 {
+                    return Err(ValidationError::BlockResultTypeMismatch);
+                }
+
+                let Some(got) = self.value_stack.last() else {
+                    return Err(ValidationError::BlockResultTypeMismatch);
+                };
+
+                if *got != result {
+                    return Err(ValidationError::BlockResultTypeMismatch);
+                }
+
+                ResultType(Some(result))
+            } else {
+                ResultType(None)
+            }
         } else {
             let idx = self.control_frames.len() - 1 - label.0 as usize;
-            let frame = &mut self.control_frames[idx];
-            let address = frame.address();
-            if frame.is_forward() {
-                // Forward jump targets use a linked-list of addresses to denote their back-patching
-                // We write the last head here and update the head to our address
-                frame.set_address(self.code.pc());
-            } else {
-                // The address of a backward jump is already known
-                // We can write the address directly
+            let pc = self.pc();
+
+            match &mut self.control_frames[idx] {
+                // Backward jump target
+                ControlFrame::Loop {
+                    result,
+                    stack_start,
+                    target,
+                } => {
+                    let stack_delta = self.value_stack.len() - *stack_start as usize;
+                    if stack_delta > 0xFF {
+                        return Err(ValidationError::LabelStackJumpTooDeep);
+                    }
+
+                    let lt = LabelTarget::new(
+                        *result,
+                        (stack_delta & 0xFF) as u8,
+                        JumpOffset::new(pc, *target)?,
+                    );
+
+                    self.code.push(lt.0 as u16)?;
+                    self.code.push((lt.0 >> 16) as u16)?;
+                    ResultType(None)
+                }
+                ControlFrame::Block {
+                    result,
+                    stack_start,
+                    patch_target,
+                }
+                | ControlFrame::If {
+                    result,
+                    stack_start,
+                    patch_target,
+                }
+                | ControlFrame::Else {
+                    result,
+                    stack_start,
+                    patch_target,
+                } => {
+                    // Forward jump targets use a linked-list of addresses to denote their back-patching
+                    // We write the last head here and update the head to our address
+                    let target = *patch_target;
+                    *patch_target = self.code.pc();
+
+                    let stack_delta = self.value_stack.len() - *stack_start as usize;
+                    if stack_delta > 0xFF {
+                        return Err(ValidationError::LabelStackJumpTooDeep);
+                    }
+
+                    let lt = LabelTarget::new(
+                        *result,
+                        (stack_delta & 0xFF) as u8,
+                        JumpOffset::new(pc, target)?,
+                    );
+
+                    self.code.push(lt.0 as u16)?;
+                    self.code.push((lt.0 >> 16) as u16)?;
+
+                    // Make sure we can pull 'result' off the stack
+                    let result = result.0;
+                    if let Some(result_v) = result {
+                        if self.control_frame_stack_len() == 0 && self.unreachable {
+                            return Ok(ResultType(result));
+                        } else if self.control_frame_stack_len() == 0 {
+                            return Err(ValidationError::BlockResultTypeMismatch);
+                        }
+
+                        let Some(got) = self.value_stack.last() else {
+                            return Err(ValidationError::BlockResultTypeMismatch);
+                        };
+
+                        if *got != result_v {
+                            return Err(ValidationError::BlockResultTypeMismatch);
+                        }
+                    }
+
+                    ResultType(result)
+                }
+                ControlFrame::UnreachableBlock | ControlFrame::UnreachableIf => {
+                    return Ok(ResultType(None));
+                }
+            }
+        };
+
+        Ok(result)
+    }
+
+    pub(crate) fn validate_block_result(
+        &mut self,
+        result: ResultType,
+        mut expected_stack_height: u16,
+    ) -> Result<(), ValidationError> {
+        if self.unreachable {
+            // Stack is polymorphic
+            // Reset the stack height and push the expected type
+            self.value_stack.truncate(expected_stack_height as usize);
+            if let Some(ty) = result.0 {
+                self.value_stack.push(ty)?;
+            }
+        } else {
+            if let Some(ty) = result.0 {
+                expected_stack_height += 1;
+                let Some(got) = self.value_stack.last() else {
+                    return Err(ValidationError::BlockResultTypeMismatch);
+                };
+
+                if *got != ty {
+                    return Err(ValidationError::BlockResultTypeMismatch);
+                }
             }
 
-            self.code.push(address.0 as u16)?;
-            self.code.push((address.0 >> 16) as u16)?;
+            if self.value_stack.len() != expected_stack_height as usize {
+                return Err(ValidationError::BlockResultTypeMismatch);
+            }
+        }
+
+        Ok(())
+    }
+
+    pub(crate) fn pop_stack_t(&mut self) -> Result<ValType, ValidationError> {
+        if self.unreachable {
+            return Ok(ValType::I32);
+        }
+
+        if self.control_frame_stack_len() == 0 {
+            return Err(ValidationError::StackUnderflow);
+        }
+
+        self.value_stack
+            .pop()
+            .ok_or(ValidationError::StackUnderflow)
+    }
+
+    pub(crate) fn pop_stack(&mut self, ty: ValType) -> Result<(), ValidationError> {
+        if self.control_frame_stack_len() == 0 && self.unreachable {
+            // We are grabing items from the polymorphic stack
+            // This will always succeed
+            return Ok(());
+        } else if self.control_frame_stack_len() == 0 {
+            return Err(ValidationError::StackUnderflow);
+        }
+
+        let top_ty = self
+            .value_stack
+            .pop()
+            .ok_or(ValidationError::StackUnderflow)?;
+
+        if top_ty != ty {
+            Err(ValidationError::TypeMismatch)
+        } else {
             Ok(())
         }
+    }
+
+    pub(crate) fn push_stack(&mut self, ty: ValType) -> Result<(), ValidationError> {
+        if self.unreachable {
+            return Ok(());
+        }
+
+        self.value_stack.push(ty)?;
+        let l = self.value_stack.len();
+        if l > (u16::MAX as usize) {
+            return Err(ValidationError::StackTooLarge);
+        } else if l > self.stack_highwater as usize {
+            self.stack_highwater = l as u16;
+        }
+
+        Ok(())
     }
 
     /// Emit an instruction with no operand.
     ///
     /// Format: `[opcode:8][0x00:8]`
-    pub(crate) fn push_no_operand(&mut self, op: u8) -> Result<(), AllocError> {
+    pub(crate) fn instr(&mut self, op: u8) -> Result<(), AllocError> {
         self.code.push((op as u16) << 8)
     }
 
-    pub(crate) fn push(&mut self, word: u16) -> Result<(), AllocError> {
-        self.code.push(word)
-    }
-
     /// Emit an instruction with an 8-bit operand
-    pub(crate) fn push_with_operand(&mut self, op: u8, operand: u8) -> Result<(), AllocError> {
-        self.code.push((op as u16) << 8 | (operand as u16))
+    pub(crate) fn instr_imm_8(&mut self, op: u8, imm: u8) -> Result<(), AllocError> {
+        self.code.push((op as u16) << 8 | (imm as u16))
     }
-
-    pub(crate) fn push_local(&mut self, op: u8, l: LocalVariable) -> Result<(), ValidationError> {
-        self.code.push(((op as u16) << 8) | (l.ty as u8 as u16))?;
-        self.code.push(l.frame_offset as u16)?;
-        Ok(())
-    }
-
-    // pub(crate) fn push_global(&mut self, op: u8, g: GlobalVariable) -> Result<(), ValidationError> {
-    //     let module = g.reference.module.0;
-    //     if module >= 0x80 {
-    //         // The final bit is reserved for the size type
-    //         return Err(ValidationError::IdxTooLarge);
-    //     }
-    //
-    //     let ty_enc = match g.ty {
-    //         ValType::I32 | ValType::F32 => 0x0,
-    //         ValType::I64 | ValType::F64 => 0x80,
-    //     };
-    //
-    //     self.code
-    //         .push(((op as u16) << 8) | ty_enc as u16 | module as u16)?;
-    //
-    //     self.code.push(g.reference.index)?;
-    //     Ok(())
-    // }
 
     /// Emit an instruction with an 8-bit or 16-bit index operand.
     ///
     /// Encoding:
     /// - If the index is between 0-254, the index will be encoded in 8-bits
     /// - Otherwise: `[opcode:8][255:8]` `[index:16]` (2 words)
-    pub(crate) fn push_8_or_16(&mut self, op: u8, idx: u32) -> Result<(), ValidationError> {
+    pub(crate) fn instr_imm_8_or_16(&mut self, op: u8, idx: u32) -> Result<(), ValidationError> {
         // We support up to 16-bit indexes
         if idx > 0xFFFF {
             Err(ValidationError::IdxTooLarge)
         } else if idx < 0xFF {
             // Encode in a single 16-bit word
-            self.code.push((op as u16) << 8 | (idx as u16))?;
+            self.instr_imm_8(op, idx as u8)?;
             Ok(())
         } else {
-            self.code.push((op as u16) << 8 | 0xFF)?;
+            self.instr_imm_8(op, 0xFF)?;
             self.code.push(idx as u16)?;
             Ok(())
         }
@@ -634,30 +1037,16 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
     /// Memory instructions (load/store) use this encoding to specify:
     /// - `align`: alignment exponent (must fit in 8 bits)
     /// - `offset`: 32-bit memory offset
-    pub(crate) fn push_mem(&mut self, op: u8, m: MemArg) -> Result<(), ValidationError> {
+    pub(crate) fn instr_mem(&mut self, op: u8, m: MemArg) -> Result<(), ValidationError> {
         // Check if the alignment exponent can fit into 8-bits
         if m.align >= 0xFF {
             Err(ValidationError::MemAlignTooLarge)
         } else {
-            self.code.push((op as u16) << 8 | (m.align as u16))?;
+            self.instr_imm_8(op, m.align as u8)?;
             self.code.push((m.offset & 0xFFFF) as u16)?;
             self.code.push(((m.offset >> 16) & 0xFFFF) as u16)?;
             Ok(())
         }
-    }
-
-    pub(crate) fn push_32(&mut self, i: u32) -> Result<(), AllocError> {
-        self.code.push(i as u16)?;
-        self.code.push((i >> 16) as u16)?;
-        Ok(())
-    }
-
-    pub(crate) fn push_64(&mut self, i: u64) -> Result<(), AllocError> {
-        self.code.push(i as u16)?;
-        self.code.push((i >> 16) as u16)?;
-        self.code.push((i >> 32) as u16)?;
-        self.code.push((i >> 48) as u16)?;
-        Ok(())
     }
 
     /// Push an operation with an 8-bit inline or 32-bit extended operand.
@@ -665,15 +1054,14 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
     /// Encoding:
     /// - Values 0-254: encoded inline in lower 8 bits of first word
     /// - Values 255+: 0xFF sentinel in first word, followed by full 32-bit value in next 2 words
-    pub(crate) fn push_8_or_32(&mut self, op: u8, i: u32) -> Result<(), AllocError> {
+    pub(crate) fn instr_imm_8_or_32(&mut self, op: u8, i: u32) -> Result<(), AllocError> {
         if i < 0xFF {
             // Inline encoding: operand fits in 8 bits (0-254)
-            let first = ((op as u16) << 8) | i as u16;
-            self.code.push(first)?;
+            self.instr_imm_8(op, i as u8)?;
         } else {
             // Extended encoding: 0xFF is sentinel, read full 32-bit value from next 2 words
-            self.code.push(((op as u16) << 8) | 0xFF)?;
-            self.push_32(i)?;
+            self.instr_imm_8(op, 0xFF)?;
+            self.write_32(i)?;
         }
 
         Ok(())
@@ -684,17 +1072,34 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
     /// Encoding:
     /// - Values 0-254: encoded inline in lower 8 bits of first word
     /// - Values 255+: 0xFF sentinel in first word, followed by full 64-bit value in next 4 words
-    pub(crate) fn push_8_or_64(&mut self, op: u8, i: u64) -> Result<(), AllocError> {
+    pub(crate) fn instr_imm_8_or_64(&mut self, op: u8, i: u64) -> Result<(), AllocError> {
         if i < 0xFF {
             // Inline encoding: operand fits in 8 bits (0-254)
-            let first = ((op as u16) << 8) | i as u16;
-            self.code.push(first)?;
+            self.instr_imm_8(op, i as u8)?;
         } else {
             // Extended encoding: 0xFF is sentinel, read full 64-bit value from next 4 words
-            self.code.push(((op as u16) << 8) | 0xFF)?;
-            self.push_64(i)?;
+            self.instr_imm_8(op, 0xFF)?;
+            self.write_64(i)?;
         }
 
+        Ok(())
+    }
+
+    pub(crate) fn write_16(&mut self, word: u16) -> Result<(), AllocError> {
+        self.code.push(word)
+    }
+
+    pub(crate) fn write_32(&mut self, i: u32) -> Result<(), AllocError> {
+        self.code.push(i as u16)?;
+        self.code.push((i >> 16) as u16)?;
+        Ok(())
+    }
+
+    pub(crate) fn write_64(&mut self, i: u64) -> Result<(), AllocError> {
+        self.code.push(i as u16)?;
+        self.code.push((i >> 16) as u16)?;
+        self.code.push((i >> 32) as u16)?;
+        self.code.push((i >> 48) as u16)?;
         Ok(())
     }
 }

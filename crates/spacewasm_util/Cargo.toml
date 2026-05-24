@@ -1,0 +1,9 @@
+[package]
+name = "spacewasm_util"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[dependencies]
+spacewasm = { path = "../.." }
+

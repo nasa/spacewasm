@@ -1,9 +1,10 @@
 use crate::exec::ir_reader::{IrReader, IrReaderError};
 use crate::*;
-use ::core::ops::{AddAssign, ControlFlow};
+use ::core::ops::ControlFlow;
 
 pub struct InterpreterState {
     pub pc: JumpTarget,
+    pub jumped: bool,
     pub fp: u32,
     pub sp: usize,
     pub stack: Stack,
@@ -24,6 +25,7 @@ impl InterpreterState {
             fp: 0x0,
             stack: Stack::new(stack_size),
             ram,
+            jumped: false,
         }
     }
 
@@ -71,7 +73,7 @@ impl InterpreterState {
         }
 
         for data in &m.data {
-            self.ram.store(data.offset, &data.init)?;
+            self.ram.store(data.offset as usize, &data.init)?;
         }
 
         self.fp = self.sp as u32;
@@ -82,12 +84,6 @@ impl InterpreterState {
 pub struct Interpreter<'store> {
     pub store: &'store Store,
     pub module: &'store Module,
-}
-
-impl AddAssign<u32> for JumpTarget {
-    fn add_assign(&mut self, rhs: u32) {
-        self.0.add_assign(rhs);
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -105,7 +101,13 @@ impl<'store> Interpreter<'store> {
         Interpreter { store, module }
     }
 
-    fn call_impl(&self, f: &Func, state: &mut InterpreterState) {
+    fn call_impl(&self, f: &Func, state: &mut InterpreterState) -> Result<(), InterpreterBreak> {
+        // Make sure we have enough stack space for the function call
+        let required_stack_space = f.stack_usage as usize + 2 + f.local_size as usize;
+        if state.stack.len() < state.sp + required_stack_space {
+            return Err(InterpreterBreak::Trap(TrapReason::StackOverflow));
+        }
+
         // The arguments are already at the top of the stack
         // We need to push the frame pointer and the return instruction pointer to the stack
         // We also encode the parameter size into the stack frame so that the return can unwind the stack
@@ -130,12 +132,73 @@ impl<'store> Interpreter<'store> {
 
         // Jump to the function's execution point
         state.pc = f.expr.0;
+        state.jumped = true;
+
+        Ok(())
+    }
+
+    /// This function performs an unconditional branch to a resolved label target.
+    ///
+    /// Label targets use a relative offset from their location in the IR. The program
+    /// counter is not in the same position as the label target offset is assuming.
+    /// For this reason there is an additional label_pc_offset needed to compute the final
+    /// program counter to jump to.
+    ///
+    /// # Arguments
+    ///
+    /// * `label_pc_offset`: Number of IR words between the current PC (instruction start)
+    ///                      and this label target.
+    /// * `addr`: Resolved label target to jump to
+    /// * `state`: Current interpreter state
+    ///
+    /// returns: Result<(), InterpreterBreak>
+    fn br_impl(
+        &self,
+        label_pc_offset: JumpOffset,
+        addr: LabelTarget,
+        state: &mut InterpreterState,
+    ) -> Result<(), InterpreterBreak> {
+        if addr.is_sentinel() {
+            return self.return_(addr.arity() as u8, state);
+        }
+
+        let depth = addr.depth() as usize;
+        state.sp -= depth;
+
+        // Copy the results to the stack location we are switching to
+        match addr.arity() {
+            LabelArity::None => {}
+            LabelArity::I32 => {
+                let w = state.stack.read_u32(state.sp + depth - 1);
+                state.stack.write_u32(state.sp, w);
+                state.sp += 1;
+            }
+            LabelArity::I64 => {
+                let w1 = state.stack.read_u32(state.sp + depth - 2);
+                let w2 = state.stack.read_u32(state.sp + depth - 1);
+
+                state.stack.write_u32(state.sp, w1);
+                state.stack.write_u32(state.sp + 1, w2);
+
+                state.sp += 2;
+            }
+        }
+
+        state.pc += label_pc_offset;
+        state.pc += addr.jump();
+        state.jumped = true;
+        Ok(())
     }
 
     /// Invoke a function with some parameters
     /// Warning! If this is being used as an interrupt rather than an entry point,
     /// make sure that the function does not return any values as that will cause stack pollution!
-    pub fn invoke(&self, state: &mut InterpreterState, f: &Func, params: &[Value]) {
+    pub fn invoke(
+        &self,
+        state: &mut InterpreterState,
+        f: &Func,
+        params: &[Value],
+    ) -> Result<(), InterpreterBreak> {
         for p in params {
             // TODO(tumbar) Validate input parameters
             match p {
@@ -158,7 +221,9 @@ impl<'store> Interpreter<'store> {
             }
         }
 
-        self.call_impl(f, state);
+        self.call_impl(f, state)?;
+        state.jumped = false;
+        Ok(())
     }
 }
 
@@ -187,12 +252,12 @@ impl<T: IrVisitor<State = InterpreterState, Error = InterpreterBreak>> Interpret
 
         // Run up to n instructions
         for _ in 0..n_instructions {
-            let old_pc = state.pc;
             let mut pc = state.pc;
 
             let i_res = reader.visit_instruction(state, &mut pc, self);
-            if old_pc != state.pc {
+            if state.jumped {
                 // We jumped, leave the PC
+                state.jumped = false;
             } else {
                 // Increment the program counter
                 state.pc = pc;
@@ -235,14 +300,18 @@ pub enum TrapReason {
     InvalidTableIndex,
     /// The function type in an indirect call does not match the function pointer's type
     InvalidTableFunctionType,
-    /// A dynamic br_table lookup was out of bounds
-    BrTableLookupFailed,
     /// An imported global could not be read
     GlobalGetFailed,
     /// An imported global could not be set
     GlobalSetFailed,
     /// A memory operation is out of bounds
     MemoryOutOfBounds,
+    /// Ran out of stack space
+    StackOverflow,
+    /// Attempting to convert Inf to integer
+    UnrepresentableResult,
+    /// Attempting to convert NaN to integer
+    BadConversionToInteger,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -267,6 +336,12 @@ impl From<HostFunctionBreak> for InterpreterBreak {
             HostFunctionBreak::Trap => InterpreterBreak::Trap(TrapReason::Host),
             HostFunctionBreak::Pause => InterpreterBreak::Pause,
         }
+    }
+}
+
+impl From<TrapReason> for InterpreterBreak {
+    fn from(err: TrapReason) -> Self {
+        InterpreterBreak::Trap(err)
     }
 }
 
@@ -314,6 +389,21 @@ macro_rules! instruction {
             let $b = state.stack.read_u32(state.sp) as i32;
             let $a = state.stack.read_u32(state.sp - 1) as i32;
             state.stack.write_u32(state.sp - 1, ($($t)*) as u32);
+            Ok(())
+        }
+    };
+    ($name:ident, i32 -> bool, $i:ident, $( $t:tt )*) => {
+        fn $name(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+            let $i = state.stack.read_u32(state.sp - 1) as i32;
+            state.stack.write_u32(state.sp - 1, if $($t)* { 1 } else { 0 });
+            Ok(())
+        }
+    };
+    ($name:ident, i64 -> bool, $i:ident, $( $t:tt )*) => {
+        fn $name(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+            state.sp -= 1;
+            let $i = state.stack.read_u64(state.sp - 1) as i32;
+            state.stack.write_u32(state.sp - 1, if $($t)* { 1 } else { 0 });
             Ok(())
         }
     };
@@ -371,13 +461,6 @@ macro_rules! instruction {
             Ok(())
         }
     };
-    ($name:ident, unreachable) => {
-        fn $name(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-            // This instruction does not exist in the IR
-            let _ = state;
-            unreachable!()
-        }
-    };
 }
 
 impl<'module> BaseVisitor for Interpreter<'module> {
@@ -389,24 +472,6 @@ impl<'module> BaseVisitor for Interpreter<'module> {
     }
 
     fn nop(&self, _: &mut Self::State) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    fn drop(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        state.sp -= 1;
-        Ok(())
-    }
-
-    fn select(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        state.sp -= 1;
-        let c = state.stack.read_u32(state.sp);
-        let val2 = state.stack.read_u32(state.sp - 1);
-        let val1 = state.stack.read_u32(state.sp - 2);
-        state.sp -= 2;
-        state
-            .stack
-            .write_u32(state.sp, if c != 0 { val1 } else { val2 });
-        state.sp += 1;
         Ok(())
     }
 
@@ -594,7 +659,13 @@ impl<'module> BaseVisitor for Interpreter<'module> {
         Ok(())
     }
 
-    instruction!(memory_grow, unreachable);
+    fn memory_grow(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        // TODO(tumbar) Hook memory growth to the optional host functionality
+        // Always fail the growth
+        // state.stack.write_u32(state.sp - 1, (-1i32) as u32);
+        state.stack.write_u32(state.sp - 1, 1);
+        Ok(())
+    }
 
     fn i32_const(&self, n: i32, state: &mut Self::State) -> Result<(), Self::Error> {
         state.stack.write_u32(state.sp, n as u32);
@@ -620,7 +691,7 @@ impl<'module> BaseVisitor for Interpreter<'module> {
         Ok(())
     }
 
-    instruction!(i32_eqz, i32 -> i32, i, if i == 0 { 1 } else { 0 });
+    instruction!(i32_eqz, i32 -> bool, i, i == 0);
     instruction!(i32_eq, i32, i32 -> bool, a, b, a == b);
     instruction!(i32_ne, i32, i32 -> bool, a, b, a != b);
     instruction!(i32_lt_s, i32, i32 -> bool, a, b, a < b);
@@ -631,7 +702,7 @@ impl<'module> BaseVisitor for Interpreter<'module> {
     instruction!(i32_le_u, i32, i32 -> bool, a, b, (a as u32) <= (b as u32));
     instruction!(i32_ge_s, i32, i32 -> bool, a, b, a >= b);
     instruction!(i32_ge_u, i32, i32 -> bool, a, b, (a as u32) >= (b as u32));
-    instruction!(i64_eqz, i64 -> i64, i, if i == 0 { 1 } else { 0 });
+    instruction!(i64_eqz, i64 -> bool, i, i == 0);
     instruction!(i64_eq, i64, i64 -> bool, a, b, a == b);
     instruction!(i64_ne, i64, i64 -> bool, a, b, a != b);
     instruction!(i64_lt_s, i64, i64 -> bool, a, b, a < b);
@@ -674,8 +745,20 @@ impl<'module> BaseVisitor for Interpreter<'module> {
             (a as u32).wrapping_div(b as u32)
         }
     } as i32);
-    instruction!(i32_rem_s, i32, i32 -> i32, a, b, a.wrapping_rem(b));
-    instruction!(i32_rem_u, i32, i32 -> i32, a, b, (a as u32).wrapping_rem(b as u32) as i32);
+    instruction!(i32_rem_s, i32, i32 -> i32, a, b, {
+        if b == 0 {
+            return Err(InterpreterBreak::Trap(TrapReason::DivideByZero))
+        } else {
+            a.wrapping_rem(b)
+        }
+    });
+    instruction!(i32_rem_u, i32, i32 -> i32, a, b, {
+        if b == 0 {
+            return Err(InterpreterBreak::Trap(TrapReason::DivideByZero))
+        } else {
+            (a as u32).wrapping_rem(b as u32) as i32
+        }
+    });
     instruction!(i32_and, i32, i32 -> i32, a, b, a & b);
     instruction!(i32_or, i32, i32 -> i32, a, b, a | b);
     instruction!(i32_xor, i32, i32 -> i32, a, b, a ^ b);
@@ -704,8 +787,20 @@ impl<'module> BaseVisitor for Interpreter<'module> {
             (a as u64).wrapping_div(b as u64) as i64
         }
     });
-    instruction!(i64_rem_s, i64, i64 -> i64, a, b, a.wrapping_rem(b));
-    instruction!(i64_rem_u, i64, i64 -> i64, a, b, (a as u64).wrapping_rem(b as u64) as i64);
+    instruction!(i64_rem_s, i64, i64 -> i64, a, b, {
+        if b == 0 {
+            return Err(InterpreterBreak::Trap(TrapReason::DivideByZero))
+        } else {
+            a.wrapping_rem(b)
+        }
+    });
+    instruction!(i64_rem_u, i64, i64 -> i64, a, b, {
+        if b == 0 {
+            return Err(InterpreterBreak::Trap(TrapReason::DivideByZero))
+        } else {
+            (a as u64).wrapping_rem(b as u64) as i64
+        }
+    });
     instruction!(i64_and, i64, i64 -> i64, a, b, a & b);
     instruction!(i64_or, i64, i64 -> i64, a, b, a | b);
     instruction!(i64_xor, i64, i64 -> i64, a, b, a ^ b);
@@ -714,12 +809,12 @@ impl<'module> BaseVisitor for Interpreter<'module> {
     instruction!(i64_shr_u, i64, i64 -> i64, a, b, (a as u64).wrapping_shr(b as u32) as i64);
     instruction!(i64_rotl, i64, i64 -> i64, a, b, a.rotate_left(b as u32));
     instruction!(i64_rotr, i64, i64 -> i64, a, b, a.rotate_right(b as u32));
-    instruction!(f32_abs, f32 -> f32, f, if f < 0.0 { -f } else { f });
+    instruction!(f32_abs, f32 -> f32, f, libm::fabsf(f));
     instruction!(f32_neg, f32 -> f32, f, -f);
     instruction!(f32_ceil, f32 -> f32, f, libm::ceilf(f));
     instruction!(f32_floor, f32 -> f32, f, libm::floorf(f));
     instruction!(f32_trunc, f32 -> f32, f, libm::truncf(f));
-    instruction!(f32_nearest, f32 -> f32, f, libm::roundf(f));
+    instruction!(f32_nearest, f32 -> f32, f, libm::rintf(f));
     instruction!(f32_sqrt, f32 -> f32, f, libm::sqrtf(f));
     instruction!(f32_add, f32, f32 -> f32, a, b, a + b);
     instruction!(f32_sub, f32, f32 -> f32, a, b, a - b);
@@ -728,12 +823,12 @@ impl<'module> BaseVisitor for Interpreter<'module> {
     instruction!(f32_min, f32, f32 -> f32, a, b, libm::fminf(a, b));
     instruction!(f32_max, f32, f32 -> f32, a, b, libm::fmaxf(a, b));
     instruction!(f32_copysign, f32, f32 -> f32, a, b, libm::copysignf(a, b));
-    instruction!(f64_abs, f64 -> f64, f, if f < 0.0 { -f } else { f });
+    instruction!(f64_abs, f64 -> f64, f, libm::fabs(f));
     instruction!(f64_neg, f64 -> f64, f, -f);
     instruction!(f64_ceil, f64 -> f64, f, libm::ceil(f));
     instruction!(f64_floor, f64 -> f64, f, libm::floor(f));
     instruction!(f64_trunc, f64 -> f64, f, libm::trunc(f));
-    instruction!(f64_nearest, f64 -> f64, f, libm::round(f));
+    instruction!(f64_nearest, f64 -> f64, f, libm::rint(f));
     instruction!(f64_sqrt, f64 -> f64, f, libm::sqrt(f));
     instruction!(f64_add, f64, f64 -> f64, a, b, a + b);
     instruction!(f64_sub, f64, f64 -> f64, a, b, a - b);
@@ -752,12 +847,32 @@ impl<'module> BaseVisitor for Interpreter<'module> {
 
     fn i32_trunc_f32_s(&self, state: &mut Self::State) -> Result<(), Self::Error> {
         let f = state.stack.read_f32(state.sp - 1);
+        if f.is_infinite() {
+            return Err(TrapReason::UnrepresentableResult.into());
+        }
+        if f.is_nan() {
+            return Err(TrapReason::BadConversionToInteger.into());
+        }
+        if f >= 2147483648.0f32 || f <= -2147483904.0f32 {
+            return Err(TrapReason::UnrepresentableResult.into());
+        }
+
         state.stack.write_u32(state.sp - 1, f as i32 as u32);
         Ok(())
     }
 
     fn i32_trunc_f32_u(&self, state: &mut Self::State) -> Result<(), Self::Error> {
         let f = state.stack.read_f32(state.sp - 1);
+        if f.is_infinite() {
+            return Err(TrapReason::UnrepresentableResult.into());
+        }
+        if f.is_nan() {
+            return Err(TrapReason::BadConversionToInteger.into());
+        }
+        if f >= 4294967296.0f32 || f <= -1.0f32 {
+            return Err(TrapReason::UnrepresentableResult.into());
+        }
+
         state.stack.write_u32(state.sp - 1, f as u32);
         Ok(())
     }
@@ -765,6 +880,15 @@ impl<'module> BaseVisitor for Interpreter<'module> {
     fn i32_trunc_f64_s(&self, state: &mut Self::State) -> Result<(), Self::Error> {
         state.sp -= 1;
         let f = state.stack.read_f64(state.sp - 1);
+        if f.is_infinite() {
+            return Err(TrapReason::UnrepresentableResult.into());
+        }
+        if f.is_nan() {
+            return Err(TrapReason::BadConversionToInteger.into());
+        }
+        if f >= 2147483648.0f64 || f <= -2147483649.0f64 {
+            return Err(TrapReason::UnrepresentableResult.into());
+        }
         state.stack.write_u32(state.sp - 1, f as i32 as u32);
         Ok(())
     }
@@ -772,6 +896,16 @@ impl<'module> BaseVisitor for Interpreter<'module> {
     fn i32_trunc_f64_u(&self, state: &mut Self::State) -> Result<(), Self::Error> {
         state.sp -= 1;
         let f = state.stack.read_f64(state.sp - 1);
+        if f.is_infinite() {
+            return Err(TrapReason::UnrepresentableResult.into());
+        }
+        if f.is_nan() {
+            return Err(TrapReason::BadConversionToInteger.into());
+        }
+        if f >= 4294967296.0f64 || f <= -1.0f64 {
+            return Err(TrapReason::UnrepresentableResult.into());
+        }
+
         state.stack.write_u32(state.sp - 1, f as u32);
         Ok(())
     }
@@ -794,6 +928,16 @@ impl<'module> BaseVisitor for Interpreter<'module> {
 
     fn i64_trunc_f32_s(&self, state: &mut Self::State) -> Result<(), Self::Error> {
         let f = state.stack.read_f32(state.sp - 1);
+        if f.is_infinite() {
+            return Err(TrapReason::UnrepresentableResult.into());
+        }
+        if f.is_nan() {
+            return Err(TrapReason::BadConversionToInteger.into());
+        }
+        if f >= 9223372036854775808.0f32 || f <= -9223373136366403584.0f32 {
+            return Err(TrapReason::UnrepresentableResult.into());
+        }
+
         let i = f as i64 as u64;
         state.stack.write_u64(state.sp - 1, i);
         state.sp += 1;
@@ -802,6 +946,16 @@ impl<'module> BaseVisitor for Interpreter<'module> {
 
     fn i64_trunc_f32_u(&self, state: &mut Self::State) -> Result<(), Self::Error> {
         let f = state.stack.read_f32(state.sp - 1);
+        if f.is_infinite() {
+            return Err(TrapReason::UnrepresentableResult.into());
+        }
+        if f.is_nan() {
+            return Err(TrapReason::BadConversionToInteger.into());
+        }
+        if f >= 18446744073709551616.0f32 || f <= -1.0f32 {
+            return Err(TrapReason::UnrepresentableResult.into());
+        }
+
         let u = f as u64;
         state.stack.write_u64(state.sp - 1, u);
         state.sp += 1;
@@ -810,6 +964,16 @@ impl<'module> BaseVisitor for Interpreter<'module> {
 
     fn i64_trunc_f64_s(&self, state: &mut Self::State) -> Result<(), Self::Error> {
         let f = state.stack.read_f64(state.sp - 2);
+        if f.is_infinite() {
+            return Err(TrapReason::UnrepresentableResult.into());
+        }
+        if f.is_nan() {
+            return Err(TrapReason::BadConversionToInteger.into());
+        }
+        if f >= 9223372036854775808.0f64 || f <= -9223372036854777856.0f64 {
+            return Err(TrapReason::UnrepresentableResult.into());
+        }
+
         let i = f as i64 as u64;
         state.stack.write_u64(state.sp - 2, i);
         Ok(())
@@ -817,6 +981,16 @@ impl<'module> BaseVisitor for Interpreter<'module> {
 
     fn i64_trunc_f64_u(&self, state: &mut Self::State) -> Result<(), Self::Error> {
         let f = state.stack.read_f64(state.sp - 2);
+        if f.is_infinite() {
+            return Err(TrapReason::UnrepresentableResult.into());
+        }
+        if f.is_nan() {
+            return Err(TrapReason::BadConversionToInteger.into());
+        }
+        if f >= 18446744073709551616.0f64 || f <= -1.0f64 {
+            return Err(TrapReason::UnrepresentableResult.into());
+        }
+
         let u = f as u64;
         state.stack.write_u64(state.sp - 2, u);
         Ok(())
@@ -851,6 +1025,7 @@ impl<'module> BaseVisitor for Interpreter<'module> {
     fn f32_demote_f64(&self, state: &mut Self::State) -> Result<(), Self::Error> {
         state.sp -= 1;
         let f = state.stack.read_f64(state.sp - 1);
+        let f = if f.is_nan() { f64::NAN } else { f };
         state.stack.write_f32(state.sp - 1, f as f32);
         Ok(())
     }
@@ -883,38 +1058,76 @@ impl<'module> BaseVisitor for Interpreter<'module> {
 
     fn f64_promote_f32(&self, state: &mut Self::State) -> Result<(), Self::Error> {
         let f = state.stack.read_f32(state.sp - 1);
+        let f = if f.is_nan() { f32::NAN } else { f };
         state.stack.write_f64(state.sp - 1, f as f64);
         state.sp += 1;
         Ok(())
     }
-
-    instruction!(i32_reinterpret_f32, unreachable);
-    instruction!(i64_reinterpret_f64, unreachable);
-    instruction!(f32_reinterpret_i32, unreachable);
-    instruction!(f64_reinterpret_i64, unreachable);
 }
 
 impl<'module> IrVisitor for Interpreter<'module> {
-    fn if_(&self, false_address: JumpTarget, state: &mut Self::State) -> Result<(), Self::Error> {
+    fn drop(&self, ty: ValType, state: &mut Self::State) -> Result<(), Self::Error> {
+        state.sp -= match ty {
+            ValType::I32 | ValType::F32 => 1,
+            ValType::I64 | ValType::F64 => 2,
+        };
+        Ok(())
+    }
+
+    fn select(&self, ty: ValType, state: &mut Self::State) -> Result<(), Self::Error> {
         state.sp -= 1;
-        let v = state.stack.read_u32(state.sp);
-        if v == 0 {
-            state.pc = false_address;
+        let c = state.stack.read_u32(state.sp);
+
+        match ty {
+            ValType::I32 | ValType::F32 => {
+                if c != 0 {
+                    // Use val1 which is already in the right spot
+                    state.sp -= 1;
+                } else {
+                    // Move val2 to val1's spot
+                    let val2 = state.stack.read_u32(state.sp - 1);
+                    state.stack.write_u32(state.sp - 2, val2);
+                    state.sp -= 1;
+                }
+            }
+            ValType::I64 | ValType::F64 => {
+                if c != 0 {
+                    // Use val1 which is already in the right spot
+                    state.sp -= 2;
+                } else {
+                    // Move val2 to val1's spot
+                    let val2 = state.stack.read_u64(state.sp - 2);
+                    state.stack.write_u64(state.sp - 4, val2);
+                    state.sp -= 2;
+                }
+            }
         }
 
         Ok(())
     }
 
-    fn br(&self, addr: JumpTarget, state: &mut Self::State) -> Result<(), Self::Error> {
-        state.pc = addr;
+    fn if_(&self, false_address: LabelTarget, state: &mut Self::State) -> Result<(), Self::Error> {
+        state.sp -= 1;
+        let v = state.stack.read_u32(state.sp);
+        if v == 0 {
+            // No need to perform any result copies or stack truncation
+            state.pc += JumpOffset::offset(1);
+            state.pc += false_address.jump();
+            state.jumped = true;
+        }
+
         Ok(())
     }
 
-    fn br_if(&self, true_address: JumpTarget, state: &mut Self::State) -> Result<(), Self::Error> {
+    fn br(&self, addr: LabelTarget, state: &mut Self::State) -> Result<(), Self::Error> {
+        self.br_impl(JumpOffset::offset(1), addr, state)
+    }
+
+    fn br_if(&self, true_address: LabelTarget, state: &mut Self::State) -> Result<(), Self::Error> {
         state.sp -= 1;
         let v = state.stack.read_u32(state.sp);
         if v != 0 {
-            state.pc = true_address;
+            self.br_impl(JumpOffset::offset(1), true_address, state)?;
         }
 
         Ok(())
@@ -922,15 +1135,23 @@ impl<'module> IrVisitor for Interpreter<'module> {
 
     fn br_table(
         &self,
-        cases: impl FnOnce(u16) -> Result<JumpTarget, ()>,
+        n: u32,
+        cases: impl FnOnce(u32) -> LabelTarget,
         state: &mut Self::State,
     ) -> Result<(), Self::Error> {
         state.sp -= 1;
         let v = state.stack.read_u32(state.sp);
-        let addr =
-            cases(v as u16).map_err(|_| InterpreterBreak::Trap(TrapReason::BrTableLookupFailed))?;
+        let label = cases(v);
 
-        state.pc = addr;
+        if v < n {
+            // A standard case, compute the offset from the current PC
+            // Instruction opcode + default case (2 words) + previous cases (each 2 words)
+            self.br_impl(JumpOffset::offset(1 + 2 + (2 * v as i32)), label, state)?;
+        } else {
+            // The default case, constant offset
+            self.br_impl(JumpOffset::offset(1), label, state)?;
+        }
+
         Ok(())
     }
 
@@ -959,6 +1180,7 @@ impl<'module> IrVisitor for Interpreter<'module> {
         if return_pc == JumpTarget::SENTINEL {
             state.sp = parameter_start;
             state.pc = JumpTarget::SENTINEL;
+            state.jumped = true;
             let return_value = match return_size {
                 0 => RawValue(0),
                 1 => RawValue(state.stack.read_u32(state.sp) as u64),
@@ -971,15 +1193,14 @@ impl<'module> IrVisitor for Interpreter<'module> {
         } else {
             state.sp = parameter_start + return_size;
             state.pc = return_pc + 2; // +2 to skip over the call or call_indirect
+            state.jumped = true;
             Ok(())
         }
     }
 
     fn call(&self, x: u16, state: &mut Self::State) -> Result<(), Self::Error> {
-        // TODO(tumbar) Check stack usage
         let f = &self.module.functions[x as usize];
-        self.call_impl(f, state);
-        Ok(())
+        self.call_impl(f, state)
     }
 
     fn call_host(
@@ -1061,7 +1282,7 @@ impl<'module> IrVisitor for Interpreter<'module> {
         // Look up the internal or host function
         let f_ref = self.module.table[i];
         match f_ref {
-            FuncRef::Func(fi) => {
+            Ref::Module(fi) => {
                 let f = &self.module.functions[fi as usize];
 
                 // Validate the function is the proper type
@@ -1073,10 +1294,9 @@ impl<'module> IrVisitor for Interpreter<'module> {
                 }
 
                 // Call the function
-                self.call_impl(f, state);
-                Ok(())
+                self.call_impl(f, state)
             }
-            FuncRef::HostFunc { module, index } => {
+            Ref::Host { module, index } => {
                 // Make sure the type matches our expectations (runtime validation)
                 let m = &self.store.host_modules[module.0 as usize];
                 let f = &m.functions[index as usize];
@@ -1087,7 +1307,7 @@ impl<'module> IrVisitor for Interpreter<'module> {
                 self.call_host(module, i as u16, state)
             }
             // TODO(tumbar) This is currently disallowed at compile time
-            FuncRef::ExternFunc { .. } => unreachable!(),
+            Ref::Extern { .. } => unreachable!(),
         }
     }
 

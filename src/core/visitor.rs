@@ -1,4 +1,6 @@
-use crate::{FuncIdx, GlobalIdx, JumpTarget, LabelIdx, LocalIdx, MemArg, ResultType, TypeIdx, ValType};
+use crate::{
+    FuncIdx, GlobalIdx, LabelIdx, LabelTarget, LocalIdx, MemArg, ResultType, TypeIdx, ValType,
+};
 
 /// A convenience macro for defining the visitor function for a decoded
 /// WebAssembly instruction from any intermediate representation.
@@ -30,11 +32,7 @@ pub trait BaseVisitor {
     visit_fn!(unreachable);
     visit_fn!(nop);
 
-    // Control flow is not handled by the base visitor
-
-    // Parametric instructions
-    visit_fn!(drop);
-    visit_fn!(select);
+    // Control flow & parametric instructions are not handled by the base visitor
 
     // Memory instructions - loads
     visit_fn!(i32_load, m: MemArg);
@@ -209,15 +207,15 @@ pub trait BaseVisitor {
     visit_fn!(f64_convert_i64_s);
     visit_fn!(f64_convert_i64_u);
     visit_fn!(f64_promote_f32);
-    visit_fn!(i32_reinterpret_f32);
-    visit_fn!(i64_reinterpret_f64);
-    visit_fn!(f32_reinterpret_i32);
-    visit_fn!(f64_reinterpret_i64);
 }
 
 /// An abstraction over WASM Bytecode.
 /// Used to implement validation and compilation of WASM bytecode.
 pub trait WasmVisitor: BaseVisitor {
+    // Parametric instructions
+    visit_fn!(drop);
+    visit_fn!(select);
+
     visit_fn!(enter_block, block_type: ResultType);
     visit_fn!(exit_block);
     visit_fn!(finish);
@@ -238,6 +236,12 @@ pub trait WasmVisitor: BaseVisitor {
     visit_fn!(local_tee, x: LocalIdx);
     visit_fn!(global_get, x: GlobalIdx);
     visit_fn!(global_set, x: GlobalIdx);
+
+    // Validation instructions
+    visit_fn!(i32_reinterpret_f32);
+    visit_fn!(i64_reinterpret_f64);
+    visit_fn!(f32_reinterpret_i32);
+    visit_fn!(f64_reinterpret_i64);
 }
 
 #[derive(Debug)]
@@ -267,24 +271,31 @@ impl HostModuleRef {
     }
 }
 
-/// A reference to a function in the WASM store
+/// A reference to a symbol in the WASM store
 #[derive(Debug, Clone, Copy)]
-pub enum FuncRef {
-    /// A function in the current WASM module
-    Func(u16),
-    /// A host function in another WASM module
-    HostFunc { module: HostModuleRef, index: u16 },
-    /// A function in another WASM module
-    ExternFunc { module: ExternalModuleRef, index: u16 },
+pub enum Ref {
+    /// A symbol in the current WASM module
+    Module(u16),
+    /// A symbol in an external host module
+    Host { module: HostModuleRef, index: u16 },
+    /// A symbol in another WASM module
+    Extern {
+        module: ExternalModuleRef,
+        index: u16,
+    },
 }
 
 /// An abstraction over IR Bytecode.
 /// Used to implement the interpreter.
 pub trait IrVisitor: BaseVisitor {
-    visit_fn!(if_, false_address: JumpTarget);
-    visit_fn!(br, addr: JumpTarget);
-    visit_fn!(br_if, true_address: JumpTarget);
-    visit_fn!(br_table, cases: impl FnOnce(u16) -> Result<JumpTarget, ()>);
+    // Parametric instructions
+    visit_fn!(drop, ty: ValType);
+    visit_fn!(select, ty: ValType);
+
+    visit_fn!(if_, false_address: LabelTarget);
+    visit_fn!(br, addr: LabelTarget);
+    visit_fn!(br_if, true_address: LabelTarget);
+    visit_fn!(br_table, n: u32, cases: impl FnOnce(u32) -> LabelTarget);
 
     visit_fn!(return_, return_size: u8);
     visit_fn!(call, x: u16);

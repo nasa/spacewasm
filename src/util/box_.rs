@@ -58,20 +58,19 @@ impl<T: Sized> Box<T, GlobalAllocator> {
 impl<T: Sized, A: Allocator> Box<T, A> {
     /// Create a new box with a custom allocator
     pub fn new_in(alloc: A, value: T) -> Result<Box<T, A>, AllocError> {
-        // We don't want to handle ZST
-        const {
-            assert!(size_of::<T>() != 0);
+        if size_of::<T>() == 0 {
+            Ok(Box { ptr: ptr::null_mut(), alloc })
+        } else {
+            let layout = Layout::new::<T>();
+            let ptr = unsafe { alloc.alloc(layout)? } as *mut T;
+
+            // Write the value into the allocated memory
+            unsafe {
+                ptr::write(ptr, value);
+            }
+
+            Ok(Box { ptr, alloc })
         }
-
-        let layout = Layout::new::<T>();
-        let ptr = unsafe { alloc.alloc(layout)? } as *mut T;
-
-        // Write the value into the allocated memory
-        unsafe {
-            ptr::write(ptr, value);
-        }
-
-        Ok(Box { ptr, alloc })
     }
 }
 

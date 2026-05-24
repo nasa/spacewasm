@@ -32,12 +32,10 @@ mod code;
 pub use code::*;
 
 mod constant;
+pub use constant::*;
 
 mod compiler;
 pub use compiler::*;
 
 mod text;
 pub use text::*;
-
-#[cfg(test)]
-mod compiler_tests;

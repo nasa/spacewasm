@@ -5,7 +5,7 @@ pub struct Module {
     pub index: u32,
     pub types: Vec<FuncType>,
     pub functions: Vec<Func>,
-    pub table: Vec<FuncRef>,
+    pub table: Vec<Ref>,
     pub memory: Option<MemType>,
     pub globals: Vec<Global>,
     pub imports: Vec<Import>,
@@ -14,6 +14,7 @@ pub struct Module {
     pub start: Option<FuncIdx>,
     pub text: Vec<Box<TextPage>>,
     pub wasm_size: u32,
+    pub table_defined: bool,
     pub final_page_offset: u32,
 }
 
@@ -45,8 +46,9 @@ impl CustomSectionHandler for DefaultCustomSectionHandler {
 impl Module {
     pub fn new<const N: usize>(
         name: &str,
-        stream: &mut dyn Stream,
+        stream: &mut dyn WasmStream,
         store: &Store,
+        compiler_options: CompilerOptions,
     ) -> Result<Module, ParseError> {
         let mut wasm = Reader::new(stream);
 
@@ -56,6 +58,7 @@ impl Module {
             store,
             &mut DefaultCustomSectionHandler,
             None,
+            compiler_options,
         )
         .map_err(|err| ParseError {
             offset: wasm.offset() as u32,
@@ -65,8 +68,9 @@ impl Module {
 
     pub fn new_with_statistics<const N: usize>(
         name: &str,
-        stream: &mut dyn Stream,
+        stream: &mut dyn WasmStream,
         store: &Store,
+        compiler_options: CompilerOptions,
     ) -> Result<(Module, [MemoryStatistics; SectionKind::N as usize]), ParseError> {
         let mut wasm = Reader::new(stream);
         let mut stats: [MemoryStatistics; SectionKind::N as usize] = Default::default();
@@ -77,6 +81,7 @@ impl Module {
             store,
             &mut DefaultCustomSectionHandler,
             Some(&mut stats),
+            compiler_options,
         )
         .map_err(|err| ParseError {
             offset: wasm.offset() as u32,
@@ -92,6 +97,7 @@ impl Module {
         store: &Store,
         custom_handler: &mut dyn CustomSectionHandler,
         mut stats: Option<&mut [MemoryStatistics; SectionKind::N as usize]>,
+        compiler_options: CompilerOptions,
     ) -> Result<Module, SectionDecodeError> {
         let magic = wasm.strip_bytes::<4>()?;
         if magic != [0x00, 0x61, 0x73, 0x6D] {
@@ -128,6 +134,7 @@ impl Module {
             start: None,
             wasm_size: 0,
             final_page_offset: 0,
+            table_defined: false,
         };
 
         let mut last_section: SectionKind = SectionKind::Custom;
@@ -172,6 +179,7 @@ impl Module {
                     section_ty,
                     custom_handler,
                     &mut builder,
+                    compiler_options,
                 )
                 .map_err(|e| e.with_section(section_ty))?;
 
@@ -210,6 +218,7 @@ impl Module {
         section_ty: SectionKind,
         custom_handler: &mut dyn CustomSectionHandler,
         code_builder: &mut CodeBuilder<PN>,
+        compiler_options: CompilerOptions,
     ) -> Result<(), ValidationError> {
         use SectionKind::*;
         match section_ty {
@@ -227,12 +236,13 @@ impl Module {
             }
             Table => {
                 self.table = TableSection::read(wasm)?;
+                self.table_defined = true;
             }
             Memory => {
                 self.memory = MemorySection::read(wasm)?;
             }
             Global => {
-                self.globals = GlobalSection::read(wasm)?;
+                GlobalSection::read(wasm, store, self)?;
             }
             Export => {
                 self.exports = ExportSection::read(wasm)?;
@@ -241,13 +251,13 @@ impl Module {
                 self.start.replace(FuncIdx::read(wasm)?);
             }
             Element => {
-                ElementSection::read(wasm, self)?;
+                ElementSection::read(wasm, store, self)?;
             }
             Code => {
-                CodeSection::read::<PN>(wasm, code_builder, store, self)?;
+                CodeSection::read::<PN>(wasm, code_builder, store, self, compiler_options)?;
             }
             Data => {
-                self.data = DataSection::read(wasm)?;
+                self.data = DataSection::read(wasm, store, self)?;
             }
             _ => unreachable!(),
         }
@@ -255,7 +265,7 @@ impl Module {
         Ok(())
     }
 
-    pub fn get_func_ref(&self, x: FuncIdx) -> Result<FuncRef, ValidationError> {
+    pub fn get_func_ref(&self, x: FuncIdx) -> Option<Ref> {
         // Check if this function index is a host function or an internal function
         let mut n = 0;
         for f in self.imports.iter() {
@@ -264,7 +274,7 @@ impl Module {
                     if x.0 == n {
                         // We are at the proper index, this is our function
                         // This import has already been resolved to an embedded function
-                        return Ok(FuncRef::ExternFunc {
+                        return Some(Ref::Extern {
                             module: *module,
                             index: *index,
                         });
@@ -274,7 +284,7 @@ impl Module {
                 }
                 Import::HostFunc { module, index } => {
                     if x.0 == n {
-                        return Ok(FuncRef::HostFunc {
+                        return Some(Ref::Host {
                             module: *module,
                             index: *index,
                         });
@@ -290,9 +300,50 @@ impl Module {
         let i = (x.0 - n) as usize;
 
         if i >= self.functions.len() {
-            Err(ValidationError::FunctionIdxOutOfRange)
+            None
         } else {
-            Ok(FuncRef::Func(i as u16))
+            Some(Ref::Module(i as u16))
+        }
+    }
+
+    pub fn get_global_ref(&self, x: GlobalIdx) -> Option<Ref> {
+        // Check if this global index is a host function or an internal global
+        let mut n = 0;
+        for f in self.imports.iter() {
+            match f {
+                Import::Global { module, index } => {
+                    if x.0 == n {
+                        // We are at the proper index, this is our global
+                        // This import has already been resolved to an embedded global
+                        return Some(Ref::Extern {
+                            module: *module,
+                            index: *index,
+                        });
+                    }
+
+                    n += 1;
+                }
+                Import::HostGlobal { module, index } => {
+                    if x.0 == n {
+                        return Some(Ref::Host {
+                            module: *module,
+                            index: *index,
+                        });
+                    }
+
+                    n += 1;
+                }
+                _ => {}
+            }
+        }
+
+        // 'n' is the number of imported globals which offset the internal global index
+        let i = (x.0 - n) as usize;
+
+        if i >= self.globals.len() {
+            None
+        } else {
+            Some(Ref::Module(i as u16))
         }
     }
 
@@ -470,14 +521,17 @@ impl Func {
             .ok_or(ValidationError::TypeIdxOutOfRange)?;
 
         let parameter_size = ty.params.iter().fold(0, |sum, a_ty| sum + a_ty.size()) / 4;
-        let return_size = ty.returns.iter().fold(0, |sum, a_ty| sum + a_ty.size()) / 4;
+
+        let return_ty = if ty.returns.len() > 1 {
+            return Err(ValidationError::FunctionReturnsTooLarge);
+        } else if ty.returns.len() == 0 {
+            None
+        } else {
+            Some(ty.returns[0].clone())
+        };
 
         if parameter_size > 0xFFFF {
             return Err(ValidationError::FunctionParametersTooLarge);
-        }
-
-        if return_size > 0xFF {
-            return Err(ValidationError::FunctionReturnsTooLarge);
         }
 
         Ok(Func {
@@ -485,7 +539,7 @@ impl Func {
             stack_usage: 0,
             local_size: 0,
             parameter_size: parameter_size as u16,
-            return_size: return_size as u8,
+            return_ty,
             locals: Vec::zero(),
             expr: Expr::zero(),
         })
@@ -502,7 +556,7 @@ impl FunctionSection {
 pub struct TableSection;
 
 impl TableSection {
-    pub fn read(wasm: &mut Reader) -> Result<Vec<FuncRef>, ValidationError> {
+    pub fn read(wasm: &mut Reader) -> Result<Vec<Ref>, ValidationError> {
         let n = wasm.read_u32()?;
         if n == 0 {
             Ok(Vec::zero())
@@ -510,7 +564,7 @@ impl TableSection {
             let table_type = TableType::read(wasm)?;
             let mut v = Vec::new(table_type.limits.min)?;
             for _ in 0..table_type.limits.min {
-                v.push(FuncRef::Func(0xFFFF))
+                v.push(Ref::Module(0xFFFF))
             }
 
             Ok(v)
@@ -548,9 +602,23 @@ pub struct Global {
 }
 
 impl Global {
-    pub fn read(wasm: &mut Reader, addr: u16) -> Result<Self, ValidationError> {
+    pub fn value(&self) -> Value {
+        match self.type_.ty {
+            ValType::I32 => Value::I32(self.init as i32),
+            ValType::I64 => Value::I64(self.init as i64),
+            ValType::F32 => Value::F32(f32::from_bits(self.init as u32)),
+            ValType::F64 => Value::F64(f64::from_bits(self.init)),
+        }
+    }
+
+    pub fn read(
+        wasm: &mut Reader,
+        addr: u16,
+        store: &Store,
+        module: &Module,
+    ) -> Result<Self, ValidationError> {
         let type_ = GlobalType::read(wasm)?;
-        let init = Expr::read_constant(wasm)?;
+        let init = Expr::read_constant(wasm, store, module)?;
         let init = match init {
             Value::I32(i) => {
                 if type_.ty != ValType::I32 {
@@ -588,13 +656,23 @@ impl Global {
 
 pub struct GlobalSection;
 impl GlobalSection {
-    pub fn read(wasm: &mut Reader) -> Result<Vec<Global>, ValidationError> {
+    pub fn read(
+        wasm: &mut Reader,
+        store: &Store,
+        module: &mut Module,
+    ) -> Result<(), ValidationError> {
         let mut addr = 0;
-        wasm.read_vec(|r| {
-            let g = Global::read(r, addr)?;
+        let len = wasm.read_u32()?;
+        module.globals = Vec::new(len)?;
+
+        for _ in 0..len {
+            let g = Global::read(wasm, addr, store, module)?;
             addr += (g.type_.ty.size() / 4) as u16;
-            Ok(g)
-        })
+
+            module.globals.push(g);
+        }
+
+        Ok(())
     }
 }
 
@@ -640,13 +718,21 @@ impl ExportSection {
 pub struct Element;
 
 impl Element {
-    pub fn read(wasm: &mut Reader, module: &mut Module) -> Result<(), ValidationError> {
+    pub fn read(
+        wasm: &mut Reader,
+        store: &Store,
+        module: &mut Module,
+    ) -> Result<(), ValidationError> {
         let table = TableIdx::read(wasm)?;
         if table.0 != 0 {
             return Err(ValidationError::InvalidTableIndex);
         }
 
-        let Value::I32(offset) = Expr::read_constant(wasm)? else {
+        if !module.table_defined {
+            return Err(ValidationError::TableNotDefined);
+        }
+
+        let Value::I32(offset) = Expr::read_constant(wasm, store, module)? else {
             return Err(ValidationError::InvalidElementOffset);
         };
 
@@ -657,8 +743,10 @@ impl Element {
 
         // Write the function indexes into the table
         for (i, idx) in init.iter().enumerate() {
-            let r = module.get_func_ref(*idx)?;
-            if let FuncRef::ExternFunc { .. } = &r {
+            let r = module
+                .get_func_ref(*idx)
+                .ok_or(ValidationError::FunctionIdxOutOfRange)?;
+            if let Ref::Extern { .. } = &r {
                 return Err(ValidationError::FunctionCallsAcrossModuleNotSupportedYet);
             }
 
@@ -671,10 +759,14 @@ impl Element {
 
 pub struct ElementSection;
 impl ElementSection {
-    pub fn read(wasm: &mut Reader, module: &mut Module) -> Result<(), ValidationError> {
+    pub fn read(
+        wasm: &mut Reader,
+        store: &Store,
+        module: &mut Module,
+    ) -> Result<(), ValidationError> {
         let len = wasm.read_u32()?;
         for _ in 0..len {
-            Element::read(wasm, module)?;
+            Element::read(wasm, store, module)?;
         }
 
         Ok(())
@@ -689,6 +781,7 @@ impl CodeSection {
         builder: &mut CodeBuilder<N>,
         store: &Store,
         module: &mut Module,
+        compiler_options: CompilerOptions,
     ) -> Result<(), ValidationError> {
         let n = wasm.read_u32()?;
         if n as usize != module.functions.len() {
@@ -696,7 +789,7 @@ impl CodeSection {
         }
 
         for i in 0..n as usize {
-            module.read_function_code(wasm, store, builder, i)?;
+            module.read_function_code(wasm, store, builder, i, compiler_options)?;
         }
 
         Ok(())
@@ -704,18 +797,22 @@ impl CodeSection {
 }
 
 pub struct Data {
-    pub offset: usize,
+    pub offset: u32,
     pub init: Vec<u8>,
 }
 
 impl Data {
-    pub fn read(wasm: &mut Reader) -> Result<Self, ValidationError> {
+    pub fn read(
+        wasm: &mut Reader,
+        store: &Store,
+        module: &Module,
+    ) -> Result<Self, ValidationError> {
         let mem = MemIdx::read(wasm)?;
         if mem.0 != 0 {
             return Err(ValidationError::InvalidMemIndex);
         }
 
-        let offset = Expr::read_constant(wasm)?;
+        let offset = Expr::read_constant(wasm, store, module)?;
         let init = wasm.read_vec(|w| w.read_u8())?;
 
         let offset = match offset {
@@ -724,14 +821,16 @@ impl Data {
                     return Err(ValidationError::InvalidNegativeMemOffset);
                 }
 
-                i as usize
+                i as u32
             }
             Value::I64(i) => {
                 if i < 0 {
                     return Err(ValidationError::InvalidNegativeMemOffset);
+                } else if i > (u32::MAX as i64) {
+                    return Err(ValidationError::InvalidMemOffset);
                 }
 
-                i as usize
+                i as u32
             }
             Value::F32(_) => return Err(ValidationError::InvalidMemOffsetType),
             Value::F64(_) => return Err(ValidationError::InvalidMemOffsetType),
@@ -743,7 +842,11 @@ impl Data {
 
 pub struct DataSection;
 impl DataSection {
-    pub fn read(wasm: &mut Reader) -> Result<Vec<Data>, ValidationError> {
-        wasm.read_vec(|r| Data::read(r))
+    pub fn read(
+        wasm: &mut Reader,
+        store: &Store,
+        module: &Module,
+    ) -> Result<Vec<Data>, ValidationError> {
+        wasm.read_vec(|r| Data::read(r, store, module))
     }
 }

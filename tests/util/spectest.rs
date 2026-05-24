@@ -1,9 +1,10 @@
 use serde::{Deserialize, Serialize};
 use spacewasm::{
-    global_allocator, vec, AllocError, Allocator, ExportDesc, FuncRef, GlobalValue,
-    GlobalValueError, HostFunction, HostGlobal, HostModule, InnerVec, Interpreter,
-    InterpreterBreak, InterpreterResult, InterpreterRunner, InterpreterState, Memory, MemoryStatistics, Module,
-    ParseError, ReaderError, Store, Stream, TrapReason, ValType, ValidationError, Value,
+    global_allocator, vec, AllocError, Allocator, CompilerOptions, ConstantExprError, ExportDesc,
+    Ref, GlobalValue, GlobalValueError, HostFunction, HostGlobal, HostModule,
+    InnerVec, Interpreter, InterpreterBreak, InterpreterResult, InterpreterRunner, InterpreterState,
+    JumpTarget, Memory, MemoryStatistics, Module, ParseError, ReaderError, Store, TrapReason,
+    ValType, ValidationError, Value, WasmStream,
 };
 use std::alloc::Layout;
 use std::cell::RefCell;
@@ -14,7 +15,7 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use super::inspector::Inspector;
+use super::inspector::{Inspector, LimitedVec};
 
 #[derive(Debug, Deserialize, Serialize)]
 struct TestFile {
@@ -49,6 +50,12 @@ enum Command {
         module_type: String,
     },
     AssertInvalid {
+        line: u32,
+        filename: String,
+        text: String,
+        module_type: String,
+    },
+    AssertUnlinkable {
         line: u32,
         filename: String,
         text: String,
@@ -166,7 +173,7 @@ impl GlobalValue for StaticGlobal {
     }
 }
 
-impl Stream for ByteStream {
+impl WasmStream for ByteStream {
     fn read(&mut self) -> Result<Option<InnerVec<u8>>, ReaderError> {
         if self.consumed {
             return Ok(None);
@@ -343,8 +350,15 @@ fn load_module(ctx: &mut TestContext, module_name: Option<String>, wasm_bytes: &
     let internal_name = format!("module_{}", ctx.store.modules.len());
 
     // Parse and validate the module
-    let module = Module::new::<256>(&internal_name, &mut stream, &ctx.store)
-        .unwrap_or_else(|e| panic!("Failed to parse module: {e:?}"));
+    let module = Module::new::<256>(
+        &internal_name,
+        &mut stream,
+        &ctx.store,
+        CompilerOptions {
+            allow_memory_grow: true,
+        },
+    )
+    .unwrap_or_else(|e| panic!("Failed to parse module: {e:?}"));
 
     // Get memory size
     let heap_size = if let Some(m_ty) = &module.memory {
@@ -358,7 +372,7 @@ fn load_module(ctx: &mut TestContext, module_name: Option<String>, wasm_bytes: &
     let memory = Memory::new(heap_size);
 
     // Create interpreter state
-    let mut state = InterpreterState::new(1024, memory);
+    let mut state = InterpreterState::new(65536, memory);
 
     // Push module to store
     let module_index = ctx.store.modules.len();
@@ -391,7 +405,7 @@ fn invoke_function(
     module_name: &Option<String>,
     func_name: &str,
     args: &[ValueSpec],
-    test_log: Rc<RefCell<Vec<String>>>,
+    test_log: Rc<RefCell<LimitedVec<String>>>,
 ) -> Result<Option<Value>, InterpreterBreak> {
     // Resolve module name through registry if needed
     let resolved_module = if let Some(name) = module_name {
@@ -443,7 +457,7 @@ fn invoke_function(
             .expect(&format!("Function {} not found in exports", func_name));
 
         let func_index = match func_ref {
-            FuncRef::Func(idx) => idx as usize,
+            Ref::Module(idx) => idx as usize,
             _ => panic!("Function {} is not a function export", func_name),
         };
 
@@ -463,7 +477,8 @@ fn invoke_function(
     let func = &module.functions[func_index];
     let interpreter = Interpreter::new(&ctx.store, module);
     let instance = ctx.instances.get_mut(&instance_key).unwrap();
-    interpreter.invoke(&mut instance.state, func, &params);
+    instance.state.pc = JumpTarget::SENTINEL;
+    interpreter.invoke(&mut instance.state, func, &params)?;
 
     let test_runner = Inspector {
         v: &interpreter,
@@ -476,10 +491,8 @@ fn invoke_function(
         .push(format!("invoke {}({:?})", func_name, params));
 
     // Run until completion
-    let mut result = InterpreterResult::OutOfFuel;
-    while result == InterpreterResult::OutOfFuel {
-        result = test_runner.run(&module.text, &mut instance.state, usize::MAX);
-    }
+    // Run up to 1-million instructions to catch infinite loops
+    let result = test_runner.run(&module.text, &mut instance.state, 10000000);
 
     // Check the result
     match result {
@@ -494,11 +507,11 @@ fn invoke_function(
         }
         InterpreterResult::Instruction(err) => Err(err),
         InterpreterResult::ReaderError(err) => panic!("Reader error: {err:?}"),
-        InterpreterResult::OutOfFuel => unreachable!(),
+        InterpreterResult::OutOfFuel => panic!("Infinite loop detected"),
     }
 }
 
-fn trap_reason_to_string(reason: TrapReason) -> &'static str {
+fn check_trap_reason(reason: TrapReason, text: &str) {
     /*
     RuntimeError::Trap(TrapError::DivideBy0) => Ok("integer divide by zero"),
         RuntimeError::Trap(TrapError::UnrepresentableResult) => Ok("integer overflow"),
@@ -522,16 +535,22 @@ fn trap_reason_to_string(reason: TrapReason) -> &'static str {
         RuntimeError::HostFunctionSignatureMismatch => Ok("host function signature mismatch"),
 
      */
-    match reason {
-        TrapReason::Unreachable => "unreachable",
-        TrapReason::Host => unreachable!(),
-        TrapReason::DivideByZero => "integer divide by zero",
-        TrapReason::InvalidTableIndex => "out of bounds table access",
-        TrapReason::InvalidTableFunctionType => "indirect call type mismatch",
-        TrapReason::BrTableLookupFailed => "out of bounds table access",
-        TrapReason::GlobalGetFailed => unreachable!(),
-        TrapReason::GlobalSetFailed => unreachable!(),
-        TrapReason::MemoryOutOfBounds => "out of bounds memory access",
+    match (reason, text) {
+        (TrapReason::Unreachable, "unreachable") => {}
+        (TrapReason::DivideByZero, "integer divide by zero") => {}
+        (TrapReason::InvalidTableIndex, "out of bounds table access") => {}
+        (TrapReason::InvalidTableFunctionType, "indirect call type mismatch") => {}
+        (TrapReason::MemoryOutOfBounds, "out of bounds memory access") => {}
+        (TrapReason::StackOverflow, "stack overflow") => {}
+        (TrapReason::InvalidTableIndex, "undefined element") => {}
+        (TrapReason::UnrepresentableResult, "integer overflow") => {}
+        (TrapReason::BadConversionToInteger, "invalid conversion to integer") => {}
+        err => {
+            assert!(
+                false,
+                "Could not match expected trap text '{text}' with error {err:?}"
+            )
+        }
     }
 }
 
@@ -560,10 +579,40 @@ fn check_decode_error(err: ParseError, text: String) {
         (ValidationError::MemoryImportsNotSupportedYet, "multiple memories") => {}
         (ValidationError::AlignmentLargerThanType, "alignment must not be larger than natural") => {
         }
+        (ValidationError::TypeMismatch, "type mismatch") => {}
+        (ValidationError::BlockResultTypeMismatch, "type mismatch") => {}
+        (ValidationError::InvalidLabelIndex, "unknown label") => {}
+        (ValidationError::MalformedSectionSize, "unexpected end") => {}
+        (ValidationError::GlobalIdxOutOfRange, "unknown global") => {}
+        (ValidationError::MalformedSectionId(_), "malformed section id") => {}
+        (ValidationError::VecTooLong, "length out of bounds") => {}
+        (ValidationError::StackUnderflow, "type mismatch") => {}
+        (ValidationError::TypeIdxOutOfRange, "unknown type") => {}
+        (ValidationError::FunctionResultTypeMismatch, "type mismatch") => {}
+        (ValidationError::FunctionIdxOutOfRange, "unknown function") => {}
+        (ValidationError::FunctionReturnsTooLarge, "invalid result arity") => {}
+        (ValidationError::BrTableHasTooManyCases, "br.table has too many cases") => {}
+        (ValidationError::TableNotDefined, "unknown table") => {}
+        (ValidationError::InvalidTableIndex, "malformed value type") => {}
+        (ValidationError::InvalidLabelIndex, "unexpected end of section or function") => {}
+        (ValidationError::MalformedValueType(_), "malformed value type") => {}
+        (ValidationError::DuplicateSection(_), "unexpected content after last section") => {}
+        (ValidationError::GlobalIsNotMutable, "immutable global") => {}
+        (ValidationError::InvalidElementOffset, "type mismatch") => {}
+        (
+            ValidationError::InvalidConstantExpr(ConstantExprError::InvalidConstantInstruction),
+            "constant expression required",
+        ) => {}
+        (ValidationError::FunctionImportOutOfRange, "unknown type") => {}
+        (ValidationError::GlobalTypeMismatch, "type mismatch") => {}
+        (ValidationError::InvalidConstantExpr(ConstantExprError::AlreadyHasValue), "type mismatch") => {}
+        (ValidationError::InvalidConstantExpr(ConstantExprError::NoValue), "type mismatch") => {}
+        (ValidationError::InvalidConstantExpr(ConstantExprError::InvalidGlobal), "unknown global") => {}
+        (ValidationError::ExpectedConstOrVar(_), "malformed mutability") => {}
         err => {
             assert!(
                 false,
-                "Could not match expected error text '{text}' with error {err:?}"
+                "Could not match validation error text '{text}' with error {err:?}"
             )
         }
     }
@@ -573,7 +622,7 @@ fn run_wast_command(
     command: Command,
     test_dir: &str,
     ctx: &mut TestContext,
-    log: Rc<RefCell<Vec<String>>>,
+    log: Rc<RefCell<LimitedVec<String>>>,
 ) {
     match command {
         Command::Module { name, filename, .. } => {
@@ -617,7 +666,7 @@ fn run_wast_command(
                 field,
                 args,
             } => match invoke_function(ctx, &module, &field, &args, log) {
-                Err(InterpreterBreak::Trap(reason)) if text == trap_reason_to_string(reason) => {}
+                Err(InterpreterBreak::Trap(reason)) => check_trap_reason(reason, &text),
                 Err(err) => {
                     panic!("Expected trap '{text}', got error: {err:?}")
                 }
@@ -641,9 +690,16 @@ fn run_wast_command(
                 let wasm_bytes = std::fs::read(&wasm_path).unwrap();
                 let mut stream = ByteStream::new(&wasm_bytes);
 
-                let err = Module::new::<256>("malformed_test", &mut stream, &ctx.store)
-                    .err()
-                    .expect(format!("Expected malformed module to fail with '{text}'").as_str());
+                let err = Module::new::<256>(
+                    "malformed_test",
+                    &mut stream,
+                    &ctx.store,
+                    CompilerOptions {
+                        allow_memory_grow: true,
+                    },
+                )
+                .err()
+                .expect(format!("Expected malformed module to fail with '{text}'").as_str());
 
                 check_decode_error(err, text);
             }
@@ -659,11 +715,40 @@ fn run_wast_command(
                 let wasm_bytes = std::fs::read(&wasm_path)
                     .unwrap_or_else(|e| panic!("Failed to read {wasm_path}: {e}"));
                 let mut stream = ByteStream::new(&wasm_bytes);
-                let err = Module::new::<256>("malformed_test", &mut stream, &ctx.store)
-                    .err()
-                    .expect(format!("Expected invalid module to fail with '{text}'").as_str());
+                let err = Module::new::<256>(
+                    "malformed_test",
+                    &mut stream,
+                    &ctx.store,
+                    CompilerOptions {
+                        allow_memory_grow: true,
+                    },
+                )
+                .err()
+                .expect(format!("Expected invalid module to fail with '{text}'").as_str());
 
                 check_decode_error(err, text);
+            }
+        }
+        Command::AssertUnlinkable {
+            filename,
+            module_type,
+            text: _text,
+            ..
+        } => {
+            if module_type != "text" {
+                let wasm_path = format!("{test_dir}/{filename}");
+                let wasm_bytes = std::fs::read(&wasm_path)
+                    .unwrap_or_else(|e| panic!("Failed to read {wasm_path}: {e}"));
+                let mut stream = ByteStream::new(&wasm_bytes);
+                Module::new::<256>(
+                    "malformed_test",
+                    &mut stream,
+                    &ctx.store,
+                    CompilerOptions {
+                        allow_memory_grow: true,
+                    },
+                )
+                .unwrap();
             }
         }
         Command::AssertExhaustion { .. } => {
@@ -696,7 +781,7 @@ fn run_wast_test_file_inner(
     test_dir: &str,
     test_name: &str,
     wast_line: Arc<Mutex<Option<u32>>>,
-    subtest_log: Arc<Mutex<Option<Rc<RefCell<Vec<String>>>>>>,
+    subtest_log: Arc<Mutex<Option<Rc<RefCell<LimitedVec<String>>>>>>,
 ) {
     let json_path = format!("{}/{}.json", test_dir, test_name);
 
@@ -778,7 +863,7 @@ fn run_wast_test_file_inner(
     let mut ctx = TestContext::new(store);
 
     for command in test_file.commands {
-        let test_log = Rc::new(RefCell::new(Vec::<String>::new()));
+        let test_log = Rc::new(RefCell::new(LimitedVec::<String>::new()));
         *subtest_log.lock().unwrap() = Some(test_log.clone());
         *wast_line.lock().unwrap() = match &command {
             Command::Module { line, .. }
@@ -788,7 +873,8 @@ fn run_wast_test_file_inner(
             | Command::AssertInvalid { line, .. }
             | Command::AssertExhaustion { line, .. }
             | Command::Register { line, .. }
-            | Command::Action { line, .. } => Some(*line),
+            | Command::Action { line, .. }
+            | Command::AssertUnlinkable { line, .. } => Some(*line),
         };
 
         run_wast_command(command, &test_dir, &mut ctx, test_log);
@@ -812,7 +898,7 @@ pub fn run_wast_test_file(test_name: &str) {
         Ok(_) => {}
         Err(err) => {
             if let Some(log) = &*subtest_log.lock().unwrap() {
-                let log_lines = log.borrow();
+                let log_lines: Vec<String> = log.borrow().clone().into();
                 if log_lines.len() > 0 {
                     eprintln!("Subtest failed, dumping invoke log");
                     for line in log_lines.iter() {

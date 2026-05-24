@@ -370,3 +370,8 @@ fn switch() {
 fn utf8_import_field() {
     run_wast_test_file("utf8-import-field");
 }
+
+#[test]
+fn test() {
+    run_wast_test_file("test");
+}

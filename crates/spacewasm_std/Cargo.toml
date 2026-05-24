@@ -1,5 +1,5 @@
 [package]
-name = "spacewasm-std"
+name = "spacewasm_std"
 
 version.workspace = true
 authors.workspace = true
@@ -7,9 +7,7 @@ edition.workspace = true
 
 [dependencies]
 spacewasm = { path = "../.." }
-
-[lib]
-path = "src/lib.rs"
+spacewasm_util = { path = "../spacewasm_util" }
 
 [[bench]]
 name = "coremark"

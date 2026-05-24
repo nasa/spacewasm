@@ -1,39 +1,10 @@
-use spacewasm::{
-    BaseVisitor, FuncIdx, GlobalIdx, HostModuleRef, IrVisitor, LabelIdx, LabelTarget, LocalIdx,
-    LocalVariable, MemArg, ResultType, TypeIdx, ValType, WasmVisitor,
-};
-use std::cell::RefCell;
-use std::collections::VecDeque;
-use std::rc::Rc;
-
-#[derive(Clone)]
-pub struct LimitedVec<T>(VecDeque<T>);
-
-impl<T> LimitedVec<T> {
-    pub fn new() -> Self {
-        LimitedVec(VecDeque::new())
-    }
-
-    pub fn push(&mut self, item: T) {
-        if self.0.len() >= 64 {
-            self.0.pop_front().unwrap();
-        }
-
-        self.0.push_back(item);
-    }
-}
-
-impl<T> From<LimitedVec<T>> for Vec<T> {
-    fn from(value: LimitedVec<T>) -> Self {
-        value.0.into_iter().collect()
-    }
-}
+use spacewasm::{BaseVisitor, FuncIdx, GlobalIdx, HostModuleRef, IrVisitor, LabelIdx, LabelTarget, LocalIdx, LocalVariable, MemArg, ResultType, TypeIdx, ValType, WasmVisitor};
 
 macro_rules! visit_fn {
     // No additional parameters
     ($name:ident) => {
         fn $name(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-            self.out.borrow_mut().push(format!("{}()", stringify!($name)));
+            self.out.write(format!("{}()", stringify!($name)));
             self.v.$name(state)
         }
     };
@@ -41,18 +12,24 @@ macro_rules! visit_fn {
     // With additional parameters
     ($name:ident, $($param:ident : $ty:ty),+) => {
         fn $name(&self, $($param: $ty),+, state: &mut Self::State) -> Result<(), Self::Error> {
-            self.out.borrow_mut().push(format!("{}{:?}", stringify!($name), ($((stringify!($param), &$param),)+)));
+            self.out.write(format!("{}{:?}", stringify!($name), ($((stringify!($param), &$param),)+)));
             self.v.$name($($param,)+ state)
         }
     };
 }
 
-pub struct Inspector<'a, S, E, T: BaseVisitor<State = S, Error = E>> {
-    pub v: &'a T,
-    pub out: Rc<RefCell<LimitedVec<String>>>,
+pub trait OutputStream {
+    fn write(&self, s: String);
 }
 
-impl<'a, S, E, T: BaseVisitor<State = S, Error = E>> BaseVisitor for Inspector<'a, S, E, T> {
+pub struct Debugger<'a, ST: OutputStream, S, E, T: BaseVisitor<State = S, Error = E>> {
+    pub v: &'a T,
+    pub out: ST,
+}
+
+impl<'a, ST: OutputStream, S, E, T: BaseVisitor<State = S, Error = E>> BaseVisitor
+    for Debugger<'a, ST, S, E, T>
+{
     type Error = E;
     type State = S;
 
@@ -237,8 +214,8 @@ impl<'a, S, E, T: BaseVisitor<State = S, Error = E>> BaseVisitor for Inspector<'
     visit_fn!(f64_promote_f32);
 }
 
-impl<'a, S, E, T: BaseVisitor<State = S, Error = E> + WasmVisitor> WasmVisitor
-    for Inspector<'a, S, E, T>
+impl<'a, ST: OutputStream, S, E, T: BaseVisitor<State = S, Error = E> + WasmVisitor> WasmVisitor
+    for Debugger<'a, ST, S, E, T>
 {
     // Parametric instructions
     visit_fn!(drop);
@@ -272,8 +249,8 @@ impl<'a, S, E, T: BaseVisitor<State = S, Error = E> + WasmVisitor> WasmVisitor
     visit_fn!(f64_reinterpret_i64);
 }
 
-impl<'a, S, E, T: BaseVisitor<State = S, Error = E> + IrVisitor> IrVisitor
-    for Inspector<'a, S, E, T>
+impl<'a, ST: OutputStream, S, E, T: BaseVisitor<State = S, Error = E> + IrVisitor> IrVisitor
+    for Debugger<'a, ST, S, E, T>
 {
     // Parametric instructions
     visit_fn!(drop, ty: ValType);
@@ -288,7 +265,7 @@ impl<'a, S, E, T: BaseVisitor<State = S, Error = E> + IrVisitor> IrVisitor
         cases: impl FnOnce(u32) -> LabelTarget,
         state: &mut Self::State,
     ) -> Result<(), Self::Error> {
-        self.out.borrow_mut().push(format!("br_table(n={:?})", n));
+        self.out.write(format!("br_table(n={:?})", n));
         self.v.br_table(n, cases, state)
     }
 

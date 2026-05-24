@@ -1,6 +1,9 @@
 #[cfg(test)]
 mod tests {
-    use crate::{BaseVisitor, Interpreter, InterpreterState, MemArg, Memory, Module, Store};
+    use crate::{
+        BaseVisitor, Interpreter, InterpreterState, IrVisitor, MemArg, Memory, Module, Store,
+        ValType,
+    };
 
     extern crate std;
 
@@ -25,6 +28,7 @@ mod tests {
             text: crate::Vec::zero(),
             wasm_size: 0,
             final_page_offset: 0,
+            table_defined: false,
         }
     }
 
@@ -100,6 +104,30 @@ mod tests {
                 assert_eq!(state.sp, 2);
                 let result = state.stack.read_u64(0);
                 assert_eq!(result, $expected as u64);
+            }
+        };
+
+        // i64 unary bool operation (2 words)
+        ($test_name:ident, $op:ident, i64 bool: $input:expr => $expected:expr) => {
+            #[test]
+            fn $test_name() {
+                let store = create_test_store();
+                let module = create_test_module();
+                let interpreter = Interpreter {
+                    store: &store,
+                    module: &module,
+                };
+                let mut state = create_test_state();
+
+                let input_val = $input as u64;
+                state.stack.write_u64(0, input_val);
+                state.sp = 2;
+
+                (&interpreter).$op(&mut state).unwrap();
+
+                assert_eq!(state.sp, 1);
+                let result = state.stack.read_u32(0);
+                assert_eq!(result, $expected as u32);
             }
         };
 
@@ -790,8 +818,8 @@ mod tests {
     test_op!(test_i32_rotr, i32_rotr, i32, i32: 0x80000001, 1 => 0xC0000000);
 
     // ===== i64 Test/Relational Operations =====
-    test_op!(test_i64_eqz_zero, i64_eqz, i64: 0i64 => 1i64);
-    test_op!(test_i64_eqz_nonzero, i64_eqz, i64: 42i64 => 0i64);
+    test_op!(test_i64_eqz_zero, i64_eqz, i64 bool: 0i64 => 1i32);
+    test_op!(test_i64_eqz_nonzero, i64_eqz, i64 bool: 42i64 => 0i32);
     test_op!(test_i64_add, i64_add, i64, i64: 5i64, 10i64 => 15i64);
     test_op!(test_i64_sub, i64_sub, i64, i64: 10i64, 5i64 => 5i64);
     test_op!(test_i64_mul, i64_mul, i64, i64: 5i64, 10i64 => 50i64);
@@ -1131,7 +1159,7 @@ mod tests {
         state.stack.write_u32(0, 42);
         state.sp = 1;
 
-        (&interpreter).drop(&mut state).unwrap();
+        (&interpreter).drop(ValType::I32, &mut state).unwrap();
 
         assert_eq!(state.sp, 0);
     }
@@ -1151,7 +1179,7 @@ mod tests {
         state.stack.write_u32(2, 1); // condition (true)
         state.sp = 3;
 
-        (&interpreter).select(&mut state).unwrap();
+        (&interpreter).select(ValType::I32, &mut state).unwrap();
 
         assert_eq!(state.sp, 1);
         assert_eq!(state.stack.read_u32(0), 10);
@@ -1172,7 +1200,7 @@ mod tests {
         state.stack.write_u32(2, 0); // condition (false)
         state.sp = 3;
 
-        (&interpreter).select(&mut state).unwrap();
+        (&interpreter).select(ValType::I32, &mut state).unwrap();
 
         assert_eq!(state.sp, 1);
         assert_eq!(state.stack.read_u32(0), 20);

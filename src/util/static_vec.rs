@@ -4,7 +4,14 @@ use core::ops::{Deref, DerefMut};
 
 pub struct StaticVec<T: Sized, const N: usize> {
     data: [T; N],
-    len: usize,
+    len: u32,
+}
+
+impl<T: Sized, const N: usize> StaticVec<T, N> {
+    pub(crate) fn truncate(&mut self, new_len: usize) {
+        assert!(new_len <= self.len as usize);
+        self.len = new_len as u32;
+    }
 }
 
 impl<T: Sized, const N: usize> Default for StaticVec<T, N> {
@@ -20,7 +27,8 @@ impl<'a, const N: usize> TryInto<&'a str> for &'a StaticVec<u8, N> {
     type Error = ValidationError;
 
     fn try_into(self) -> Result<&'a str, Self::Error> {
-        core::str::from_utf8(&self[0..self.len]).map_err(|_| ValidationError::MalformedUtf8)
+        core::str::from_utf8(&self[0..(self.len as usize)])
+            .map_err(|_| ValidationError::MalformedUtf8)
     }
 }
 
@@ -30,12 +38,12 @@ impl<T, const N: usize> StaticVec<T, N> {
     }
 
     pub fn push(&mut self, value: T) -> Result<(), AllocError> {
-        if self.len >= N {
+        if (self.len as usize) >= N {
             return Err(AllocError::OutOfMemory);
         }
 
         unsafe {
-            core::ptr::write(&mut self.data[self.len], value);
+            core::ptr::write(&mut self.data[self.len as usize], value);
         }
 
         self.len += 1;
@@ -43,7 +51,7 @@ impl<T, const N: usize> StaticVec<T, N> {
     }
 
     pub fn len(&self) -> usize {
-        self.len
+        self.len as usize
     }
 
     pub fn pop(&mut self) -> Option<T> {
@@ -51,7 +59,7 @@ impl<T, const N: usize> StaticVec<T, N> {
             None
         } else {
             self.len -= 1;
-            unsafe { Some(core::ptr::read(&self.data[self.len])) }
+            unsafe { Some(core::ptr::read(&self.data[self.len as usize])) }
         }
     }
 }
@@ -65,13 +73,13 @@ impl<T: core::fmt::Debug, const N: usize> core::fmt::Debug for StaticVec<T, N> {
 impl<T, const N: usize> Deref for StaticVec<T, N> {
     type Target = [T];
     fn deref(&self) -> &[T] {
-        &self.data
+        &self.data[0..(self.len as usize)]
     }
 }
 
 impl<T, const N: usize> DerefMut for StaticVec<T, N> {
     fn deref_mut(&mut self) -> &mut [T] {
-        &mut self.data
+        &mut self.data[0..(self.len as usize)]
     }
 }
 
@@ -84,7 +92,7 @@ impl<T, const N: usize> Iterator for StaticVecIntoIter<T, N> {
     type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.pos < self.vec.len {
+        if self.pos < (self.vec.len as usize) {
             let item = unsafe { core::ptr::read(&self.vec.data[self.pos]) };
             self.pos += 1;
             Some(item)
@@ -97,7 +105,7 @@ impl<T, const N: usize> Iterator for StaticVecIntoIter<T, N> {
 impl<T, const N: usize> Drop for StaticVecIntoIter<T, N> {
     fn drop(&mut self) {
         // Drop remaining elements that haven't been yielded yet
-        while self.pos < self.vec.len {
+        while self.pos < (self.vec.len as usize) {
             unsafe { core::ptr::drop_in_place(&mut self.vec.data[self.pos] as *mut T) };
             self.pos += 1;
         }
@@ -158,7 +166,7 @@ mod tests {
         vec.push(30).unwrap();
 
         let slice: &[i32] = &*vec;
-        assert_eq!(slice.len(), 5);
+        assert_eq!(slice.len(), 3);
     }
 
     #[test]

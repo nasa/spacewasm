@@ -1,4 +1,5 @@
 use crate::*;
+use ::core::ops::AddAssign;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IrReaderError {
@@ -10,6 +11,13 @@ pub enum IrReaderError {
 
 pub struct IrReader<'code>(&'code [Box<TextPage>]);
 
+impl AddAssign<i32> for JumpTarget {
+    fn add_assign(&mut self, rhs: i32) {
+        let a = (self.0 as i32) + rhs;
+        self.0 = a as u32;
+    }
+}
+
 impl<'code> IrReader<'code> {
     pub fn new(code: &'code [Box<TextPage>]) -> Self {
         IrReader(code)
@@ -18,11 +26,22 @@ impl<'code> IrReader<'code> {
     fn read(&self, address: &mut JumpTarget) -> Result<u16, IrReaderError> {
         let page = address.page();
         let offset = address.offset();
-        if page >= self.0.len() || offset >= 256 {
-            Err(IrReaderError::InvalidAddress)
-        } else {
+
+        #[cfg(feature = "strict-assertions")]
+        {
+            if page >= self.0.len() || offset >= 256 {
+                Err(IrReaderError::InvalidAddress)
+            } else {
+                *address += 1;
+                Ok(self.0[page].0[offset])
+            }
+        }
+
+        #[cfg(not(feature = "strict-assertions"))]
+        {
+            let v = unsafe { self.0.get_unchecked(page).0.get_unchecked(offset) };
             *address += 1;
-            Ok(self.0[page].0[offset])
+            Ok(*v)
         }
     }
 
@@ -68,17 +87,14 @@ impl<'code> IrReader<'code> {
 
             // An instruction with a local variable reference immediate
             ($name:ident, local) => {{
-                let ty = match imm {
-                    0 => ValType::I32,
-                    1 => ValType::I64,
-                    2 => ValType::F32,
-                    3 => ValType::F64,
-                    _ => Err(IrReaderError::InvalidType).unwrap(),
-                };
-
                 let frame_offset = self.read(pc).unwrap() as i16;
-
-                visitor.$name(LocalVariable { frame_offset, ty }, state)?;
+                visitor.$name(
+                    LocalVariable {
+                        frame_offset,
+                        ty: imm.into(),
+                    },
+                    state,
+                )?;
             }};
 
             // An instruction with a MemArg operand
@@ -103,38 +119,55 @@ impl<'code> IrReader<'code> {
 
             IF => {
                 let false_address = self.read_u32(pc).unwrap();
-                visitor.if_(JumpTarget(false_address), state)?;
+                visitor.if_(false_address.into(), state)?;
             }
 
             BR => {
                 let address = self.read_u32(pc).unwrap();
-                visitor.br(JumpTarget(address), state)?;
+                visitor.br(address.into(), state)?;
             }
 
             BR_IF => {
                 let true_address = self.read_u32(pc).unwrap();
-                visitor.br_if(JumpTarget(true_address), state)?;
+                visitor.br_if(true_address.into(), state)?;
             }
 
             BR_TABLE => {
                 let n = if imm == 0xFF {
-                    self.read(pc).unwrap()
+                    self.read(pc).unwrap() as u32
                 } else {
-                    imm as u16
+                    imm as u32
                 };
 
                 let default_ = self.read_u32(pc).unwrap();
 
                 visitor.br_table(
+                    n,
                     |case_| {
                         if case_ < n {
-                            let Ok(addr) = self.read_u32(pc) else {
-                                return Err(());
-                            };
+                            // Read & dump the cases before the selected index
+                            for _ in 0..case_ {
+                                self.read_u32(pc).unwrap();
+                            }
 
-                            Ok(JumpTarget(addr))
+                            // Read the case target
+                            let lt = self.read_u32(pc).unwrap();
+
+                            // Dump the rest of the cases
+                            if case_ + 1 < n {
+                                for _ in (case_ + 1)..n {
+                                    self.read_u32(pc).unwrap();
+                                }
+                            }
+
+                            lt.into()
                         } else {
-                            Ok(JumpTarget(default_))
+                            // Dump all the cases and return the default
+                            for _ in 0..n {
+                                self.read_u32(pc).unwrap();
+                            }
+
+                            default_.into()
                         }
                     },
                     state,
@@ -162,8 +195,12 @@ impl<'code> IrReader<'code> {
             }
 
             // Parametric instructions
-            DROP => instruction!(drop),
-            SELECT => instruction!(select),
+            DROP => {
+                visitor.drop(imm.into(), state)?;
+            }
+            SELECT => {
+                visitor.select(imm.into(), state)?;
+            }
 
             // Variable instructions
             LOCAL_GET => instruction!(local_get, local),

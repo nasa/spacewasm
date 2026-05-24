@@ -155,8 +155,12 @@ impl<T: Sized, A: Allocator> Vec<T, A> {
         self.inner.pop()
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = &T> {
-        self.inner.iter()
+    pub fn iter(&self) -> impl DoubleEndedIterator<Item = &T> + ExactSizeIterator {
+        self[..].iter()
+    }
+
+    pub fn iter_mut(&mut self) -> impl DoubleEndedIterator<Item = &mut T> + ExactSizeIterator {
+        self[..].iter_mut()
     }
 
     pub unsafe fn assume_init(mut self) -> Self {
@@ -280,6 +284,19 @@ impl<T, A: Allocator> Iterator for IntoIter<T, A> {
     fn size_hint(&self) -> (usize, Option<usize>) {
         let len = (self.end as usize - self.start as usize) / size_of::<T>();
         (len, Some(len))
+    }
+}
+
+impl<T, A: Allocator> DoubleEndedIterator for IntoIter<T, A> {
+    fn next_back(&mut self) -> Option<T> {
+        if self.start == self.end {
+            None
+        } else {
+            unsafe {
+                self.end = self.end.offset(-1);
+                Some(core::ptr::read(self.end))
+            }
+        }
     }
 }
 
@@ -447,5 +464,96 @@ mod tests {
         let cloned = vec.clone();
         assert_eq!(vec.len(), cloned.len());
         assert_eq!(&vec[..], &cloned[..]);
+    }
+
+    #[test]
+    fn test_iter_reverse() {
+        let mut vec = Vec::new(5).unwrap();
+        vec.push(1);
+        vec.push(2);
+        vec.push(3);
+        vec.push(4);
+        vec.push(5);
+
+        let mut reversed = Vec::new(5).unwrap();
+        for val in vec.iter().rev() {
+            reversed.push(*val);
+        }
+        assert_eq!(&reversed[..], &[5, 4, 3, 2, 1]);
+    }
+
+    #[test]
+    fn test_iter_mut_reverse() {
+        let mut vec = Vec::new(3).unwrap();
+        vec.push(1);
+        vec.push(2);
+        vec.push(3);
+
+        for val in vec.iter_mut().rev() {
+            *val *= 10;
+        }
+
+        assert_eq!(&vec[..], &[10, 20, 30]);
+    }
+
+    #[test]
+    fn test_into_iter_reverse() {
+        let mut vec = Vec::new(4).unwrap();
+        vec.push(10);
+        vec.push(20);
+        vec.push(30);
+        vec.push(40);
+
+        let mut reversed = Vec::new(4).unwrap();
+        for val in vec.into_iter().rev() {
+            reversed.push(val);
+        }
+        assert_eq!(&reversed[..], &[40, 30, 20, 10]);
+    }
+
+    #[test]
+    fn test_iter_both_ends() {
+        let mut vec = Vec::new(5).unwrap();
+        vec.push(1);
+        vec.push(2);
+        vec.push(3);
+        vec.push(4);
+        vec.push(5);
+
+        let mut iter = vec.iter();
+        assert_eq!(iter.next(), Some(&1));
+        assert_eq!(iter.next_back(), Some(&5));
+        assert_eq!(iter.next(), Some(&2));
+        assert_eq!(iter.next_back(), Some(&4));
+        assert_eq!(iter.next(), Some(&3));
+        assert_eq!(iter.next(), None);
+        assert_eq!(iter.next_back(), None);
+    }
+
+    #[test]
+    fn test_into_iter_both_ends() {
+        let mut vec = Vec::new(4).unwrap();
+        vec.push(10);
+        vec.push(20);
+        vec.push(30);
+        vec.push(40);
+
+        let mut iter = vec.into_iter();
+        assert_eq!(iter.next(), Some(10));
+        assert_eq!(iter.next_back(), Some(40));
+        assert_eq!(iter.next_back(), Some(30));
+        assert_eq!(iter.next(), Some(20));
+        assert_eq!(iter.next(), None);
+        assert_eq!(iter.next_back(), None);
+    }
+
+    #[test]
+    fn test_iter_empty_reverse() {
+        let vec: Vec<i32> = Vec::zero();
+        let mut count = 0;
+        for _ in vec.iter().rev() {
+            count += 1;
+        }
+        assert_eq!(count, 0);
     }
 }
