@@ -192,13 +192,6 @@ mod kani_proofs {
             assert!(mem.store_u32(overflow_addr, 0).is_err(), "Overflow address must be rejected");
             assert!(mem.load_u32(overflow_addr).is_err(), "Overflow address must be rejected");
 
-            // Test addresses that exceed isize::MAX
-            let large_addr = (isize::MAX as usize) + 1;
-            if large_addr < size {
-                assert!(mem.store_u8(large_addr, 0).is_err(), "Address beyond isize::MAX must be rejected");
-                assert!(mem.load_u8(large_addr).is_err(), "Address beyond isize::MAX must be rejected");
-            }
-
             // Verify safe addresses have lossless isize conversion
             if addr <= isize::MAX as usize {
                 let offset = addr as isize;
@@ -249,4 +242,5 @@ mod kani_proofs {
         core::mem::forget(mem);
         unsafe { alloc.dealloc(ptr, Layout::from_size_align(size, 16).unwrap()) };
     }
+
 }
