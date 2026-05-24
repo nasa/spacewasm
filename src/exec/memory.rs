@@ -24,7 +24,7 @@ impl Memory {
 
     #[inline]
     fn check_in_bounds(&self, addr: usize, size: usize) -> Result<(), MemoryOutOfBounds> {
-        if addr + size > self.size {
+        if size > self.size || addr > self.size - size {
             Err(MemoryOutOfBounds)
         } else {
             Ok(())
