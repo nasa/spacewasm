@@ -1,14 +1,13 @@
 use serde::{Deserialize, Serialize};
 use spacewasm::{
-    global_allocator, vec, AllocError, Allocator, CompilerOptions, ConstantExprError, ExportDesc,
-    Ref, GlobalValue, GlobalValueError, HostFunction, HostGlobal, HostModule,
+    global_allocator, vec, AllocError, Allocator, CompilerOptions, ConstantExprError,
+    ExportDesc, GlobalValue, GlobalValueError, HostFunction, HostGlobal, HostModule,
     InnerVec, Interpreter, InterpreterBreak, InterpreterResult, InterpreterRunner, InterpreterState,
-    JumpTarget, Memory, MemoryStatistics, Module, ParseError, ReaderError, Store, TrapReason,
-    ValType, ValidationError, Value, WasmStream,
+    JumpTarget, Memory, MemoryStatistics, Module, ParseError, ReaderError, Ref, Store,
+    TrapReason, ValType, ValidationError, Value, WasmStream,
 };
 use std::alloc::Layout;
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::ops::ControlFlow;
 use std::panic::catch_unwind;
 use std::rc::Rc;
@@ -197,26 +196,20 @@ impl WasmStream for ByteStream {
     }
 }
 
-struct TestInstance {
-    module_index: usize,
-    state: InterpreterState,
-}
-
 struct TestContext {
     store: Store,
-    instances: HashMap<Option<String>, TestInstance>,
-    current_instance: Option<String>,
-    registry: HashMap<String, Option<String>>,
+    state: InterpreterState,
 }
 
 impl TestContext {
     fn new(store: Store) -> Self {
-        TestContext {
-            store,
-            instances: HashMap::new(),
-            current_instance: None,
-            registry: HashMap::new(),
-        }
+        let memory = Memory::new(65536);
+        let state = InterpreterState::new(65536, memory);
+        TestContext { store, state }
+    }
+
+    fn current_module_index(&self) -> usize {
+        self.store.modules.len() - 1
     }
 
     fn get_module(&self, index: usize) -> &Module {
@@ -225,6 +218,10 @@ impl TestContext {
             .get(index)
             .map(|b| &**b)
             .unwrap_or_else(|| panic!("Module at index {index} not found"))
+    }
+
+    fn find_module_by_name(&self, name: &str) -> Option<usize> {
+        self.store.modules.iter().position(|m| m.name == name)
     }
 }
 
@@ -259,6 +256,60 @@ fn parse_value(spec: &ValueSpec) -> Value {
     }
 }
 
+fn assert_nan_f32(z: f32, arithmetic: bool) {
+    let bits = z.to_bits();
+
+    let exponent = (bits >> 23) & 0xFF;
+    let payload = bits & 0x7F_FFFF;
+
+    if arithmetic {
+        assert!(
+            (exponent == 0xFF) && ((payload & 0x40_0000) != 0),
+            "Expected arithmetic NaN f32 {} ({:x}) (exponent={}), (payload={:x})",
+            z,
+            bits,
+            exponent,
+            payload
+        )
+    } else {
+        assert!(
+            (exponent == 0xFF) && (payload == 0x400000),
+            "Expected canonical NaN f32 {} ({:x}) (exponent={}), (payload={:x})",
+            z,
+            bits,
+            exponent,
+            payload
+        );
+    }
+}
+
+fn assert_nan_f64(z: f64, arithmetic: bool) {
+    let bits = z.to_bits();
+
+    let exponent = (bits >> 52) & 0x7FF;
+    let payload = bits & 0xF_FFFF_FFFF_FFFF;
+
+    if arithmetic {
+        assert!(
+            (exponent == 0x7FF) && ((payload & 0x8_0000_0000_0000) != 0),
+            "Expected arithmetic NaN f64 {} ({:x}) (exponent={}), (payload={:x})",
+            z,
+            bits,
+            exponent,
+            payload
+        )
+    } else {
+        assert!(
+            (exponent == 0x7FF) && (payload == 0x8_0000_0000_0000),
+            "Expected canonical NaN f32 {} ({:08x}) (exponent={}), (payload={:08x})",
+            z,
+            bits,
+            exponent,
+            payload
+        );
+    }
+}
+
 fn compare_values(actual: Value, expected: &ValueSpec) {
     let value_str = expected
         .value
@@ -285,58 +336,46 @@ fn compare_values(actual: Value, expected: &ValueSpec) {
                 panic!("Expected f32, got {actual:?}");
             };
 
-            let (e, arithmetic_nan) = match value_str.as_str() {
-                "nan:arithmetic" => (f32::NAN, true),
-                "nan:canonical" => (f32::NAN, false),
-                _ => (
-                    f32::from_bits(value_str.parse::<u32>().expect("failed to parse f32 bits")),
-                    false,
-                ),
+            match value_str.as_str() {
+                "nan:arithmetic" => assert_nan_f32(a, true),
+                "nan:canonical" => assert_nan_f32(a, false),
+                _ => {
+                    let expected_f32 =
+                        f32::from_bits(value_str.parse::<u32>().expect("failed to parse f32 bits"));
+                    assert_eq!(
+                        a.to_bits(),
+                        expected_f32.to_bits(),
+                        "Expected f32 {} ({:08x}), got {} ({:08x})",
+                        expected_f32,
+                        expected_f32.to_bits(),
+                        a,
+                        a.to_bits()
+                    );
+                }
             };
-
-            if arithmetic_nan {
-                assert!(a.is_nan(), "Expected NaN f32, got {actual:?}");
-            } else {
-                // Handle exact comparisons
-                assert_eq!(
-                    a.to_bits(),
-                    e.to_bits(),
-                    "Expected f32 {} ({:08x}), got {} ({:08x})",
-                    e,
-                    e.to_bits(),
-                    a,
-                    a.to_bits()
-                );
-            }
         }
         "f64" => {
             let Value::F64(a) = actual else {
                 panic!("Expected f64, got {actual:?}");
             };
 
-            let (e, arithmetic_nan) = match value_str.as_str() {
-                "nan:arithmetic" => (f64::NAN, true),
-                "nan:canonical" => (f64::NAN, false),
-                _ => (
-                    f64::from_bits(value_str.parse::<u64>().expect("failed to parse f64 bits")),
-                    false,
-                ),
+            match value_str.as_str() {
+                "nan:arithmetic" => assert_nan_f64(a, true),
+                "nan:canonical" => assert_nan_f64(a, false),
+                _ => {
+                    let expected_f64 =
+                        f64::from_bits(value_str.parse::<u64>().expect("failed to parse f64 bits"));
+                    assert_eq!(
+                        a.to_bits(),
+                        expected_f64.to_bits(),
+                        "Expected f64 {} ({:08x}), got {} ({:08x})",
+                        expected_f64,
+                        expected_f64.to_bits(),
+                        a,
+                        a.to_bits()
+                    );
+                }
             };
-
-            if arithmetic_nan {
-                assert!(a.is_nan(), "Expected NaN f64, got {actual:?}");
-            } else {
-                // Handle exact comparisons
-                assert_eq!(
-                    a.to_bits(),
-                    e.to_bits(),
-                    "Expected f64 {} ({:08x}), got {} ({:08x})",
-                    e,
-                    e.to_bits(),
-                    a,
-                    a.to_bits()
-                );
-            }
         }
         _ => panic!("Unsupported expected value type: {}", expected.ty),
     }
@@ -347,7 +386,8 @@ fn load_module(ctx: &mut TestContext, module_name: Option<String>, wasm_bytes: &
     let mut stream = ByteStream::new(wasm_bytes);
 
     // Generate a unique module name for the WASM module itself
-    let internal_name = format!("module_{}", ctx.store.modules.len());
+    let internal_name =
+        module_name.unwrap_or_else(|| format!("module_{}", ctx.store.modules.len()));
 
     // Parse and validate the module
     let module = Module::new::<256>(
@@ -368,36 +408,22 @@ fn load_module(ctx: &mut TestContext, module_name: Option<String>, wasm_bytes: &
         65536
     };
 
-    // Allocate memory
-    let memory = Memory::new(heap_size);
-
-    // Create interpreter state
-    let mut state = InterpreterState::new(65536, memory);
-
     // Push module to store
     let module_index = ctx.store.modules.len();
     ctx.store.modules.push(spacewasm::Box::new(module).unwrap());
-    let module = ctx.get_module(module_index);
 
-    // Initialize the state
-    state
-        .initialize(module)
-        .unwrap_or_else(|e| panic!("Failed to initialize module: {e:?}"));
+    // Reinitialize state with new memory size
+    let memory = Memory::new(heap_size);
+    let new_state = InterpreterState::new(65536, memory);
+    ctx.state = new_state;
 
-    // Use a string name for the instance key (never None)
-    let instance_key = module_name.unwrap_or_else(|| internal_name.clone());
-
-    // Store the instance
-    ctx.instances.insert(
-        Some(instance_key.clone()),
-        TestInstance {
-            module_index,
-            state,
-        },
-    );
-
-    // Set as current instance
-    ctx.current_instance = Some(instance_key);
+    // Initialize the state - split borrows to store and state
+    {
+        let module = ctx.store.modules.get(module_index).map(|b| &**b).unwrap();
+        ctx.state
+            .initialize(module)
+            .unwrap_or_else(|e| panic!("Failed to initialize module: {e:?}"));
+    }
 }
 
 fn invoke_function(
@@ -407,33 +433,13 @@ fn invoke_function(
     args: &[ValueSpec],
     test_log: Rc<RefCell<LimitedVec<String>>>,
 ) -> Result<Option<Value>, InterpreterBreak> {
-    // Resolve module name through registry if needed
-    let resolved_module = if let Some(name) = module_name {
-        ctx.registry
-            .get(name)
-            .cloned()
-            .unwrap_or_else(|| Some(name.clone()))
+    // Resolve module index by name lookup or use current (last) module
+    let module_index = if let Some(name) = module_name {
+        ctx.find_module_by_name(name)
+            .unwrap_or_else(|| panic!("Module '{name}' not found"))
     } else {
-        None
+        ctx.current_module_index()
     };
-
-    // Get the instance key
-    let instance_key = if resolved_module.is_some() {
-        resolved_module.clone()
-    } else {
-        Some(
-            ctx.current_instance
-                .clone()
-                .expect("No module instance specified for invoke"),
-        )
-    };
-
-    // Get module index first
-    let module_index = ctx
-        .instances
-        .get(&instance_key)
-        .expect(&format!("Instance {instance_key:?} not found"))
-        .module_index;
 
     // Scope the immutable borrow of ctx
     let (func_index, return_types, params) = {
@@ -476,9 +482,8 @@ fn invoke_function(
     let module = ctx.store.modules.get(module_index).unwrap();
     let func = &module.functions[func_index];
     let interpreter = Interpreter::new(&ctx.store, module);
-    let instance = ctx.instances.get_mut(&instance_key).unwrap();
-    instance.state.pc = JumpTarget::SENTINEL;
-    interpreter.invoke(&mut instance.state, func, &params)?;
+    ctx.state.pc = JumpTarget::SENTINEL;
+    interpreter.invoke(&mut ctx.state, func, &params)?;
 
     let test_runner = Inspector {
         v: &interpreter,
@@ -492,7 +497,7 @@ fn invoke_function(
 
     // Run until completion
     // Run up to 1-million instructions to catch infinite loops
-    let result = test_runner.run(&module.text, &mut instance.state, 10000000);
+    let result = test_runner.run(&module.text, &mut ctx.state, 10000000);
 
     // Check the result
     match result {
@@ -605,9 +610,15 @@ fn check_decode_error(err: ParseError, text: String) {
         ) => {}
         (ValidationError::FunctionImportOutOfRange, "unknown type") => {}
         (ValidationError::GlobalTypeMismatch, "type mismatch") => {}
-        (ValidationError::InvalidConstantExpr(ConstantExprError::AlreadyHasValue), "type mismatch") => {}
+        (
+            ValidationError::InvalidConstantExpr(ConstantExprError::AlreadyHasValue),
+            "type mismatch",
+        ) => {}
         (ValidationError::InvalidConstantExpr(ConstantExprError::NoValue), "type mismatch") => {}
-        (ValidationError::InvalidConstantExpr(ConstantExprError::InvalidGlobal), "unknown global") => {}
+        (
+            ValidationError::InvalidConstantExpr(ConstantExprError::InvalidGlobal),
+            "unknown global",
+        ) => {}
         (ValidationError::ExpectedConstOrVar(_), "malformed mutability") => {}
         err => {
             assert!(
@@ -755,12 +766,18 @@ fn run_wast_command(
             // Skip exhaustion tests as stack overflow detection is not implemented
         }
         Command::Register { name, as_name, .. } => {
-            // Register maps an alias to a module instance
-            let instance_key = name
-                .map(Some)
-                .unwrap_or_else(|| ctx.current_instance.clone());
-            assert!(instance_key.is_some(), "No instance to register");
-            ctx.registry.insert(as_name, instance_key);
+            // Register updates the module name in the store to the alias
+            let module_index = if let Some(ref module_name) = name {
+                ctx.find_module_by_name(module_name)
+                    .unwrap_or_else(|| panic!("Module '{module_name}' not found for registration"))
+            } else {
+                ctx.current_module_index()
+            };
+
+            // Update the module name in the store to the registered alias
+            // This allows linking to find it by the registered name
+            let module = ctx.store.modules.get_mut(module_index).unwrap();
+            module.name = as_name.as_str().try_into().unwrap();
         }
         Command::Action { action, .. } => match action {
             Action::Invoke {
