@@ -550,6 +550,7 @@ fn check_trap_reason(reason: TrapReason, text: &str) {
         (TrapReason::InvalidTableIndex, "undefined element") => {}
         (TrapReason::UnrepresentableResult, "integer overflow") => {}
         (TrapReason::BadConversionToInteger, "invalid conversion to integer") => {}
+        (TrapReason::IntegerOverflow, "integer overflow") => {}
         err => {
             assert!(
                 false,

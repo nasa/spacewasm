@@ -310,6 +310,8 @@ pub enum TrapReason {
     StackOverflow,
     /// Attempting to convert Inf to integer
     UnrepresentableResult,
+    /// Signed division causes integer overflow
+    IntegerOverflow,
     /// Attempting to convert NaN to integer
     BadConversionToInteger,
 }
@@ -402,7 +404,7 @@ macro_rules! instruction {
     ($name:ident, i64 -> bool, $i:ident, $( $t:tt )*) => {
         fn $name(&self, state: &mut Self::State) -> Result<(), Self::Error> {
             state.sp -= 1;
-            let $i = state.stack.read_u64(state.sp - 1) as i32;
+            let $i = state.stack.read_u64(state.sp - 1) as i64;
             state.stack.write_u32(state.sp - 1, if $($t)* { 1 } else { 0 });
             Ok(())
         }
@@ -733,18 +735,21 @@ impl<'module> BaseVisitor for Interpreter<'module> {
     instruction!(i32_mul, i32, i32 -> i32, a, b, a.wrapping_mul(b));
     instruction!(i32_div_s, i32, i32 -> i32, a, b, {
         if b == 0 {
-            return Err(InterpreterBreak::Trap(TrapReason::DivideByZero))
-        } else {
-            a.wrapping_div(b)
+            return Err(TrapReason::DivideByZero.into());
         }
+        if a == i32::MIN && b == -1 {
+            return Err(TrapReason::IntegerOverflow.into());
+        }
+
+        a / b
     });
     instruction!(i32_div_u, i32, i32 -> i32, a, b, {
         if b == 0 {
             return Err(InterpreterBreak::Trap(TrapReason::DivideByZero))
         } else {
-            (a as u32).wrapping_div(b as u32)
+           ((a as u32) / (b as u32)) as i32
         }
-    } as i32);
+    });
     instruction!(i32_rem_s, i32, i32 -> i32, a, b, {
         if b == 0 {
             return Err(InterpreterBreak::Trap(TrapReason::DivideByZero))
@@ -775,10 +780,13 @@ impl<'module> BaseVisitor for Interpreter<'module> {
     instruction!(i64_mul, i64, i64 -> i64, a, b, a.wrapping_mul(b));
     instruction!(i64_div_s, i64, i64 -> i64, a, b, {
         if b == 0 {
-            return Err(InterpreterBreak::Trap(TrapReason::DivideByZero))
-        } else {
-            a.wrapping_div(b)
+            return Err(TrapReason::DivideByZero.into());
         }
+        if a == i64::MIN && b == -1 {
+            return Err(TrapReason::IntegerOverflow.into());
+        }
+
+        a / b
     });
     instruction!(i64_div_u, i64, i64 -> i64, a, b, {
         if b == 0 {
