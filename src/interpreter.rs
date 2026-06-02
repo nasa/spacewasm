@@ -1,6 +1,5 @@
-use crate::exec::ir_reader::{IrReader, IrReaderError};
 use crate::*;
-use ::core::ops::ControlFlow;
+use core::ops::ControlFlow;
 
 pub struct InterpreterState {
     pub pc: JumpTarget,
@@ -42,7 +41,7 @@ impl InterpreterState {
     /// For each data, d, in [m]
     ///     For d with init data i and offset o:
     ///     Write i to the RAM at offset o.
-    pub fn initialize(&mut self, m: &Module) -> Result<(), MemoryOutOfBounds> {
+    pub fn initialize(&mut self, m: &Module) -> Result<(), MemoryError> {
         // Globals must be initialized before any invocation
         assert_eq!(self.sp, 0);
         assert_eq!(self.fp, 0);
@@ -305,6 +304,8 @@ pub enum TrapReason {
     /// An imported global could not be set
     GlobalSetFailed,
     /// A memory operation is out of bounds
+    OutOfMemory,
+    /// A memory operation is out of bounds
     MemoryOutOfBounds,
     /// Ran out of stack space
     StackOverflow,
@@ -326,9 +327,12 @@ pub enum InterpreterBreak {
     Pause,
 }
 
-impl From<MemoryOutOfBounds> for InterpreterBreak {
-    fn from(_: MemoryOutOfBounds) -> Self {
-        InterpreterBreak::Trap(TrapReason::MemoryOutOfBounds)
+impl From<MemoryError> for InterpreterBreak {
+    fn from(e: MemoryError) -> Self {
+        match e {
+            MemoryError::OutOfBounds => InterpreterBreak::Trap(TrapReason::MemoryOutOfBounds),
+            MemoryError::OutOfMemory => InterpreterBreak::Trap(TrapReason::OutOfMemory),
+        }
     }
 }
 
@@ -656,16 +660,22 @@ impl<'module> BaseVisitor for Interpreter<'module> {
     }
 
     fn memory_size(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        state.stack.write_u32(state.sp, state.ram.size_pages());
+        state.stack.write_u32(state.sp, state.ram.size());
         state.sp += 1;
         Ok(())
     }
 
     fn memory_grow(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        // TODO(tumbar) Hook memory growth to the optional host functionality
-        // Always fail the growth
-        // state.stack.write_u32(state.sp - 1, (-1i32) as u32);
-        state.stack.write_u32(state.sp - 1, 1);
+        let n = state.stack.read_u32(state.sp - 1);
+        match state.ram.grow(n) {
+            Ok(old_size) => {
+                state.stack.write_u32(state.sp - 1, old_size);
+            }
+            Err(_) => {
+                state.stack.write_u32(state.sp - 1, 0xFFFF_FFFF);
+            }
+        }
+
         Ok(())
     }
 

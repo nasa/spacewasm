@@ -111,7 +111,7 @@ impl<'code> IrReader<'code> {
             }};
         }
 
-        use crate::core::opcode::*;
+        use crate::opcode::*;
         match opcode {
             // Control instructions
             UNREACHABLE => instruction!(unreachable),

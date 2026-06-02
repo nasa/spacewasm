@@ -1,4 +1,4 @@
-use crate::core::constant::ConstantCompiler;
+use crate::constant::ConstantCompiler;
 use crate::*;
 
 #[derive(Clone)]
@@ -175,7 +175,7 @@ impl<'wasm> Reader<'wasm> {
             }};
         }
 
-        use crate::core::opcode::*;
+        use crate::opcode::*;
         loop {
             match self.read_u8()? {
                 // Control instructions
