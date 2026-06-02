@@ -76,7 +76,7 @@ impl Module {
         let start = wasm.offset();
 
         let empty_f = self.functions[i].clone();
-        let mut f = ::core::mem::replace(&mut self.functions[i], empty_f);
+        let mut f = core::mem::replace(&mut self.functions[i], empty_f);
 
         f.locals = wasm.read_vec(|w| {
             let n = w.read_u32()?;
@@ -126,7 +126,7 @@ impl Module {
             }
         };
 
-        let _ = ::core::mem::replace(&mut self.functions[i], f);
+        let _ = core::mem::replace(&mut self.functions[i], f);
 
         let end = wasm.offset();
         if (end - start) as u32 != size {

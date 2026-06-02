@@ -80,7 +80,7 @@ impl JumpOffset {
 pub struct LabelTarget(u32);
 
 impl ::core::fmt::Debug for LabelTarget {
-    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("LabelTarget")
             .field("arity", &self.arity())
             .field("depth", &self.depth())
@@ -158,14 +158,14 @@ impl LabelTarget {
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub struct JumpTarget(pub u32);
 
-impl ::core::ops::Add<JumpOffset> for JumpTarget {
+impl core::ops::Add<JumpOffset> for JumpTarget {
     type Output = JumpTarget;
     fn add(self, rhs: JumpOffset) -> JumpTarget {
         JumpTarget(((self.0 as i32) + rhs.0) as u32)
     }
 }
 
-impl ::core::ops::Add<u32> for JumpTarget {
+impl core::ops::Add<u32> for JumpTarget {
     type Output = JumpTarget;
     fn add(self, rhs: u32) -> JumpTarget {
         JumpTarget(self.0 + rhs)

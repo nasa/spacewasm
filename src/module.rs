@@ -435,7 +435,7 @@ impl CustomSection {
     ) -> Result<(), ValidationError> {
         let start = wasm.offset();
         let name: StaticVec<u8, 32> = wasm.read_vec_stack(|w| w.read_u8())?;
-        let name_str = ::core::str::from_utf8(&name).map_err(|_| ValidationError::MalformedUtf8)?;
+        let name_str = core::str::from_utf8(&name).map_err(|_| ValidationError::MalformedUtf8)?;
 
         let name_length = wasm.offset() - start;
         if name_length > size {
