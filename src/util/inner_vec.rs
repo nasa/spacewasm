@@ -104,7 +104,7 @@ mod tests {
 }
 
 #[cfg(kani)]
-mod proof_harness {
+mod kani_proofs {
     use super::*;
     use core::alloc::Layout;
     use crate::util::static_alloc::StaticAllocator;
