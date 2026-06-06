@@ -7,7 +7,10 @@ pub struct Memory {
 }
 
 #[derive(Debug)]
-pub struct MemoryOutOfBounds;
+pub enum MemoryError {
+    OutOfBounds,
+    OutOfMemory,
+}
 
 impl Memory {
     pub fn new(size: usize) -> Memory {
@@ -23,15 +26,15 @@ impl Memory {
     }
 
     #[inline]
-    fn check_in_bounds(&self, addr: usize, size: usize) -> Result<(), MemoryOutOfBounds> {
+    fn check_in_bounds(&self, addr: usize, size: usize) -> Result<(), MemoryError> {
         if size > self.size || addr > self.size - size {
-            Err(MemoryOutOfBounds)
+            Err(MemoryError::OutOfBounds)
         } else {
             Ok(())
         }
     }
 
-    pub fn store_u8(&self, addr: usize, i: u8) -> Result<(), MemoryOutOfBounds> {
+    pub fn store_u8(&self, addr: usize, i: u8) -> Result<(), MemoryError> {
         self.check_in_bounds(addr, 1)?;
         unsafe {
             self.ptr.offset(addr as isize).write(i);
@@ -39,7 +42,7 @@ impl Memory {
         Ok(())
     }
 
-    pub fn store_u16(&self, addr: usize, i: u16) -> Result<(), MemoryOutOfBounds> {
+    pub fn store_u16(&self, addr: usize, i: u16) -> Result<(), MemoryError> {
         self.check_in_bounds(addr, 2)?;
         unsafe {
             self.ptr
@@ -50,7 +53,7 @@ impl Memory {
         Ok(())
     }
 
-    pub fn store_u32(&self, addr: usize, i: u32) -> Result<(), MemoryOutOfBounds> {
+    pub fn store_u32(&self, addr: usize, i: u32) -> Result<(), MemoryError> {
         self.check_in_bounds(addr, 4)?;
         unsafe {
             self.ptr
@@ -61,7 +64,7 @@ impl Memory {
         Ok(())
     }
 
-    pub fn store_u64(&self, addr: usize, i: u64) -> Result<(), MemoryOutOfBounds> {
+    pub fn store_u64(&self, addr: usize, i: u64) -> Result<(), MemoryError> {
         self.check_in_bounds(addr, 8)?;
         unsafe {
             self.ptr
@@ -72,7 +75,7 @@ impl Memory {
         Ok(())
     }
 
-    pub fn store(&self, addr: usize, data: &[u8]) -> Result<(), MemoryOutOfBounds> {
+    pub fn store(&self, addr: usize, data: &[u8]) -> Result<(), MemoryError> {
         self.check_in_bounds(addr, data.len())?;
 
         unsafe {
@@ -82,22 +85,12 @@ impl Memory {
         Ok(())
     }
 
-    pub fn load(&self, addr: usize, len: usize) -> Result<&[u8], MemoryOutOfBounds> {
-        self.check_in_bounds(addr, len)?;
-        unsafe {
-            Ok(core::slice::from_raw_parts(
-                self.ptr.offset(addr as isize),
-                len,
-            ))
-        }
-    }
-
-    pub fn load_u8(&self, addr: usize) -> Result<u8, MemoryOutOfBounds> {
+    pub fn load_u8(&self, addr: usize) -> Result<u8, MemoryError> {
         self.check_in_bounds(addr, 1)?;
         unsafe { Ok(self.ptr.offset(addr as isize).read()) }
     }
 
-    pub fn load_u16(&self, addr: usize) -> Result<u16, MemoryOutOfBounds> {
+    pub fn load_u16(&self, addr: usize) -> Result<u16, MemoryError> {
         self.check_in_bounds(addr, 2)?;
         unsafe {
             Ok(self
@@ -108,7 +101,7 @@ impl Memory {
         }
     }
 
-    pub fn load_u32(&self, addr: usize) -> Result<u32, MemoryOutOfBounds> {
+    pub fn load_u32(&self, addr: usize) -> Result<u32, MemoryError> {
         self.check_in_bounds(addr, 4)?;
         unsafe {
             Ok(self
@@ -119,7 +112,7 @@ impl Memory {
         }
     }
 
-    pub fn load_u64(&self, addr: usize) -> Result<u64, MemoryOutOfBounds> {
+    pub fn load_u64(&self, addr: usize) -> Result<u64, MemoryError> {
         self.check_in_bounds(addr, 8)?;
         unsafe {
             Ok(self
@@ -130,7 +123,19 @@ impl Memory {
         }
     }
 
-    pub fn size_pages(&self) -> u32 {
+    pub fn load(&self, addr: usize, len: usize) -> Result<&[u8], MemoryError> {
+        self.check_in_bounds(addr, len)?;
+        Ok(unsafe { core::slice::from_raw_parts(self.ptr.offset(addr as isize), len) })
+    }
+
+    /// Grow the memory by n pages
+    /// If the memory growth succeeds, return the old number of pages
+    pub fn grow(&self, n: u32) -> Result<u32, MemoryError> {
+        let _ = n;
+        Err(MemoryError::OutOfMemory)
+    }
+
+    pub fn size(&self) -> u32 {
         (self.size / 65536) as u32
     }
 }

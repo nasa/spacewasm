@@ -1,6 +1,5 @@
-use crate::exec::ir_reader::{IrReader, IrReaderError};
 use crate::*;
-use ::core::ops::ControlFlow;
+use core::ops::ControlFlow;
 
 pub struct InterpreterState {
     pub pc: JumpTarget,
@@ -42,7 +41,7 @@ impl InterpreterState {
     /// For each data, d, in [m]
     ///     For d with init data i and offset o:
     ///     Write i to the RAM at offset o.
-    pub fn initialize(&mut self, m: &Module) -> Result<(), MemoryOutOfBounds> {
+    pub fn initialize(&mut self, m: &Module) -> Result<(), MemoryError> {
         // Globals must be initialized before any invocation
         assert_eq!(self.sp, 0);
         assert_eq!(self.fp, 0);
@@ -305,11 +304,15 @@ pub enum TrapReason {
     /// An imported global could not be set
     GlobalSetFailed,
     /// A memory operation is out of bounds
+    OutOfMemory,
+    /// A memory operation is out of bounds
     MemoryOutOfBounds,
     /// Ran out of stack space
     StackOverflow,
     /// Attempting to convert Inf to integer
     UnrepresentableResult,
+    /// Signed division causes integer overflow
+    IntegerOverflow,
     /// Attempting to convert NaN to integer
     BadConversionToInteger,
 }
@@ -324,9 +327,12 @@ pub enum InterpreterBreak {
     Pause,
 }
 
-impl From<MemoryOutOfBounds> for InterpreterBreak {
-    fn from(_: MemoryOutOfBounds) -> Self {
-        InterpreterBreak::Trap(TrapReason::MemoryOutOfBounds)
+impl From<MemoryError> for InterpreterBreak {
+    fn from(e: MemoryError) -> Self {
+        match e {
+            MemoryError::OutOfBounds => InterpreterBreak::Trap(TrapReason::MemoryOutOfBounds),
+            MemoryError::OutOfMemory => InterpreterBreak::Trap(TrapReason::OutOfMemory),
+        }
     }
 }
 
@@ -402,7 +408,7 @@ macro_rules! instruction {
     ($name:ident, i64 -> bool, $i:ident, $( $t:tt )*) => {
         fn $name(&self, state: &mut Self::State) -> Result<(), Self::Error> {
             state.sp -= 1;
-            let $i = state.stack.read_u64(state.sp - 1) as i32;
+            let $i = state.stack.read_u64(state.sp - 1) as i64;
             state.stack.write_u32(state.sp - 1, if $($t)* { 1 } else { 0 });
             Ok(())
         }
@@ -654,16 +660,22 @@ impl<'module> BaseVisitor for Interpreter<'module> {
     }
 
     fn memory_size(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        state.stack.write_u32(state.sp, state.ram.size_pages());
+        state.stack.write_u32(state.sp, state.ram.size());
         state.sp += 1;
         Ok(())
     }
 
     fn memory_grow(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        // TODO(tumbar) Hook memory growth to the optional host functionality
-        // Always fail the growth
-        // state.stack.write_u32(state.sp - 1, (-1i32) as u32);
-        state.stack.write_u32(state.sp - 1, 1);
+        let n = state.stack.read_u32(state.sp - 1);
+        match state.ram.grow(n) {
+            Ok(old_size) => {
+                state.stack.write_u32(state.sp - 1, old_size);
+            }
+            Err(_) => {
+                state.stack.write_u32(state.sp - 1, 0xFFFF_FFFF);
+            }
+        }
+
         Ok(())
     }
 
@@ -733,18 +745,21 @@ impl<'module> BaseVisitor for Interpreter<'module> {
     instruction!(i32_mul, i32, i32 -> i32, a, b, a.wrapping_mul(b));
     instruction!(i32_div_s, i32, i32 -> i32, a, b, {
         if b == 0 {
-            return Err(InterpreterBreak::Trap(TrapReason::DivideByZero))
-        } else {
-            a.wrapping_div(b)
+            return Err(TrapReason::DivideByZero.into());
         }
+        if a == i32::MIN && b == -1 {
+            return Err(TrapReason::IntegerOverflow.into());
+        }
+
+        a / b
     });
     instruction!(i32_div_u, i32, i32 -> i32, a, b, {
         if b == 0 {
             return Err(InterpreterBreak::Trap(TrapReason::DivideByZero))
         } else {
-            (a as u32).wrapping_div(b as u32)
+           ((a as u32) / (b as u32)) as i32
         }
-    } as i32);
+    });
     instruction!(i32_rem_s, i32, i32 -> i32, a, b, {
         if b == 0 {
             return Err(InterpreterBreak::Trap(TrapReason::DivideByZero))
@@ -775,10 +790,13 @@ impl<'module> BaseVisitor for Interpreter<'module> {
     instruction!(i64_mul, i64, i64 -> i64, a, b, a.wrapping_mul(b));
     instruction!(i64_div_s, i64, i64 -> i64, a, b, {
         if b == 0 {
-            return Err(InterpreterBreak::Trap(TrapReason::DivideByZero))
-        } else {
-            a.wrapping_div(b)
+            return Err(TrapReason::DivideByZero.into());
         }
+        if a == i64::MIN && b == -1 {
+            return Err(TrapReason::IntegerOverflow.into());
+        }
+
+        a / b
     });
     instruction!(i64_div_u, i64, i64 -> i64, a, b, {
         if b == 0 {
@@ -811,31 +829,127 @@ impl<'module> BaseVisitor for Interpreter<'module> {
     instruction!(i64_rotr, i64, i64 -> i64, a, b, a.rotate_right(b as u32));
     instruction!(f32_abs, f32 -> f32, f, libm::fabsf(f));
     instruction!(f32_neg, f32 -> f32, f, -f);
-    instruction!(f32_ceil, f32 -> f32, f, libm::ceilf(f));
-    instruction!(f32_floor, f32 -> f32, f, libm::floorf(f));
-    instruction!(f32_trunc, f32 -> f32, f, libm::truncf(f));
-    instruction!(f32_nearest, f32 -> f32, f, libm::rintf(f));
+    instruction!(f32_ceil, f32 -> f32, f, {
+        if f.is_nan() {
+            f32::NAN
+        } else {
+            libm::ceilf(f)
+        }
+    });
+    instruction!(f32_floor, f32 -> f32, f, {
+        if f.is_nan() {
+            f32::NAN
+        } else {
+            libm::floorf(f)
+        }
+    });
+    instruction!(f32_trunc, f32 -> f32, f, {
+        if f.is_nan() {
+            f32::NAN
+        } else {
+            libm::truncf(f)
+        }
+    });
+    instruction!(f32_nearest, f32 -> f32, f, {
+        if f.is_nan() {
+            f32::NAN
+        } else {
+            libm::rintf(f)
+        }
+    });
     instruction!(f32_sqrt, f32 -> f32, f, libm::sqrtf(f));
     instruction!(f32_add, f32, f32 -> f32, a, b, a + b);
     instruction!(f32_sub, f32, f32 -> f32, a, b, a - b);
     instruction!(f32_mul, f32, f32 -> f32, a, b, a * b);
     instruction!(f32_div, f32, f32 -> f32, a, b, a / b);
-    instruction!(f32_min, f32, f32 -> f32, a, b, libm::fminf(a, b));
-    instruction!(f32_max, f32, f32 -> f32, a, b, libm::fmaxf(a, b));
+    instruction!(f32_min, f32, f32 -> f32, a, b, {
+        if a.is_nan() || b.is_nan() {
+            f32::NAN
+        } else if a == 0.0 && b == 0.0 {
+            if a.to_bits() >> 31 == 1 {
+                a
+            } else {
+                b
+            }
+        } else {
+            a.min(b)
+        }
+    });
+    instruction!(f32_max, f32, f32 -> f32, a, b, {
+        if a.is_nan() || b.is_nan() {
+            f32::NAN
+        } else if a == 0.0 && b == 0.0 {
+            if a.to_bits() >> 31 == 1 {
+                b
+            } else {
+                a
+            }
+        } else {
+            a.max(b)
+        }
+    });
     instruction!(f32_copysign, f32, f32 -> f32, a, b, libm::copysignf(a, b));
     instruction!(f64_abs, f64 -> f64, f, libm::fabs(f));
     instruction!(f64_neg, f64 -> f64, f, -f);
-    instruction!(f64_ceil, f64 -> f64, f, libm::ceil(f));
-    instruction!(f64_floor, f64 -> f64, f, libm::floor(f));
-    instruction!(f64_trunc, f64 -> f64, f, libm::trunc(f));
-    instruction!(f64_nearest, f64 -> f64, f, libm::rint(f));
+    instruction!(f64_ceil, f64 -> f64, f, {
+        if f.is_nan() {
+            f64::NAN
+        } else {
+            libm::ceil(f)
+        }
+    });
+    instruction!(f64_floor, f64 -> f64, f, {
+        if f.is_nan() {
+            f64::NAN
+        } else {
+            libm::floor(f)
+        }
+    });
+    instruction!(f64_trunc, f64 -> f64, f, {
+        if f.is_nan() {
+            f64::NAN
+        } else {
+            libm::trunc(f)
+        }
+    });
+    instruction!(f64_nearest, f64 -> f64, f, {
+        if f.is_nan() {
+            f64::NAN
+        } else {
+            libm::rint(f)
+        }
+    });
     instruction!(f64_sqrt, f64 -> f64, f, libm::sqrt(f));
     instruction!(f64_add, f64, f64 -> f64, a, b, a + b);
     instruction!(f64_sub, f64, f64 -> f64, a, b, a - b);
     instruction!(f64_mul, f64, f64 -> f64, a, b, a * b);
     instruction!(f64_div, f64, f64 -> f64, a, b, a / b);
-    instruction!(f64_min, f64, f64 -> f64, a, b, libm::fmin(a, b));
-    instruction!(f64_max, f64, f64 -> f64, a, b, libm::fmax(a, b));
+    instruction!(f64_min, f64, f64 -> f64, a, b, {
+        if a.is_nan() || b.is_nan() {
+            f64::NAN
+        } else if a == 0.0 && b == 0.0 {
+            if a.to_bits() >> 63 == 1 {
+                a
+            } else {
+                b
+            }
+        } else {
+            a.min(b)
+        }
+    });
+    instruction!(f64_max, f64, f64 -> f64, a, b, {
+        if a.is_nan() || b.is_nan() {
+            f64::NAN
+        } else if a == 0.0 && b == 0.0 {
+            if a.to_bits() >> 63 == 1 {
+                b
+            } else {
+                a
+            }
+        } else {
+            a.max(b)
+        }
+    });
     instruction!(f64_copysign, f64, f64 -> f64, a, b, libm::copysign(a, b));
 
     fn i32_wrap_i64(&self, state: &mut Self::State) -> Result<(), Self::Error> {
@@ -1025,7 +1139,6 @@ impl<'module> BaseVisitor for Interpreter<'module> {
     fn f32_demote_f64(&self, state: &mut Self::State) -> Result<(), Self::Error> {
         state.sp -= 1;
         let f = state.stack.read_f64(state.sp - 1);
-        let f = if f.is_nan() { f64::NAN } else { f };
         state.stack.write_f32(state.sp - 1, f as f32);
         Ok(())
     }
@@ -1058,7 +1171,6 @@ impl<'module> BaseVisitor for Interpreter<'module> {
 
     fn f64_promote_f32(&self, state: &mut Self::State) -> Result<(), Self::Error> {
         let f = state.stack.read_f32(state.sp - 1);
-        let f = if f.is_nan() { f32::NAN } else { f };
         state.stack.write_f64(state.sp - 1, f as f64);
         state.sp += 1;
         Ok(())

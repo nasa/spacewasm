@@ -1,13 +1,61 @@
 #![no_std]
 
-pub mod core;
-pub use core::*;
-
 pub mod util;
 pub use util::*;
 
-pub mod exec;
-pub use exec::*;
+mod visitor;
+pub use visitor::*;
+
+mod store;
+pub use store::*;
+
+mod reader;
+pub use reader::*;
+
+mod host;
+pub use host::*;
+
+mod imports;
+pub use imports::*;
+
+mod stream;
+pub use stream::*;
+
+pub mod error;
+pub use error::*;
+
+pub mod module;
+pub use module::*;
+
+pub(crate) mod opcode;
+pub use opcode::*;
+
+mod types;
+pub use types::*;
+
+mod code;
+pub use code::*;
+
+mod constant;
+pub use constant::*;
+
+mod compiler;
+pub use compiler::*;
+
+mod text;
+pub use text::*;
+
+mod interpreter;
+pub use interpreter::*;
+
+mod memory;
+pub use memory::*;
+
+mod stack;
+pub use stack::*;
+
+mod ir_reader;
+pub use ir_reader::*;
 
 #[cfg(test)]
 mod tests {

@@ -39,7 +39,7 @@ impl From<u8> for ValType {
 
         #[cfg(not(feature = "strict-assertions"))]
         unsafe {
-            ::core::mem::transmute(val)
+            core::mem::transmute(val)
         }
     }
 }

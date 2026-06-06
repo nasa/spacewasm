@@ -32,7 +32,7 @@ impl<T: GlobalValue> Box<T> {
         T: GlobalValue + 'static,
     {
         let ptr = self.as_mut_ptr() as *mut dyn GlobalValue;
-        ::core::mem::forget(self); // Prevent double free
+        core::mem::forget(self); // Prevent double free
         unsafe { Box::from_raw(GlobalAllocator, ptr) }
     }
 }
@@ -125,7 +125,7 @@ impl<T: Fn(&mut InterpreterState, &[Value]) -> HostFunctionResult> Box<T> {
     {
         let ptr =
             self.as_mut_ptr() as *mut dyn Fn(&mut InterpreterState, &[Value]) -> HostFunctionResult;
-        ::core::mem::forget(self); // Prevent double free
+        core::mem::forget(self); // Prevent double free
         unsafe { Box::from_raw(GlobalAllocator, ptr) }
     }
 }
