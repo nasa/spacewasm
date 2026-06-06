@@ -364,3 +364,297 @@ mod tests {
         }
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+    use crate::StaticAllocator;
+
+    /// Verify Page::alloc pointer arithmetic safety and allocation correctness
+    #[kani::proof]
+    fn proof_page_allocation_safety() {
+        let backing_alloc = StaticAllocator::<512, 8>::new();
+
+        // Allocate a page from backing allocator
+        let page_size = 256;
+        let page_layout = Layout::from_size_align(page_size, 128).unwrap();
+        let page_ptr = unsafe { backing_alloc.alloc(page_layout).unwrap() };
+
+        let mut page = Page::new(page_ptr, page_size);
+
+        // Test with symbolic size and alignment
+        let size: usize = kani::any();
+        kani::assume(size > 0 && size <= 64);
+
+        let align: usize = kani::any();
+        kani::assume(align > 0 && align <= 128);
+        kani::assume(align.is_power_of_two());
+
+        let layout = Layout::from_size_align(size, align).unwrap();
+
+        let allocated_before = page.allocated;
+        let wasted_before = page.wasted;
+
+        match page.alloc(layout) {
+            Some(ptr) => {
+                let ptr_addr = ptr as usize;
+                let page_base = page_ptr as usize;
+
+                // Pointer must be aligned
+                assert_eq!(ptr_addr % align, 0, "Returned pointer must be aligned");
+
+                // Verify alignment padding is minimal
+                let start_before_align = page_base + allocated_before;
+                if start_before_align % align != 0 {
+                    let padding = page.wasted - wasted_before;
+                    assert!(padding < align, "Alignment padding must be < align");
+                    assert_eq!(
+                        (start_before_align + padding) % align, 0,
+                        "Padding must result in aligned address"
+                    );
+                }
+
+                // Wasted bytes must increase monotonically
+                assert!(page.wasted >= wasted_before, "Wasted bytes must be monotonic");
+
+                // Pointer must be within page bounds
+                assert!(ptr_addr >= page_base, "Pointer must be >= page base");
+                assert!(ptr_addr < page_base + page_size, "Pointer must be within page");
+
+                // Allocated offset must be within bounds
+                assert!(page.allocated <= page_size, "Allocated offset must not exceed page size");
+
+                // Allocated must increase monotonically
+                assert!(page.allocated >= allocated_before, "Allocated must increase");
+
+                // Allocation counter incremented
+                assert_eq!(page.n_allocations, 1, "Allocation counter must increment");
+
+                // Cache must be set
+                assert!(page.cache.is_some(), "Cache must be populated after allocation");
+
+                // No overflow in pointer arithmetic
+                let offset = ptr_addr - page_base;
+                assert!(offset.checked_add(size).is_some(), "Offset + size must not overflow");
+                assert!(offset + size <= page_size, "Allocation must fit within page");
+
+                // Second allocation must not overlap
+                let layout2 = Layout::from_size_align(16, 8).unwrap();
+                if let Some(ptr2) = page.alloc(layout2) {
+                    let ptr2_addr = ptr2 as usize;
+                    let offset2 = ptr2_addr - page_base;
+
+                    // Second allocation must start after first ends
+                    assert!(offset2 >= offset + size, "Allocations must not overlap");
+                    assert_eq!(page.n_allocations, 2, "Counter must be 2 after second alloc");
+                }
+            }
+            None => {
+                // Allocation failed - page too full
+                // This is acceptable
+            }
+        }
+
+        // Cleanup
+        core::mem::forget(page);
+        unsafe { backing_alloc.dealloc(page_ptr, page_layout) };
+    }
+
+    /// Verify Page::dealloc correctness and cache mechanism
+    #[kani::proof]
+    fn proof_page_deallocation_safety() {
+        let backing_alloc = StaticAllocator::<512, 8>::new();
+
+        let page_size = 256;
+        let page_layout = Layout::from_size_align(page_size, 128).unwrap();
+        let page_ptr = unsafe { backing_alloc.alloc(page_layout).unwrap() };
+
+        let mut page = Page::new(page_ptr, page_size);
+        let page_base = page_ptr as usize;
+
+        // Make two allocations
+        let layout1 = Layout::from_size_align(32, 8).unwrap();
+        let layout2 = Layout::from_size_align(16, 8).unwrap();
+
+        let ptr1 = page.alloc(layout1).unwrap();
+        let allocated_after_first = page.allocated;
+        let wasted_after_first = page.wasted;
+
+        let ptr2 = page.alloc(layout2).unwrap();
+        let _allocated_after_second = page.allocated;
+        let _wasted_after_second = page.wasted;
+
+        assert_eq!(page.n_allocations, 2, "Should have 2 allocations");
+
+        // Test LIFO deallocation (cache hit)
+        let should_drop = page.dealloc(ptr2, layout2);
+
+        assert_eq!(should_drop, Some(false), "Page should not be dropped with remaining allocations");
+        assert_eq!(page.n_allocations, 1, "Counter must decrement");
+
+        // Cache hit must restore allocated to exact previous value
+        assert_eq!(
+            page.allocated, allocated_after_first,
+            "Cache hit must restore allocated to exact previous value"
+        );
+
+        // Cache hit must restore wasted bytes (subtracts alignment padding)
+        assert_eq!(
+            page.wasted, wasted_after_first,
+            "Cache hit must restore wasted bytes"
+        );
+
+        assert!(!page.has_deallocated, "Cache hit should not set has_deallocated flag");
+
+        // Test pointer ownership check - pointer outside page range
+        let outside_ptr = (page_base - 16) as *mut u8;
+        let result = page.dealloc(outside_ptr, layout1);
+        assert_eq!(result, None, "Dealloc of pointer outside page must return None");
+        assert_eq!(page.n_allocations, 1, "Counter must not change for outside pointer");
+
+        // Test non-LIFO deallocation (cache miss)
+        let ptr3 = page.alloc(Layout::from_size_align(8, 8).unwrap()).unwrap();
+        assert_eq!(page.n_allocations, 2, "Should have 2 allocations again");
+
+        // Deallocate ptr1 (not the last allocation, so cache miss)
+        let should_drop2 = page.dealloc(ptr1, layout1);
+        assert_eq!(should_drop2, Some(false), "Page should not be dropped");
+        assert_eq!(page.n_allocations, 1, "Counter must decrement");
+        assert!(page.has_deallocated, "Cache miss should set has_deallocated flag");
+
+        // Final deallocation should return true (drop page)
+        let should_drop3 = page.dealloc(ptr3, Layout::from_size_align(8, 8).unwrap());
+        assert_eq!(should_drop3, Some(true), "Page should be dropped when n_allocations reaches 0");
+        assert_eq!(page.n_allocations, 0, "Counter must be 0");
+
+        // Cleanup
+        core::mem::forget(page);
+        unsafe { backing_alloc.dealloc(page_ptr, page_layout) };
+    }
+
+    /// Verify PageAllocator orchestration with multiple pages
+    #[kani::proof]
+    fn proof_page_allocator_correctness() {
+        let backing_alloc = StaticAllocator::<1024, 8>::new();
+        let page_alloc = PageAllocator::<3>::new(&backing_alloc, 128);
+
+        // Test zero-size allocation must fail
+        let zero_layout = Layout::from_size_align(0, 1).unwrap();
+        let result_zero = unsafe { page_alloc.alloc(zero_layout) };
+        assert!(
+            matches!(result_zero, Err(AllocError::IllegalZeroSize)),
+            "Zero-size allocation must fail"
+        );
+
+        // Test allocation too large for page size must fail
+        let huge_layout = Layout::from_size_align(200, 8).unwrap();
+        let result_huge = unsafe { page_alloc.alloc(huge_layout) };
+        assert!(
+            matches!(result_huge, Err(AllocError::PageTooSmall)),
+            "Allocation larger than page size must fail with PageTooSmall"
+        );
+
+        // Test basic allocation
+        let layout = Layout::from_size_align(32, 8).unwrap();
+        let result1 = unsafe { page_alloc.alloc(layout) };
+
+        // If first allocation succeeds, verify properties
+        if let Ok(ptr1) = result1 {
+            // Pointer must be non-null and aligned
+            assert!(!ptr1.is_null(), "Allocated pointer must be non-null");
+            assert_eq!(ptr1 as usize % 8, 0, "Pointer must be aligned");
+
+            let stats1 = page_alloc.stats();
+            assert!(stats1.pages >= 1, "Should have at least 1 page");
+            assert!(stats1.total_bytes >= 32, "Should track allocated bytes");
+
+            // Verify stats aggregation: total_bytes = allocated + wasted across all pages
+            // (We can't directly verify this without accessing page internals,
+            // but we can verify total_bytes is reasonable)
+            assert!(
+                stats1.total_bytes <= stats1.pages as u32 * 128,
+                "Total bytes must not exceed total page capacity"
+            );
+            assert!(
+                stats1.total_bytes >= stats1.pad_bytes,
+                "Total bytes must be >= pad bytes"
+            );
+
+            // Try second allocation
+            let result2 = unsafe { page_alloc.alloc(layout) };
+            if let Ok(ptr2) = result2 {
+                // Verify no overlap
+                let ptr1_addr = ptr1 as usize;
+                let ptr2_addr = ptr2 as usize;
+                assert!(
+                    ptr2_addr >= ptr1_addr + 32 || ptr1_addr >= ptr2_addr + 32,
+                    "Allocations must not overlap"
+                );
+
+                // Try to allocate until we run out of space
+                let result3 = unsafe { page_alloc.alloc(layout) };
+                let result4 = unsafe { page_alloc.alloc(layout) };
+
+                // Eventually should run out of pages or backing memory
+                if result3.is_ok() && result4.is_ok() {
+                    // Keep trying until failure
+                    for _ in 0..10 {
+                        if unsafe { page_alloc.alloc(layout) }.is_err() {
+                            break;
+                        }
+                    }
+                    // With limited backing memory, should eventually fail
+                    // (but might not if state space exploration stops early)
+                }
+
+                // Test deallocation
+                unsafe {
+                    page_alloc.dealloc(ptr2, layout);
+                    page_alloc.dealloc(ptr1, layout);
+                }
+            }
+        }
+    }
+
+    /// Verify Drop frees all pages in correct order
+    #[kani::proof]
+    fn proof_drop_safety() {
+        let backing_alloc = StaticAllocator::<512, 8>::new();
+
+        let initial_stats = backing_alloc.memory_statistics();
+        assert_eq!(initial_stats.total_bytes, 0, "Backing allocator must start empty");
+
+        {
+            let page_alloc = PageAllocator::<3>::new(&backing_alloc, 128);
+
+            // Each allocation is 100 bytes, forcing new page creation
+            // (100 bytes won't fit after first allocation in 128-byte page)
+            let layout = Layout::from_size_align(100, 8).unwrap();
+
+            let ptr1 = unsafe { page_alloc.alloc(layout).unwrap() }; // Creates page 0
+            let ptr2 = unsafe { page_alloc.alloc(layout).unwrap() }; // Creates page 1
+            let ptr3 = unsafe { page_alloc.alloc(layout).unwrap() }; // Creates page 2
+
+            // Verify 3 pages allocated
+            let stats = page_alloc.stats();
+            assert_eq!(stats.pages, 3, "Must have exactly 3 pages allocated");
+
+            // Memory should be allocated
+            let mid_stats = backing_alloc.memory_statistics();
+            assert!(mid_stats.total_bytes > 0, "Memory must be allocated");
+
+            // Keep pointers alive to prevent early dealloc
+            core::mem::forget((ptr1, ptr2, ptr3));
+
+            // PageAllocator drops here - must deallocate all 3 pages
+            // in reverse order: page2, page1, page0 (LIFO for StaticAllocator)
+        }
+
+        // After drop, all memory must be freed
+        let final_stats = backing_alloc.memory_statistics();
+        assert_eq!(
+            final_stats.total_bytes, 0,
+            "Drop must free all allocated pages"
+        );
+    }
+}
