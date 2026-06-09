@@ -61,6 +61,7 @@ macro_rules! instruction {
     // An instruction with a MemArg operand
     ($name:ident, $opcode:expr, mem, $ty_align:tt, ($($in_ty:ident)*) -> ($($out_ty:ident)*)) => {
         fn $name(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
+            state.module().check_memory_defined()?;
             validate!(state, ($($in_ty)*) -> ($($out_ty)*));
             if m.align > alignment!($ty_align) {
                 return Err(ValidationError::AlignmentLargerThanType);
@@ -392,9 +393,15 @@ impl<'a, const N: usize> BaseVisitor for Compiler<'a, N> {
     instruction!(i64_store16, I64_STORE16, mem, 16, (I64 I32) -> ());
     instruction!(i64_store32, I64_STORE32, mem, 32, (I64 I32) -> ());
 
-    instruction!(memory_size, MEMORY_SIZE, () -> (I32));
+    fn memory_size(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        state.module().check_memory_defined()?;
+        validate!(state, () -> (I32));
+        state.instr(MEMORY_SIZE)?;
+        Ok(())
+    }
 
     fn memory_grow(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        state.module().check_memory_defined()?;
         validate!(state, (I32) -> (I32));
         if self.options.allow_memory_grow {
             state.instr(MEMORY_GROW)?;

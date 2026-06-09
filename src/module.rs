@@ -773,6 +773,16 @@ pub struct Data {
     pub init: Vec<u8>,
 }
 
+impl Module {
+    pub(crate) fn check_memory_defined(&self) -> Result<(), ValidationError> {
+        if self.memory.is_none() {
+            Err(ValidationError::MemoryNotDefined)
+        } else {
+            Ok(())
+        }
+    }
+}
+
 impl Data {
     pub fn read(
         wasm: &mut Reader,
@@ -783,6 +793,9 @@ impl Data {
         if mem.0 != 0 {
             return Err(ValidationError::InvalidMemIndex);
         }
+
+        // Make sure we actually defined a linear memory for this module
+        module.check_memory_defined()?;
 
         let offset = Expr::read_constant(wasm, store, module)?;
         let init = wasm.read_vec(|w| w.read_u8())?;

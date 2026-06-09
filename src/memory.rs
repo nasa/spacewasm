@@ -1,4 +1,4 @@
-use crate::AllocError;
+use crate::{AllocError, MemType};
 use core::alloc::Layout;
 use core::ptr::NonNull;
 
@@ -19,24 +19,14 @@ pub trait WasmMemoryAllocator {
     fn deallocate(&self, ptr: NonNull<u8>, layout: Layout);
 }
 
-// impl<T: WasmMemoryAllocator> Box<T> {
-//     pub fn into_wasm_memory_allocator_dyn(mut self) -> Box<dyn WasmMemoryAllocator>
-//     where
-//         T: WasmMemoryAllocator + 'static,
-//     {
-//         let ptr = self.as_mut_ptr() as *mut dyn WasmMemoryAllocator;
-//         core::mem::forget(self); // Prevent double free
-//         unsafe { Box::from_raw(GlobalAllocator, ptr) }
-//     }
-// }
-
 pub struct Memory {
     ptr: *mut u8,
     size: usize,
+    ty: MemType,
     allocator: Option<&'static dyn WasmMemoryAllocator>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum MemoryError {
     OutOfBounds,
     OutOfMemory,
@@ -63,19 +53,29 @@ impl Memory {
         Memory {
             ptr: core::ptr::null_mut(),
             size: 0,
+            ty: MemType { min: 0, max: 0 },
             allocator: None,
         }
     }
 
     pub fn new(
-        n_pages: usize,
+        ty: MemType,
         allocator: &'static dyn WasmMemoryAllocator,
     ) -> Result<Memory, AllocError> {
+        let size = (ty.min as usize) * Self::PAGE_SIZE;
+        let ptr = allocator
+            .allocate(Layout::from_size_align(size, 16).unwrap())?
+            .as_ptr();
+
+        // Clear the pages
+        unsafe {
+            ptr.write_bytes(0, size);
+        }
+
         Ok(Memory {
-            ptr: allocator
-                .allocate(Layout::from_size_align(n_pages * Self::PAGE_SIZE, 16).unwrap())?
-                .as_ptr(),
-            size: n_pages * Self::PAGE_SIZE,
+            ptr,
+            size,
+            ty,
             allocator: Some(allocator),
         })
     }
@@ -186,6 +186,10 @@ impl Memory {
     /// Grow the memory by n pages
     /// If the memory growth succeeds, return the old number of pages
     pub fn grow(&mut self, n: u32) -> Result<u32, MemoryError> {
+        if self.size() + n > self.ty.max {
+            return Err(MemoryError::OutOfMemory);
+        }
+
         let old_size = self.size;
         let new_size = (Self::PAGE_SIZE * n as usize) + self.size;
         if let Some(allocator) = &self.allocator
@@ -198,6 +202,15 @@ impl Memory {
                     Layout::from_size_align(new_size, 16).unwrap(),
                 )?
                 .as_ptr();
+
+            // Clear the new memory
+            let new_ptr = unsafe { self.ptr.offset(old_size as isize) };
+            unsafe {
+                new_ptr.write_bytes(0, Self::PAGE_SIZE * n as usize);
+            }
+
+            self.size = new_size;
+
             Ok((old_size / Self::PAGE_SIZE) as u32)
         } else {
             Err(MemoryError::OutOfMemory)

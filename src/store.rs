@@ -49,10 +49,7 @@ impl Store {
                 Some(MemoryKind::Allocate { ty, index }) => {
                     // Make sure the module construction is pointing to the index we expect
                     assert_eq!(*index as usize, self.memory.len());
-                    self.memory.push(RefCell::new(Memory::new(
-                        ty.0.min as usize,
-                        allocator.clone(),
-                    )?));
+                    self.memory.push(RefCell::new(Memory::new(*ty, allocator)?));
                     self.memory.last().unwrap().borrow_mut()
                 }
                 Some(MemoryKind::Import(mem_idx)) => {

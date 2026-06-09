@@ -209,10 +209,10 @@ impl FuncType {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Limit {
     pub min: u32,
-    // Note: We are disabling `max` memory size since we don't support memory.grow
-    // pub max: Option<core::num::NonZeroU32>,
+    pub max: Option<u32>,
 }
 
 impl Limit {
@@ -221,7 +221,7 @@ impl Limit {
         match wasm.read_u8()? {
             0x00 => Ok(Limit {
                 min: wasm.read_u32()?,
-                // max: None,
+                max: None,
             }),
             0x01 => {
                 let min = wasm.read_u32()?;
@@ -234,9 +234,7 @@ impl Limit {
 
                 Ok(Limit {
                     min,
-                    // max: Some(
-                    //     max,
-                    // ),
+                    max: Some(max),
                 })
             }
             c => Err(ValidationError::MalformedLimit(c)),
@@ -244,12 +242,30 @@ impl Limit {
     }
 }
 
-pub struct MemType(pub Limit);
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MemType {
+    pub min: u32,
+    pub max: u32,
+}
 
 impl MemType {
     pub(crate) fn read(wasm: &mut Reader) -> Result<Self, ValidationError> {
         // Memory types are encoded with their limits.
-        Ok(MemType(Limit::read(wasm)?))
+        let limit = Limit::read(wasm)?;
+
+        // Validate the memory limits
+        if limit.min > 65536 {
+            Err(ValidationError::MemoryTooLarge)
+        } else if let Some(max) = limit.max
+            && max > 65536
+        {
+            Err(ValidationError::MemoryTooLarge)
+        } else {
+            Ok(MemType {
+                min: limit.min,
+                max: limit.max.unwrap_or(65536),
+            })
+        }
     }
 }
 

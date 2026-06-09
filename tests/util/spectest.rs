@@ -1,17 +1,17 @@
 use serde::{Deserialize, Serialize};
 use spacewasm::{
-    global_allocator, vec, AllocError, Allocator, CompilerOptions, ConstantExprError,
-    ExportDesc, GlobalValue, GlobalValueError, HostFunction, HostGlobal, HostModule,
-    InnerVec, Interpreter, InterpreterBreak, InterpreterResult, InterpreterRunner, InterpreterState,
-    JumpTarget, Memory, MemoryStatistics, Module, ParseError, ReaderError, Ref, Store,
-    TrapReason, ValType, ValidationError, Value, WasmStream,
+    global_allocator, vec, AllocError, Allocator, CodeBuilder, CompilerOptions, ConstantExprError,
+    Error, ExportDesc, GlobalValue, GlobalValueError, HostFunction, HostGlobal, HostModule,
+    InnerVec, Interpreter, InterpreterBreak, InterpreterResult, InterpreterRunner,
+    InterpreterState, JumpTarget, MemoryStatistics, Module, ReaderError, Ref, Store, TrapReason, ValType,
+    ValidationError, Value, WasmMemoryAllocator, WasmStream,
 };
 use std::alloc::Layout;
 use std::cell::RefCell;
 use std::ops::ControlFlow;
 use std::panic::catch_unwind;
+use std::ptr::NonNull;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use super::inspector::{Inspector, LimitedVec};
@@ -102,21 +102,10 @@ struct ValueSpec {
     value: Option<String>,
 }
 
-struct RustSystemAllocator {
-    total: AtomicUsize,
-}
-
-impl RustSystemAllocator {
-    const fn new() -> Self {
-        Self {
-            total: AtomicUsize::new(0),
-        }
-    }
-}
+struct RustSystemAllocator;
 
 unsafe impl Allocator for RustSystemAllocator {
     unsafe fn alloc(&self, layout: Layout) -> Result<*mut u8, AllocError> {
-        self.total.store(layout.size(), Ordering::Relaxed);
         unsafe { Ok(std::alloc::alloc(layout)) }
     }
 
@@ -126,13 +115,37 @@ unsafe impl Allocator for RustSystemAllocator {
 
     fn memory_statistics(&self) -> MemoryStatistics {
         MemoryStatistics {
-            total_bytes: self.total.load(Ordering::Relaxed) as i32,
+            total_bytes: 0,
             pad_bytes: 0,
         }
     }
 }
 
-global_allocator!(RustSystemAllocator, RustSystemAllocator::new());
+impl WasmMemoryAllocator for RustSystemAllocator {
+    fn allocate(&self, layout: Layout) -> Result<NonNull<u8>, AllocError> {
+        unsafe { Ok(NonNull::new(std::alloc::alloc(layout)).ok_or(AllocError::AllocationFailed)?) }
+    }
+
+    fn reallocate(
+        &self,
+        ptr: NonNull<u8>,
+        old_layout: Layout,
+        layout: Layout,
+    ) -> Result<NonNull<u8>, AllocError> {
+        unsafe {
+            Ok(
+                NonNull::new(std::alloc::realloc(ptr.as_ptr(), old_layout, layout.size()))
+                    .ok_or(AllocError::AllocationFailed)?,
+            )
+        }
+    }
+
+    fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
+        unsafe { std::alloc::dealloc(ptr.as_ptr(), layout) }
+    }
+}
+
+global_allocator!(RustSystemAllocator, RustSystemAllocator);
 
 pub struct ByteStream {
     buffer: Option<Vec<u8>>,
@@ -198,14 +211,22 @@ impl WasmStream for ByteStream {
 
 struct TestContext {
     store: Store,
-    state: InterpreterState,
+    state: Option<InterpreterState>,
+    module_index: usize,
+    code_builder: CodeBuilder<256>,
+    text: spacewasm::Vec<spacewasm::Box<spacewasm::TextPage>>,
 }
 
 impl TestContext {
     fn new(store: Store) -> Self {
-        let memory = Memory::new(65536 * 8); // up to 8 pages of linear memory
-        let state = InterpreterState::new(65536, memory);
-        TestContext { store, state }
+        let code_builder = CodeBuilder::<256>::default();
+        TestContext {
+            store,
+            state: None,
+            module_index: 0,
+            code_builder,
+            text: spacewasm::Vec::zero(),
+        }
     }
 
     fn current_module_index(&self) -> usize {
@@ -394,6 +415,7 @@ fn load_module(ctx: &mut TestContext, module_name: Option<String>, wasm_bytes: &
         &internal_name,
         &mut stream,
         &ctx.store,
+        &mut ctx.code_builder,
         CompilerOptions {
             allow_memory_grow: true,
         },
@@ -403,26 +425,17 @@ fn load_module(ctx: &mut TestContext, module_name: Option<String>, wasm_bytes: &
     // Push module to store
     let module_index = ctx.store.modules.len();
     ctx.store.modules.push(spacewasm::Box::new(module).unwrap());
+    ctx.store.finish(&RustSystemAllocator).unwrap();
 
-    // Reinitialize state with new memory size
-    let memory = Memory::new_with_realloc(65536 * 8, |ptr, new_size| unsafe {
-        Ok(std::alloc::realloc(
-            ptr,
-            Layout::from_size_align(new_size, 16).unwrap(),
-            new_size,
-        ))
-    });
+    // Finish the code builder to get the text
+    let code_builder = std::mem::replace(&mut ctx.code_builder, CodeBuilder::<256>::default());
+    let (text, _final_page_offset) = code_builder.finish().unwrap();
+    ctx.text = text;
 
-    let new_state = InterpreterState::new(65536, memory);
-    ctx.state = new_state;
-
-    // Initialize the state - split borrows to store and state
-    {
-        let module = ctx.store.modules.get(module_index).map(|b| &**b).unwrap();
-        ctx.state
-            .initialize(module)
-            .unwrap_or_else(|e| panic!("Failed to initialize module: {e:?}"));
-    }
+    // Reinitialize state with the new module
+    ctx.module_index = module_index;
+    let new_state = InterpreterState::new(&mut ctx.store, module_index, 65536);
+    ctx.state = Some(new_state);
 }
 
 fn invoke_function(
@@ -477,12 +490,17 @@ fn invoke_function(
         (func_index, return_types, params)
     };
 
-    // Now create interpreter with fresh borrows
-    let module = ctx.store.modules.get(module_index).unwrap();
+    // Create a temporary interpreter by moving the store
+    // We'll move it back after the function completes
+    let store = std::mem::replace(&mut ctx.store, Store::new(0, []).unwrap());
+    let interpreter = Interpreter::new(store);
+
+    let module = interpreter.store.modules.get(module_index).unwrap();
     let func = &module.functions[func_index];
-    let interpreter = Interpreter::new(&ctx.store, module);
-    ctx.state.pc = JumpTarget::SENTINEL;
-    interpreter.invoke(&mut ctx.state, func, &params)?;
+
+    let state = ctx.state.as_mut().expect("State not initialized");
+    state.pc = JumpTarget::SENTINEL;
+    interpreter.invoke(state, func, &params)?;
 
     let test_runner = Inspector {
         v: &interpreter,
@@ -496,7 +514,11 @@ fn invoke_function(
 
     // Run until completion
     // Run up to 1-million instructions to catch infinite loops
-    let result = test_runner.run(&module.text, &mut ctx.state, 10000000);
+    let state = ctx.state.as_mut().expect("State not initialized");
+    let result = test_runner.run(&ctx.text, state, 10000000);
+
+    // Move the store back to the context
+    ctx.store = interpreter.store;
 
     // Check the result
     match result {
@@ -559,73 +581,89 @@ fn check_trap_reason(reason: TrapReason, text: &str) {
     }
 }
 
-fn check_decode_error(err: ParseError, text: String) {
-    match (err.err.err, text.as_str()) {
-        (
-            ValidationError::MalformedInteger,
-            "integer too large" | "integer representation too long",
-        ) => {}
-        (ValidationError::MalformedMagic, "magic header not detected") => {}
-        (ValidationError::MalformedVersion, "unknown binary version") => {}
-        (ValidationError::ExpectedTerminal(0), "zero byte expected") => {}
-        (
-            ValidationError::Eof,
-            "unexpected end" | "length out of bounds" | "unexpected end of section or function",
-        ) => {}
-        (ValidationError::TooManyLocals, "too many locals") => {}
-        (ValidationError::MalformedUtf8, "malformed UTF-8 encoding") => {}
-        (
-            ValidationError::InvalidCodeSectionFunctionCount,
-            "function and code section have inconsistent lengths",
-        ) => {}
-        (ValidationError::MalformedSectionSize, "section size mismatch") => {}
-        (ValidationError::LocalIdxOutOfRange, "unknown local") => {}
-        (ValidationError::MultipleMemories, "multiple memories") => {}
-        (ValidationError::MemoryImportsNotSupportedYet, "multiple memories") => {}
-        (ValidationError::AlignmentLargerThanType, "alignment must not be larger than natural") => {
-        }
-        (ValidationError::TypeMismatch, "type mismatch") => {}
-        (ValidationError::BlockResultTypeMismatch, "type mismatch") => {}
-        (ValidationError::InvalidLabelIndex, "unknown label") => {}
-        (ValidationError::MalformedSectionSize, "unexpected end") => {}
-        (ValidationError::GlobalIdxOutOfRange, "unknown global") => {}
-        (ValidationError::MalformedSectionId(_), "malformed section id") => {}
-        (ValidationError::VecTooLong, "length out of bounds") => {}
-        (ValidationError::StackUnderflow, "type mismatch") => {}
-        (ValidationError::TypeIdxOutOfRange, "unknown type") => {}
-        (ValidationError::FunctionResultTypeMismatch, "type mismatch") => {}
-        (ValidationError::FunctionIdxOutOfRange, "unknown function") => {}
-        (ValidationError::FunctionReturnsTooLarge, "invalid result arity") => {}
-        (ValidationError::BrTableHasTooManyCases, "br.table has too many cases") => {}
-        (ValidationError::TableNotDefined, "unknown table") => {}
-        (ValidationError::InvalidTableIndex, "malformed value type") => {}
-        (ValidationError::InvalidLabelIndex, "unexpected end of section or function") => {}
-        (ValidationError::MalformedValueType(_), "malformed value type") => {}
-        (ValidationError::DuplicateSection(_), "unexpected content after last section") => {}
-        (ValidationError::GlobalIsNotMutable, "immutable global") => {}
-        (ValidationError::InvalidElementOffset, "type mismatch") => {}
-        (
-            ValidationError::InvalidConstantExpr(ConstantExprError::InvalidConstantInstruction),
-            "constant expression required",
-        ) => {}
-        (ValidationError::FunctionImportOutOfRange, "unknown type") => {}
-        (ValidationError::GlobalTypeMismatch, "type mismatch") => {}
-        (
-            ValidationError::InvalidConstantExpr(ConstantExprError::AlreadyHasValue),
-            "type mismatch",
-        ) => {}
-        (ValidationError::InvalidConstantExpr(ConstantExprError::NoValue), "type mismatch") => {}
-        (
-            ValidationError::InvalidConstantExpr(ConstantExprError::InvalidGlobal),
-            "unknown global",
-        ) => {}
-        (ValidationError::ExpectedConstOrVar(_), "malformed mutability") => {}
-        err => {
-            assert!(
-                false,
-                "Could not match validation error text '{text}' with error {err:?}"
-            )
-        }
+fn check_decode_error(err: Error, text: String) {
+    match err {
+        Error::Parse(err) => match (err.err.err, text.as_str()) {
+            (
+                ValidationError::MalformedInteger,
+                "integer too large" | "integer representation too long",
+            ) => {}
+            (ValidationError::MalformedMagic, "magic header not detected") => {}
+            (ValidationError::MalformedVersion, "unknown binary version") => {}
+            (ValidationError::ExpectedTerminal(0), "zero byte expected") => {}
+            (
+                ValidationError::Eof,
+                "unexpected end" | "length out of bounds" | "unexpected end of section or function",
+            ) => {}
+            (ValidationError::TooManyLocals, "too many locals") => {}
+            (ValidationError::MalformedUtf8, "malformed UTF-8 encoding") => {}
+            (
+                ValidationError::InvalidCodeSectionFunctionCount,
+                "function and code section have inconsistent lengths",
+            ) => {}
+            (ValidationError::MalformedSectionSize, "section size mismatch") => {}
+            (ValidationError::LocalIdxOutOfRange, "unknown local") => {}
+            (ValidationError::MultipleMemories, "multiple memories") => {}
+            (ValidationError::MemoryImportsNotSupportedYet, "multiple memories") => {}
+            (
+                ValidationError::AlignmentLargerThanType,
+                "alignment must not be larger than natural",
+            ) => {}
+            (ValidationError::TypeMismatch, "type mismatch") => {}
+            (ValidationError::BlockResultTypeMismatch, "type mismatch") => {}
+            (ValidationError::InvalidLabelIndex, "unknown label") => {}
+            (ValidationError::MalformedSectionSize, "unexpected end") => {}
+            (ValidationError::GlobalIdxOutOfRange, "unknown global") => {}
+            (ValidationError::MalformedSectionId(_), "malformed section id") => {}
+            (ValidationError::VecTooLong, "length out of bounds") => {}
+            (ValidationError::StackUnderflow, "type mismatch") => {}
+            (ValidationError::TypeIdxOutOfRange, "unknown type") => {}
+            (ValidationError::FunctionResultTypeMismatch, "type mismatch") => {}
+            (ValidationError::FunctionIdxOutOfRange, "unknown function") => {}
+            (ValidationError::FunctionReturnsTooLarge, "invalid result arity") => {}
+            (ValidationError::BrTableHasTooManyCases, "br.table has too many cases") => {}
+            (ValidationError::TableNotDefined, "unknown table") => {}
+            (ValidationError::InvalidTableIndex, "malformed value type") => {}
+            (ValidationError::InvalidLabelIndex, "unexpected end of section or function") => {}
+            (ValidationError::MalformedValueType(_), "malformed value type") => {}
+            (ValidationError::DuplicateSection(_), "unexpected content after last section") => {}
+            (ValidationError::GlobalIsNotMutable, "immutable global") => {}
+            (ValidationError::InvalidElementOffset, "type mismatch") => {}
+            (
+                ValidationError::InvalidConstantExpr(ConstantExprError::InvalidConstantInstruction),
+                "constant expression required",
+            ) => {}
+            (ValidationError::FunctionImportOutOfRange, "unknown type") => {}
+            (ValidationError::GlobalTypeMismatch, "type mismatch") => {}
+            (
+                ValidationError::InvalidConstantExpr(ConstantExprError::AlreadyHasValue),
+                "type mismatch",
+            ) => {}
+            (ValidationError::InvalidConstantExpr(ConstantExprError::NoValue), "type mismatch") => {
+            }
+            (
+                ValidationError::InvalidConstantExpr(ConstantExprError::InvalidGlobal),
+                "unknown global",
+            ) => {}
+            (ValidationError::ExpectedConstOrVar(_), "malformed mutability") => {}
+            (ValidationError::MemoryNotDefined, "unknown memory") => {}
+            (ValidationError::InvalidMaxLimit, "size minimum must not be greater than maximum") => {}
+            (ValidationError::MemoryTooLarge, "memory size must be at most 65536 pages (4GiB)") => {}
+            err => {
+                assert!(
+                    false,
+                    "Could not match validation error text '{text}' with error {err:?}"
+                )
+            }
+        },
+        Error::Memory(err) => match err {
+            err => {
+                assert!(
+                    false,
+                    "Could not match validation error text '{text}' with error {err:?}"
+                )
+            }
+        },
     }
 }
 
@@ -701,10 +739,12 @@ fn run_wast_command(
                 let wasm_bytes = std::fs::read(&wasm_path).unwrap();
                 let mut stream = ByteStream::new(&wasm_bytes);
 
+                let mut temp_builder = CodeBuilder::<256>::default();
                 let err = Module::new::<256>(
                     "malformed_test",
                     &mut stream,
                     &ctx.store,
+                    &mut temp_builder,
                     CompilerOptions {
                         allow_memory_grow: true,
                     },
@@ -712,7 +752,7 @@ fn run_wast_command(
                 .err()
                 .expect(format!("Expected malformed module to fail with '{text}'").as_str());
 
-                check_decode_error(err, text);
+                check_decode_error(err.into(), text);
             }
         }
         Command::AssertInvalid {
@@ -726,16 +766,29 @@ fn run_wast_command(
                 let wasm_bytes = std::fs::read(&wasm_path)
                     .unwrap_or_else(|e| panic!("Failed to read {wasm_path}: {e}"));
                 let mut stream = ByteStream::new(&wasm_bytes);
-                let err = Module::new::<256>(
-                    "malformed_test",
-                    &mut stream,
-                    &ctx.store,
-                    CompilerOptions {
-                        allow_memory_grow: true,
-                    },
-                )
-                .err()
-                .expect(format!("Expected invalid module to fail with '{text}'").as_str());
+                let mut temp_builder = CodeBuilder::<256>::default();
+
+                let err = || -> Result<(), Error> {
+                    let mut store = Store::new::<0>(1, [])?;
+                    let module = Module::new::<256>(
+                        "malformed_test",
+                        &mut stream,
+                        &store,
+                        &mut temp_builder,
+                        CompilerOptions {
+                            allow_memory_grow: true,
+                        },
+                    )?;
+
+                    store.modules.push(spacewasm::Box::new(module)?);
+                    store.finish(&RustSystemAllocator)?;
+
+                    Ok(())
+                }();
+
+                let err = err
+                    .err()
+                    .expect(format!("Expected invalid module to fail with '{text}'").as_str());
 
                 check_decode_error(err, text);
             }
@@ -751,10 +804,12 @@ fn run_wast_command(
                 let wasm_bytes = std::fs::read(&wasm_path)
                     .unwrap_or_else(|e| panic!("Failed to read {wasm_path}: {e}"));
                 let mut stream = ByteStream::new(&wasm_bytes);
+                let mut temp_builder = CodeBuilder::<256>::default();
                 Module::new::<256>(
                     "malformed_test",
                     &mut stream,
                     &ctx.store,
+                    &mut temp_builder,
                     CompilerOptions {
                         allow_memory_grow: true,
                     },

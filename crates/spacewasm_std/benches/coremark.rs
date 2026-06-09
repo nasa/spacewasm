@@ -1,6 +1,6 @@
 use spacewasm::{
-    CompilerOptions, ExportDesc, Ref, HostFunction, HostModule, InterpreterBreak,
-    InterpreterResult, InterpreterRunner, Memory, Store, Value,
+    CodeBuilder, CompilerOptions, ExportDesc, HostFunction, HostModule, InterpreterBreak,
+    InterpreterResult, InterpreterRunner, Ref, Store, Value,
 };
 use spacewasm_util::FileStream;
 use std::ops::ControlFlow;
@@ -39,6 +39,7 @@ fn main() {
     };
 
     let mut store = Store::new(2, [env]).unwrap();
+    let mut code_builder = CodeBuilder::<256>::default();
 
     let file = std::fs::File::open("benches/coremark-minimal.wasm")
         .expect("failed to open coremark-minimal.wasm");
@@ -46,21 +47,19 @@ fn main() {
         "coremark",
         &mut FileStream::new(file),
         &store,
+        &mut code_builder,
         CompilerOptions::default(),
     )
     .expect("failed to parse wasm module");
 
     store.modules.push(spacewasm::Box::new(module).unwrap());
-    let module = store.modules.last().unwrap();
 
-    let heap_size = if let Some(spacewasm::MemType(spacewasm::Limit { min })) = module.memory {
-        min
-    } else {
-        0
-    } * 65536;
+    let (text, _final_page_offset) = code_builder.finish().unwrap();
 
-    let mut state = spacewasm::InterpreterState::new(1024, Memory::new(heap_size as usize));
-    state.initialize(&module).unwrap();
+    let mut state = spacewasm::InterpreterState::new(&mut store, 0, 1024);
+
+    let interpreter = spacewasm::Interpreter::new(store);
+    let module = interpreter.store.modules.last().unwrap();
 
     let export = module
         .exports
@@ -77,8 +76,6 @@ fn main() {
         _ => panic!("run export is not a function"),
     };
 
-    let interpreter = spacewasm::Interpreter::new(&store, &module);
-
     let f_ty = &module.types[func.ty.0 as usize];
     eprintln!(
         "Running CoreMark run() => ({:?}) -> {:?}\n",
@@ -91,7 +88,7 @@ fn main() {
     eprintln!("Starting execution...");
     let mut result = InterpreterResult::OutOfFuel;
     while result == InterpreterResult::OutOfFuel {
-        result = interpreter.run(&module.text, &mut state, usize::MAX)
+        result = interpreter.run(&text, &mut state, usize::MAX)
     }
     let elapsed = bench_start.elapsed();
 
@@ -110,7 +107,7 @@ fn main() {
     match result {
         InterpreterResult::Instruction(InterpreterBreak::Finished(raw_value)) => {
             // The run function returns f32, so interpret the bits as float
-            let coremark_score = f32::from_bits(raw_value.0 as u32);
+            let coremark_score = raw_value.read_f32();
 
             println!("Execution time: {:.3}s", elapsed.as_secs_f64());
             println!("Return value: {:.3}", coremark_score);

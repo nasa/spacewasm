@@ -1,7 +1,13 @@
 use crate::alloc::AllocError;
 use crate::constant::ConstantExprError;
-use crate::ReaderError;
 use crate::SectionKind;
+use crate::{MemoryError, ReaderError};
+
+#[derive(Debug, Clone)]
+pub enum Error {
+    Parse(ParseError),
+    Memory(MemoryError),
+}
 
 #[derive(Debug, Clone)]
 pub struct ParseError {
@@ -62,6 +68,7 @@ pub enum ValidationError {
     IdxTooLarge,
     ModuleIdxTooLarge,
     MemoryIdxTooLarge,
+    MemoryTooLarge,
     MemAlignTooLarge,
     ControlFlowTooDeep,
     StackUnderflow,
@@ -78,6 +85,7 @@ pub enum ValidationError {
     TableNotDefined,
     InvalidElementCount,
     InvalidMemIndex,
+    MemoryNotDefined,
     InvalidMemOffsetType,
     InvalidNegativeMemOffset,
     InvalidMemOffset,
@@ -136,6 +144,24 @@ impl From<AllocError> for SectionDecodeError {
 impl From<ValidationError> for SectionDecodeError {
     fn from(value: ValidationError) -> Self {
         Self::new(value)
+    }
+}
+
+impl From<ParseError> for Error {
+    fn from(value: ParseError) -> Self {
+        Error::Parse(value)
+    }
+}
+
+impl From<AllocError> for Error {
+    fn from(value: AllocError) -> Self {
+        Self::Memory(value.into())
+    }
+}
+
+impl From<MemoryError> for Error {
+    fn from(value: MemoryError) -> Self {
+        Self::Memory(value)
     }
 }
 

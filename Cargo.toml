@@ -31,6 +31,7 @@ libm = "0.2.16"
 [dev-dependencies]
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+spacewasm = { path = ".", features = ["strict-assertions"] }
 
 [profile.release]
 opt-level = 3
