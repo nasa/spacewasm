@@ -8,7 +8,8 @@ mod tests {
     extern crate std;
 
     fn create_test_state() -> InterpreterState {
-        let mem = Memory::new(65536);
+        let mut mem = Memory::new(65536);
+        mem.allocate(1).unwrap();
         InterpreterState::new(1024, mem)
     }
 
@@ -33,7 +34,7 @@ mod tests {
     }
 
     fn create_test_store() -> Store {
-        Store::new(1, []).unwrap()
+        Store::new(1, [], ).unwrap()
     }
 
     // Helper macro for testing operations
@@ -337,7 +338,7 @@ mod tests {
         let mut state = create_test_state();
 
         // Store a value in memory
-        state.ram.store_u32(100, 0x12345678).unwrap();
+        state.memory.store_u32(100, 0x12345678).unwrap();
 
         // Push address onto stack
         state.stack.write_u32(0, 100);
@@ -367,7 +368,7 @@ mod tests {
         };
         let mut state = create_test_state();
 
-        state.ram.store_u32(108, 0xDEADBEEF).unwrap();
+        state.memory.store_u32(108, 0xDEADBEEF).unwrap();
 
         state.stack.write_u32(0, 100);
         state.sp = 1;
@@ -395,7 +396,7 @@ mod tests {
         };
         let mut state = create_test_state();
 
-        state.ram.store_u64(100, 0x123456789ABCDEF0).unwrap();
+        state.memory.store_u64(100, 0x123456789ABCDEF0).unwrap();
 
         state.stack.write_u32(0, 100);
         state.sp = 1;
@@ -424,7 +425,7 @@ mod tests {
         };
         let mut state = create_test_state();
 
-        state.ram.store_u8(100, 0xFF).unwrap(); // -1 in i8
+        state.memory.store_u8(100, 0xFF).unwrap(); // -1 in i8
 
         state.stack.write_u32(0, 100);
         state.sp = 1;
@@ -452,7 +453,7 @@ mod tests {
         };
         let mut state = create_test_state();
 
-        state.ram.store_u8(100, 0xFF).unwrap();
+        state.memory.store_u8(100, 0xFF).unwrap();
 
         state.stack.write_u32(0, 100);
         state.sp = 1;
@@ -480,7 +481,7 @@ mod tests {
         };
         let mut state = create_test_state();
 
-        state.ram.store_u16(100, 0xFFFF).unwrap(); // -1 in i16
+        state.memory.store_u16(100, 0xFFFF).unwrap(); // -1 in i16
 
         state.stack.write_u32(0, 100);
         state.sp = 1;
@@ -508,7 +509,7 @@ mod tests {
         };
         let mut state = create_test_state();
 
-        state.ram.store_u16(100, 0xFFFF).unwrap();
+        state.memory.store_u16(100, 0xFFFF).unwrap();
 
         state.stack.write_u32(0, 100);
         state.sp = 1;
@@ -536,7 +537,7 @@ mod tests {
         };
         let mut state = create_test_state();
 
-        state.ram.store_u8(100, 0xFF).unwrap();
+        state.memory.store_u8(100, 0xFF).unwrap();
 
         state.stack.write_u32(0, 100);
         state.sp = 1;
@@ -565,7 +566,7 @@ mod tests {
         };
         let mut state = create_test_state();
 
-        state.ram.store_u32(100, 0xDEADBEEF).unwrap();
+        state.memory.store_u32(100, 0xDEADBEEF).unwrap();
 
         state.stack.write_u32(0, 100);
         state.sp = 1;
@@ -610,7 +611,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(state.sp, 0);
-        assert_eq!(state.ram.load_u32(100).unwrap(), 0x12345678);
+        assert_eq!(state.memory.load_u32(100).unwrap(), 0x12345678);
     }
 
     #[test]
@@ -637,7 +638,7 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(state.ram.load_u32(108).unwrap(), 0xDEADBEEF);
+        assert_eq!(state.memory.load_u32(108).unwrap(), 0xDEADBEEF);
     }
 
     #[test]
@@ -665,7 +666,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(state.sp, 0);
-        assert_eq!(state.ram.load_u64(100).unwrap(), 0x123456789ABCDEF0);
+        assert_eq!(state.memory.load_u64(100).unwrap(), 0x123456789ABCDEF0);
     }
 
     #[test]
@@ -693,7 +694,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(state.sp, 0);
-        assert_eq!(state.ram.load_u8(100).unwrap(), 0xFF);
+        assert_eq!(state.memory.load_u8(100).unwrap(), 0xFF);
     }
 
     #[test]
@@ -721,7 +722,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(state.sp, 0);
-        assert_eq!(state.ram.load_u16(100).unwrap(), 0xFFFF);
+        assert_eq!(state.memory.load_u16(100).unwrap(), 0xFFFF);
     }
 
     #[test]
@@ -749,7 +750,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(state.sp, 0);
-        assert_eq!(state.ram.load_u8(100).unwrap(), 0xFF);
+        assert_eq!(state.memory.load_u8(100).unwrap(), 0xFF);
     }
 
     #[test]
@@ -777,7 +778,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(state.sp, 0);
-        assert_eq!(state.ram.load_u32(100).unwrap(), 0xDEADBEEF);
+        assert_eq!(state.memory.load_u32(100).unwrap(), 0xDEADBEEF);
     }
 
     // ===== i32 Test/Relational Operations =====

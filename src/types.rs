@@ -44,6 +44,7 @@ impl From<u8> for ValType {
     }
 }
 
+/// A runtime type-tracked value
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Value {
     I32(i32),
@@ -76,6 +77,93 @@ impl ValType {
 
     pub(crate) fn read(wasm: &mut Reader) -> Result<Self, ValidationError> {
         ValType::convert(wasm.read_u8()?)
+    }
+}
+
+/// A compile-time/configured value
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RawValue(u64);
+
+impl RawValue {
+    pub fn from_32(u: u32) -> RawValue {
+        RawValue(u as u64)
+    }
+
+    pub fn from_64(u: u64) -> RawValue {
+        RawValue(u)
+    }
+
+    pub fn from_i32(i: i32) -> RawValue {
+        RawValue::from_32(i as u32)
+    }
+
+    pub fn from_i64(i: i64) -> RawValue {
+        RawValue::from_64(i as u64)
+    }
+
+    pub fn from_f32(f: f32) -> RawValue {
+        RawValue::from_32(f.to_bits())
+    }
+
+    pub fn from_f64(f: f64) -> RawValue {
+        RawValue::from_64(f.to_bits())
+    }
+
+    pub fn write_32(&mut self, i: u32) {
+        self.0 = i as u64;
+    }
+
+    pub fn write_64(&mut self, i: u64) {
+        self.0 = i;
+    }
+
+    pub fn write_i32(&mut self, i: i32) {
+        self.0 = i as u64;
+    }
+
+    pub fn write_i64(&mut self, i: i64) {
+        self.0 = i as u64;
+    }
+
+    pub fn write_f32(&mut self, z: f32) {
+        self.0 = z.to_bits() as u64;
+    }
+
+    pub fn write_f64(&mut self, z: f64) {
+        self.0 = z.to_bits();
+    }
+
+    pub fn read_32(&self) -> u32 {
+        self.0 as u32
+    }
+
+    pub fn read_64(&self) -> u64 {
+        self.0
+    }
+
+    pub fn read_i32(&self) -> i32 {
+        self.0 as i32
+    }
+
+    pub fn read_i64(&self) -> i64 {
+        self.0 as i64
+    }
+
+    pub fn read_f32(&self) -> f32 {
+        f32::from_bits(self.0 as u32)
+    }
+
+    pub fn read_f64(&self) -> f64 {
+        f64::from_bits(self.0)
+    }
+
+    pub fn to_value(self, ty: ValType) -> Value {
+        match ty {
+            ValType::I32 => Value::I32((self.0 as u32) as i32),
+            ValType::I64 => Value::I64(self.0 as i64),
+            ValType::F32 => Value::F32(f32::from_bits(self.0 as u32)),
+            ValType::F64 => Value::F64(f64::from_bits(self.0)),
+        }
     }
 }
 

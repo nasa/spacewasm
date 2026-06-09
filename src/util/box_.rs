@@ -59,7 +59,10 @@ impl<T: Sized, A: Allocator> Box<T, A> {
     /// Create a new box with a custom allocator
     pub fn new_in(alloc: A, value: T) -> Result<Box<T, A>, AllocError> {
         if size_of::<T>() == 0 {
-            Ok(Box { ptr: ptr::null_mut(), alloc })
+            Ok(Box {
+                ptr: ptr::null_mut(),
+                alloc,
+            })
         } else {
             let layout = Layout::new::<T>();
             let ptr = unsafe { alloc.alloc(layout)? } as *mut T;

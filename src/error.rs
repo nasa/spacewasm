@@ -61,6 +61,7 @@ pub enum ValidationError {
     VecTooLong,
     IdxTooLarge,
     ModuleIdxTooLarge,
+    MemoryIdxTooLarge,
     MemAlignTooLarge,
     ControlFlowTooDeep,
     StackUnderflow,

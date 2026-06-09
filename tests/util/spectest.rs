@@ -203,7 +203,7 @@ struct TestContext {
 
 impl TestContext {
     fn new(store: Store) -> Self {
-        let memory = Memory::new(65536);
+        let memory = Memory::new(65536 * 8); // up to 8 pages of linear memory
         let state = InterpreterState::new(65536, memory);
         TestContext { store, state }
     }
@@ -400,20 +400,19 @@ fn load_module(ctx: &mut TestContext, module_name: Option<String>, wasm_bytes: &
     )
     .unwrap_or_else(|e| panic!("Failed to parse module: {e:?}"));
 
-    // Get memory size
-    let heap_size = if let Some(m_ty) = &module.memory {
-        (m_ty.0.min as usize) * 65536
-    } else {
-        // Default small memory if no memory section
-        65536
-    };
-
     // Push module to store
     let module_index = ctx.store.modules.len();
     ctx.store.modules.push(spacewasm::Box::new(module).unwrap());
 
     // Reinitialize state with new memory size
-    let memory = Memory::new(heap_size);
+    let memory = Memory::new_with_realloc(65536 * 8, |ptr, new_size| unsafe {
+        Ok(std::alloc::realloc(
+            ptr,
+            Layout::from_size_align(new_size, 16).unwrap(),
+            new_size,
+        ))
+    });
+
     let new_state = InterpreterState::new(65536, memory);
     ctx.state = new_state;
 

@@ -24,6 +24,3 @@ pub(crate) use static_vec::*;
 
 mod string;
 pub(crate) use string::*;
-
-// mod binary_tree;
-// pub(crate) use binary_tree::*;

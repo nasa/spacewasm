@@ -34,6 +34,12 @@ macro_rules! vec {
     );
 }
 
+impl<T> Default for Vec<T> {
+    fn default() -> Self {
+        Vec::<T>::zero()
+    }
+}
+
 impl<A: Allocator, T: core::fmt::Debug> core::fmt::Debug for Vec<T, A> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         self.inner.fmt(f)

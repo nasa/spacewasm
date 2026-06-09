@@ -1,21 +1,18 @@
 use crate::*;
+use core::cell::RefCell;
 
 pub struct Module {
     pub name: String,
-    pub index: u32,
     pub types: Vec<FuncType>,
     pub functions: Vec<Func>,
     pub table: Vec<Ref>,
-    pub memory: Option<MemType>,
+    pub memory: Option<MemoryKind>,
     pub globals: Vec<Global>,
     pub imports: Vec<Import>,
     pub exports: Vec<Export>,
     pub data: Vec<Data>,
     pub start: Option<FuncIdx>,
-    pub text: Vec<Box<TextPage>>,
-    pub wasm_size: u32,
-    pub table_defined: bool,
-    pub final_page_offset: u32,
+    pub table_defined: bool, // FIXME(tumbar) This feels sort of pointless?
 }
 
 pub trait CustomSectionHandler {
@@ -48,6 +45,7 @@ impl Module {
         name: &str,
         stream: &mut dyn WasmStream,
         store: &Store,
+        code_builder: &mut CodeBuilder<N>,
         compiler_options: CompilerOptions,
     ) -> Result<Module, ParseError> {
         let mut wasm = Reader::new(stream);
@@ -56,6 +54,7 @@ impl Module {
             name,
             &mut wasm,
             store,
+            code_builder,
             &mut DefaultCustomSectionHandler,
             None,
             compiler_options,
@@ -70,6 +69,7 @@ impl Module {
         name: &str,
         stream: &mut dyn WasmStream,
         store: &Store,
+        code_builder: &mut CodeBuilder<N>,
         compiler_options: CompilerOptions,
     ) -> Result<(Module, [MemoryStatistics; SectionKind::N as usize]), ParseError> {
         let mut wasm = Reader::new(stream);
@@ -79,6 +79,7 @@ impl Module {
             name,
             &mut wasm,
             store,
+            code_builder,
             &mut DefaultCustomSectionHandler,
             Some(&mut stats),
             compiler_options,
@@ -95,6 +96,7 @@ impl Module {
         name: &str,
         wasm: &mut Reader,
         store: &Store,
+        code_builder: &mut CodeBuilder<N>,
         custom_handler: &mut dyn CustomSectionHandler,
         mut stats: Option<&mut [MemoryStatistics; SectionKind::N as usize]>,
         compiler_options: CompilerOptions,
@@ -121,10 +123,8 @@ impl Module {
 
         let mut module = Module {
             name: name.try_into()?,
-            index: store.modules.len() as u32,
             types: Vec::zero(),
             functions: Vec::zero(),
-            text: Vec::zero(),
             table: Vec::zero(),
             memory: None,
             globals: Vec::zero(),
@@ -132,13 +132,10 @@ impl Module {
             exports: Vec::zero(),
             data: Vec::zero(),
             start: None,
-            wasm_size: 0,
-            final_page_offset: 0,
             table_defined: false,
         };
 
         let mut last_section: SectionKind = SectionKind::Custom;
-        let mut builder = CodeBuilder::<N>::new();
         let mut seen_code_section = false;
 
         loop {
@@ -178,7 +175,7 @@ impl Module {
                     section_size,
                     section_ty,
                     custom_handler,
-                    &mut builder,
+                    code_builder,
                     compiler_options,
                 )
                 .map_err(|e| e.with_section(section_ty))?;
@@ -203,10 +200,6 @@ impl Module {
             return Err(ValidationError::InvalidCodeSectionFunctionCount.into());
         }
 
-        let (text, text_offset) = builder.finish()?;
-        module.text = text;
-        module.wasm_size = wasm.offset() as u32;
-        module.final_page_offset = text_offset as u32;
         Ok(module)
     }
 
@@ -239,10 +232,10 @@ impl Module {
                 self.table_defined = true;
             }
             Memory => {
-                self.memory = MemorySection::read(wasm)?;
+                self.memory = MemorySection::read(wasm, store)?;
             }
             Global => {
-                GlobalSection::read(wasm, store, self)?;
+                self.globals = GlobalSection::read(wasm, store, self)?;
             }
             Export => {
                 self.exports = ExportSection::read(wasm)?;
@@ -345,37 +338,6 @@ impl Module {
         } else {
             Some(Ref::Module(i as u16))
         }
-    }
-
-    pub fn func_import_count(&self) -> usize {
-        self.imports
-            .iter()
-            .filter(|f| match f {
-                Import::Func { .. } => true,
-                Import::HostFunc { .. } => true,
-                _ => false,
-            })
-            .count()
-    }
-
-    pub fn global_import_count(&self) -> usize {
-        self.imports
-            .iter()
-            .filter(|f| match f {
-                Import::Global { .. } => true,
-                Import::HostGlobal { .. } => true,
-                _ => false,
-            })
-            .count()
-    }
-
-    pub fn wasm_module_ref<'store>(
-        &self,
-        store: &'store Store,
-        module_ref: ExternalModuleRef,
-    ) -> &'store Module {
-        let mod_idx = (self.index as usize) - (module_ref.0 as usize);
-        &store.modules[mod_idx]
     }
 }
 
@@ -574,46 +536,64 @@ impl TableSection {
     }
 }
 
+pub enum MemoryKind {
+    Allocate {
+        /// Memory size when allocating for the store
+        ty: MemType,
+        /// Memory index in the store
+        index: u8,
+    },
+    /// Instead of allocating linear memory, import it from another module.
+    /// The value indicates the memory index in the store
+    Import(u8),
+}
+
 pub struct MemorySection;
 impl MemorySection {
-    pub fn read(wasm: &mut Reader) -> Result<Option<MemType>, ValidationError> {
+    pub fn read(wasm: &mut Reader, store: &Store) -> Result<Option<MemoryKind>, ValidationError> {
         let len = wasm.read_u32()?;
         if len > 1 {
             Err(ValidationError::MultipleMemories)
         } else if len == 0 {
             Ok(None)
         } else {
-            Ok(Some(MemType::read(wasm)?))
+            // We are allocating memory for this module
+            // We need to compute the next index that _will_ be in the store by
+            // looking at what the previous modules do
+            let memories = store
+                .modules
+                .iter()
+                .filter(|m| match m.memory {
+                    Some(MemoryKind::Allocate { .. }) => true,
+                    _ => false,
+                })
+                .count();
+
+            if memories > (u8::MAX as usize) {
+                Err(ValidationError::MemoryIdxTooLarge)
+            } else {
+                Ok(Some(MemoryKind::Allocate {
+                    ty: MemType::read(wasm)?,
+                    index: memories as u8,
+                }))
+            }
         }
     }
 }
 
 pub struct Global {
     pub type_: GlobalType,
-
-    /// Address of the global relative to the start of the stack.
-    /// All internal globals are written in order. This address is an
-    /// index of 32-bit stack words.
-    pub addr: u16,
-
-    /// Raw 8-byte value that should be written to initialize the variable.
-    /// Look at [type_] to see if we should write 32-bits or 64-bits of this value
-    pub init: u64,
+    // FIXME(tumbar) This is terrible!
+    pub value: RefCell<RawValue>,
 }
 
 impl Global {
     pub fn value(&self) -> Value {
-        match self.type_.ty {
-            ValType::I32 => Value::I32(self.init as i32),
-            ValType::I64 => Value::I64(self.init as i64),
-            ValType::F32 => Value::F32(f32::from_bits(self.init as u32)),
-            ValType::F64 => Value::F64(f64::from_bits(self.init)),
-        }
+        self.value.borrow().to_value(self.type_.ty)
     }
 
     pub fn read(
         wasm: &mut Reader,
-        addr: u16,
         store: &Store,
         module: &Module,
     ) -> Result<Self, ValidationError> {
@@ -625,32 +605,35 @@ impl Global {
                     return Err(ValidationError::GlobalTypeMismatch);
                 }
 
-                i as u64
+                RawValue::from_i32(i)
             }
             Value::I64(i) => {
                 if type_.ty != ValType::I64 {
                     return Err(ValidationError::GlobalTypeMismatch);
                 }
 
-                i as u64
+                RawValue::from_i64(i)
             }
             Value::F32(z) => {
                 if type_.ty != ValType::F32 {
                     return Err(ValidationError::GlobalTypeMismatch);
                 }
 
-                z.to_bits() as u64
+                RawValue::from_f32(z)
             }
             Value::F64(z) => {
                 if type_.ty != ValType::F64 {
                     return Err(ValidationError::GlobalTypeMismatch);
                 }
 
-                z.to_bits()
+                RawValue::from_f64(z)
             }
         };
 
-        Ok(Global { type_, addr, init })
+        Ok(Global {
+            type_,
+            value: RefCell::new(init),
+        })
     }
 }
 
@@ -659,20 +642,9 @@ impl GlobalSection {
     pub fn read(
         wasm: &mut Reader,
         store: &Store,
-        module: &mut Module,
-    ) -> Result<(), ValidationError> {
-        let mut addr = 0;
-        let len = wasm.read_u32()?;
-        module.globals = Vec::new(len)?;
-
-        for _ in 0..len {
-            let g = Global::read(wasm, addr, store, module)?;
-            addr += (g.type_.ty.size() / 4) as u16;
-
-            module.globals.push(g);
-        }
-
-        Ok(())
+        module: &Module,
+    ) -> Result<Vec<Global>, ValidationError> {
+        wasm.read_vec(|wasm| Global::read(wasm, store, module))
     }
 }
 

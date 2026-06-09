@@ -1,10 +1,9 @@
 use spacewasm::{
-    vec, Box, CompilerOptions, ExportDesc, HostFunction, HostFunctionBreak,
-    HostModule, InterpreterBreak, InterpreterResult, InterpreterRunner, Memory, PageAllocator,
-    Ref, SectionKind, Store, ValType, Value,
+    vec, Box, CodeBuilder, CompilerOptions, ExportDesc, HostFunction, HostFunctionBreak,
+    HostModule, InterpreterBreak, InterpreterResult, InterpreterRunner, PageAllocator, Ref, SectionKind,
+    Store, ValType, Value,
 };
 use spacewasm_util::{FileStream, RustSystemAllocator};
-use std::alloc::{alloc, Layout};
 use std::ops::ControlFlow;
 use std::time::Instant;
 
@@ -17,6 +16,7 @@ fn main() {
     let path = std::env::args().nth(1).unwrap();
 
     let start = Instant::now();
+    let mut code_builder = CodeBuilder::<256>::default();
 
     let fprime_core = HostModule {
         name: "fprime_core",
@@ -33,7 +33,7 @@ fn main() {
                     panic!("expected i32");
                 };
 
-                let f = state.ram.load(*addr as usize, *len as usize).unwrap();
+                let f = state.memory.load(*addr as usize, *len as usize).unwrap();
                 let s: &str = core::str::from_utf8(f).unwrap();
 
                 eprintln!("PANIC {}:{}", s, line_no);
@@ -56,7 +56,7 @@ fn main() {
                 };
 
                 let msg_r = state
-                    .ram
+                    .memory
                     .load(*msg_ptr as usize, *msg_len as usize)
                     .unwrap();
 
@@ -83,16 +83,16 @@ fn main() {
                 };
 
                 // Time base
-                state.ram.store_u16(*time_ptr as usize, 0).unwrap();
+                state.memory.store_u16(*time_ptr as usize, 0).unwrap();
 
                 // Time context
-                state.ram.store_u8((*time_ptr as usize) + 2, 0).unwrap();
+                state.memory.store_u8((*time_ptr as usize) + 2, 0).unwrap();
 
                 // Seconds
-                state.ram.store_u32((*time_ptr as usize) + 3, 0).unwrap();
+                state.memory.store_u32((*time_ptr as usize) + 3, 0).unwrap();
 
                 // Useconds
-                state.ram.store_u32((*time_ptr as usize) + 7, 0).unwrap();
+                state.memory.store_u32((*time_ptr as usize) + 7, 0).unwrap();
 
                 eprintln!("TELEMETRY {id}");
                 ControlFlow::Continue(Some(Value::I32(0)))
@@ -118,13 +118,19 @@ fn main() {
     let mut store = Store::new(3, [fprime_core, env]).unwrap();
 
     let file = std::fs::File::open(path).expect("failed to open file");
-    let (module, stats) = spacewasm::Module::new_with_statistics::<256>(
+    let mut file_stream = FileStream::new(file);
+    let (module, stats) = spacewasm::Module::new_with_statistics(
         "main",
-        &mut FileStream::new(file),
+        &mut file_stream,
         &store,
+        &mut code_builder,
         CompilerOptions::default(),
     )
     .expect("failed to parse wasm module");
+
+    store.modules.push(Box::new(module).unwrap());
+    store.finish(&RustSystemAllocator).unwrap();
+    let module = store.modules.last().unwrap();
 
     let mut total: usize = 0;
     for (i, section) in stats.iter().enumerate() {
@@ -133,30 +139,32 @@ fn main() {
         total += section.total_bytes as usize;
     }
 
+    let (text, final_page_offset) = code_builder.finish().unwrap();
+    let wasm_size = file_stream.len();
+
     eprintln!("Total: {}", total);
     eprintln!(
         "Compilation Ratio: {:.2}x",
-        (total as f64) / (module.wasm_size as f64)
+        (total as f64) / (wasm_size as f64)
     );
 
-    let full_page_usage = if module.text.len() > 1 {
-        (module.text.len() - 1) * 256
+    let full_page_usage = if text.len() > 1 {
+        (text.len() - 1) * 256
     } else {
         0
     };
 
-    eprintln!("Code pages: {}", module.text.len());
+    eprintln!("Code pages: {}", text.len());
     eprintln!(
         "Code word usage (16-bits): {} / {} ({:.2}%)",
-        full_page_usage + module.final_page_offset as usize,
-        module.text.len() * 256,
-        100.0 * ((full_page_usage + module.final_page_offset as usize) as f64)
-            / (module.text.len() * 256) as f64
+        full_page_usage + final_page_offset,
+        text.len() * 256,
+        100.0 * ((full_page_usage + final_page_offset) as f64) / (text.len() * 256) as f64
     );
     eprintln!(
         "Final page: {} / 256 ({:.2}%)",
-        module.final_page_offset,
-        100.0 * (module.final_page_offset as f64 / 256.0)
+        final_page_offset,
+        100.0 * (final_page_offset as f64 / 256.0)
     );
 
     eprintln!("Exports:");
@@ -171,23 +179,8 @@ fn main() {
         }
     }
 
-    store.modules.push(Box::new(module).unwrap());
+    let mut state = spacewasm::InterpreterState::new(&mut store, 0, 1024);
     let module = store.modules.last().unwrap();
-    let heap_size = if let Some(spacewasm::MemType(spacewasm::Limit { min })) = module.memory {
-        min
-    } else {
-        0
-    } * 65536;
-
-    let mut state = spacewasm::InterpreterState::new(
-        1024,
-        Memory::from(
-            unsafe { alloc(Layout::from_size_align(heap_size as usize, 16).unwrap()) },
-            heap_size as usize,
-        ),
-    );
-
-    state.initialize(&module).unwrap();
 
     let fi = match &module.start {
         None => {
@@ -200,7 +193,8 @@ fn main() {
         Some(fi) => *fi,
     };
 
-    let interpreter = spacewasm::Interpreter::new(&store, module);
+    let interpreter = spacewasm::Interpreter::new(store);
+    let module = interpreter.store.modules.last().unwrap();
 
     let Ref::Module(fi) = module.get_func_ref(fi).unwrap() else {
         panic!()
@@ -217,7 +211,7 @@ fn main() {
 
     let mut result = InterpreterResult::OutOfFuel;
     while result == InterpreterResult::OutOfFuel {
-        result = interpreter.run(&module.text, &mut state, usize::MAX)
+        result = interpreter.run(&text, &mut state, usize::MAX)
     }
 
     let InterpreterResult::Instruction(InterpreterBreak::Finished(value)) = result else {

@@ -239,6 +239,12 @@ pub struct CodeBuilder<const N: usize> {
     offset: usize,
 }
 
+impl<const N: usize> Default for CodeBuilder<N> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<const N: usize> CodeBuilder<N> {
     pub fn new() -> CodeBuilder<N> {
         CodeBuilder {
@@ -501,24 +507,8 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
     pub fn get_global(&self, x: GlobalIdx) -> Result<GlobalVariable, ValidationError> {
         let reference = self
             .module
-            .imports
-            .iter()
-            .filter_map(|i| match &i {
-                Import::Global { module, index } => Some(Ref::Extern {
-                    module: *module,
-                    index: *index,
-                }),
-                Import::HostGlobal { module, index } => Some(Ref::Host {
-                    module: *module,
-                    index: *index,
-                }),
-                _ => None,
-            })
-            .skip(x.0 as usize)
-            .next()
-            .unwrap_or(Ref::Module(
-                (x.0 as usize - self.module.global_import_count()) as u16,
-            ));
+            .get_global_ref(x)
+            .ok_or(ValidationError::GlobalIdxOutOfRange)?;
 
         match reference {
             // This index is one of the WASM defined globals
@@ -549,7 +539,6 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
             }
             Ref::Extern { module, index } => {
                 let module = self.store.modules.get(module.0 as usize).unwrap();
-
                 let global = module.globals.get(index as usize).unwrap();
 
                 Ok(GlobalVariable {

@@ -94,33 +94,14 @@ impl Store {
                         return if let ExportDesc::Func(fi) = e.desc {
                             // Resolve the index to an import or local function
                             let f_ref = module
-                                .imports
-                                .iter()
-                                .filter_map(|i| match &i {
-                                    Import::Func { module, index } => Some(Ref::Extern {
-                                        module: *module,
-                                        index: *index,
-                                    }),
-                                    Import::HostFunc { module, index } => Some(Ref::Host {
-                                        module: *module,
-                                        index: *index,
-                                    }),
-                                    _ => None,
-                                })
-                                .skip(fi.0 as usize)
-                                .next()
-                                .unwrap_or(Ref::Module(
-                                    (fi.0 as usize - module.func_import_count()) as u16,
-                                ));
+                                .get_func_ref(fi)
+                                .ok_or(ValidationError::FunctionIdxOutOfRange)?;
 
                             // Check the function signature
                             match f_ref {
                                 Ref::Module(idx) => {
                                     // This function is in the current module
-                                    let f = module
-                                        .functions
-                                        .get(idx as usize)
-                                        .ok_or(ValidationError::FunctionIdxOutOfRange)?;
+                                    let f = &module.functions[idx as usize];
 
                                     let ty = module
                                         .types
@@ -131,15 +112,14 @@ impl Store {
                                     if ty == expected_ty {
                                         Ok(Import::Func {
                                             module: ExternalModuleRef(mi as u8),
-                                            index: ((fi.0 as usize) - module.func_import_count())
-                                                as u16,
+                                            index: idx,
                                         })
                                     } else {
                                         Err(ValidationError::FunctionImportTypeMismatch)
                                     }
                                 }
                                 Ref::Extern { module, index } => {
-                                    let em = &self.modules[module.0 as usize];
+                                    let em = &self.modules.get(module.0 as usize).unwrap();
                                     let f = &em.functions[index as usize];
                                     let ty = &em.types[f.ty.0 as usize];
 
@@ -207,24 +187,8 @@ impl Store {
                             // This index could either be an import or a global
                             // in the current module
                             let g_ref = module
-                                .imports
-                                .iter()
-                                .filter_map(|i| match &i {
-                                    Import::Global { module, index } => Some(Ref::Extern {
-                                        module: *module,
-                                        index: *index,
-                                    }),
-                                    Import::HostGlobal { module, index } => Some(Ref::Host {
-                                        module: *module,
-                                        index: *index,
-                                    }),
-                                    _ => None,
-                                })
-                                .skip(gi.0 as usize)
-                                .next()
-                                .unwrap_or(Ref::Module(
-                                    (gi.0 as usize - module.global_import_count()) as u16,
-                                ));
+                                .get_global_ref(*gi)
+                                .ok_or(ValidationError::GlobalIdxOutOfRange)?;
 
                             // Check the function signature
                             match g_ref {
@@ -242,7 +206,7 @@ impl Store {
                                     }
                                 }
                                 Ref::Extern { module, index } => {
-                                    let em = &self.modules[module.0 as usize];
+                                    let em = self.modules.get(module.0 as usize).unwrap();
                                     let g = &em.globals[index as usize];
                                     if g.type_.ty != expected_ty.ty {
                                         Err(ValidationError::GlobalImportTypeMismatch)
