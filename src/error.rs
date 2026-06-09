@@ -69,6 +69,7 @@ pub enum ValidationError {
     ModuleIdxTooLarge,
     MemoryIdxTooLarge,
     MemoryTooLarge,
+    MemoryImportTooLarge,
     MemAlignTooLarge,
     ControlFlowTooDeep,
     StackUnderflow,
@@ -103,10 +104,12 @@ pub enum ValidationError {
     GlobalIdxOutOfRange,
     FunctionImportNotFound,
     GlobalImportNotFound,
+    MemoryImportNotFound,
     FunctionImportOutOfRange,
     FunctionImportTypeMismatch,
     GlobalIsNotMutable,
     GlobalImportTypeMismatch,
+    MemoryImportTypeMismatch,
     FunctionParametersTooLarge,
     FunctionReturnsTooLarge,
     TooManyLocals,
@@ -115,7 +118,6 @@ pub enum ValidationError {
     GlobalTypeMismatch,
     AlignmentLargerThanType,
     TableImportsNotSupportedYet, // TODO(tumbar) Implement dynamic linking
-    MemoryImportsNotSupportedYet, // TODO(tumbar) Implement implement shared memory
     FunctionCallsAcrossModuleNotSupportedYet, // TODO(tumbar) Implement module context isolation
     GlobalsAcrossModuleNotSupportedYet, // TODO(tumbar) Implement module context isolation
     InvalidConstantExpr(ConstantExprError),

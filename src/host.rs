@@ -130,7 +130,7 @@ impl<T: Fn(&mut InterpreterState, &[Value]) -> HostFunctionResult> Box<T> {
     }
 }
 
-pub struct HostFunction{
+pub struct HostFunction {
     name: &'static str,
     params: HostValList,
     returns: HostValList,
@@ -144,6 +144,7 @@ pub struct HostModule {
     pub name: &'static str,
     pub globals: Vec<HostGlobal>,
     pub functions: Vec<HostFunction>,
+    pub memory: Option<Memory>,
 }
 
 impl HostFunction {

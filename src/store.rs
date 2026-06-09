@@ -5,6 +5,13 @@ use crate::{
     AllocError, Box, HostModule, Memory, MemoryError, MemoryKind, Module, WasmMemoryAllocator,
 };
 
+pub struct StoreLinker {
+    /// The modules we have initialized so far
+    pub modules: Vec<Box<Module>>,
+    /// The host modules of the store
+    pub host_modules: Vec<HostModule>,
+}
+
 /// Holds ownership of all the loaded modules. As new modules are loaded,
 /// imports/exports are referenced through the store.
 pub struct Store {
@@ -13,23 +20,19 @@ pub struct Store {
     pub memory: Vec<RefCell<Memory>>,
 }
 
-impl Store {
+impl StoreLinker {
     pub fn new<const N: usize>(
         max_modules: usize,
         host_modules: [HostModule; N],
     ) -> Result<Self, AllocError> {
-        Ok(Store {
+        Ok(StoreLinker {
             modules: Vec::new(max_modules as u32)?,
             host_modules: Vec::from_array(host_modules)?,
-            memory: Vec::zero(),
         })
     }
 
     /// This function must be called _after_ all modules are
-    pub fn finish(
-        &mut self,
-        allocator: &'static dyn WasmMemoryAllocator,
-    ) -> Result<(), MemoryError> {
+    pub fn finish(self, allocator: &'static dyn WasmMemoryAllocator) -> Result<Store, MemoryError> {
         // Count the owned memories in the entire store
         let total_memories = self
             .modules
@@ -41,21 +44,21 @@ impl Store {
             .count();
 
         // Allocate some space to hold all the memories
-        self.memory = Vec::new(total_memories as u32)?;
+        let mut memory = Vec::new(total_memories as u32)?;
 
         // Initialize the memory and fill up the data
         for module in &self.modules {
             let mut linear_memory = match &module.memory {
                 Some(MemoryKind::Allocate { ty, index }) => {
                     // Make sure the module construction is pointing to the index we expect
-                    assert_eq!(*index as usize, self.memory.len());
-                    self.memory.push(RefCell::new(Memory::new(*ty, allocator)?));
-                    self.memory.last().unwrap().borrow_mut()
+                    assert_eq!(*index as usize, memory.len());
+                    memory.push(RefCell::new(Memory::new(*ty, allocator)?));
+                    memory.last().unwrap().borrow_mut()
                 }
                 Some(MemoryKind::Import(mem_idx)) => {
                     // Make sure this memory index is valid
-                    assert!((*mem_idx as usize) < self.memory.len());
-                    self.memory.get(*mem_idx as usize).unwrap().borrow_mut()
+                    assert!((*mem_idx as usize) < memory.len());
+                    memory.get(*mem_idx as usize).unwrap().borrow_mut()
                 }
                 None => {
                     assert!(module.data.is_empty());
@@ -69,7 +72,11 @@ impl Store {
             }
         }
 
-        Ok(())
+        Ok(Store {
+            modules: self.modules,
+            host_modules: self.host_modules,
+            memory,
+        })
     }
 }
 

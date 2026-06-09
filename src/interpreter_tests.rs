@@ -1,8 +1,9 @@
 #[cfg(test)]
 mod tests {
+    use crate::StoreLinker;
     use crate::{
         AllocError, BaseVisitor, Interpreter, InterpreterState, IrVisitor, MemArg, MemoryKind,
-        Module, Store, ValType,
+        Module, ValType,
     };
 
     extern crate std;
@@ -39,7 +40,7 @@ mod tests {
     }
 
     fn create_test_context() -> (Interpreter, InterpreterState) {
-        let mut store = Store::new(1, []).unwrap();
+        let mut store = StoreLinker::new(1, []).unwrap();
 
         // Create a minimal valid module
         let module = Module {
@@ -60,7 +61,7 @@ mod tests {
         };
 
         store.modules.push(crate::Box::new(module).unwrap());
-        store.finish(&TestAllocator).unwrap();
+        let mut store = store.finish(&TestAllocator).unwrap();
 
         let state = InterpreterState::new(&mut store, 0, 1024);
         let interpreter = Interpreter::new(store);

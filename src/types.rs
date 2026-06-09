@@ -267,6 +267,10 @@ impl MemType {
             })
         }
     }
+
+    pub fn fits_in(&self, other: MemType) -> bool {
+        self.min <= other.min && self.max <= other.max
+    }
 }
 
 pub enum ElemType {

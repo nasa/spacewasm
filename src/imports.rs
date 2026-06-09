@@ -30,7 +30,6 @@ pub enum Import {
     },
     Mem {
         module: ExternalModuleRef,
-        index: u16,
     },
     Global {
         module: ExternalModuleRef,
@@ -47,17 +46,18 @@ impl From<Import> for Ref {
         match value {
             Import::Func { module, index }
             | Import::Table { module, index }
-            | Import::Mem { module, index }
             | Import::Global { module, index } => Ref::Extern { module, index },
 
             Import::HostFunc { module, index } | Import::HostGlobal { module, index } => {
                 Ref::Host { module, index }
             }
+
+            Import::Mem { module } => Ref::Extern { module, index: 0 },
         }
     }
 }
 
-impl Store {
+impl StoreLinker {
     fn link_function(
         &self,
         module_name: &str,
@@ -238,13 +238,90 @@ impl Store {
 
         Err(ValidationError::GlobalImportNotFound)
     }
+
+    fn link_memory(
+        &self,
+        module_name: &str,
+        name: &str,
+        expected_ty: MemType,
+    ) -> Result<Import, ValidationError> {
+        for (mi, module) in self.modules.iter().enumerate() {
+            // Check if this module is the module we are looking for
+            if module.name == module_name {
+                // Look for any exports that match this function name
+                for e in &module.exports {
+                    if e.name == name {
+                        // Make sure this is a memory
+                        return if let ExportDesc::Mem(mem_i) = e.desc {
+                            // WASM 1.0 MVP only supports a single memory
+                            if mem_i.0 > 0 {
+                                return Err(ValidationError::MemoryIdxTooLarge);
+                            }
+
+                            match module.memory {
+                                None => return Err(ValidationError::MemoryNotDefined),
+                                Some(MemoryKind::Allocate { index: _, ty }) => {
+                                    if !expected_ty.fits_in(ty) {
+                                        return Err(ValidationError::MemoryImportTooLarge);
+                                    }
+
+                                    Ok(Import::Mem {
+                                        module: ExternalModuleRef(mi as u8),
+                                    })
+                                }
+                                Some(MemoryKind::Import(idx)) => {
+                                    // This module imported memory from another module
+                                    // This index is the _memory_ index not the module index
+                                    // so we have to do a linear lookup.
+
+                                    let (original_module_index, original_module) = self
+                                        .modules
+                                        .iter()
+                                        .enumerate()
+                                        .find(|(_, mp)| match mp.memory {
+                                            Some(MemoryKind::Allocate { index, .. })
+                                                if index == idx =>
+                                            {
+                                                true
+                                            }
+                                            _ => false,
+                                        })
+                                        .unwrap();
+
+                                    let Some(MemoryKind::Allocate {
+                                        ty: original_allocate_ty,
+                                        ..
+                                    }) = original_module.memory
+                                    else {
+                                        unreachable!()
+                                    };
+
+                                    if !expected_ty.fits_in(original_allocate_ty) {
+                                        return Err(ValidationError::MemoryImportTooLarge);
+                                    }
+
+                                    Ok(Import::Mem {
+                                        module: ExternalModuleRef(original_module_index as u8),
+                                    })
+                                }
+                            }
+                        } else {
+                            Err(ValidationError::MemoryImportTypeMismatch)
+                        };
+                    }
+                }
+            }
+        }
+
+        Err(ValidationError::MemoryImportNotFound)
+    }
 }
 
 impl Import {
     pub fn read(
         wasm: &mut Reader,
         module: &Module,
-        store: &Store,
+        store: &StoreLinker,
     ) -> Result<Import, ValidationError> {
         let module_raw = wasm.read_vec_stack::<32, _>(|r| r.read_u8())?;
         let module_name = (&module_raw).try_into()?;
@@ -265,8 +342,11 @@ impl Import {
 
                 store.link_function(module_name, name, ty)
             }
+            ImportDesc::Mem(ty) => {
+                // Look up the function type from the WASM module
+                store.link_memory(module_name, name, ty)
+            }
             ImportDesc::Table(_) => Err(ValidationError::TableImportsNotSupportedYet),
-            ImportDesc::Mem(_) => Err(ValidationError::MemoryImportsNotSupportedYet),
             ImportDesc::Global(g_ty) => store.link_global(module_name, name, g_ty),
         }
     }

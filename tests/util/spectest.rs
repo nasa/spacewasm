@@ -2,9 +2,9 @@ use serde::{Deserialize, Serialize};
 use spacewasm::{
     global_allocator, vec, AllocError, Allocator, CodeBuilder, CompilerOptions, ConstantExprError,
     Error, ExportDesc, GlobalValue, GlobalValueError, HostFunction, HostGlobal, HostModule,
-    InnerVec, Interpreter, InterpreterBreak, InterpreterResult, InterpreterRunner,
-    InterpreterState, JumpTarget, MemoryStatistics, Module, ReaderError, Ref, Store, TrapReason, ValType,
-    ValidationError, Value, WasmMemoryAllocator, WasmStream,
+    InnerVec, Interpreter, InterpreterBreak, InterpreterResult, InterpreterRunner, InterpreterState,
+    JumpTarget, Memory, MemoryStatistics, Module, ReaderError, Ref, Store, StoreLinker,
+    TrapReason, ValType, ValidationError, Value, WasmMemoryAllocator, WasmStream,
 };
 use std::alloc::Layout;
 use std::cell::RefCell;
@@ -210,7 +210,8 @@ impl WasmStream for ByteStream {
 }
 
 struct TestContext {
-    store: Store,
+    linker: Option<StoreLinker>,
+    store: Option<Store>,
     state: Option<InterpreterState>,
     module_index: usize,
     code_builder: CodeBuilder<256>,
@@ -218,10 +219,11 @@ struct TestContext {
 }
 
 impl TestContext {
-    fn new(store: Store) -> Self {
+    fn new(linker: StoreLinker) -> Self {
         let code_builder = CodeBuilder::<256>::default();
         TestContext {
-            store,
+            linker: Some(linker),
+            store: None,
             state: None,
             module_index: 0,
             code_builder,
@@ -230,19 +232,56 @@ impl TestContext {
     }
 
     fn current_module_index(&self) -> usize {
-        self.store.modules.len() - 1
+        if let Some(linker) = &self.linker {
+            linker.modules.len() - 1
+        } else if let Some(store) = &self.store {
+            store.modules.len() - 1
+        } else {
+            0
+        }
     }
 
     fn get_module(&self, index: usize) -> &Module {
-        self.store
-            .modules
+        let modules = if let Some(linker) = &self.linker {
+            &linker.modules
+        } else if let Some(store) = &self.store {
+            &store.modules
+        } else {
+            panic!("No store or linker available");
+        };
+
+        modules
             .get(index)
             .map(|b| &**b)
             .unwrap_or_else(|| panic!("Module at index {index} not found"))
     }
 
     fn find_module_by_name(&self, name: &str) -> Option<usize> {
-        self.store.modules.iter().position(|m| m.name == name)
+        let modules = if let Some(linker) = &self.linker {
+            &linker.modules
+        } else if let Some(store) = &self.store {
+            &store.modules
+        } else {
+            return None;
+        };
+
+        modules.iter().position(|m| m.name == name)
+    }
+
+    fn finish_linker_if_needed(&mut self) {
+        // Only finish the linker if it hasn't been finished yet and we have modules
+        if self.linker.is_some() && self.store.is_none() {
+            if let Some(linker) = self.linker.take() {
+                let mut store = linker.finish(&RustSystemAllocator).unwrap();
+                let state = InterpreterState::new(&mut store, self.module_index, 65536);
+                self.store = Some(store);
+                self.state = Some(state);
+            }
+        }
+    }
+
+    fn ensure_store(&mut self) {
+        self.finish_linker_if_needed();
     }
 }
 
@@ -407,14 +446,40 @@ fn load_module(ctx: &mut TestContext, module_name: Option<String>, wasm_bytes: &
     let mut stream = ByteStream::new(wasm_bytes);
 
     // Generate a unique module name for the WASM module itself
-    let internal_name =
-        module_name.unwrap_or_else(|| format!("module_{}", ctx.store.modules.len()));
+    let module_count = if let Some(linker) = &ctx.linker {
+        linker.modules.len()
+    } else if let Some(store) = &ctx.store {
+        store.modules.len()
+    } else {
+        0
+    };
+    let internal_name = module_name.unwrap_or_else(|| format!("module_{}", module_count));
+
+    // If the linker was already finished (store exists), we need to recreate a linker
+    // This happens when loading multiple modules in sequence with invocations between them
+    if let Some(mut store) = ctx.store.take() {
+        // Move modules back from store to a new linker
+        let modules = std::mem::replace(&mut store.modules, spacewasm::Vec::zero());
+        let host_modules = std::mem::replace(&mut store.host_modules, spacewasm::Vec::zero());
+
+        // Create new linker with the preserved modules
+        let mut new_linker = StoreLinker::new(500, []).unwrap();
+        new_linker.modules = modules;
+        new_linker.host_modules = host_modules;
+
+        ctx.linker = Some(new_linker);
+        ctx.state = None;
+        // Store is dropped here, releasing any memory allocations
+    }
+
+    // Get reference to linker for module creation
+    let linker = ctx.linker.as_ref().expect("Linker not available");
 
     // Parse and validate the module
     let module = Module::new::<256>(
         &internal_name,
         &mut stream,
-        &ctx.store,
+        linker,
         &mut ctx.code_builder,
         CompilerOptions {
             allow_memory_grow: true,
@@ -422,20 +487,18 @@ fn load_module(ctx: &mut TestContext, module_name: Option<String>, wasm_bytes: &
     )
     .unwrap_or_else(|e| panic!("Failed to parse module: {e:?}"));
 
-    // Push module to store
-    let module_index = ctx.store.modules.len();
-    ctx.store.modules.push(spacewasm::Box::new(module).unwrap());
-    ctx.store.finish(&RustSystemAllocator).unwrap();
+    // Push module to linker
+    let linker = ctx.linker.as_mut().expect("Linker not available");
+    let module_index = linker.modules.len();
+    linker.modules.push(spacewasm::Box::new(module).unwrap());
 
     // Finish the code builder to get the text
     let code_builder = std::mem::replace(&mut ctx.code_builder, CodeBuilder::<256>::default());
     let (text, _final_page_offset) = code_builder.finish().unwrap();
     ctx.text = text;
 
-    // Reinitialize state with the new module
+    // Update module index - don't finish the linker yet, as more modules might be loaded
     ctx.module_index = module_index;
-    let new_state = InterpreterState::new(&mut ctx.store, module_index, 65536);
-    ctx.state = Some(new_state);
 }
 
 fn invoke_function(
@@ -445,6 +508,9 @@ fn invoke_function(
     args: &[ValueSpec],
     test_log: Rc<RefCell<LimitedVec<String>>>,
 ) -> Result<Option<Value>, InterpreterBreak> {
+    // Ensure the linker is finished and we have a store
+    ctx.ensure_store();
+
     // Resolve module index by name lookup or use current (last) module
     let module_index = if let Some(name) = module_name {
         ctx.find_module_by_name(name)
@@ -492,7 +558,7 @@ fn invoke_function(
 
     // Create a temporary interpreter by moving the store
     // We'll move it back after the function completes
-    let store = std::mem::replace(&mut ctx.store, Store::new(0, []).unwrap());
+    let store = ctx.store.take().expect("Store not available");
     let interpreter = Interpreter::new(store);
 
     let module = interpreter.store.modules.get(module_index).unwrap();
@@ -518,7 +584,7 @@ fn invoke_function(
     let result = test_runner.run(&ctx.text, state, 10000000);
 
     // Move the store back to the context
-    ctx.store = interpreter.store;
+    ctx.store = Some(interpreter.store);
 
     // Check the result
     match result {
@@ -604,7 +670,6 @@ fn check_decode_error(err: Error, text: String) {
             (ValidationError::MalformedSectionSize, "section size mismatch") => {}
             (ValidationError::LocalIdxOutOfRange, "unknown local") => {}
             (ValidationError::MultipleMemories, "multiple memories") => {}
-            (ValidationError::MemoryImportsNotSupportedYet, "multiple memories") => {}
             (
                 ValidationError::AlignmentLargerThanType,
                 "alignment must not be larger than natural",
@@ -647,8 +712,10 @@ fn check_decode_error(err: Error, text: String) {
             ) => {}
             (ValidationError::ExpectedConstOrVar(_), "malformed mutability") => {}
             (ValidationError::MemoryNotDefined, "unknown memory") => {}
-            (ValidationError::InvalidMaxLimit, "size minimum must not be greater than maximum") => {}
-            (ValidationError::MemoryTooLarge, "memory size must be at most 65536 pages (4GiB)") => {}
+            (ValidationError::InvalidMaxLimit, "size minimum must not be greater than maximum") => {
+            }
+            (ValidationError::MemoryTooLarge, "memory size must be at most 65536 pages (4GiB)") => {
+            }
             err => {
                 assert!(
                     false,
@@ -740,10 +807,13 @@ fn run_wast_command(
                 let mut stream = ByteStream::new(&wasm_bytes);
 
                 let mut temp_builder = CodeBuilder::<256>::default();
+                // For validation tests, create a temporary linker if needed
+                let temp_linker = StoreLinker::new(1, []).unwrap();
+                let linker = ctx.linker.as_ref().unwrap_or(&temp_linker);
                 let err = Module::new::<256>(
                     "malformed_test",
                     &mut stream,
-                    &ctx.store,
+                    linker,
                     &mut temp_builder,
                     CompilerOptions {
                         allow_memory_grow: true,
@@ -769,19 +839,19 @@ fn run_wast_command(
                 let mut temp_builder = CodeBuilder::<256>::default();
 
                 let err = || -> Result<(), Error> {
-                    let mut store = Store::new::<0>(1, [])?;
+                    let mut linker = StoreLinker::new(1, [])?;
                     let module = Module::new::<256>(
                         "malformed_test",
                         &mut stream,
-                        &store,
+                        &linker,
                         &mut temp_builder,
                         CompilerOptions {
                             allow_memory_grow: true,
                         },
                     )?;
 
-                    store.modules.push(spacewasm::Box::new(module)?);
-                    store.finish(&RustSystemAllocator)?;
+                    linker.modules.push(spacewasm::Box::new(module)?);
+                    let _store = linker.finish(&RustSystemAllocator)?;
 
                     Ok(())
                 }();
@@ -805,10 +875,13 @@ fn run_wast_command(
                     .unwrap_or_else(|e| panic!("Failed to read {wasm_path}: {e}"));
                 let mut stream = ByteStream::new(&wasm_bytes);
                 let mut temp_builder = CodeBuilder::<256>::default();
+                // For validation tests, create a temporary linker if needed
+                let temp_linker = StoreLinker::new(1, []).unwrap();
+                let linker = ctx.linker.as_ref().unwrap_or(&temp_linker);
                 Module::new::<256>(
                     "malformed_test",
                     &mut stream,
-                    &ctx.store,
+                    linker,
                     &mut temp_builder,
                     CompilerOptions {
                         allow_memory_grow: true,
@@ -831,8 +904,13 @@ fn run_wast_command(
 
             // Update the module name in the store to the registered alias
             // This allows linking to find it by the registered name
-            let module = ctx.store.modules.get_mut(module_index).unwrap();
-            module.name = as_name.as_str().try_into().unwrap();
+            if let Some(linker) = &mut ctx.linker {
+                let module = linker.modules.get_mut(module_index).unwrap();
+                module.name = as_name.as_str().try_into().unwrap();
+            } else if let Some(store) = &mut ctx.store {
+                let module = store.modules.get_mut(module_index).unwrap();
+                module.name = as_name.as_str().try_into().unwrap();
+            }
         }
         Command::Action { action, .. } => match action {
             Action::Invoke {
@@ -863,7 +941,7 @@ fn run_wast_test_file_inner(
     let test_file: TestFile = serde_json::from_str(&json_content)
         .unwrap_or_else(|e| panic!("Failed to parse JSON file {}: {}", json_path, e));
 
-    let store = Store::new(
+    let linker = StoreLinker::new(
         500,
         [HostModule {
             name: "spectest",
@@ -928,11 +1006,14 @@ fn run_wast_test_file_inner(
                     ControlFlow::Continue(None)
                 }),
             ],
+            memory: Some(
+                Memory::new(spacewasm::MemType { min: 1, max: 2 }, &RustSystemAllocator).unwrap(),
+            ),
         }],
     )
     .unwrap();
 
-    let mut ctx = TestContext::new(store);
+    let mut ctx = TestContext::new(linker);
 
     for command in test_file.commands {
         let test_log = Rc::new(RefCell::new(LimitedVec::<String>::new()));

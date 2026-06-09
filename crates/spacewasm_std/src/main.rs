@@ -1,8 +1,4 @@
-use spacewasm::{
-    vec, Box, CodeBuilder, CompilerOptions, ExportDesc, HostFunction, HostFunctionBreak,
-    HostModule, InterpreterBreak, InterpreterResult, InterpreterRunner, PageAllocator, Ref, SectionKind,
-    Store, ValType, Value,
-};
+use spacewasm::{vec, Box, CodeBuilder, CompilerOptions, ExportDesc, HostFunction, HostFunctionBreak, HostModule, InterpreterBreak, InterpreterResult, InterpreterRunner, PageAllocator, Ref, SectionKind, Store, StoreLinker, ValType, Value};
 use spacewasm_util::{FileStream, RustSystemAllocator};
 use std::ops::ControlFlow;
 use std::time::Instant;
@@ -98,6 +94,7 @@ fn main() {
                 ControlFlow::Continue(Some(Value::I32(0)))
             }),
         ],
+        memory: None,
     };
     let env = HostModule {
         name: "env",
@@ -113,9 +110,10 @@ fn main() {
                 ControlFlow::Continue(Some(Value::I64(ms as i64)))
             },
         )],
+        memory: None,
     };
 
-    let mut store = Store::new(3, [fprime_core, env]).unwrap();
+    let mut store = StoreLinker::new(3, [fprime_core, env]).unwrap();
 
     let file = std::fs::File::open(path).expect("failed to open file");
     let mut file_stream = FileStream::new(file);
@@ -129,7 +127,7 @@ fn main() {
     .expect("failed to parse wasm module");
 
     store.modules.push(Box::new(module).unwrap());
-    store.finish(&RustSystemAllocator).unwrap();
+    let mut store = store.finish(&RustSystemAllocator).unwrap();
     let module = store.modules.last().unwrap();
 
     let mut total: usize = 0;

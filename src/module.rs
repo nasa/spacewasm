@@ -44,7 +44,7 @@ impl Module {
     pub fn new<const N: usize>(
         name: &str,
         stream: &mut dyn WasmStream,
-        store: &Store,
+        store: &StoreLinker,
         code_builder: &mut CodeBuilder<N>,
         compiler_options: CompilerOptions,
     ) -> Result<Module, ParseError> {
@@ -68,7 +68,7 @@ impl Module {
     pub fn new_with_statistics<const N: usize>(
         name: &str,
         stream: &mut dyn WasmStream,
-        store: &Store,
+        store: &StoreLinker,
         code_builder: &mut CodeBuilder<N>,
         compiler_options: CompilerOptions,
     ) -> Result<(Module, [MemoryStatistics; SectionKind::N as usize]), ParseError> {
@@ -95,7 +95,7 @@ impl Module {
     fn read<const N: usize>(
         name: &str,
         wasm: &mut Reader,
-        store: &Store,
+        store: &StoreLinker,
         code_builder: &mut CodeBuilder<N>,
         custom_handler: &mut dyn CustomSectionHandler,
         mut stats: Option<&mut [MemoryStatistics; SectionKind::N as usize]>,
@@ -206,7 +206,7 @@ impl Module {
     fn read_section<const PN: usize>(
         &mut self,
         wasm: &mut Reader,
-        store: &Store,
+        store: &StoreLinker,
         section_size: usize,
         section_ty: SectionKind,
         custom_handler: &mut dyn CustomSectionHandler,
@@ -466,7 +466,7 @@ pub struct ImportSection;
 impl ImportSection {
     pub fn read(
         wasm: &mut Reader,
-        store: &Store,
+        store: &StoreLinker,
         module: &Module,
     ) -> Result<Vec<Import>, ValidationError> {
         wasm.read_vec(|w| Import::read(w, module, store))
@@ -550,7 +550,10 @@ pub enum MemoryKind {
 
 pub struct MemorySection;
 impl MemorySection {
-    pub fn read(wasm: &mut Reader, store: &Store) -> Result<Option<MemoryKind>, ValidationError> {
+    pub fn read(
+        wasm: &mut Reader,
+        store: &StoreLinker,
+    ) -> Result<Option<MemoryKind>, ValidationError> {
         let len = wasm.read_u32()?;
         if len > 1 {
             Err(ValidationError::MultipleMemories)
@@ -594,7 +597,7 @@ impl Global {
 
     pub fn read(
         wasm: &mut Reader,
-        store: &Store,
+        store: &StoreLinker,
         module: &Module,
     ) -> Result<Self, ValidationError> {
         let type_ = GlobalType::read(wasm)?;
@@ -641,7 +644,7 @@ pub struct GlobalSection;
 impl GlobalSection {
     pub fn read(
         wasm: &mut Reader,
-        store: &Store,
+        store: &StoreLinker,
         module: &Module,
     ) -> Result<Vec<Global>, ValidationError> {
         wasm.read_vec(|wasm| Global::read(wasm, store, module))
@@ -692,7 +695,7 @@ pub struct Element;
 impl Element {
     pub fn read(
         wasm: &mut Reader,
-        store: &Store,
+        store: &StoreLinker,
         module: &mut Module,
     ) -> Result<(), ValidationError> {
         let table = TableIdx::read(wasm)?;
@@ -733,7 +736,7 @@ pub struct ElementSection;
 impl ElementSection {
     pub fn read(
         wasm: &mut Reader,
-        store: &Store,
+        store: &StoreLinker,
         module: &mut Module,
     ) -> Result<(), ValidationError> {
         let len = wasm.read_u32()?;
@@ -751,7 +754,7 @@ impl CodeSection {
     pub fn read<const N: usize>(
         wasm: &mut Reader,
         builder: &mut CodeBuilder<N>,
-        store: &Store,
+        store: &StoreLinker,
         module: &mut Module,
         compiler_options: CompilerOptions,
     ) -> Result<(), ValidationError> {
@@ -786,7 +789,7 @@ impl Module {
 impl Data {
     pub fn read(
         wasm: &mut Reader,
-        store: &Store,
+        store: &StoreLinker,
         module: &Module,
     ) -> Result<Self, ValidationError> {
         let mem = MemIdx::read(wasm)?;
@@ -829,7 +832,7 @@ pub struct DataSection;
 impl DataSection {
     pub fn read(
         wasm: &mut Reader,
-        store: &Store,
+        store: &StoreLinker,
         module: &Module,
     ) -> Result<Vec<Data>, ValidationError> {
         wasm.read_vec(|r| Data::read(r, store, module))

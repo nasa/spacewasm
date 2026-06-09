@@ -9,7 +9,11 @@ impl Expr {
         Expr(JumpTarget(0))
     }
 
-    pub fn read_constant(wasm: &mut Reader, store: &Store, module: &Module) -> Result<Value, ValidationError> {
+    pub fn read_constant(
+        wasm: &mut Reader,
+        store: &StoreLinker,
+        module: &Module,
+    ) -> Result<Value, ValidationError> {
         let mut value: Option<Value> = None;
         wasm.read_code(&ConstantCompiler::new(store, module), &mut value)?;
         Ok(value.unwrap())
@@ -18,7 +22,7 @@ impl Expr {
     pub fn read<const N: usize>(
         wasm: &mut Reader,
         builder: &mut CodeBuilder<N>,
-        store: &Store,
+        store: &StoreLinker,
         module: &Module,
         ctx: &Func,
         compiler_options: CompilerOptions,
@@ -67,7 +71,7 @@ impl Module {
     pub fn read_function_code<const N: usize>(
         &mut self,
         wasm: &mut Reader,
-        store: &Store,
+        store: &StoreLinker,
         builder: &mut CodeBuilder<N>,
         i: usize,
         compiler_options: CompilerOptions,

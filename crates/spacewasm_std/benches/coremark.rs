@@ -1,8 +1,8 @@
 use spacewasm::{
     CodeBuilder, CompilerOptions, ExportDesc, HostFunction, HostModule, InterpreterBreak,
-    InterpreterResult, InterpreterRunner, Ref, Store, Value,
+    InterpreterResult, InterpreterRunner, Ref, StoreLinker, Value,
 };
-use spacewasm_util::FileStream;
+use spacewasm_util::{FileStream, RustSystemAllocator};
 use std::ops::ControlFlow;
 use std::time::Instant;
 
@@ -36,9 +36,10 @@ fn main() {
                 ControlFlow::Continue(Some(Value::I64(ms)))
             },
         )],
+        memory: None,
     };
 
-    let mut store = Store::new(2, [env]).unwrap();
+    let mut store = StoreLinker::new(2, [env]).unwrap();
     let mut code_builder = CodeBuilder::<256>::default();
 
     let file = std::fs::File::open("benches/coremark-minimal.wasm")
@@ -53,6 +54,7 @@ fn main() {
     .expect("failed to parse wasm module");
 
     store.modules.push(spacewasm::Box::new(module).unwrap());
+    let mut store = store.finish(&RustSystemAllocator).unwrap();
 
     let (text, _final_page_offset) = code_builder.finish().unwrap();
 

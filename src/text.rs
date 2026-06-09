@@ -397,7 +397,7 @@ impl<const N: usize> CodeBuilder<N> {
 /// The `N` generic parameter limits the maximum number of code pages.
 pub struct TextBuilder<'a, const N: usize> {
     code: &'a mut CodeBuilder<N>,
-    store: &'a Store,
+    store: &'a StoreLinker,
     module: &'a Module,
     func: &'a Func,
     control_frames: StaticVec<ControlFrame, 64>,
@@ -409,7 +409,7 @@ pub struct TextBuilder<'a, const N: usize> {
 impl<'a, const N: usize> TextBuilder<'a, N> {
     pub fn new(
         code: &'a mut CodeBuilder<N>,
-        store: &'a Store,
+        store: &'a StoreLinker,
         module: &'a Module,
         func: &'a Func,
     ) -> TextBuilder<'a, N> {
@@ -425,7 +425,7 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
         }
     }
 
-    pub fn store(&self) -> &'a Store {
+    pub fn store(&self) -> &'a StoreLinker {
         self.store
     }
 

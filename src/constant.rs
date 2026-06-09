@@ -1,15 +1,15 @@
 use crate::{
-    BaseVisitor, FuncIdx, GlobalIdx, LabelIdx, LocalIdx, MemArg, Module, Ref, ResultType, Store,
-    TypeIdx, Value, WasmVisitor,
+    BaseVisitor, FuncIdx, GlobalIdx, LabelIdx, LocalIdx, MemArg, Module, Ref, ResultType,
+    StoreLinker, TypeIdx, Value, WasmVisitor,
 };
 
 pub struct ConstantCompiler<'a> {
-    store: &'a Store,
+    store: &'a StoreLinker,
     module: &'a Module,
 }
 
 impl<'a> ConstantCompiler<'a> {
-    pub fn new(store: &'a Store, module: &'a Module) -> Self {
+    pub fn new(store: &'a StoreLinker, module: &'a Module) -> Self {
         Self { store, module }
     }
 }
