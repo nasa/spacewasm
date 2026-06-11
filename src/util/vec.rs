@@ -48,13 +48,23 @@ impl<A: Allocator, T: core::fmt::Debug> core::fmt::Debug for Vec<T, A> {
 
 impl<T: Clone, A: Allocator + Clone> Clone for Vec<T, A> {
     fn clone(&self) -> Self {
-        let mut n = Vec::new_in(self.alloc.clone(), self.inner.capacity).unwrap();
-        n.inner.len = self.inner.len;
-        n.inner.capacity = self.inner.capacity;
+        let mut n: Vec<T, A> = Vec::new_in(self.alloc.clone(), self.inner.capacity).unwrap();
 
         if self.len() > 0 {
-            n[0..self.len()].clone_from_slice(self);
+            // SAFETY: We need to write to uninitialized memory without creating a reference to it.
+            // Use ptr::write to initialize each element.
+            unsafe {
+                for i in 0..self.len() {
+                    core::ptr::write(
+                        n.inner.ptr.add(i),
+                        self[i].clone()
+                    );
+                }
+            }
         }
+
+        // Only set len after initializing the memory
+        n.inner.len = self.inner.len;
 
         n
     }
@@ -245,11 +255,7 @@ impl<T: Sized, A: Allocator> Drop for Vec<T, A> {
             unsafe {
                 self.alloc.dealloc(
                     self.inner.ptr as *mut u8,
-                    Layout::from_size_align(
-                        size_of::<T>() * self.inner.capacity as usize,
-                        align_of::<T>(),
-                    )
-                    .unwrap(),
+                    Layout::array::<T>(self.inner.capacity as usize).unwrap(),
                 );
             }
         }

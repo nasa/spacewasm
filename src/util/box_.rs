@@ -110,14 +110,15 @@ impl<T: ?Sized, A: Allocator> Drop for Box<T, A> {
     fn drop(&mut self) {
         // Null pointers do not have an allocation, they are usually just for dyn* on ZSTs
         if !self.ptr.is_null() {
-            // Drop the contained value
             unsafe {
-                ptr::drop_in_place(self.ptr);
-            }
-
-            // Deallocate the memory
-            unsafe {
+                // SAFETY: Compute the layout before dropping the value.
+                // Creating a reference to get metadata is safe even though we're about to drop.
                 let layout = Layout::for_value(&*self.ptr);
+
+                // Drop the contained value
+                ptr::drop_in_place(self.ptr);
+
+                // Deallocate the memory
                 self.alloc.dealloc(self.ptr as *mut u8, layout);
             }
         }
@@ -217,5 +218,20 @@ mod tests {
         }
 
         assert!(DROPPED.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn test_box_slice() {
+        use crate::Vec;
+
+        let mut v = Vec::new(3).unwrap();
+        v.push(1);
+        v.push(2);
+        v.push(3);
+
+        let b = v.into_boxed_slice();
+        assert_eq!(b.len(), 3);
+        assert_eq!(&*b, &[1, 2, 3]);
+        drop(b);
     }
 }
