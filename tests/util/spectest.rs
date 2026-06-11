@@ -740,7 +740,8 @@ fn check_decode_error(err: Error, text: String) {
 }
 
 fn check_initialization_error(err: InitializeError, text: &str) {
-    match err {
+    match (err, text) {
+        (InitializeError::Trap(TrapReason::Unreachable), "unreachable") => {}
         err => {
             assert!(
                 false,

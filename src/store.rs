@@ -201,6 +201,8 @@ impl UninitializedStore {
                 self.store = interpreter.store;
                 self.finished_start = self.running_start;
                 self.running_start = None;
+                self.store.modules[state.module.0 as usize]
+                    .return_memory(&self.store, core::mem::take(&mut state.memory));
                 Ok(ControlFlow::Continue(
                     InitializeContinue::FinishedModuleStart(self),
                 ))
