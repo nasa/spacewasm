@@ -27,26 +27,114 @@ pub struct InterpreterState {
     pub memory: Memory,
 
     /// Current module we are executing code for
-    pub module: usize,
+    pub module: ModuleRef,
+
+    /// The interpreter result when finished executing
+    pub result: Option<RawValue>,
 }
 
 impl InterpreterState {
-    pub fn new(store: &mut Store, module_index: usize, stack_size: usize) -> InterpreterState {
-        let module = store.modules.get(module_index).unwrap();
-
+    pub fn new(stack_size: usize) -> InterpreterState {
         InterpreterState {
             pc: JumpTarget::SENTINEL,
             sp: 0x0,
             fp: 0x0,
             stack: Stack::new(stack_size),
-            memory: module.take_memory(store),
+            memory: Memory::zero(),
             jumped: false,
-            module: module_index,
+            module: ModuleRef(0xFF),
+            result: None,
         }
     }
 
     pub fn module<'store>(&self, store: &'store Store) -> &'store Module {
-        store.modules.get(self.module).unwrap()
+        store.modules.get(self.module.0 as usize).unwrap()
+    }
+
+    /// Call a function within the _current_ module
+    fn call_impl(&mut self, f: &Func) -> Result<(), InterpreterBreak> {
+        // Make sure we have enough stack space for the function call
+        let required_stack_space = f.stack_usage as usize + 2 + f.local_size as usize;
+        if self.stack.len() < self.sp + required_stack_space {
+            return Err(InterpreterBreak::Trap(TrapReason::StackOverflow));
+        }
+
+        // The arguments are already at the top of the stack
+        // We need to push the frame pointer and the return instruction pointer to the stack
+        // We also encode the parameter size into the stack frame so that the return can unwind the stack
+        let frame_length = (self.sp - self.fp as usize) as u32;
+        assert!(frame_length <= 0xFFFFF);
+
+        let frame_length = frame_length << 16;
+
+        self.stack
+            .write_u32(self.sp, frame_length | (f.parameter_size as u32));
+        self.stack.write_u32(self.sp + 1, self.pc.0);
+        self.fp = self.sp as u32;
+
+        // Zero out the local variables
+        for i in 0..(f.local_size as usize) {
+            self.stack.write_u32(self.sp + 2 + i, 0);
+        }
+
+        // Allocate space for frame and the local variables
+        self.sp += 2 + f.local_size as usize;
+
+        // Jump to the function's execution point
+        self.pc = f.expr.0;
+        self.jumped = true;
+
+        Ok(())
+    }
+
+    /// Invoke a function with some parameters.
+    /// This function can only be used to kick off the interpreter.
+    /// It cannot be invoked once the interpreter has started.
+    pub fn invoke(
+        &mut self,
+        store: &Store,
+        fref: WasmRef,
+        params: &[Value],
+    ) -> Result<(), InterpreterBreak> {
+        // Make sure we are looking at the sentinel program counter
+        // This is only the case when nothing is running
+        assert_eq!(self.pc, JumpTarget::SENTINEL);
+
+        for p in params {
+            // TODO(tumbar) Validate input parameters
+            match p {
+                Value::I32(i) => {
+                    self.stack.write_u32(self.sp, *i as u32);
+                    self.sp += 1;
+                }
+                Value::I64(i) => {
+                    self.stack.write_u64(self.sp, *i as u64);
+                    self.sp += 2;
+                }
+                Value::F32(z) => {
+                    self.stack.write_f32(self.sp, *z);
+                    self.sp += 1;
+                }
+                Value::F64(z) => {
+                    self.stack.write_f64(self.sp, *z);
+                    self.sp += 2;
+                }
+            }
+        }
+
+        if let Some(old_m) = store.modules.get(self.module.0 as usize) {
+            old_m.return_memory(&store, core::mem::take(&mut self.memory));
+        }
+
+        let m = &store.modules[fref.module.0 as usize];
+        self.memory = m.take_memory(&store);
+        self.module = fref.module;
+
+        let f = &m.functions[fref.index as usize];
+        self.call_impl(f)?;
+        self.jumped = false;
+        self.result = None;
+        Ok(())
     }
 }
 
@@ -67,42 +155,6 @@ pub enum InterpreterResult {
 impl Interpreter {
     pub fn new(store: Store) -> Self {
         Interpreter { store }
-    }
-
-    fn call_impl(&self, f: &Func, state: &mut InterpreterState) -> Result<(), InterpreterBreak> {
-        // Make sure we have enough stack space for the function call
-        let required_stack_space = f.stack_usage as usize + 2 + f.local_size as usize;
-        if state.stack.len() < state.sp + required_stack_space {
-            return Err(InterpreterBreak::Trap(TrapReason::StackOverflow));
-        }
-
-        // The arguments are already at the top of the stack
-        // We need to push the frame pointer and the return instruction pointer to the stack
-        // We also encode the parameter size into the stack frame so that the return can unwind the stack
-        let frame_length = (state.sp - state.fp as usize) as u32;
-        assert!(frame_length <= 0xFFFFF);
-
-        let frame_length = frame_length << 16;
-
-        state
-            .stack
-            .write_u32(state.sp, frame_length | (f.parameter_size as u32));
-        state.stack.write_u32(state.sp + 1, state.pc.0);
-        state.fp = state.sp as u32;
-
-        // Zero out the local variables
-        for i in 0..(f.local_size as usize) {
-            state.stack.write_u32(state.sp + 2 + i, 0);
-        }
-
-        // Allocate space for frame and the local variables
-        state.sp += 2 + f.local_size as usize;
-
-        // Jump to the function's execution point
-        state.pc = f.expr.0;
-        state.jumped = true;
-
-        Ok(())
     }
 
     /// This function performs an unconditional branch to a resolved label target.
@@ -155,42 +207,6 @@ impl Interpreter {
         state.pc += label_pc_offset;
         state.pc += addr.jump();
         state.jumped = true;
-        Ok(())
-    }
-
-    /// Invoke a function with some parameters
-    /// Warning! If this is being used as an interrupt rather than an entry point,
-    /// make sure that the function does not return any values as that will cause stack pollution!
-    pub fn invoke(
-        &self,
-        state: &mut InterpreterState,
-        f: &Func,
-        params: &[Value],
-    ) -> Result<(), InterpreterBreak> {
-        for p in params {
-            // TODO(tumbar) Validate input parameters
-            match p {
-                Value::I32(i) => {
-                    state.stack.write_u32(state.sp, *i as u32);
-                    state.sp += 1;
-                }
-                Value::I64(i) => {
-                    state.stack.write_u64(state.sp, *i as u64);
-                    state.sp += 2;
-                }
-                Value::F32(z) => {
-                    state.stack.write_f32(state.sp, *z);
-                    state.sp += 1;
-                }
-                Value::F64(z) => {
-                    state.stack.write_f64(state.sp, *z);
-                    state.sp += 2;
-                }
-            }
-        }
-
-        self.call_impl(f, state)?;
-        state.jumped = false;
         Ok(())
     }
 }
@@ -247,7 +263,7 @@ pub enum TrapReason {
     Unreachable,
     /// A host function has noted an unrecoverable failure
     Host,
-    ///
+    /// Integer or floating point division by zero
     DivideByZero,
     /// An indirect call tried to map to a table function out of range
     InvalidTableIndex,
@@ -274,7 +290,7 @@ pub enum TrapReason {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InterpreterBreak {
     /// The program has completed
-    Finished(RawValue),
+    Finished,
     /// The program has been aborted
     Trap(TrapReason),
     /// An instruction or host function has requested the interpreter to pause
@@ -1256,7 +1272,8 @@ impl IrVisitor for Interpreter {
                 _ => unreachable!(),
             };
 
-            Err(InterpreterBreak::Finished(return_value))
+            state.result = Some(return_value);
+            Err(InterpreterBreak::Finished)
         } else {
             state.sp = parameter_start + return_size;
             state.pc = return_pc + 2; // +2 to skip over the call or call_indirect
@@ -1267,7 +1284,7 @@ impl IrVisitor for Interpreter {
 
     fn call(&self, x: u16, state: &mut Self::State) -> Result<(), Self::Error> {
         let f = &state.module(&self.store).functions[x as usize];
-        self.call_impl(f, state)
+        state.call_impl(f)
     }
 
     fn call_host(
@@ -1362,7 +1379,7 @@ impl IrVisitor for Interpreter {
                 }
 
                 // Call the function
-                self.call_impl(f, state)
+                state.call_impl(f)
             }
             Ref::Host { module, index } => {
                 // Make sure the type matches our expectations (runtime validation)

@@ -1,4 +1,8 @@
-use spacewasm::{vec, Box, CodeBuilder, CompilerOptions, ExportDesc, HostFunction, HostFunctionBreak, HostModule, InterpreterBreak, InterpreterResult, InterpreterRunner, PageAllocator, Ref, SectionKind, Store, StoreLinker, ValType, Value};
+use spacewasm::{
+    vec, Box, CodeBuilder, CompilerOptions, ExportDesc, HostFunction, HostFunctionBreak,
+    HostModule, InitializeResult, InterpreterBreak, InterpreterResult, InterpreterRunner,
+    ModuleRef, PageAllocator, Ref, SectionKind, StoreLinker, ValType, Value, WasmRef,
+};
 use spacewasm_util::{FileStream, RustSystemAllocator};
 use std::ops::ControlFlow;
 use std::time::Instant;
@@ -127,7 +131,16 @@ fn main() {
     .expect("failed to parse wasm module");
 
     store.modules.push(Box::new(module).unwrap());
-    let mut store = store.finish(&RustSystemAllocator).unwrap();
+    let (text, final_page_offset) = code_builder.finish().unwrap();
+    let mut store = store.allocate(&RustSystemAllocator).unwrap();
+    let mut state = spacewasm::InterpreterState::new(1024);
+    let store = loop {
+        store = match store.initialize(&text, &mut state, usize::MAX).unwrap() {
+            InitializeResult::Finished(s) => break s,
+            InitializeResult::Continue(c) => c,
+        }
+    };
+
     let module = store.modules.last().unwrap();
 
     let mut total: usize = 0;
@@ -137,7 +150,6 @@ fn main() {
         total += section.total_bytes as usize;
     }
 
-    let (text, final_page_offset) = code_builder.finish().unwrap();
     let wasm_size = file_stream.len();
 
     eprintln!("Total: {}", total);
@@ -176,31 +188,35 @@ fn main() {
             ExportDesc::Global(_) => {}
         }
     }
+    eprintln!("====");
 
-    let mut state = spacewasm::InterpreterState::new(&mut store, 0, 1024);
     let module = store.modules.last().unwrap();
 
-    let fi = match &module.start {
-        None => {
-            let f = module.exports.iter().find(|f| &f.name == "run").unwrap();
-            let ExportDesc::Func(fi) = f.desc else {
-                panic!()
-            };
-            fi
-        }
-        Some(fi) => *fi,
+    let fi = {
+        let f = module.exports.iter().find(|f| &f.name == "run").unwrap();
+        let ExportDesc::Func(fi) = f.desc else {
+            panic!()
+        };
+        fi
     };
 
-    let interpreter = spacewasm::Interpreter::new(store);
-    let module = interpreter.store.modules.last().unwrap();
-
+    let module = store.modules.last().unwrap();
     let Ref::Module(fi) = module.get_func_ref(fi).unwrap() else {
         panic!()
     };
-    let f = &module.functions[fi as usize];
-    interpreter.invoke(&mut state, f, &[]).unwrap();
 
-    eprintln!("====");
+    state
+        .invoke(
+            &store,
+            WasmRef {
+                module: ModuleRef(0),
+                index: fi,
+            },
+            &[],
+        )
+        .unwrap();
+
+    let interpreter = spacewasm::Interpreter::new(store);
 
     // let dbg = Inspector {
     //     v: &interpreter,
@@ -212,9 +228,12 @@ fn main() {
         result = interpreter.run(&text, &mut state, usize::MAX)
     }
 
-    let InterpreterResult::Instruction(InterpreterBreak::Finished(value)) = result else {
+    let InterpreterResult::Instruction(InterpreterBreak::Finished) = result else {
         panic!("interpreter failed: {:?}", result)
     };
 
-    eprintln!("Interpreter result: {:?}", value.to_value(ValType::F32))
+    eprintln!(
+        "Interpreter result: {:?}",
+        state.result.map(|v| v.to_value(ValType::F32))
+    )
 }

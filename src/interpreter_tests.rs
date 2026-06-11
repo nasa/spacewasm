@@ -1,10 +1,10 @@
 #[cfg(test)]
 mod tests {
-    use crate::StoreLinker;
     use crate::{
-        AllocError, BaseVisitor, Interpreter, InterpreterState, IrVisitor, MemArg, MemoryKind,
-        Module, ValType,
+        AllocError, BaseVisitor, Interpreter, InterpreterState, IrVisitor, MemArg, MemType, Memory,
+        MemoryKind, Module, ValType,
     };
+    use crate::{InitializeResult, StoreLinker};
 
     extern crate std;
 
@@ -49,7 +49,7 @@ mod tests {
             functions: crate::Vec::zero(),
             table: crate::Vec::zero(),
             memory: Some(MemoryKind::Allocate {
-                ty: crate::MemType { min: 1, max: 1 },
+                ty: crate::MemType::from(1, Some(2)),
                 index: 0,
             }),
             globals: crate::Vec::zero(),
@@ -61,12 +61,18 @@ mod tests {
         };
 
         store.modules.push(crate::Box::new(module).unwrap());
-        let mut store = store.finish(&TestAllocator).unwrap();
+        let mut store = store.allocate(&TestAllocator).unwrap();
+        let mut state = InterpreterState::new(1024);
+        state.memory = Memory::new(MemType::from(1, None), &TestAllocator).unwrap();
 
-        let state = InterpreterState::new(&mut store, 0, 1024);
-        let interpreter = Interpreter::new(store);
+        let store = loop {
+            store = match store.initialize(&[], &mut state, 10).unwrap() {
+                InitializeResult::Finished(store) => break store,
+                InitializeResult::Continue(c) => c,
+            }
+        };
 
-        (interpreter, state)
+        (Interpreter::new(store), state)
     }
 
     // Helper macro for testing operations

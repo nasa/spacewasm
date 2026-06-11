@@ -70,6 +70,10 @@ impl HostValList {
             data: self.0,
         }
     }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
 }
 
 impl From<&'static str> for HostValList {
@@ -97,6 +101,25 @@ impl PartialEq<[ValType]> for HostValList {
 pub struct HostValListIter {
     index: usize,
     data: &'static str,
+}
+
+impl DoubleEndedIterator for HostValListIter {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        if self.index == self.data.len() {
+            return None;
+        }
+
+        let c = match self.data.chars().nth(self.data.len() - self.index - 1)? {
+            'i' => ValType::I32,
+            'I' => ValType::I64,
+            'f' => ValType::F32,
+            'd' => ValType::F64,
+            _ => unreachable!(),
+        };
+
+        self.index += 1;
+        Some(c)
+    }
 }
 
 impl Iterator for HostValListIter {
@@ -144,7 +167,7 @@ pub struct HostModule {
     pub name: &'static str,
     pub globals: Vec<HostGlobal>,
     pub functions: Vec<HostFunction>,
-    pub memory: Option<Memory>,
+    pub memory: Option<MemType>,
 }
 
 impl HostFunction {

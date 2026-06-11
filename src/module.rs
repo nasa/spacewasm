@@ -1,6 +1,7 @@
 use crate::*;
 use core::cell::RefCell;
 
+#[derive(Clone)]
 pub struct Module {
     pub name: String,
     pub types: Vec<FuncType>,
@@ -11,7 +12,7 @@ pub struct Module {
     pub imports: Vec<Import>,
     pub exports: Vec<Export>,
     pub data: Vec<Data>,
-    pub start: Option<FuncIdx>,
+    pub start: Option<Ref>,
     pub table_defined: bool, // FIXME(tumbar) This feels sort of pointless?
 }
 
@@ -223,6 +224,35 @@ impl Module {
             }
             Import => {
                 self.imports = ImportSection::read(wasm, store, self)?;
+
+                // We need to resolve some imports into the module (i.e. memory and table)
+                for import in &self.imports {
+                    match import {
+                        crate::Import::Mem { module, .. } => {
+                            let Some(MemoryKind::Allocate { index, .. }) =
+                                store.modules[module.0 as usize].memory
+                            else {
+                                unreachable!()
+                            };
+
+                            self.memory = Some(MemoryKind::Import(index));
+                        }
+                        crate::Import::HostMem { module, .. } => {
+                            // Count the number of host modules that defined memory before this one
+                            let next_index = store.host_modules[0..(module.0 as usize)]
+                                .iter()
+                                .filter(|hm| hm.memory.is_some())
+                                .count();
+
+                            if next_index > (u8::MAX as usize) {
+                                return Err(ValidationError::MemoryIdxTooLarge);
+                            } else {
+                                self.memory = Some(MemoryKind::Import(next_index as u8))
+                            }
+                        }
+                        _ => {}
+                    }
+                }
             }
             Function => {
                 self.functions = FunctionSection::read(wasm, self)?;
@@ -232,7 +262,7 @@ impl Module {
                 self.table_defined = true;
             }
             Memory => {
-                self.memory = MemorySection::read(wasm, store)?;
+                self.memory = MemorySection::read(wasm, store, self)?;
             }
             Global => {
                 self.globals = GlobalSection::read(wasm, store, self)?;
@@ -241,7 +271,37 @@ impl Module {
                 self.exports = ExportSection::read(wasm)?;
             }
             Start => {
-                self.start.replace(FuncIdx::read(wasm)?);
+                let idx = FuncIdx::read(wasm)?;
+                let r = self
+                    .get_func_ref(idx)
+                    .ok_or(ValidationError::FunctionIdxOutOfRange)?;
+
+                // Start functions must be [] -> []
+                match r {
+                    Ref::Module(index) => {
+                        let f = &self.functions[index as usize];
+                        let ty = &self.types[f.ty.0 as usize];
+                        if ty.params.len() != 0 || ty.returns.len() != 0 {
+                            return Err(ValidationError::InvalidStartFunctionSignature);
+                        }
+                    }
+                    Ref::Host { module, index } => {
+                        let f = &store.host_modules[module.0 as usize].functions[index as usize];
+                        if f.params().len() != 0 || f.returns().len() != 0 {
+                            return Err(ValidationError::InvalidStartFunctionSignature);
+                        }
+                    }
+                    Ref::Extern { module, index } => {
+                        let m = &store.modules[module.0 as usize];
+                        let f = &m.functions[index as usize];
+                        let ty = &m.types[f.ty.0 as usize];
+                        if ty.params.len() != 0 || ty.returns.len() != 0 {
+                            return Err(ValidationError::InvalidStartFunctionSignature);
+                        }
+                    }
+                }
+
+                self.start = Some(r);
             }
             Element => {
                 ElementSection::read(wasm, store, self)?;
@@ -536,6 +596,7 @@ impl TableSection {
     }
 }
 
+#[derive(Clone, Copy)]
 pub enum MemoryKind {
     Allocate {
         /// Memory size when allocating for the store
@@ -553,17 +614,26 @@ impl MemorySection {
     pub fn read(
         wasm: &mut Reader,
         store: &StoreLinker,
+        module: &Module,
     ) -> Result<Option<MemoryKind>, ValidationError> {
         let len = wasm.read_u32()?;
         if len > 1 {
             Err(ValidationError::MultipleMemories)
         } else if len == 0 {
             Ok(None)
+        } else if module.memory.is_some() {
+            return Err(ValidationError::MultipleMemories);
         } else {
             // We are allocating memory for this module
             // We need to compute the next index that _will_ be in the store by
             // looking at what the previous modules do
-            let memories = store
+            let host_memories = store
+                .host_modules
+                .iter()
+                .filter(|m| m.memory.is_some())
+                .count();
+
+            let wasm_memories = store
                 .modules
                 .iter()
                 .filter(|m| match m.memory {
@@ -572,18 +642,21 @@ impl MemorySection {
                 })
                 .count();
 
-            if memories > (u8::MAX as usize) {
+            let next_index = host_memories + wasm_memories;
+
+            if next_index > (u8::MAX as usize) {
                 Err(ValidationError::MemoryIdxTooLarge)
             } else {
                 Ok(Some(MemoryKind::Allocate {
                     ty: MemType::read(wasm)?,
-                    index: memories as u8,
+                    index: next_index as u8,
                 }))
             }
         }
     }
 }
 
+#[derive(Clone)]
 pub struct Global {
     pub type_: GlobalType,
     // FIXME(tumbar) This is terrible!
@@ -651,6 +724,7 @@ impl GlobalSection {
     }
 }
 
+#[derive(Clone)]
 pub enum ExportDesc {
     Func(FuncIdx),
     Table(TableIdx),
@@ -670,6 +744,7 @@ impl ExportDesc {
     }
 }
 
+#[derive(Clone)]
 pub struct Export {
     pub name: String,
     pub desc: ExportDesc,
@@ -771,6 +846,7 @@ impl CodeSection {
     }
 }
 
+#[derive(Clone)]
 pub struct Data {
     pub offset: u32,
     pub init: Vec<u8>,
@@ -811,15 +887,7 @@ impl Data {
 
                 i as u32
             }
-            Value::I64(i) => {
-                if i < 0 {
-                    return Err(ValidationError::InvalidNegativeMemOffset);
-                } else if i > (u32::MAX as i64) {
-                    return Err(ValidationError::InvalidMemOffset);
-                }
-
-                i as u32
-            }
+            Value::I64(_) => return Err(ValidationError::InvalidMemOffsetType),
             Value::F32(_) => return Err(ValidationError::InvalidMemOffsetType),
             Value::F64(_) => return Err(ValidationError::InvalidMemOffsetType),
         };

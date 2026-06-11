@@ -22,8 +22,33 @@ pub trait WasmMemoryAllocator {
 pub struct Memory {
     ptr: *mut u8,
     size: usize,
-    ty: MemType,
+    limits: MemType,
     allocator: Option<&'static dyn WasmMemoryAllocator>,
+}
+
+// Please don't use this in flight...
+impl Clone for Memory {
+    fn clone(&self) -> Self {
+        if let Some(allocator) = self.allocator {
+            let ptr = allocator
+                .allocate(Layout::from_size_align(self.size, 16).unwrap())
+                .unwrap()
+                .as_ptr();
+
+            unsafe {
+                self.ptr.copy_to(ptr, self.size);
+            }
+
+            Memory {
+                ptr,
+                size: self.size,
+                limits: self.limits,
+                allocator: Some(allocator),
+            }
+        } else {
+            Memory::zero()
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -53,7 +78,7 @@ impl Memory {
         Memory {
             ptr: core::ptr::null_mut(),
             size: 0,
-            ty: MemType { min: 0, max: 0 },
+            limits: MemType::zero(),
             allocator: None,
         }
     }
@@ -62,7 +87,7 @@ impl Memory {
         ty: MemType,
         allocator: &'static dyn WasmMemoryAllocator,
     ) -> Result<Memory, AllocError> {
-        let size = (ty.min as usize) * Self::PAGE_SIZE;
+        let size = (ty.min() as usize) * Self::PAGE_SIZE;
         let ptr = allocator
             .allocate(Layout::from_size_align(size, 16).unwrap())?
             .as_ptr();
@@ -75,7 +100,7 @@ impl Memory {
         Ok(Memory {
             ptr,
             size,
-            ty,
+            limits: ty,
             allocator: Some(allocator),
         })
     }
@@ -186,7 +211,7 @@ impl Memory {
     /// Grow the memory by n pages
     /// If the memory growth succeeds, return the old number of pages
     pub fn grow(&mut self, n: u32) -> Result<u32, MemoryError> {
-        if self.size() + n > self.ty.max {
+        if !self.limits.can_hold(self.size() + n) {
             return Err(MemoryError::OutOfMemory);
         }
 

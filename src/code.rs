@@ -214,10 +214,13 @@ impl<'wasm> Reader<'wasm> {
                 BR => instruction!(br, LabelIdx),
                 BR_IF => instruction!(br_if, LabelIdx),
                 BR_TABLE => {
-                    let lut = self.read_vec(LabelIdx::read)?;
-                    if lut.len() > 256 {
-                        return Err(ValidationError::BrTableHasTooManyCases);
-                    }
+                    // FIXME(tumbar) Is it possible to use an iterator and not require up-front allocation?
+                    let lut = self
+                        .read_vec_stack::<256, LabelIdx>(LabelIdx::read)
+                        .map_err(|e| match e {
+                            ValidationError::VecTooLong => ValidationError::BrTableHasTooManyCases,
+                            e => e,
+                        })?;
 
                     let default_ = LabelIdx::read(self)?;
                     visitor.br_table(&lut, default_, state)?;

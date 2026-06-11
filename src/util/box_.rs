@@ -108,15 +108,18 @@ impl<T: ?Sized, A: Allocator> DerefMut for Box<T, A> {
 
 impl<T: ?Sized, A: Allocator> Drop for Box<T, A> {
     fn drop(&mut self) {
-        // Drop the contained value
-        unsafe {
-            ptr::drop_in_place(self.ptr);
-        }
+        // Null pointers do not have an allocation, they are usually just for dyn* on ZSTs
+        if !self.ptr.is_null() {
+            // Drop the contained value
+            unsafe {
+                ptr::drop_in_place(self.ptr);
+            }
 
-        // Deallocate the memory
-        unsafe {
-            let layout = Layout::for_value(&self.ptr);
-            self.alloc.dealloc(self.ptr as *mut u8, layout);
+            // Deallocate the memory
+            unsafe {
+                let layout = Layout::for_value(&*self.ptr);
+                self.alloc.dealloc(self.ptr as *mut u8, layout);
+            }
         }
     }
 }

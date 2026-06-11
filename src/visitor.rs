@@ -259,7 +259,7 @@ pub struct LocalVariable {
 /// Module imports can only refer to modules loaded before it.
 /// References store a relative offset from the 'current' module. 0 indicates the current module.
 #[derive(Debug, Clone, Copy)]
-pub struct ExternalModuleRef(pub u8);
+pub struct ModuleRef(pub u8);
 
 #[derive(Debug, Clone, Copy)]
 pub struct HostModuleRef(pub u8);
@@ -271,7 +271,7 @@ impl HostModuleRef {
     }
 }
 
-/// A reference to a symbol in the WASM store
+/// A reference to a symbol in the WASM store relative to an implicit 'self' module
 #[derive(Debug, Clone, Copy)]
 pub enum Ref {
     /// A symbol in the current WASM module
@@ -280,9 +280,16 @@ pub enum Ref {
     Host { module: HostModuleRef, index: u16 },
     /// A symbol in another WASM module
     Extern {
-        module: ExternalModuleRef,
+        module: ModuleRef,
         index: u16,
     },
+}
+
+/// A reference to a WASM symbol in the store
+#[derive(Debug, Clone, Copy)]
+pub struct WasmRef {
+    pub module: ModuleRef,
+    pub index: u16,
 }
 
 /// An abstraction over IR Bytecode.

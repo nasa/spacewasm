@@ -3,7 +3,7 @@ use crate::*;
 /// A general purpose
 #[derive(Debug, Clone, Copy)]
 pub struct ExternalRef {
-    pub module: ExternalModuleRef,
+    pub module: ModuleRef,
     pub index: u16,
 }
 
@@ -17,7 +17,7 @@ pub struct HostRef {
 #[derive(Debug, Clone, Copy)]
 pub enum Import {
     Func {
-        module: ExternalModuleRef,
+        module: ModuleRef,
         index: u16,
     },
     HostFunc {
@@ -25,14 +25,17 @@ pub enum Import {
         index: u16,
     },
     Table {
-        module: ExternalModuleRef,
+        module: ModuleRef,
         index: u16,
     },
     Mem {
-        module: ExternalModuleRef,
+        module: ModuleRef,
+    },
+    HostMem {
+        module: HostModuleRef,
     },
     Global {
-        module: ExternalModuleRef,
+        module: ModuleRef,
         index: u16,
     },
     HostGlobal {
@@ -53,6 +56,7 @@ impl From<Import> for Ref {
             }
 
             Import::Mem { module } => Ref::Extern { module, index: 0 },
+            Import::HostMem { module } => Ref::Host { module, index: 0 },
         }
     }
 }
@@ -111,7 +115,7 @@ impl StoreLinker {
                                     // Check the function signature
                                     if ty == expected_ty {
                                         Ok(Import::Func {
-                                            module: ExternalModuleRef(mi as u8),
+                                            module: ModuleRef(mi as u8),
                                             index: idx,
                                         })
                                     } else {
@@ -164,16 +168,16 @@ impl StoreLinker {
                 for (gi, g) in module.globals.iter().enumerate() {
                     if g.name == name {
                         // Validate the imported type matches the global type defined here
-                        if g.value.ty() != expected_ty.ty {
-                            return Err(ValidationError::GlobalImportTypeMismatch);
+                        return if g.value.ty() != expected_ty.ty {
+                            Err(ValidationError::GlobalImportTypeMismatch)
                         } else if !g.value.mutable() && expected_ty.mutable {
-                            return Err(ValidationError::GlobalIsNotMutable);
-                        }
-
-                        return Ok(Import::HostGlobal {
-                            module: HostModuleRef::new(mi),
-                            index: gi as u16,
-                        });
+                            Err(ValidationError::GlobalIsNotMutable)
+                        } else {
+                            Ok(Import::HostGlobal {
+                                module: HostModuleRef::new(mi),
+                                index: gi as u16,
+                            })
+                        };
                     }
                 }
             }
@@ -200,7 +204,7 @@ impl StoreLinker {
                                         Err(ValidationError::GlobalIsNotMutable)
                                     } else {
                                         Ok(Import::Global {
-                                            module: ExternalModuleRef(mi as u8),
+                                            module: ModuleRef(mi as u8),
                                             index: idx,
                                         })
                                     }
@@ -245,6 +249,22 @@ impl StoreLinker {
         name: &str,
         expected_ty: MemType,
     ) -> Result<Import, ValidationError> {
+        for (mi, module) in self.host_modules.iter().enumerate() {
+            if module.name == module_name {
+                return if let Some(mem) = &module.memory {
+                    if expected_ty.fits_in(*mem) {
+                        Ok(Import::HostMem {
+                            module: HostModuleRef::new(mi),
+                        })
+                    } else {
+                        Err(ValidationError::MemoryImportTooLarge)
+                    }
+                } else {
+                    Err(ValidationError::MemoryNotDefined)
+                };
+            }
+        }
+
         for (mi, module) in self.modules.iter().enumerate() {
             // Check if this module is the module we are looking for
             if module.name == module_name {
@@ -259,50 +279,48 @@ impl StoreLinker {
                             }
 
                             match module.memory {
-                                None => return Err(ValidationError::MemoryNotDefined),
+                                None => Err(ValidationError::MemoryNotDefined),
                                 Some(MemoryKind::Allocate { index: _, ty }) => {
                                     if !expected_ty.fits_in(ty) {
                                         return Err(ValidationError::MemoryImportTooLarge);
                                     }
 
                                     Ok(Import::Mem {
-                                        module: ExternalModuleRef(mi as u8),
+                                        module: ModuleRef(mi as u8),
                                     })
                                 }
                                 Some(MemoryKind::Import(idx)) => {
                                     // This module imported memory from another module
                                     // This index is the _memory_ index not the module index
                                     // so we have to do a linear lookup.
+                                    let (original_allocate_ty, import) = match self
+                                        .get_memory(idx)
+                                        .unwrap()
+                                    {
+                                        Ref::Module(_) => unreachable!(),
+                                        Ref::Host { module, .. } => (
+                                            self.host_modules[module.0 as usize].memory.unwrap(),
+                                            Import::HostMem { module },
+                                        ),
+                                        Ref::Extern { module, .. } => {
+                                            let MemoryKind::Allocate { ty, .. } = self.modules
+                                                [module.0 as usize]
+                                                .memory
+                                                .as_ref()
+                                                .unwrap()
+                                            else {
+                                                unreachable!()
+                                            };
 
-                                    let (original_module_index, original_module) = self
-                                        .modules
-                                        .iter()
-                                        .enumerate()
-                                        .find(|(_, mp)| match mp.memory {
-                                            Some(MemoryKind::Allocate { index, .. })
-                                                if index == idx =>
-                                            {
-                                                true
-                                            }
-                                            _ => false,
-                                        })
-                                        .unwrap();
-
-                                    let Some(MemoryKind::Allocate {
-                                        ty: original_allocate_ty,
-                                        ..
-                                    }) = original_module.memory
-                                    else {
-                                        unreachable!()
+                                            (*ty, Import::Mem { module })
+                                        }
                                     };
 
                                     if !expected_ty.fits_in(original_allocate_ty) {
                                         return Err(ValidationError::MemoryImportTooLarge);
                                     }
 
-                                    Ok(Import::Mem {
-                                        module: ExternalModuleRef(original_module_index as u8),
-                                    })
+                                    Ok(import)
                                 }
                             }
                         } else {

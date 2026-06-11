@@ -117,6 +117,7 @@ pub enum ValidationError {
     BrTableHasTooManyCases,
     GlobalTypeMismatch,
     AlignmentLargerThanType,
+    InvalidStartFunctionSignature,
     TableImportsNotSupportedYet, // TODO(tumbar) Implement dynamic linking
     FunctionCallsAcrossModuleNotSupportedYet, // TODO(tumbar) Implement module context isolation
     GlobalsAcrossModuleNotSupportedYet, // TODO(tumbar) Implement module context isolation

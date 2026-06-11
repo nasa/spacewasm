@@ -1,10 +1,12 @@
+use super::inspector::{Inspector, LimitedVec};
 use serde::{Deserialize, Serialize};
 use spacewasm::{
     global_allocator, vec, AllocError, Allocator, CodeBuilder, CompilerOptions, ConstantExprError,
-    Error, ExportDesc, GlobalValue, GlobalValueError, HostFunction, HostGlobal, HostModule,
-    InnerVec, Interpreter, InterpreterBreak, InterpreterResult, InterpreterRunner, InterpreterState,
-    JumpTarget, Memory, MemoryStatistics, Module, ReaderError, Ref, Store, StoreLinker,
-    TrapReason, ValType, ValidationError, Value, WasmMemoryAllocator, WasmStream,
+    Error, ExportDesc, GlobalValue, GlobalValueError, HostFunction, HostGlobal,
+    HostModule, InitializeError, InitializeResult, InnerVec, Interpreter,
+    InterpreterBreak, InterpreterResult, InterpreterRunner, InterpreterState, MemoryError, MemoryStatistics,
+    Module, ModuleRef, ParseError, ReaderError, Ref, Store, StoreLinker, TrapReason, ValType,
+    ValidationError, Value, WasmMemoryAllocator, WasmRef, WasmStream,
 };
 use std::alloc::Layout;
 use std::cell::RefCell;
@@ -13,8 +15,6 @@ use std::panic::catch_unwind;
 use std::ptr::NonNull;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
-
-use super::inspector::{Inspector, LimitedVec};
 
 #[derive(Debug, Deserialize, Serialize)]
 struct TestFile {
@@ -41,6 +41,12 @@ enum Command {
         line: u32,
         action: Action,
         text: String,
+    },
+    AssertUninstantiable {
+        line: u32,
+        filename: String,
+        text: String,
+        module_type: String,
     },
     AssertMalformed {
         line: u32,
@@ -210,21 +216,17 @@ impl WasmStream for ByteStream {
 }
 
 struct TestContext {
-    linker: Option<StoreLinker>,
-    store: Option<Store>,
-    state: Option<InterpreterState>,
+    store: Store,
     module_index: usize,
     code_builder: CodeBuilder<256>,
     text: spacewasm::Vec<spacewasm::Box<spacewasm::TextPage>>,
 }
 
 impl TestContext {
-    fn new(linker: StoreLinker) -> Self {
+    fn new() -> Self {
         let code_builder = CodeBuilder::<256>::default();
         TestContext {
-            linker: Some(linker),
-            store: None,
-            state: None,
+            store: Store::default(),
             module_index: 0,
             code_builder,
             text: spacewasm::Vec::zero(),
@@ -232,56 +234,23 @@ impl TestContext {
     }
 
     fn current_module_index(&self) -> usize {
-        if let Some(linker) = &self.linker {
-            linker.modules.len() - 1
-        } else if let Some(store) = &self.store {
-            store.modules.len() - 1
-        } else {
+        if self.store.modules.len() == 0 {
             0
+        } else {
+            self.store.modules.len() - 1
         }
     }
 
     fn get_module(&self, index: usize) -> &Module {
-        let modules = if let Some(linker) = &self.linker {
-            &linker.modules
-        } else if let Some(store) = &self.store {
-            &store.modules
-        } else {
-            panic!("No store or linker available");
-        };
-
-        modules
+        self.store
+            .modules
             .get(index)
             .map(|b| &**b)
             .unwrap_or_else(|| panic!("Module at index {index} not found"))
     }
 
     fn find_module_by_name(&self, name: &str) -> Option<usize> {
-        let modules = if let Some(linker) = &self.linker {
-            &linker.modules
-        } else if let Some(store) = &self.store {
-            &store.modules
-        } else {
-            return None;
-        };
-
-        modules.iter().position(|m| m.name == name)
-    }
-
-    fn finish_linker_if_needed(&mut self) {
-        // Only finish the linker if it hasn't been finished yet and we have modules
-        if self.linker.is_some() && self.store.is_none() {
-            if let Some(linker) = self.linker.take() {
-                let mut store = linker.finish(&RustSystemAllocator).unwrap();
-                let state = InterpreterState::new(&mut store, self.module_index, 65536);
-                self.store = Some(store);
-                self.state = Some(state);
-            }
-        }
-    }
-
-    fn ensure_store(&mut self) {
-        self.finish_linker_if_needed();
+        self.store.modules.iter().position(|m| m.name == name)
     }
 }
 
@@ -441,64 +410,96 @@ fn compare_values(actual: Value, expected: &ValueSpec) {
     }
 }
 
-fn load_module(ctx: &mut TestContext, module_name: Option<String>, wasm_bytes: &[u8]) {
+#[derive(Debug)]
+enum ModuleLoadError {
+    DecodeError(ParseError),
+    AllocationError(MemoryError),
+    InitializeError(InitializeError),
+}
+
+impl From<ParseError> for ModuleLoadError {
+    fn from(e: ParseError) -> Self {
+        ModuleLoadError::DecodeError(e)
+    }
+}
+
+impl From<InitializeError> for ModuleLoadError {
+    fn from(value: InitializeError) -> Self {
+        ModuleLoadError::InitializeError(value)
+    }
+}
+
+impl From<MemoryError> for ModuleLoadError {
+    fn from(value: MemoryError) -> Self {
+        ModuleLoadError::AllocationError(value)
+    }
+}
+
+fn load_module(
+    ctx: &mut TestContext,
+    module_name: Option<String>,
+    wasm_bytes: &[u8],
+) -> Result<(), ModuleLoadError> {
     // Create a ByteStream
     let mut stream = ByteStream::new(wasm_bytes);
 
-    // Generate a unique module name for the WASM module itself
-    let module_count = if let Some(linker) = &ctx.linker {
-        linker.modules.len()
-    } else if let Some(store) = &ctx.store {
-        store.modules.len()
-    } else {
-        0
-    };
-    let internal_name = module_name.unwrap_or_else(|| format!("module_{}", module_count));
+    // We are loading a new module. We need to construct a new store using the old modules
+    // Move modules back from store to a new linker
 
-    // If the linker was already finished (store exists), we need to recreate a linker
-    // This happens when loading multiple modules in sequence with invocations between them
-    if let Some(mut store) = ctx.store.take() {
-        // Move modules back from store to a new linker
-        let modules = std::mem::replace(&mut store.modules, spacewasm::Vec::zero());
-        let host_modules = std::mem::replace(&mut store.host_modules, spacewasm::Vec::zero());
-
-        // Create new linker with the preserved modules
-        let mut new_linker = StoreLinker::new(500, []).unwrap();
-        new_linker.modules = modules;
-        new_linker.host_modules = host_modules;
-
-        ctx.linker = Some(new_linker);
-        ctx.state = None;
-        // Store is dropped here, releasing any memory allocations
+    // Create new linker with the preserved modules
+    let mut new_linker = StoreLinker::new(254, []).unwrap();
+    if ctx.store.modules.capacity() > 0 {
+        new_linker.modules = ctx.store.modules.clone();
     }
 
-    // Get reference to linker for module creation
-    let linker = ctx.linker.as_ref().expect("Linker not available");
+    new_linker.host_modules = test_host_module();
+
+    // If the last module that got loaded has an empty name "", this means that it should not be
+    // kept around in the store since it cannot actually be referenced. It was only the "active"
+    // module and probably ran some invoke/assert_return stuff but should not remain in the store.
+    if let Some(module) = new_linker.modules.pop() {
+        if module.name != "" {
+            // It is possible to reference this module in the future
+            // Add it back to the list
+            new_linker.modules.push(module);
+        }
+    }
 
     // Parse and validate the module
     let module = Module::new::<256>(
-        &internal_name,
+        module_name.as_ref().map(|f| f.as_ref()).unwrap_or(""),
         &mut stream,
-        linker,
+        &new_linker,
         &mut ctx.code_builder,
         CompilerOptions {
             allow_memory_grow: true,
         },
-    )
-    .unwrap_or_else(|e| panic!("Failed to parse module: {e:?}"));
+    )?;
 
     // Push module to linker
-    let linker = ctx.linker.as_mut().expect("Linker not available");
-    let module_index = linker.modules.len();
-    linker.modules.push(spacewasm::Box::new(module).unwrap());
+    let module_index = new_linker.modules.len();
+    new_linker
+        .modules
+        .push(spacewasm::Box::new(module).unwrap());
 
     // Finish the code builder to get the text
     let code_builder = std::mem::replace(&mut ctx.code_builder, CodeBuilder::<256>::default());
     let (text, _final_page_offset) = code_builder.finish().unwrap();
     ctx.text = text;
 
+    // Initialize the linker into a store
+    let mut store = new_linker.allocate(&RustSystemAllocator)?;
+    let mut state = InterpreterState::new(1024);
+    ctx.store = loop {
+        store = match store.initialize(&ctx.text, &mut state, usize::MAX)? {
+            InitializeResult::Finished(store) => break store,
+            InitializeResult::Continue(c) => c,
+        }
+    };
+
     // Update module index - don't finish the linker yet, as more modules might be loaded
     ctx.module_index = module_index;
+    Ok(())
 }
 
 fn invoke_function(
@@ -508,9 +509,6 @@ fn invoke_function(
     args: &[ValueSpec],
     test_log: Rc<RefCell<LimitedVec<String>>>,
 ) -> Result<Option<Value>, InterpreterBreak> {
-    // Ensure the linker is finished and we have a store
-    ctx.ensure_store();
-
     // Resolve module index by name lookup or use current (last) module
     let module_index = if let Some(name) = module_name {
         ctx.find_module_by_name(name)
@@ -558,15 +556,17 @@ fn invoke_function(
 
     // Create a temporary interpreter by moving the store
     // We'll move it back after the function completes
-    let store = ctx.store.take().expect("Store not available");
-    let interpreter = Interpreter::new(store);
+    let interpreter = Interpreter::new(core::mem::take(&mut ctx.store));
 
-    let module = interpreter.store.modules.get(module_index).unwrap();
-    let func = &module.functions[func_index];
-
-    let state = ctx.state.as_mut().expect("State not initialized");
-    state.pc = JumpTarget::SENTINEL;
-    interpreter.invoke(state, func, &params)?;
+    let mut state = InterpreterState::new(1024);
+    state.invoke(
+        &interpreter.store,
+        WasmRef {
+            module: ModuleRef(module_index as u8),
+            index: func_index as u16,
+        },
+        &params,
+    )?;
 
     let test_runner = Inspector {
         v: &interpreter,
@@ -580,19 +580,20 @@ fn invoke_function(
 
     // Run until completion
     // Run up to 1-million instructions to catch infinite loops
-    let state = ctx.state.as_mut().expect("State not initialized");
-    let result = test_runner.run(&ctx.text, state, 10000000);
+    let result = test_runner.run(&ctx.text, &mut state, 10000000);
 
     // Move the store back to the context
-    ctx.store = Some(interpreter.store);
+    ctx.store = interpreter.store;
+    ctx.get_module(module_index)
+        .return_memory(&ctx.store, state.memory);
 
     // Check the result
     match result {
-        InterpreterResult::Instruction(InterpreterBreak::Finished(raw)) => {
+        InterpreterResult::Instruction(InterpreterBreak::Finished) => {
             if return_types.is_empty() {
                 Ok(None)
             } else if return_types.len() == 1 {
-                Ok(Some(raw.to_value(return_types[0])))
+                Ok(Some(state.result.unwrap().to_value(return_types[0])))
             } else {
                 panic!("Multi-value returns not supported");
             }
@@ -716,6 +717,9 @@ fn check_decode_error(err: Error, text: String) {
             }
             (ValidationError::MemoryTooLarge, "memory size must be at most 65536 pages (4GiB)") => {
             }
+            (ValidationError::InvalidNegativeMemOffset, "data segment does not fit") => {}
+            (ValidationError::InvalidMemOffsetType, "type mismatch") => {}
+            (ValidationError::InvalidStartFunctionSignature, "start function") => {}
             err => {
                 assert!(
                     false,
@@ -723,7 +727,8 @@ fn check_decode_error(err: Error, text: String) {
                 )
             }
         },
-        Error::Memory(err) => match err {
+        Error::Memory(err) => match (err, text.as_str()) {
+            (MemoryError::OutOfBounds, "data segment does not fit") => {}
             err => {
                 assert!(
                     false,
@@ -732,6 +737,85 @@ fn check_decode_error(err: Error, text: String) {
             }
         },
     }
+}
+
+fn check_initialization_error(err: InitializeError, text: &str) {
+    match err {
+        err => {
+            assert!(
+                false,
+                "Could not match initialization error text '{text}' with error {err:?}"
+            )
+        }
+    }
+}
+
+fn test_host_module() -> spacewasm::Vec<HostModule> {
+    vec![HostModule {
+        name: "spectest",
+        globals: vec![
+            HostGlobal {
+                name: "global_i32",
+                value: spacewasm::Box::new(StaticGlobal {
+                    value: Mutex::new(Value::I32(666)),
+                    ty: ValType::I32,
+                })
+                .unwrap()
+                .into_global_value_dyn(),
+            },
+            HostGlobal {
+                name: "global_i64",
+                value: spacewasm::Box::new(StaticGlobal {
+                    value: Mutex::new(Value::I64(666)),
+                    ty: ValType::I64,
+                })
+                .unwrap()
+                .into_global_value_dyn(),
+            },
+            HostGlobal {
+                name: "global_f32",
+                value: spacewasm::Box::new(StaticGlobal {
+                    value: Mutex::new(Value::F32(666.6)),
+                    ty: ValType::F32,
+                })
+                .unwrap()
+                .into_global_value_dyn(),
+            },
+            HostGlobal {
+                name: "global_f64",
+                value: spacewasm::Box::new(StaticGlobal {
+                    value: Mutex::new(Value::F64(666.6)),
+                    ty: ValType::F64,
+                })
+                .unwrap()
+                .into_global_value_dyn(),
+            },
+        ],
+        functions: vec![
+            HostFunction::new("print", "".into(), "".into(), |_, _| {
+                ControlFlow::Continue(None)
+            }),
+            HostFunction::new("print_i32", "i".into(), "".into(), |_, _| {
+                ControlFlow::Continue(None)
+            }),
+            HostFunction::new("print_i64", "I".into(), "".into(), |_, _| {
+                ControlFlow::Continue(None)
+            }),
+            HostFunction::new("print_f32", "f".into(), "".into(), |_, _| {
+                ControlFlow::Continue(None)
+            }),
+            HostFunction::new("print_f64", "d".into(), "".into(), |_, _| {
+                ControlFlow::Continue(None)
+            }),
+            HostFunction::new("print_i32_f32", "if".into(), "".into(), |_, _| {
+                ControlFlow::Continue(None)
+            }),
+            HostFunction::new("print_f64_f64", "dd".into(), "".into(), |_, _| {
+                ControlFlow::Continue(None)
+            }),
+        ],
+        memory: Some(spacewasm::MemType::from(1, Some(2))),
+    }]
 }
 
 fn run_wast_command(
@@ -745,7 +829,7 @@ fn run_wast_command(
             let wasm_path = format!("{test_dir}/{filename}");
             let wasm_bytes =
                 std::fs::read(&wasm_path).unwrap_or_else(|e| panic!("Failed to read module: {e}"));
-            load_module(ctx, name, &wasm_bytes);
+            load_module(ctx, name, &wasm_bytes).unwrap();
         }
         Command::AssertReturn {
             action, expected, ..
@@ -776,6 +860,41 @@ fn run_wast_command(
                 panic!("Multi-value returns not yet supported");
             }
         }
+        Command::AssertUninstantiable {
+            text,
+            filename,
+            module_type,
+            ..
+        } => {
+            if module_type != "text" {
+                let wasm_path = format!("{test_dir}/{filename}");
+                let wasm_bytes = std::fs::read(&wasm_path)
+                    .unwrap_or_else(|e| panic!("Failed to read module: {e}"));
+
+                // Clone the old store to restore it after we lose this one
+                // The problem is we need to do a "partial" clone since the host_modules are not clonable.
+                let prev_store = Store {
+                    modules: ctx.store.modules.clone(),
+                    host_modules: test_host_module(),
+                    memory: ctx.store.memory.clone(),
+                };
+
+                match load_module(ctx, None, &wasm_bytes) {
+                    Ok(_) => {
+                        panic!("Expected error when linking/initializing module");
+                    }
+                    Err(ModuleLoadError::InitializeError(err)) => {
+                        check_initialization_error(err, &text);
+
+                        // Restore the previous store since this one is now wiped out.
+                        ctx.store = prev_store;
+                    }
+                    Err(err) => {
+                        panic!("Failed to decode module '{err:?}'");
+                    }
+                }
+            }
+        }
         Command::AssertTrap { action, text, .. } => match action {
             Action::Invoke {
                 module,
@@ -804,28 +923,22 @@ fn run_wast_command(
             if module_type != "text" {
                 let wasm_path = format!("{test_dir}/{filename}");
                 let wasm_bytes = std::fs::read(&wasm_path).unwrap();
-                let mut stream = ByteStream::new(&wasm_bytes);
 
-                let mut temp_builder = CodeBuilder::<256>::default();
-                // For validation tests, create a temporary linker if needed
-                let temp_linker = StoreLinker::new(1, []).unwrap();
-                let linker = ctx.linker.as_ref().unwrap_or(&temp_linker);
-                let err = Module::new::<256>(
-                    "malformed_test",
-                    &mut stream,
-                    linker,
-                    &mut temp_builder,
-                    CompilerOptions {
-                        allow_memory_grow: true,
-                    },
-                )
-                .err()
-                .expect(format!("Expected malformed module to fail with '{text}'").as_str());
-
-                check_decode_error(err.into(), text);
+                match load_module(ctx, None, &wasm_bytes) {
+                    Err(ModuleLoadError::DecodeError(err)) => check_decode_error(err.into(), text),
+                    _ => {
+                        panic!("Expected error when decoding module");
+                    }
+                }
             }
         }
         Command::AssertInvalid {
+            filename,
+            module_type,
+            text,
+            ..
+        }
+        | Command::AssertUnlinkable {
             filename,
             module_type,
             text,
@@ -835,63 +948,20 @@ fn run_wast_command(
                 let wasm_path = format!("{test_dir}/{filename}");
                 let wasm_bytes = std::fs::read(&wasm_path)
                     .unwrap_or_else(|e| panic!("Failed to read {wasm_path}: {e}"));
-                let mut stream = ByteStream::new(&wasm_bytes);
-                let mut temp_builder = CodeBuilder::<256>::default();
 
-                let err = || -> Result<(), Error> {
-                    let mut linker = StoreLinker::new(1, [])?;
-                    let module = Module::new::<256>(
-                        "malformed_test",
-                        &mut stream,
-                        &linker,
-                        &mut temp_builder,
-                        CompilerOptions {
-                            allow_memory_grow: true,
-                        },
-                    )?;
-
-                    linker.modules.push(spacewasm::Box::new(module)?);
-                    let _store = linker.finish(&RustSystemAllocator)?;
-
-                    Ok(())
-                }();
-
-                let err = err
-                    .err()
-                    .expect(format!("Expected invalid module to fail with '{text}'").as_str());
-
-                check_decode_error(err, text);
-            }
-        }
-        Command::AssertUnlinkable {
-            filename,
-            module_type,
-            text: _text,
-            ..
-        } => {
-            if module_type != "text" {
-                let wasm_path = format!("{test_dir}/{filename}");
-                let wasm_bytes = std::fs::read(&wasm_path)
-                    .unwrap_or_else(|e| panic!("Failed to read {wasm_path}: {e}"));
-                let mut stream = ByteStream::new(&wasm_bytes);
-                let mut temp_builder = CodeBuilder::<256>::default();
-                // For validation tests, create a temporary linker if needed
-                let temp_linker = StoreLinker::new(1, []).unwrap();
-                let linker = ctx.linker.as_ref().unwrap_or(&temp_linker);
-                Module::new::<256>(
-                    "malformed_test",
-                    &mut stream,
-                    linker,
-                    &mut temp_builder,
-                    CompilerOptions {
-                        allow_memory_grow: true,
-                    },
-                )
-                .unwrap();
+                match load_module(ctx, None, &wasm_bytes) {
+                    Err(ModuleLoadError::DecodeError(err)) => check_decode_error(err.into(), text),
+                    Err(ModuleLoadError::AllocationError(err)) => {
+                        check_decode_error(err.into(), text)
+                    }
+                    _ => {
+                        panic!("Expected error when decoding module");
+                    }
+                }
             }
         }
         Command::AssertExhaustion { .. } => {
-            // Skip exhaustion tests as stack overflow detection is not implemented
+            // todo!()
         }
         Command::Register { name, as_name, .. } => {
             // Register updates the module name in the store to the alias
@@ -904,13 +974,8 @@ fn run_wast_command(
 
             // Update the module name in the store to the registered alias
             // This allows linking to find it by the registered name
-            if let Some(linker) = &mut ctx.linker {
-                let module = linker.modules.get_mut(module_index).unwrap();
-                module.name = as_name.as_str().try_into().unwrap();
-            } else if let Some(store) = &mut ctx.store {
-                let module = store.modules.get_mut(module_index).unwrap();
-                module.name = as_name.as_str().try_into().unwrap();
-            }
+            let module = ctx.store.modules.get_mut(module_index).unwrap();
+            module.name = as_name.as_str().try_into().unwrap();
         }
         Command::Action { action, .. } => match action {
             Action::Invoke {
@@ -921,7 +986,7 @@ fn run_wast_command(
                 invoke_function(ctx, &module, &field, &args, log).unwrap();
             }
             Action::Get { .. } => {
-                // Skip Get actions for now
+                // todo!()
             }
         },
     }
@@ -941,79 +1006,8 @@ fn run_wast_test_file_inner(
     let test_file: TestFile = serde_json::from_str(&json_content)
         .unwrap_or_else(|e| panic!("Failed to parse JSON file {}: {}", json_path, e));
 
-    let linker = StoreLinker::new(
-        500,
-        [HostModule {
-            name: "spectest",
-            globals: vec![
-                HostGlobal {
-                    name: "global_i32",
-                    value: spacewasm::Box::new(StaticGlobal {
-                        value: Mutex::new(Value::I32(666)),
-                        ty: ValType::I32,
-                    })
-                    .unwrap()
-                    .into_global_value_dyn(),
-                },
-                HostGlobal {
-                    name: "global_i64",
-                    value: spacewasm::Box::new(StaticGlobal {
-                        value: Mutex::new(Value::I64(666)),
-                        ty: ValType::I64,
-                    })
-                    .unwrap()
-                    .into_global_value_dyn(),
-                },
-                HostGlobal {
-                    name: "global_f32",
-                    value: spacewasm::Box::new(StaticGlobal {
-                        value: Mutex::new(Value::F32(666.6)),
-                        ty: ValType::F32,
-                    })
-                    .unwrap()
-                    .into_global_value_dyn(),
-                },
-                HostGlobal {
-                    name: "global_f64",
-                    value: spacewasm::Box::new(StaticGlobal {
-                        value: Mutex::new(Value::F64(666.6)),
-                        ty: ValType::F64,
-                    })
-                    .unwrap()
-                    .into_global_value_dyn(),
-                },
-            ],
-            functions: vec![
-                HostFunction::new("print", "".into(), "".into(), |_, _| {
-                    ControlFlow::Continue(None)
-                }),
-                HostFunction::new("print_i32", "i".into(), "".into(), |_, _| {
-                    ControlFlow::Continue(None)
-                }),
-                HostFunction::new("print_i64", "I".into(), "".into(), |_, _| {
-                    ControlFlow::Continue(None)
-                }),
-                HostFunction::new("print_f32", "f".into(), "".into(), |_, _| {
-                    ControlFlow::Continue(None)
-                }),
-                HostFunction::new("print_f64", "d".into(), "".into(), |_, _| {
-                    ControlFlow::Continue(None)
-                }),
-                HostFunction::new("print_i32_f32", "if".into(), "".into(), |_, _| {
-                    ControlFlow::Continue(None)
-                }),
-                HostFunction::new("print_f64_f64", "dd".into(), "".into(), |_, _| {
-                    ControlFlow::Continue(None)
-                }),
-            ],
-            memory: Some(
-                Memory::new(spacewasm::MemType { min: 1, max: 2 }, &RustSystemAllocator).unwrap(),
-            ),
-        }],
-    )
-    .unwrap();
-
-    let mut ctx = TestContext::new(linker);
+    let mut ctx = TestContext::new();
+    ctx.store.host_modules = test_host_module();
 
     for command in test_file.commands {
         let test_log = Rc::new(RefCell::new(LimitedVec::<String>::new()));
@@ -1022,6 +1016,7 @@ fn run_wast_test_file_inner(
             Command::Module { line, .. }
             | Command::AssertReturn { line, .. }
             | Command::AssertTrap { line, .. }
+            | Command::AssertUninstantiable { line, .. }
             | Command::AssertMalformed { line, .. }
             | Command::AssertInvalid { line, .. }
             | Command::AssertExhaustion { line, .. }

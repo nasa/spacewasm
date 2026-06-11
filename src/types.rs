@@ -182,7 +182,7 @@ impl ResultType {
     }
 }
 
-#[derive(PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct FuncType {
     pub params: Vec<ValType>,
     pub returns: Vec<ValType>,
@@ -243,10 +243,7 @@ impl Limit {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MemType {
-    pub min: u32,
-    pub max: u32,
-}
+pub struct MemType(Limit);
 
 impl MemType {
     pub(crate) fn read(wasm: &mut Reader) -> Result<Self, ValidationError> {
@@ -261,15 +258,52 @@ impl MemType {
         {
             Err(ValidationError::MemoryTooLarge)
         } else {
-            Ok(MemType {
-                min: limit.min,
-                max: limit.max.unwrap_or(65536),
-            })
+            Ok(MemType(limit))
         }
     }
 
+    pub fn from(min: u32, max: Option<u32>) -> Self {
+        MemType(Limit { min, max })
+    }
+
+    pub fn zero() -> MemType {
+        MemType(Limit {
+            min: 0,
+            max: Some(0),
+        })
+    }
+
+    pub fn min(&self) -> u32 {
+        self.0.min
+    }
+
+    pub fn can_hold(&self, n_pages: u32) -> bool {
+        if let Some(max) = self.0.max {
+            if n_pages > max {
+                return false;
+            }
+        } else if n_pages > 65536 {
+            // WASM only has 4Gib of pages
+            return false;
+        }
+
+        self.0.min <= n_pages
+    }
+
     pub fn fits_in(&self, other: MemType) -> bool {
-        self.min <= other.min && self.max <= other.max
+        // if let Some(self_max) = self.0.max {
+        //     if self_max < other.0.min {
+        //         return false;
+        //     }
+        //
+        //     if let Some(other_max) = other.0.max {
+        //         if self_max > other_max {
+        //             return false;
+        //         }
+        //     }
+        // }
+
+        self.0.min <= other.0.min
     }
 }
 

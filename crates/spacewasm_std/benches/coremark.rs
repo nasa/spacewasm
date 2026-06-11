@@ -1,6 +1,7 @@
 use spacewasm::{
-    CodeBuilder, CompilerOptions, ExportDesc, HostFunction, HostModule, InterpreterBreak,
-    InterpreterResult, InterpreterRunner, Ref, StoreLinker, Value,
+    CodeBuilder, CompilerOptions, ExportDesc, HostFunction, HostModule, InitializeResult,
+    InterpreterBreak, InterpreterResult, InterpreterRunner, ModuleRef, RawValue, Ref, StoreLinker,
+    Value, WasmRef,
 };
 use spacewasm_util::{FileStream, RustSystemAllocator};
 use std::ops::ControlFlow;
@@ -54,15 +55,18 @@ fn main() {
     .expect("failed to parse wasm module");
 
     store.modules.push(spacewasm::Box::new(module).unwrap());
-    let mut store = store.finish(&RustSystemAllocator).unwrap();
-
     let (text, _final_page_offset) = code_builder.finish().unwrap();
+    let mut state = spacewasm::InterpreterState::new(1024);
+    let mut store = store.allocate(&RustSystemAllocator).unwrap();
 
-    let mut state = spacewasm::InterpreterState::new(&mut store, 0, 1024);
+    let store = loop {
+        store = match store.initialize(&text, &mut state, usize::MAX).unwrap() {
+            InitializeResult::Finished(s) => break s,
+            InitializeResult::Continue(c) => c,
+        }
+    };
 
-    let interpreter = spacewasm::Interpreter::new(store);
-    let module = interpreter.store.modules.last().unwrap();
-
+    let module = store.modules.last().unwrap();
     let export = module
         .exports
         .iter()
@@ -73,21 +77,20 @@ fn main() {
             let Ref::Module(fdi) = module.get_func_ref(fi).unwrap() else {
                 panic!("invalid function ref")
             };
-            module.functions.get(fdi as usize).unwrap()
+            WasmRef {
+                module: ModuleRef(0),
+                index: fdi,
+            }
         }
         _ => panic!("run export is not a function"),
     };
 
-    let f_ty = &module.types[func.ty.0 as usize];
-    eprintln!(
-        "Running CoreMark run() => ({:?}) -> {:?}\n",
-        f_ty.params, f_ty.returns
-    );
-    interpreter.invoke(&mut state, func, &[]).unwrap();
+    state.invoke(&store, func, &[]).unwrap();
 
     let bench_start = Instant::now();
 
     eprintln!("Starting execution...");
+    let interpreter = spacewasm::Interpreter::new(store);
     let mut result = InterpreterResult::OutOfFuel;
     while result == InterpreterResult::OutOfFuel {
         result = interpreter.run(&text, &mut state, usize::MAX)
@@ -107,9 +110,9 @@ fn main() {
     // "Call f32 run() function. It should take 12..20 seconds to execute and return a CoreMark result."
     // "if res > 1: print(f'Result: {res:.3f}') else: print('Error')"
     match result {
-        InterpreterResult::Instruction(InterpreterBreak::Finished(raw_value)) => {
+        InterpreterResult::Instruction(InterpreterBreak::Finished) => {
             // The run function returns f32, so interpret the bits as float
-            let coremark_score = raw_value.read_f32();
+            let coremark_score = state.result.unwrap_or(RawValue::from_32(0)).read_f32();
 
             println!("Execution time: {:.3}s", elapsed.as_secs_f64());
             println!("Return value: {:.3}", coremark_score);

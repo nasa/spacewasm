@@ -185,8 +185,8 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
         match f_ref {
             Ref::Module(index) => {
                 // Check the call signature
-                let f = state.module().functions.get(index as usize).unwrap();
-                let ty = state.module().types.get(f.ty.0 as usize).unwrap();
+                let f = &state.module().functions[index as usize];
+                let ty = &state.module().types[f.ty.0 as usize];
 
                 for p in ty.params.iter().rev() {
                     state.pop_stack(*p)?;
@@ -205,13 +205,13 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
                     return Err(ValidationError::ModuleIdxTooLarge);
                 }
 
-                let hm = state.store().host_modules.get(module.0 as usize).unwrap();
-                let f = hm.functions.get(index as usize).unwrap();
-                for p in f.params().iter() {
+                let hm = &state.store().host_modules[module.0 as usize];
+                let f = &hm.functions[index as usize];
+                for p in f.params().iter().rev() {
                     state.pop_stack(p)?;
                 }
 
-                for r in f.returns().iter() {
+                for r in f.returns().iter().rev() {
                     state.push_stack(r)?;
                 }
 

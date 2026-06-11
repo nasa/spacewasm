@@ -4,7 +4,7 @@ use core::fmt;
 use core::fmt::Formatter;
 use core::ops::Deref;
 
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Clone)]
 pub struct String<A: Allocator = GlobalAllocator>(Vec<u8, A>);
 
 impl TryFrom<&[u8]> for String<GlobalAllocator> {
