@@ -27,6 +27,7 @@ use ::core::ops::AddAssign;
 /// - **Jump target**: 2 words encoding a 32-bit address
 
 /// A page of compiled IR code containing 256 16-bit words (512 bytes).
+#[derive(Clone)]
 pub struct TextPage(pub [u16; 256]);
 impl Default for TextPage {
     fn default() -> TextPage {
@@ -234,6 +235,7 @@ pub struct GlobalVariable {
 ///
 /// Manages allocation of pages and writing 16-bit words to the current position.
 /// The `N` generic parameter limits the maximum number of pages that can be allocated.
+#[derive(Clone)]
 pub struct CodeBuilder<const N: usize> {
     pages: StaticVec<Box<TextPage>, N>,
     offset: usize,

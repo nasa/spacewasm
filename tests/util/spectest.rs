@@ -219,17 +219,14 @@ struct TestContext {
     store: Store,
     module_index: usize,
     code_builder: CodeBuilder<256>,
-    text: spacewasm::Vec<spacewasm::Box<spacewasm::TextPage>>,
 }
 
 impl TestContext {
     fn new() -> Self {
-        let code_builder = CodeBuilder::<256>::default();
         TestContext {
             store: Store::default(),
             module_index: 0,
-            code_builder,
-            text: spacewasm::Vec::zero(),
+            code_builder: CodeBuilder::<256>::default(),
         }
     }
 
@@ -483,15 +480,13 @@ fn load_module(
         .push(spacewasm::Box::new(module).unwrap());
 
     // Finish the code builder to get the text
-    let code_builder = std::mem::replace(&mut ctx.code_builder, CodeBuilder::<256>::default());
-    let (text, _final_page_offset) = code_builder.finish().unwrap();
-    ctx.text = text;
+    let (text, _final_page_offset) = ctx.code_builder.clone().finish().unwrap();
 
     // Initialize the linker into a store
     let mut store = new_linker.allocate(&RustSystemAllocator)?;
     let mut state = InterpreterState::new(1024);
     ctx.store = loop {
-        store = match store.initialize(&ctx.text, &mut state, usize::MAX)? {
+        store = match store.initialize(&text, &mut state, usize::MAX)? {
             InitializeResult::Finished(store) => break store,
             InitializeResult::Continue(c) => c,
         }
@@ -580,7 +575,8 @@ fn invoke_function(
 
     // Run until completion
     // Run up to 1-million instructions to catch infinite loops
-    let result = test_runner.run(&ctx.text, &mut state, 10000000);
+    let (text, _final_page_offset) = ctx.code_builder.clone().finish().unwrap();
+    let result = test_runner.run(&text, &mut state, 10000000);
 
     // Move the store back to the context
     ctx.store = interpreter.store;

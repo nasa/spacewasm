@@ -1,10 +1,32 @@
 use crate::alloc::AllocError;
 use crate::ValidationError;
+use core::mem::MaybeUninit;
 use core::ops::{Deref, DerefMut};
 
 pub struct StaticVec<T: Sized, const N: usize> {
-    data: [T; N],
+    data: [MaybeUninit<T>; N],
     len: u32,
+}
+
+impl<T: Sized + Clone, const N: usize> Clone for StaticVec<T, N> {
+    fn clone(&self) -> Self {
+        // Create uninitialized array
+        let mut new_vec = StaticVec::<T, N>::default();
+
+        // Clone only the initialized elements
+        for i in 0..(self.len as usize) {
+            unsafe {
+                new_vec.data[i].write(
+                    self.data[i].assume_init_ref().clone()
+                );
+            }
+        }
+
+        // Set length after initialization
+        new_vec.len = self.len;
+
+        new_vec
+    }
 }
 
 impl<T: Sized, const N: usize> StaticVec<T, N> {
@@ -17,7 +39,7 @@ impl<T: Sized, const N: usize> StaticVec<T, N> {
 impl<T: Sized, const N: usize> Default for StaticVec<T, N> {
     fn default() -> Self {
         Self {
-            data: unsafe { core::mem::zeroed() },
+            data: unsafe { MaybeUninit::uninit().assume_init() },
             len: 0,
         }
     }
@@ -42,9 +64,7 @@ impl<T, const N: usize> StaticVec<T, N> {
             return Err(AllocError::OutOfMemory);
         }
 
-        unsafe {
-            core::ptr::write(&mut self.data[self.len as usize], value);
-        }
+        self.data[self.len as usize].write(value);
 
         self.len += 1;
         Ok(())
@@ -59,7 +79,7 @@ impl<T, const N: usize> StaticVec<T, N> {
             None
         } else {
             self.len -= 1;
-            unsafe { Some(core::ptr::read(&self.data[self.len as usize])) }
+            unsafe { Some(self.data[self.len as usize].assume_init_read()) }
         }
     }
 }
@@ -73,13 +93,25 @@ impl<T: core::fmt::Debug, const N: usize> core::fmt::Debug for StaticVec<T, N> {
 impl<T, const N: usize> Deref for StaticVec<T, N> {
     type Target = [T];
     fn deref(&self) -> &[T] {
-        &self.data[0..(self.len as usize)]
+        unsafe {
+            // SAFETY: elements [0..len) are initialized
+            core::slice::from_raw_parts(
+                self.data.as_ptr() as *const T,
+                self.len as usize
+            )
+        }
     }
 }
 
 impl<T, const N: usize> DerefMut for StaticVec<T, N> {
     fn deref_mut(&mut self) -> &mut [T] {
-        &mut self.data[0..(self.len as usize)]
+        unsafe {
+            // SAFETY: elements [0..len) are initialized
+            core::slice::from_raw_parts_mut(
+                self.data.as_mut_ptr() as *mut T,
+                self.len as usize
+            )
+        }
     }
 }
 
@@ -93,7 +125,7 @@ impl<T, const N: usize> Iterator for StaticVecIntoIter<T, N> {
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.pos < (self.vec.len as usize) {
-            let item = unsafe { core::ptr::read(&self.vec.data[self.pos]) };
+            let item = unsafe { self.vec.data[self.pos].assume_init_read() };
             self.pos += 1;
             Some(item)
         } else {
@@ -106,7 +138,7 @@ impl<T, const N: usize> Drop for StaticVecIntoIter<T, N> {
     fn drop(&mut self) {
         // Drop remaining elements that haven't been yielded yet
         while self.pos < (self.vec.len as usize) {
-            unsafe { core::ptr::drop_in_place(&mut self.vec.data[self.pos] as *mut T) };
+            unsafe { self.vec.data[self.pos].assume_init_drop() };
             self.pos += 1;
         }
     }
@@ -181,5 +213,18 @@ mod tests {
         assert_eq!(iter.next(), Some(20));
         assert_eq!(iter.next(), Some(30));
         assert_eq!(iter.next(), None);
+    }
+
+    #[test]
+    fn test_clone() {
+        let mut vec: StaticVec<i32, 5> = StaticVec::new();
+        vec.push(1).unwrap();
+        vec.push(2).unwrap();
+        vec.push(3).unwrap();
+
+        let cloned = vec.clone();
+        assert_eq!(cloned.len(), 3);
+        assert_eq!(&cloned[..], &[1, 2, 3]);
+        assert_eq!(&vec[..], &[1, 2, 3]);
     }
 }
