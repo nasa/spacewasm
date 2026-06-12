@@ -268,7 +268,7 @@ impl Module {
                 self.globals = GlobalSection::read(wasm, store, self)?;
             }
             Export => {
-                self.exports = ExportSection::read(wasm)?;
+                self.exports = ExportSection::read(wasm, self)?;
             }
             Start => {
                 let idx = FuncIdx::read(wasm)?;
@@ -751,17 +751,58 @@ pub struct Export {
 }
 
 impl Export {
-    pub fn read(wasm: &mut Reader) -> Result<Self, ValidationError> {
+    pub fn read(wasm: &mut Reader, module: &Module) -> Result<Self, ValidationError> {
         let name = Name::read(wasm)?;
         let desc = ExportDesc::read(wasm)?;
+
+        // Check if the export refers to a defined symbol
+        match desc {
+            ExportDesc::Func(i) => {
+                let _ = module
+                    .get_func_ref(i)
+                    .ok_or(ValidationError::FunctionIdxOutOfRange)?;
+            }
+            ExportDesc::Table(i) => {
+                if i.0 != 0 {
+                    return Err(ValidationError::InvalidTableIndex);
+                } else if !module.table_defined {
+                    return Err(ValidationError::TableNotDefined);
+                }
+            }
+            ExportDesc::Mem(i) => {
+                if i.0 != 0 {
+                    return Err(ValidationError::MemoryIdxTooLarge);
+                } else if module.memory.is_none() {
+                    return Err(ValidationError::MemoryNotDefined);
+                }
+            }
+            ExportDesc::Global(i) => {
+                let _ = module
+                    .get_global_ref(i)
+                    .ok_or(ValidationError::GlobalIdxOutOfRange)?;
+            }
+        }
+
         Ok(Export { name, desc })
     }
 }
 
 pub struct ExportSection;
 impl ExportSection {
-    pub fn read(wasm: &mut Reader) -> Result<Vec<Export>, ValidationError> {
-        wasm.read_vec(Export::read)
+    pub fn read(wasm: &mut Reader, module: &Module) -> Result<Vec<Export>, ValidationError> {
+        let len = wasm.read_u32()?;
+        let mut out: Vec<Export> = Vec::new(len)?;
+        for _ in 0..len {
+            let e = Export::read(wasm, module)?;
+            // Check for duplicate export name
+            if out.iter().find(|ei| &*ei.name == &*e.name).is_some() {
+                return Err(ValidationError::DuplicateExportName)
+            }
+
+            out.push(e);
+        }
+
+        Ok(out)
     }
 }
 

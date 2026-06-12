@@ -49,6 +49,7 @@ pub enum ValidationError {
     MalformedVersion,
     MalformedUtf8,
     DuplicateModuleName,
+    DuplicateExportName,
     MalformedSectionId(u8),
     MalformedValueType(u8),
     MalformedFunction(u8),

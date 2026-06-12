@@ -716,6 +716,9 @@ fn check_decode_error(err: Error, text: String) {
             (ValidationError::InvalidNegativeMemOffset, "data segment does not fit") => {}
             (ValidationError::InvalidMemOffsetType, "type mismatch") => {}
             (ValidationError::InvalidStartFunctionSignature, "start function") => {}
+            (ValidationError::DuplicateExportName, "duplicate export name") => {}
+            (ValidationError::InvalidTableIndex, "unknown table") => {}
+            (ValidationError::MemoryIdxTooLarge, "unknown memory") => {}
             err => {
                 assert!(
                     false,
