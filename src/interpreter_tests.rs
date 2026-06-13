@@ -39,7 +39,7 @@ mod tests {
         }
     }
 
-    fn create_test_context() -> (Interpreter, InterpreterState) {
+    fn create_test_context() -> InterpreterState {
         let mut store = StoreLinker::new(1, []).unwrap();
 
         // Create a minimal valid module
@@ -48,10 +48,7 @@ mod tests {
             types: crate::Vec::zero(),
             functions: crate::Vec::zero(),
             table: crate::Vec::zero(),
-            memory: Some(MemoryKind::Allocate {
-                ty: crate::MemType::from(1, Some(2)),
-                index: 0,
-            }),
+            memory: Some(MemoryKind::Owned(crate::Rc::new(Memory::new(MemType::from(1, None), &TestAllocator).unwrap()).unwrap())),
             globals: crate::Vec::zero(),
             start: None,
             imports: crate::Vec::zero(),
@@ -60,18 +57,16 @@ mod tests {
         };
 
         store.modules.push(crate::Box::new(module).unwrap());
-        let mut store = store.allocate(&TestAllocator).unwrap();
-        let mut state = InterpreterState::new(1024);
-        state.memory = Memory::new(MemType::from(1, None), &TestAllocator).unwrap();
+        let mut store = store.allocate(1024).unwrap();
 
-        let store = loop {
-            store = match store.initialize(&[], &mut state, 10).unwrap() {
-                InitializeResult::Finished(store) => break store,
+        let state = loop {
+            store = match store.initialize(&[], 10).unwrap() {
+                InitializeResult::Finished(state) => break state,
                 InitializeResult::Continue(c) => c,
             }
         };
 
-        (Interpreter::new(store), state)
+        state
     }
 
     // Helper macro for testing operations
@@ -80,7 +75,8 @@ mod tests {
         ($test_name:ident, $op:ident, i32: $input:expr => $expected:expr) => {
             #[test]
             fn $test_name() {
-                let (interpreter, mut state) = create_test_context();
+                let mut state = create_test_context();
+                let interpreter = Interpreter;
 
                 state.stack.write_u32(0, $input);
                 state.sp = 1;
@@ -96,7 +92,8 @@ mod tests {
         ($test_name:ident, $op:ident, i32, i32: $a:expr, $b:expr => $expected:expr) => {
             #[test]
             fn $test_name() {
-                let (interpreter, mut state) = create_test_context();
+                let mut state = create_test_context();
+                let interpreter = Interpreter;
 
                 state.stack.write_u32(0, $a);
                 state.stack.write_u32(1, $b);
@@ -113,7 +110,8 @@ mod tests {
         ($test_name:ident, $op:ident, i64: $input:expr => $expected:expr) => {
             #[test]
             fn $test_name() {
-                let (interpreter, mut state) = create_test_context();
+                let mut state = create_test_context();
+                let interpreter = Interpreter;
 
                 let input_val = $input as u64;
                 state.stack.write_u64(0, input_val);
@@ -131,7 +129,8 @@ mod tests {
         ($test_name:ident, $op:ident, i64 bool: $input:expr => $expected:expr) => {
             #[test]
             fn $test_name() {
-                let (interpreter, mut state) = create_test_context();
+                let mut state = create_test_context();
+                let interpreter = Interpreter;
 
                 let input_val = $input as u64;
                 state.stack.write_u64(0, input_val);
@@ -149,7 +148,8 @@ mod tests {
         ($test_name:ident, $op:ident, i64, i64: $a:expr, $b:expr => $expected:expr) => {
             #[test]
             fn $test_name() {
-                let (interpreter, mut state) = create_test_context();
+                let mut state = create_test_context();
+                let interpreter = Interpreter;
 
                 let a_val = $a as u64;
                 let b_val = $b as u64;
@@ -169,7 +169,8 @@ mod tests {
         ($test_name:ident, $op:ident, f32: $input:expr => $expected:expr) => {
             #[test]
             fn $test_name() {
-                let (interpreter, mut state) = create_test_context();
+                let mut state = create_test_context();
+                let interpreter = Interpreter;
 
                 state.stack.write_f32(0, $input);
                 state.sp = 1;
@@ -186,7 +187,8 @@ mod tests {
         ($test_name:ident, $op:ident, f32, f32: $a:expr, $b:expr => $expected:expr) => {
             #[test]
             fn $test_name() {
-                let (interpreter, mut state) = create_test_context();
+                let mut state = create_test_context();
+                let interpreter = Interpreter;
 
                 state.stack.write_f32(0, $a);
                 state.stack.write_f32(1, $b);
@@ -204,7 +206,8 @@ mod tests {
         ($test_name:ident, $op:ident, f64: $input:expr => $expected:expr) => {
             #[test]
             fn $test_name() {
-                let (interpreter, mut state) = create_test_context();
+                let mut state = create_test_context();
+                let interpreter = Interpreter;
 
                 state.stack.write_f64(0, $input);
                 state.sp = 2;
@@ -221,7 +224,8 @@ mod tests {
         ($test_name:ident, $op:ident, f64, f64: $a:expr, $b:expr => $expected:expr) => {
             #[test]
             fn $test_name() {
-                let (interpreter, mut state) = create_test_context();
+                let mut state = create_test_context();
+                let interpreter = Interpreter;
 
                 state.stack.write_f64(0, $a);
                 state.stack.write_f64(2, $b);
@@ -239,7 +243,8 @@ mod tests {
     // ===== Const Operations =====
     #[test]
     fn test_i32_const() {
-        let (interpreter, mut state) = create_test_context();
+        let mut state = create_test_context();
+        let interpreter = Interpreter;
 
         (&interpreter).i32_const(42, &mut state).unwrap();
         assert_eq!(state.sp, 1);
@@ -252,7 +257,8 @@ mod tests {
 
     #[test]
     fn test_i64_const() {
-        let (interpreter, mut state) = create_test_context();
+        let mut state = create_test_context();
+        let interpreter = Interpreter;
 
         (&interpreter)
             .i64_const(0x123456789ABCDEF0i64, &mut state)
@@ -267,7 +273,8 @@ mod tests {
 
     #[test]
     fn test_f32_const() {
-        let (interpreter, mut state) = create_test_context();
+        let mut state = create_test_context();
+        let interpreter = Interpreter;
 
         (&interpreter).f32_const(3.14f32, &mut state).unwrap();
         assert_eq!(state.sp, 1);
@@ -276,7 +283,8 @@ mod tests {
 
     #[test]
     fn test_f64_const() {
-        let (interpreter, mut state) = create_test_context();
+        let mut state = create_test_context();
+        let interpreter = Interpreter;
 
         (&interpreter)
             .f64_const(3.14159265358979, &mut state)
@@ -288,7 +296,8 @@ mod tests {
     // ===== Memory Load Operations =====
     #[test]
     fn test_i32_load() {
-        let (interpreter, mut state) = create_test_context();
+        let mut state = create_test_context();
+        let interpreter = Interpreter;
 
         // Store a value in memory
         state.memory.store_u32(100, 0x12345678).unwrap();
@@ -313,7 +322,8 @@ mod tests {
 
     #[test]
     fn test_i32_load_with_offset() {
-        let (interpreter, mut state) = create_test_context();
+        let mut state = create_test_context();
+        let interpreter = Interpreter;
 
         state.memory.store_u32(108, 0xDEADBEEF).unwrap();
 
@@ -335,7 +345,8 @@ mod tests {
 
     #[test]
     fn test_i64_load() {
-        let (interpreter, mut state) = create_test_context();
+        let mut state = create_test_context();
+        let interpreter = Interpreter;
 
         state.memory.store_u64(100, 0x123456789ABCDEF0).unwrap();
 
@@ -358,7 +369,8 @@ mod tests {
 
     #[test]
     fn test_i32_load8_s() {
-        let (interpreter, mut state) = create_test_context();
+        let mut state = create_test_context();
+        let interpreter = Interpreter;
 
         state.memory.store_u8(100, 0xFF).unwrap(); // -1 in i8
 
@@ -380,7 +392,8 @@ mod tests {
 
     #[test]
     fn test_i32_load8_u() {
-        let (interpreter, mut state) = create_test_context();
+        let mut state = create_test_context();
+        let interpreter = Interpreter;
 
         state.memory.store_u8(100, 0xFF).unwrap();
 
@@ -402,7 +415,8 @@ mod tests {
 
     #[test]
     fn test_i32_load16_s() {
-        let (interpreter, mut state) = create_test_context();
+        let mut state = create_test_context();
+        let interpreter = Interpreter;
 
         state.memory.store_u16(100, 0xFFFF).unwrap(); // -1 in i16
 
@@ -424,7 +438,8 @@ mod tests {
 
     #[test]
     fn test_i32_load16_u() {
-        let (interpreter, mut state) = create_test_context();
+        let mut state = create_test_context();
+        let interpreter = Interpreter;
 
         state.memory.store_u16(100, 0xFFFF).unwrap();
 
@@ -446,7 +461,8 @@ mod tests {
 
     #[test]
     fn test_i64_load8_s() {
-        let (interpreter, mut state) = create_test_context();
+        let mut state = create_test_context();
+        let interpreter = Interpreter;
 
         state.memory.store_u8(100, 0xFF).unwrap();
 
@@ -469,7 +485,8 @@ mod tests {
 
     #[test]
     fn test_i64_load32_u() {
-        let (interpreter, mut state) = create_test_context();
+        let mut state = create_test_context();
+        let interpreter = Interpreter;
 
         state.memory.store_u32(100, 0xDEADBEEF).unwrap();
 
@@ -493,7 +510,8 @@ mod tests {
     // ===== Memory Store Operations =====
     #[test]
     fn test_i32_store() {
-        let (interpreter, mut state) = create_test_context();
+        let mut state = create_test_context();
+        let interpreter = Interpreter;
 
         state.stack.write_u32(0, 100); // address
         state.stack.write_u32(1, 0x12345678); // value
@@ -515,7 +533,8 @@ mod tests {
 
     #[test]
     fn test_i32_store_with_offset() {
-        let (interpreter, mut state) = create_test_context();
+        let mut state = create_test_context();
+        let interpreter = Interpreter;
 
         state.stack.write_u32(0, 100);
         state.stack.write_u32(1, 0xDEADBEEF);
@@ -536,7 +555,8 @@ mod tests {
 
     #[test]
     fn test_i64_store() {
-        let (interpreter, mut state) = create_test_context();
+        let mut state = create_test_context();
+        let interpreter = Interpreter;
 
         state.stack.write_u32(0, 100); // address
         state.stack.write_u64(1, 0x123456789ABCDEF0); // value
@@ -558,7 +578,8 @@ mod tests {
 
     #[test]
     fn test_i32_store8() {
-        let (interpreter, mut state) = create_test_context();
+        let mut state = create_test_context();
+        let interpreter = Interpreter;
 
         state.stack.write_u32(0, 100);
         state.stack.write_u32(1, 0x123456FF);
@@ -580,7 +601,8 @@ mod tests {
 
     #[test]
     fn test_i32_store16() {
-        let (interpreter, mut state) = create_test_context();
+        let mut state = create_test_context();
+        let interpreter = Interpreter;
 
         state.stack.write_u32(0, 100);
         state.stack.write_u32(1, 0x1234FFFF);
@@ -602,7 +624,8 @@ mod tests {
 
     #[test]
     fn test_i64_store8() {
-        let (interpreter, mut state) = create_test_context();
+        let mut state = create_test_context();
+        let interpreter = Interpreter;
 
         state.stack.write_u32(0, 100);
         state.stack.write_u64(1, 0x123456789ABCDEFF);
@@ -624,7 +647,8 @@ mod tests {
 
     #[test]
     fn test_i64_store32() {
-        let (interpreter, mut state) = create_test_context();
+        let mut state = create_test_context();
+        let interpreter = Interpreter;
 
         state.stack.write_u32(0, 100);
         state.stack.write_u64(1, 0x12345678DEADBEEF);
@@ -726,7 +750,8 @@ mod tests {
     // ===== Conversion Operations =====
     #[test]
     fn test_i32_wrap_i64() {
-        let (interpreter, mut state) = create_test_context();
+        let mut state = create_test_context();
+        let interpreter = Interpreter;
 
         state.stack.write_u64(0, 0x123456789ABCDEF0);
         state.sp = 2;
@@ -739,7 +764,8 @@ mod tests {
 
     #[test]
     fn test_i32_trunc_f32_s() {
-        let (interpreter, mut state) = create_test_context();
+        let mut state = create_test_context();
+        let interpreter = Interpreter;
 
         state.stack.write_f32(0, 3.99);
         state.sp = 1;
@@ -752,7 +778,8 @@ mod tests {
 
     #[test]
     fn test_i32_trunc_f32_u() {
-        let (interpreter, mut state) = create_test_context();
+        let mut state = create_test_context();
+        let interpreter = Interpreter;
 
         state.stack.write_f32(0, 3.99);
         state.sp = 1;
@@ -765,7 +792,8 @@ mod tests {
 
     #[test]
     fn test_i32_trunc_f64_s() {
-        let (interpreter, mut state) = create_test_context();
+        let mut state = create_test_context();
+        let interpreter = Interpreter;
 
         state.stack.write_f64(0, 3.99);
         state.sp = 2;
@@ -778,7 +806,8 @@ mod tests {
 
     #[test]
     fn test_i64_extend_i32_s() {
-        let (interpreter, mut state) = create_test_context();
+        let mut state = create_test_context();
+        let interpreter = Interpreter;
 
         state.stack.write_u32(0, (-1i32) as u32);
         state.sp = 1;
@@ -791,7 +820,8 @@ mod tests {
 
     #[test]
     fn test_i64_extend_i32_u() {
-        let (interpreter, mut state) = create_test_context();
+        let mut state = create_test_context();
+        let interpreter = Interpreter;
 
         state.stack.write_u32(0, 0xFFFFFFFF);
         state.sp = 1;
@@ -804,7 +834,8 @@ mod tests {
 
     #[test]
     fn test_i64_trunc_f32_s() {
-        let (interpreter, mut state) = create_test_context();
+        let mut state = create_test_context();
+        let interpreter = Interpreter;
 
         state.stack.write_f32(0, 123.99);
         state.sp = 1;
@@ -817,7 +848,8 @@ mod tests {
 
     #[test]
     fn test_i64_trunc_f64_s() {
-        let (interpreter, mut state) = create_test_context();
+        let mut state = create_test_context();
+        let interpreter = Interpreter;
 
         state.stack.write_f64(0, 123.99);
         state.sp = 2;
@@ -830,7 +862,8 @@ mod tests {
 
     #[test]
     fn test_f32_convert_i32_s() {
-        let (interpreter, mut state) = create_test_context();
+        let mut state = create_test_context();
+        let interpreter = Interpreter;
 
         state.stack.write_u32(0, (-42i32) as u32);
         state.sp = 1;
@@ -843,7 +876,8 @@ mod tests {
 
     #[test]
     fn test_f32_convert_i32_u() {
-        let (interpreter, mut state) = create_test_context();
+        let mut state = create_test_context();
+        let interpreter = Interpreter;
 
         state.stack.write_u32(0, 42);
         state.sp = 1;
@@ -856,7 +890,8 @@ mod tests {
 
     #[test]
     fn test_f32_convert_i64_s() {
-        let (interpreter, mut state) = create_test_context();
+        let mut state = create_test_context();
+        let interpreter = Interpreter;
 
         state.stack.write_u64(0, (-42i64) as u64);
         state.sp = 2;
@@ -869,7 +904,8 @@ mod tests {
 
     #[test]
     fn test_f32_demote_f64() {
-        let (interpreter, mut state) = create_test_context();
+        let mut state = create_test_context();
+        let interpreter = Interpreter;
 
         state.stack.write_f64(0, 3.141592653589793);
         state.sp = 2;
@@ -882,7 +918,8 @@ mod tests {
 
     #[test]
     fn test_f64_convert_i32_s() {
-        let (interpreter, mut state) = create_test_context();
+        let mut state = create_test_context();
+        let interpreter = Interpreter;
 
         state.stack.write_u32(0, (-42i32) as u32);
         state.sp = 1;
@@ -895,7 +932,8 @@ mod tests {
 
     #[test]
     fn test_f64_convert_i64_s() {
-        let (interpreter, mut state) = create_test_context();
+        let mut state = create_test_context();
+        let interpreter = Interpreter;
 
         state.stack.write_u64(0, (-42i64) as u64);
         state.sp = 2;
@@ -908,7 +946,8 @@ mod tests {
 
     #[test]
     fn test_f64_promote_f32() {
-        let (interpreter, mut state) = create_test_context();
+        let mut state = create_test_context();
+        let interpreter = Interpreter;
 
         state.stack.write_f32(0, 3.14159f32);
         state.sp = 1;
@@ -922,7 +961,8 @@ mod tests {
     // ===== Parametric Operations =====
     #[test]
     fn test_drop() {
-        let (interpreter, mut state) = create_test_context();
+        let mut state = create_test_context();
+        let interpreter = Interpreter;
 
         state.stack.write_u32(0, 42);
         state.sp = 1;
@@ -934,7 +974,8 @@ mod tests {
 
     #[test]
     fn test_select_true() {
-        let (interpreter, mut state) = create_test_context();
+        let mut state = create_test_context();
+        let interpreter = Interpreter;
 
         state.stack.write_u32(0, 10); // val1
         state.stack.write_u32(1, 20); // val2
@@ -949,7 +990,8 @@ mod tests {
 
     #[test]
     fn test_select_false() {
-        let (interpreter, mut state) = create_test_context();
+        let mut state = create_test_context();
+        let interpreter = Interpreter;
 
         state.stack.write_u32(0, 10); // val1
         state.stack.write_u32(1, 20); // val2
@@ -965,7 +1007,8 @@ mod tests {
     // ===== Memory Size/Grow Operations =====
     #[test]
     fn test_memory_size() {
-        let (interpreter, mut state) = create_test_context();
+        let mut state = create_test_context();
+        let interpreter = Interpreter;
 
         state.sp = 0;
 
@@ -978,7 +1021,8 @@ mod tests {
     // ===== Float Comparison Operations =====
     #[test]
     fn test_f32_eq() {
-        let (interpreter, mut state) = create_test_context();
+        let mut state = create_test_context();
+        let interpreter = Interpreter;
 
         state.stack.write_f32(0, 3.14);
         state.stack.write_f32(1, 3.14);
@@ -992,7 +1036,8 @@ mod tests {
 
     #[test]
     fn test_f32_ne() {
-        let (interpreter, mut state) = create_test_context();
+        let mut state = create_test_context();
+        let interpreter = Interpreter;
 
         state.stack.write_f32(0, 3.14);
         state.stack.write_f32(1, 2.71);
@@ -1006,7 +1051,8 @@ mod tests {
 
     #[test]
     fn test_f32_lt() {
-        let (interpreter, mut state) = create_test_context();
+        let mut state = create_test_context();
+        let interpreter = Interpreter;
 
         state.stack.write_f32(0, 2.0);
         state.stack.write_f32(1, 3.0);
@@ -1020,7 +1066,8 @@ mod tests {
 
     #[test]
     fn test_f64_eq() {
-        let (interpreter, mut state) = create_test_context();
+        let mut state = create_test_context();
+        let interpreter = Interpreter;
 
         state.stack.write_f64(0, 3.14159);
         state.stack.write_f64(2, 3.14159);
@@ -1035,7 +1082,8 @@ mod tests {
     // ===== i64 Comparison Operations (return i32) =====
     #[test]
     fn test_i64_eq_true() {
-        let (interpreter, mut state) = create_test_context();
+        let mut state = create_test_context();
+        let interpreter = Interpreter;
 
         state.stack.write_u64(0, 0x123456789ABCDEF0);
         state.stack.write_u64(2, 0x123456789ABCDEF0);
@@ -1049,7 +1097,8 @@ mod tests {
 
     #[test]
     fn test_i64_ne_true() {
-        let (interpreter, mut state) = create_test_context();
+        let mut state = create_test_context();
+        let interpreter = Interpreter;
 
         state.stack.write_u64(0, 0x123456789ABCDEF0);
         state.stack.write_u64(2, 0xFEDCBA9876543210);
@@ -1063,7 +1112,8 @@ mod tests {
 
     #[test]
     fn test_i64_lt_s_true() {
-        let (interpreter, mut state) = create_test_context();
+        let mut state = create_test_context();
+        let interpreter = Interpreter;
 
         state.stack.write_u64(0, (-5i64) as u64);
         state.stack.write_u64(2, 5);
@@ -1078,7 +1128,8 @@ mod tests {
     // ===== Additional Edge Cases =====
     #[test]
     fn test_i32_add_wrapping() {
-        let (interpreter, mut state) = create_test_context();
+        let mut state = create_test_context();
+        let interpreter = Interpreter;
 
         state.stack.write_u32(0, 0xFFFFFFFF);
         state.stack.write_u32(1, 2);
@@ -1092,7 +1143,8 @@ mod tests {
 
     #[test]
     fn test_i64_add_wrapping() {
-        let (interpreter, mut state) = create_test_context();
+        let mut state = create_test_context();
+        let interpreter = Interpreter;
 
         state.stack.write_u64(0, 0xFFFFFFFFFFFFFFFF);
         state.stack.write_u64(2, 2);

@@ -26,31 +26,6 @@ pub struct Memory {
     allocator: Option<&'static dyn WasmMemoryAllocator>,
 }
 
-// Please don't use this in flight...
-impl Clone for Memory {
-    fn clone(&self) -> Self {
-        if let Some(allocator) = self.allocator {
-            let ptr = allocator
-                .allocate(Layout::from_size_align(self.size, 16).unwrap())
-                .unwrap()
-                .as_ptr();
-
-            unsafe {
-                self.ptr.copy_to(ptr, self.size);
-            }
-
-            Memory {
-                ptr,
-                size: self.size,
-                limits: self.limits,
-                allocator: Some(allocator),
-            }
-        } else {
-            Memory::zero()
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MemoryError {
     OutOfBounds,

@@ -29,7 +29,7 @@ impl StoreLinker {
         max_modules: usize,
         host_modules: [HostModule; N],
     ) -> Result<Self, AllocError> {
-        assert!(max_modules < 255);
+        assert!(max_modules <= 255);
         Ok(StoreLinker {
             modules: Vec::new(max_modules as u32)?,
             host_modules: Vec::from_array(host_modules)?,

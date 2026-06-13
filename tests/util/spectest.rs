@@ -1,11 +1,11 @@
 use super::inspector::{Inspector, LimitedVec};
 use serde::{Deserialize, Serialize};
 use spacewasm::{
-    global_allocator, vec, AllocError, Allocator, CodeBuilder, CompilerOptions, ConstantExprError,
-    Error, ExportDesc, GlobalValue, GlobalValueError, HostFunction, HostGlobal,
+    global_allocator, vec, AllocError, Allocator, CodeBuilder, CompilerOptions,
+    ConstantExprError, ExportDesc, GlobalValue, GlobalValueError, HostFunction, HostGlobal,
     HostModule, InitializeError, InitializeResult, InnerVec, Interpreter,
-    InterpreterBreak, InterpreterResult, InterpreterRunner, InterpreterState, MemoryError, MemoryStatistics,
-    Module, ModuleRef, ParseError, ReaderError, Ref, Store, StoreLinker, TrapReason, ValType,
+    InterpreterBreak, InterpreterResult, InterpreterRunner, InterpreterState, Memory, MemoryError, MemoryStatistics,
+    Module, ModuleRef, ParseError, ReaderError, Ref, StoreLinker, TrapReason, ValType,
     ValidationError, Value, WasmMemoryAllocator, WasmRef, WasmStream,
 };
 use std::alloc::Layout;
@@ -231,23 +231,17 @@ impl TestContext {
     }
 
     fn current_module_index(&self) -> usize {
-        if self.store.modules.len() == 0 {
+        let state = self.state.as_ref().expect("No state initialized");
+        if state.store.modules.len() == 0 {
             0
         } else {
-            self.store.modules.len() - 1
+            state.store.modules.len() - 1
         }
     }
 
-    fn get_module(&self, index: usize) -> &Module {
-        self.store
-            .modules
-            .get(index)
-            .map(|b| &**b)
-            .unwrap_or_else(|| panic!("Module at index {index} not found"))
-    }
-
     fn find_module_by_name(&self, name: &str) -> Option<usize> {
-        self.store.modules.iter().position(|m| m.name == name)
+        let state = self.state.as_ref().expect("No state initialized");
+        state.store.modules.iter().position(|m| m.name == name)
     }
 }
 
@@ -444,23 +438,27 @@ fn load_module(
     // Move modules back from store to a new linker
 
     // Create new linker with the preserved modules
-    let mut new_linker = StoreLinker::new(254, []).unwrap();
-    if ctx.store.modules.capacity() > 0 {
-        new_linker.modules = ctx.store.modules.clone();
-    }
+    // We need to move the modules out of the old state, not clone them, to avoid duplicating Rc<Memory> references
+    let mut new_linker = if let Some(mut state) = ctx.state.take() {
+        let mut linker = StoreLinker::new(254, [test_host_module()]).unwrap();
 
-    new_linker.host_modules = test_host_module();
+        // Move modules out of the old store (this transfers ownership without cloning Rc references)
+        let old_modules = core::mem::take(&mut state.store.modules);
 
-    // If the last module that got loaded has an empty name "", this means that it should not be
-    // kept around in the store since it cannot actually be referenced. It was only the "active"
-    // module and probably ran some invoke/assert_return stuff but should not remain in the store.
-    if let Some(module) = new_linker.modules.pop() {
-        if module.name != "" {
-            // It is possible to reference this module in the future
-            // Add it back to the list
-            new_linker.modules.push(module);
+        // Explicitly drop the old state now to release its memory reference before we proceed
+        drop(state);
+
+        // Only preserve modules that have non-empty names (these can be imported/referenced)
+        // This prevents accumulation of memory references from unnamed temporary modules
+        for module in old_modules.into_iter() {
+            if !module.name.is_empty() {
+                linker.modules.push(module);
+            }
         }
-    }
+        linker
+    } else {
+        StoreLinker::new(254, [test_host_module()]).unwrap()
+    };
 
     // Parse and validate the module
     let module = Module::new::<256>(
@@ -484,14 +482,13 @@ fn load_module(
     let (text, _final_page_offset) = ctx.code_builder.clone().finish().unwrap();
 
     // Initialize the linker into a store
-    let mut store = new_linker.allocate(&RustSystemAllocator)?;
-    let mut state = InterpreterState::new(1024);
-    ctx.store = loop {
-        store = match store.initialize(&text, &mut state, usize::MAX)? {
-            InitializeResult::Finished(store) => break store,
+    let mut store = new_linker.allocate(1024)?;
+    ctx.state = Some(loop {
+        store = match store.initialize(&text, usize::MAX)? {
+            InitializeResult::Finished(state) => break state,
             InitializeResult::Continue(c) => c,
         }
-    };
+    });
 
     // Update module index - don't finish the linker yet, as more modules might be loaded
     ctx.module_index = module_index;
@@ -505,17 +502,31 @@ fn invoke_function(
     args: &[ValueSpec],
     test_log: Rc<RefCell<LimitedVec<String>>>,
 ) -> Result<Option<Value>, InterpreterBreak> {
+    let state = ctx.state.as_mut().expect("No state initialized");
+
     // Resolve module index by name lookup or use current (last) module
     let module_index = if let Some(name) = module_name {
-        ctx.find_module_by_name(name)
+        state
+            .store
+            .modules
+            .iter()
+            .position(|m| &*m.name == name)
             .unwrap_or_else(|| panic!("Module '{name}' not found"))
     } else {
-        ctx.current_module_index()
+        if state.store.modules.len() == 0 {
+            0
+        } else {
+            state.store.modules.len() - 1
+        }
     };
 
-    // Scope the immutable borrow of ctx
+    // Scope the immutable borrow
     let (func_index, return_types, params) = {
-        let module = ctx.get_module(module_index);
+        let module = &*state
+            .store
+            .modules
+            .get(module_index)
+            .unwrap_or_else(|| panic!("Module at index {module_index} not found"));
 
         // Find the exported function
         let export = module
@@ -550,19 +561,15 @@ fn invoke_function(
         (func_index, return_types, params)
     };
 
-    // Create a temporary interpreter by moving the store
-    // We'll move it back after the function completes
-    let interpreter = Interpreter::new(core::mem::take(&mut ctx.store));
-
-    let mut state = InterpreterState::new(1024);
     state.invoke(
-        &interpreter.store,
         WasmRef {
             module: ModuleRef(module_index as u8),
             index: func_index as u16,
         },
         &params,
     )?;
+
+    let interpreter = Interpreter;
 
     let test_runner = Inspector {
         v: &interpreter,
@@ -575,14 +582,9 @@ fn invoke_function(
         .push(format!("invoke {}({:?})", func_name, params));
 
     // Run until completion
-    // Run up to 1-million instructions to catch infinite loops
+    // Run up to 10-million instructions to catch infinite loops
     let (text, _final_page_offset) = ctx.code_builder.clone().finish().unwrap();
-    let result = test_runner.run(&text, &mut state, 10000000);
-
-    // Move the store back to the context
-    ctx.store = interpreter.store;
-    ctx.get_module(module_index)
-        .return_memory(&ctx.store, state.memory);
+    let result = test_runner.run(&text, state, 10000000);
 
     // Check the result
     match result {
@@ -645,96 +647,82 @@ fn check_trap_reason(reason: TrapReason, text: &str) {
     }
 }
 
-fn check_decode_error(err: Error, text: String) {
-    match err {
-        Error::Parse(err) => match (err.err.err, text.as_str()) {
-            (
-                ValidationError::MalformedInteger,
-                "integer too large" | "integer representation too long",
-            ) => {}
-            (ValidationError::MalformedMagic, "magic header not detected") => {}
-            (ValidationError::MalformedVersion, "unknown binary version") => {}
-            (ValidationError::ExpectedTerminal(0), "zero byte expected") => {}
-            (
-                ValidationError::Eof,
-                "unexpected end" | "length out of bounds" | "unexpected end of section or function",
-            ) => {}
-            (ValidationError::TooManyLocals, "too many locals") => {}
-            (ValidationError::MalformedUtf8, "malformed UTF-8 encoding") => {}
-            (
-                ValidationError::InvalidCodeSectionFunctionCount,
-                "function and code section have inconsistent lengths",
-            ) => {}
-            (ValidationError::MalformedSectionSize, "section size mismatch") => {}
-            (ValidationError::LocalIdxOutOfRange, "unknown local") => {}
-            (ValidationError::MultipleMemories, "multiple memories") => {}
-            (
-                ValidationError::AlignmentLargerThanType,
-                "alignment must not be larger than natural",
-            ) => {}
-            (ValidationError::TypeMismatch, "type mismatch") => {}
-            (ValidationError::BlockResultTypeMismatch, "type mismatch") => {}
-            (ValidationError::InvalidLabelIndex, "unknown label") => {}
-            (ValidationError::MalformedSectionSize, "unexpected end") => {}
-            (ValidationError::GlobalIdxOutOfRange, "unknown global") => {}
-            (ValidationError::MalformedSectionId(_), "malformed section id") => {}
-            (ValidationError::VecTooLong, "length out of bounds") => {}
-            (ValidationError::StackUnderflow, "type mismatch") => {}
-            (ValidationError::TypeIdxOutOfRange, "unknown type") => {}
-            (ValidationError::FunctionResultTypeMismatch, "type mismatch") => {}
-            (ValidationError::FunctionIdxOutOfRange, "unknown function") => {}
-            (ValidationError::FunctionReturnsTooLarge, "invalid result arity") => {}
-            (ValidationError::BrTableHasTooManyCases, "br.table has too many cases") => {}
-            (ValidationError::TableNotDefined, "unknown table") => {}
-            (ValidationError::InvalidTableIndex, "malformed value type") => {}
-            (ValidationError::InvalidLabelIndex, "unexpected end of section or function") => {}
-            (ValidationError::MalformedValueType(_), "malformed value type") => {}
-            (ValidationError::DuplicateSection(_), "unexpected content after last section") => {}
-            (ValidationError::GlobalIsNotMutable, "immutable global") => {}
-            (ValidationError::InvalidElementOffset, "type mismatch") => {}
-            (
-                ValidationError::InvalidConstantExpr(ConstantExprError::InvalidConstantInstruction),
-                "constant expression required",
-            ) => {}
-            (ValidationError::FunctionImportOutOfRange, "unknown type") => {}
-            (ValidationError::GlobalTypeMismatch, "type mismatch") => {}
-            (
-                ValidationError::InvalidConstantExpr(ConstantExprError::AlreadyHasValue),
-                "type mismatch",
-            ) => {}
-            (ValidationError::InvalidConstantExpr(ConstantExprError::NoValue), "type mismatch") => {
-            }
-            (
-                ValidationError::InvalidConstantExpr(ConstantExprError::InvalidGlobal),
-                "unknown global",
-            ) => {}
-            (ValidationError::ExpectedConstOrVar(_), "malformed mutability") => {}
-            (ValidationError::MemoryNotDefined, "unknown memory") => {}
-            (ValidationError::InvalidMaxLimit, "size minimum must not be greater than maximum") => {
-            }
-            (ValidationError::MemoryTooLarge, "memory size must be at most 65536 pages (4GiB)") => {
-            }
-            (ValidationError::InvalidNegativeMemOffset, "data segment does not fit") => {}
-            (ValidationError::InvalidMemOffsetType, "type mismatch") => {}
-            (ValidationError::InvalidStartFunctionSignature, "start function") => {}
-            (ValidationError::DuplicateExportName, "duplicate export name") => {}
-            (ValidationError::InvalidTableIndex, "unknown table") => {}
-            err => {
-                assert!(
-                    false,
-                    "Could not match validation error text '{text}' with error {err:?}"
-                )
-            }
-        },
-        Error::Memory(err) => match (err, text.as_str()) {
-            (MemoryError::OutOfBounds, "data segment does not fit") => {}
-            err => {
-                assert!(
-                    false,
-                    "Could not match validation error text '{text}' with error {err:?}"
-                )
-            }
-        },
+fn check_decode_error(err: ParseError, text: String) {
+    match (err.err.err, text.as_str()) {
+        (
+            ValidationError::MalformedInteger,
+            "integer too large" | "integer representation too long",
+        ) => {}
+        (ValidationError::MalformedMagic, "magic header not detected") => {}
+        (ValidationError::MalformedVersion, "unknown binary version") => {}
+        (ValidationError::ExpectedTerminal(0), "zero byte expected") => {}
+        (
+            ValidationError::Eof,
+            "unexpected end" | "length out of bounds" | "unexpected end of section or function",
+        ) => {}
+        (ValidationError::TooManyLocals, "too many locals") => {}
+        (ValidationError::MalformedUtf8, "malformed UTF-8 encoding") => {}
+        (
+            ValidationError::InvalidCodeSectionFunctionCount,
+            "function and code section have inconsistent lengths",
+        ) => {}
+        (ValidationError::MalformedSectionSize, "section size mismatch") => {}
+        (ValidationError::LocalIdxOutOfRange, "unknown local") => {}
+        (ValidationError::MultipleMemories, "multiple memories") => {}
+        (ValidationError::AlignmentLargerThanType, "alignment must not be larger than natural") => {
+        }
+        (ValidationError::TypeMismatch, "type mismatch") => {}
+        (ValidationError::BlockResultTypeMismatch, "type mismatch") => {}
+        (ValidationError::InvalidLabelIndex, "unknown label") => {}
+        (ValidationError::MalformedSectionSize, "unexpected end") => {}
+        (ValidationError::GlobalIdxOutOfRange, "unknown global") => {}
+        (ValidationError::MalformedSectionId(_), "malformed section id") => {}
+        (ValidationError::VecTooLong, "length out of bounds") => {}
+        (ValidationError::StackUnderflow, "type mismatch") => {}
+        (ValidationError::TypeIdxOutOfRange, "unknown type") => {}
+        (ValidationError::FunctionResultTypeMismatch, "type mismatch") => {}
+        (ValidationError::FunctionIdxOutOfRange, "unknown function") => {}
+        (ValidationError::FunctionReturnsTooLarge, "invalid result arity") => {}
+        (ValidationError::BrTableHasTooManyCases, "br.table has too many cases") => {}
+        (ValidationError::TableNotDefined, "unknown table") => {}
+        (ValidationError::InvalidTableIndex, "malformed value type") => {}
+        (ValidationError::InvalidLabelIndex, "unexpected end of section or function") => {}
+        (ValidationError::MalformedValueType(_), "malformed value type") => {}
+        (ValidationError::DuplicateSection(_), "unexpected content after last section") => {}
+        (ValidationError::GlobalIsNotMutable, "immutable global") => {}
+        (ValidationError::InvalidElementOffset, "type mismatch") => {}
+        (
+            ValidationError::InvalidConstantExpr(ConstantExprError::InvalidConstantInstruction),
+            "constant expression required",
+        ) => {}
+        (ValidationError::FunctionImportOutOfRange, "unknown type") => {}
+        (ValidationError::GlobalTypeMismatch, "type mismatch") => {}
+        (
+            ValidationError::InvalidConstantExpr(ConstantExprError::AlreadyHasValue),
+            "type mismatch",
+        ) => {}
+        (ValidationError::InvalidConstantExpr(ConstantExprError::NoValue), "type mismatch") => {}
+        (
+            ValidationError::InvalidConstantExpr(ConstantExprError::InvalidGlobal),
+            "unknown global",
+        ) => {}
+        (ValidationError::ExpectedConstOrVar(_), "malformed mutability") => {}
+        (ValidationError::MemoryNotDefined, "unknown memory") => {}
+        (ValidationError::InvalidMaxLimit, "size minimum must not be greater than maximum") => {}
+        (ValidationError::MemoryTooLarge, "memory size must be at most 65536 pages (4GiB)") => {}
+        (ValidationError::InvalidNegativeMemOffset, "data segment does not fit") => {}
+        (ValidationError::InvalidMemOffsetType, "type mismatch") => {}
+        (ValidationError::InvalidStartFunctionSignature, "start function") => {}
+        (ValidationError::DuplicateExportName, "duplicate export name") => {}
+        (ValidationError::InvalidTableIndex, "unknown table") => {}
+        (ValidationError::MemoryError(MemoryError::OutOfBounds), "data segment does not fit") => {}
+        (ValidationError::InvalidMemIndex, "unknown memory") => {}
+        err => {
+            assert!(
+                false,
+                "Could not match validation error text '{text}' with error {err:?}"
+            )
+        }
     }
 }
 
@@ -750,8 +738,8 @@ fn check_initialization_error(err: InitializeError, text: &str) {
     }
 }
 
-fn test_host_module() -> spacewasm::Vec<HostModule> {
-    vec![HostModule {
+fn test_host_module() -> HostModule {
+    HostModule {
         name: "spectest",
         globals: vec![
             HostGlobal {
@@ -814,8 +802,13 @@ fn test_host_module() -> spacewasm::Vec<HostModule> {
                 ControlFlow::Continue(None)
             }),
         ],
-        memory: Some(spacewasm::MemType::from(1, Some(2))),
-    }]
+        memory: Some(
+            spacewasm::Rc::new(
+                Memory::new(spacewasm::MemType::from(1, Some(2)), &RustSystemAllocator).unwrap(),
+            )
+            .unwrap(),
+        ),
+    }
 }
 
 fn run_wast_command(
@@ -871,13 +864,8 @@ fn run_wast_command(
                 let wasm_bytes = std::fs::read(&wasm_path)
                     .unwrap_or_else(|e| panic!("Failed to read module: {e}"));
 
-                // Clone the old store to restore it after we lose this one
-                // The problem is we need to do a "partial" clone since the host_modules are not clonable.
-                let prev_store = Store {
-                    modules: ctx.store.modules.clone(),
-                    host_modules: test_host_module(),
-                    memory: ctx.store.memory.clone(),
-                };
+                // Save the previous state to restore it after we lose this one
+                let prev_state = ctx.state.take();
 
                 match load_module(ctx, None, &wasm_bytes) {
                     Ok(_) => {
@@ -886,8 +874,8 @@ fn run_wast_command(
                     Err(ModuleLoadError::InitializeError(err)) => {
                         check_initialization_error(err, &text);
 
-                        // Restore the previous store since this one is now wiped out.
-                        ctx.store = prev_store;
+                        // Restore the previous state since this one is now wiped out.
+                        ctx.state = prev_state;
                     }
                     Err(err) => {
                         panic!("Failed to decode module '{err:?}'");
@@ -952,7 +940,7 @@ fn run_wast_command(
                 match load_module(ctx, None, &wasm_bytes) {
                     Err(ModuleLoadError::DecodeError(err)) => check_decode_error(err.into(), text),
                     Err(ModuleLoadError::AllocationError(err)) => {
-                        check_decode_error(err.into(), text)
+                        panic!("Expected error when decoding module '{err:?}'");
                     }
                     _ => {
                         panic!("Expected error when decoding module");
@@ -974,7 +962,8 @@ fn run_wast_command(
 
             // Update the module name in the store to the registered alias
             // This allows linking to find it by the registered name
-            let module = ctx.store.modules.get_mut(module_index).unwrap();
+            let state = ctx.state.as_mut().expect("No state initialized");
+            let module = state.store.modules.get_mut(module_index).unwrap();
             module.name = as_name.as_str().try_into().unwrap();
         }
         Command::Action { action, .. } => match action {
@@ -1007,7 +996,6 @@ fn run_wast_test_file_inner(
         .unwrap_or_else(|e| panic!("Failed to parse JSON file {}: {}", json_path, e));
 
     let mut ctx = TestContext::new();
-    ctx.store.host_modules = test_host_module();
 
     for command in test_file.commands {
         let test_log = Rc::new(RefCell::new(LimitedVec::<String>::new()));

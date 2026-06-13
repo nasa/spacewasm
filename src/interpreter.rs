@@ -240,6 +240,15 @@ impl<T: IrVisitor<State = InterpreterState, Error = InterpreterBreak>> Interpret
 
             match i_res {
                 Ok(_) => {}
+                Err(InterpreterBreak::Trap(trap_reason)) => {
+                    // TODO(tumbar) How do we expose a backtrace?
+                    // We trapped, we need to unwind and reset the state
+                    state.sp = 0;
+                    state.pc = JumpTarget::SENTINEL;
+                    state.fp = 0;
+                    state.jumped = false;
+                    return InterpreterResult::Instruction(InterpreterBreak::Trap(trap_reason));
+                }
                 Err(e) => return InterpreterResult::Instruction(e),
             }
         }
@@ -267,7 +276,7 @@ pub enum TrapReason {
     /// A memory operation is out of bounds
     OutOfMemory,
     /// memory.grow failed because a host function has taken ownership of a memory
-    MemoryGrowFailed,
+    MemoryRefNotUnqiue,
     /// A memory operation is out of bounds
     MemoryOutOfBounds,
     /// Ran out of stack space
@@ -648,13 +657,17 @@ impl BaseVisitor for Interpreter {
 
         // Look up what _should_ be the final unique reference to this memory
         let memory = state.store.get_memory_mut(state.module);
-        let result = if memory.is_zero() {
+        let result: Result<u32, MemoryError> = if memory.is_zero() {
             Err(MemoryError::OutOfMemory)
         } else if let Some(memory) = memory.get_mut() {
             memory.grow(n)
         } else {
-            return Err(InterpreterBreak::Trap(TrapReason::MemoryGrowFailed));
+            // This is probably caused by a host function holding onto a memory reference
+            // We could panic here... I'd rather just error gracefully.
+            return Err(InterpreterBreak::Trap(TrapReason::MemoryRefNotUnqiue));
         };
+
+        state.memory = memory.clone();
 
         match result {
             Ok(old_size) => {
