@@ -201,10 +201,6 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
                 Ok(())
             }
             Ref::Host { module, index } => {
-                if module.0 >= 0x80 {
-                    return Err(ValidationError::ModuleIdxTooLarge);
-                }
-
                 let hm = &state.store().host_modules[module.0 as usize];
                 let f = &hm.functions[index as usize];
                 for p in f.params().iter().rev() {
@@ -215,22 +211,27 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
                     state.push_stack(r)?;
                 }
 
-                state.instr_imm_8(CALL, 0x80 | module.0)?;
+                state.instr_imm_8(CALL_HOST, module.0)?;
                 state.write_16(index)?;
                 Ok(())
             }
             Ref::Extern { module, index } => {
-                if module.0 >= 0x80 {
-                    return Err(ValidationError::ModuleIdxTooLarge);
+                // Check the call signature
+                let m = &state.store().modules[module.0 as usize];
+                let f = &m.functions[index as usize];
+                let ty = &m.types[f.ty.0 as usize];
+
+                for p in ty.params.iter().rev() {
+                    state.pop_stack(*p)?;
                 }
 
-                state.instr_imm_8(CALL, module.0)?;
-                state.write_16(index)?;
+                for r in ty.returns.iter().rev() {
+                    state.push_stack(*r)?;
+                }
 
-                // TODO(tumbar) We do not yet support calling WASM functions across modules
-                //              This would require isolation of memory and instruction (and stack?)
-                //              space.
-                Err(ValidationError::FunctionCallsAcrossModuleNotSupportedYet)
+                state.instr_imm_8(CALL_EXTERN, module.0)?;
+                state.write_16(index)?;
+                Ok(())
             }
         }
     }
@@ -294,9 +295,9 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
                 Ok(())
             }
             Ref::Extern { module, index } => {
-                state.instr_imm_8(GLOBAL_GET_EXTERNAL, module.0)?;
+                state.instr_imm_8(GLOBAL_GET_EXTERN, module.0)?;
                 state.write_16(index)?;
-                Err(ValidationError::GlobalsAcrossModuleNotSupportedYet)
+                Ok(())
             }
             Ref::Host { module, index } => {
                 state.instr_imm_8(GLOBAL_GET_HOST, module.0)?;
@@ -318,9 +319,9 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
                     Ok(())
                 }
                 Ref::Extern { module, index } => {
-                    state.instr_imm_8(GLOBAL_SET_EXTERNAL, module.0)?;
+                    state.instr_imm_8(GLOBAL_SET_EXTERN, module.0)?;
                     state.write_16(index)?;
-                    Err(ValidationError::GlobalsAcrossModuleNotSupportedYet)
+                    Ok(())
                 }
                 Ref::Host { module, index } => {
                     state.instr_imm_8(GLOBAL_SET_HOST, module.0)?;

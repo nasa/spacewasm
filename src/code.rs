@@ -54,7 +54,7 @@ pub struct Func {
     pub local_size: u16,
 
     /// Parameter size in 32-bit words
-    pub parameter_size: u16,
+    pub parameter_size: u8,
 
     /// Return value size in 32-bit words
     pub return_ty: Option<ValType>,

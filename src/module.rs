@@ -568,7 +568,7 @@ impl Func {
             Some(ty.returns[0].clone())
         };
 
-        if parameter_size > 0xFFFF {
+        if parameter_size > 0xFF {
             return Err(ValidationError::FunctionParametersTooLarge);
         }
 
@@ -576,7 +576,7 @@ impl Func {
             ty: ty_idx,
             stack_usage: 0,
             local_size: 0,
-            parameter_size: parameter_size as u16,
+            parameter_size: parameter_size as u8,
             return_ty,
             locals: Vec::zero(),
             expr: Expr::zero(),

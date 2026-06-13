@@ -36,6 +36,24 @@ pub struct InterpreterState {
     pub result: Option<RawValue>,
 }
 
+struct CallFrame {
+    frame_length: u16,
+    module_delta: u8,
+    parameter_size: u8,
+}
+
+impl CallFrame {
+    pub fn from_bits(bits: u32) -> CallFrame {
+        // SAFETY: We are converting from the serialized form. The sizes are checked at compile time.
+        unsafe { core::mem::transmute(bits) }
+    }
+
+    // SAFETY: We are converting to the serialized form. The sizes are checked at compile time.
+    pub fn to_bits(self) -> u32 {
+        unsafe { core::mem::transmute(self) }
+    }
+}
+
 impl InterpreterState {
     pub(crate) fn new(mut store: Store, stack_size: usize) -> Result<InterpreterState, AllocError> {
         let module = ModuleRef(0);
@@ -55,10 +73,21 @@ impl InterpreterState {
     }
 
     /// Call a function within the _current_ module
-    fn call_impl(&mut self, fi: FuncIdx) -> Result<(), InterpreterBreak> {
+    fn call_impl(&mut self, f_ref: WasmRef) -> Result<(), InterpreterBreak> {
+        // If we are calling across module we need to swap out the current memory
+        let module_delta = if f_ref.module == self.module {
+            0
+        } else {
+            // Swap to the extern module's context
+            let delta = f_ref.module.0.wrapping_sub(self.module.0);
+            self.module = f_ref.module;
+            self.memory = self.store.get_memory(self.module).clone();
+            delta
+        };
+
         // Make sure we have enough stack space for the function call
         let m = &self.store.modules[self.module.0 as usize];
-        let f = &m.functions[fi.0 as usize];
+        let f = &m.functions[f_ref.index as usize];
         let required_stack_space = f.stack_usage as usize + 2 + f.local_size as usize;
         if self.stack.len() < self.sp + required_stack_space {
             return Err(InterpreterBreak::Trap(TrapReason::StackOverflow));
@@ -69,11 +98,13 @@ impl InterpreterState {
         // We also encode the parameter size into the stack frame so that the return can unwind the stack
         let frame_length = (self.sp - self.fp as usize) as u32;
         assert!(frame_length <= 0xFFFFF);
+        let frame = CallFrame {
+            frame_length: frame_length as u16,
+            module_delta,
+            parameter_size: f.parameter_size,
+        };
 
-        let frame_length = frame_length << 16;
-
-        self.stack
-            .write_u32(self.sp, frame_length | (f.parameter_size as u32));
+        self.stack.write_u32(self.sp, frame.to_bits());
         self.stack.write_u32(self.sp + 1, self.pc.0);
         self.fp = self.sp as u32;
 
@@ -92,15 +123,10 @@ impl InterpreterState {
         Ok(())
     }
 
-    fn enter_module(&mut self, module: ModuleRef) {
-        self.memory = self.store.get_memory(module).clone();
-        self.module = module;
-    }
-
     /// Invoke a function with some parameters.
     /// This function can only be used to kick off the interpreter.
     /// It cannot be invoked once the interpreter has started.
-    pub fn invoke(&mut self, fref: WasmRef, params: &[Value]) -> Result<(), InterpreterBreak> {
+    pub fn invoke(&mut self, f_ref: WasmRef, params: &[Value]) -> Result<(), InterpreterBreak> {
         // Make sure we are looking at the sentinel program counter
         // This is only the case when nothing is running
         assert_eq!(self.pc, JumpTarget::SENTINEL);
@@ -127,8 +153,7 @@ impl InterpreterState {
             }
         }
 
-        self.enter_module(fref.module);
-        self.call_impl(FuncIdx(fref.index as u32))?;
+        self.call_impl(f_ref)?;
         self.jumped = false;
         self.result = None;
         Ok(())
@@ -1276,12 +1301,9 @@ impl IrVisitor for Interpreter {
         let return_pc = JumpTarget(state.stack.read_u32(state.fp as usize + 1));
 
         // The frame pointer on the stack actually encodes ((sp - fp) << 16) | prm_size
-        let frame_length_and_prm_size = state.stack.read_u32(state.fp as usize);
-        let frame_length = (frame_length_and_prm_size >> 16) as u16;
-        let parameter_size = (frame_length_and_prm_size as u16) as usize;
-        let return_fp = (fp as u32) - (frame_length as u32);
-
-        let parameter_start = fp - parameter_size;
+        let call_frame = CallFrame::from_bits(state.stack.read_u32(state.fp as usize));
+        let return_fp = (fp as u32) - (call_frame.frame_length as u32);
+        let parameter_start = fp - (call_frame.parameter_size as usize);
 
         // Copy the return value over the parameters/frame information
         for i in 0..return_size {
@@ -1290,6 +1312,14 @@ impl IrVisitor for Interpreter {
         }
 
         state.fp = return_fp;
+
+        // Check if we are leaving the context of this module
+        if call_frame.module_delta != 0 {
+            // Restore the old module context outside this frame
+            let restore_module = state.module.0.wrapping_sub(call_frame.module_delta);
+            state.module = ModuleRef(restore_module);
+            state.memory = state.store.get_memory(state.module).clone();
+        }
 
         if return_pc == JumpTarget::SENTINEL {
             state.sp = parameter_start;
@@ -1314,7 +1344,10 @@ impl IrVisitor for Interpreter {
     }
 
     fn call(&self, x: u16, state: &mut Self::State) -> Result<(), Self::Error> {
-        state.call_impl(FuncIdx(x as u32))
+        state.call_impl(WasmRef {
+            module: state.module,
+            index: x,
+        })
     }
 
     fn call_host(
@@ -1383,6 +1416,18 @@ impl IrVisitor for Interpreter {
         }
     }
 
+    fn call_extern(
+        &self,
+        module_ref: ModuleRef,
+        x: u16,
+        state: &mut Self::State,
+    ) -> Result<(), Self::Error> {
+        state.call_impl(WasmRef {
+            module: module_ref,
+            index: x,
+        })
+    }
+
     fn call_indirect(&self, x: TypeIdx, state: &mut Self::State) -> Result<(), Self::Error> {
         // Pop the table pointer off the stack
         state.sp -= 1;
@@ -1409,7 +1454,10 @@ impl IrVisitor for Interpreter {
                 }
 
                 // Call the function
-                state.call_impl(FuncIdx(fi as u32))
+                state.call_impl(WasmRef {
+                    module: state.module,
+                    index: fi,
+                })
             }
             Ref::Host { module, index } => {
                 // Make sure the type matches our expectations (runtime validation)
@@ -1421,8 +1469,21 @@ impl IrVisitor for Interpreter {
 
                 self.call_host(module, i as u16, state)
             }
-            // TODO(tumbar) This is currently disallowed at compile time
-            Ref::Extern { .. } => unreachable!(),
+            Ref::Extern { module, index } => {
+                let m = &state.store.modules[module.0 as usize];
+                let f = &m.functions[index as usize];
+
+                // Validate the function is the proper type
+                // This asserts that it's safe to call the function with the current stack
+                let f_actual = &m.types[f.ty.0 as usize];
+
+                if f_actual.params != f_expected.params || f_actual.returns != f_expected.returns {
+                    return Err(InterpreterBreak::Trap(TrapReason::InvalidTableFunctionType));
+                }
+
+                // Call the function
+                state.call_impl(WasmRef { module, index })
+            }
         }
     }
 
@@ -1587,6 +1648,32 @@ impl IrVisitor for Interpreter {
             }
         }
         .or(Err(InterpreterBreak::Trap(TrapReason::GlobalSetFailed)))
+    }
+
+    fn global_get_extern(
+        &self,
+        module: ModuleRef,
+        index: u16,
+        state: &mut Self::State,
+    ) -> Result<(), Self::Error> {
+        let current = state.module;
+        state.module = module;
+        let res = self.global_get(index, state);
+        state.module = current;
+        res
+    }
+
+    fn global_set_extern(
+        &self,
+        module: ModuleRef,
+        index: u16,
+        state: &mut Self::State,
+    ) -> Result<(), Self::Error> {
+        let current = state.module;
+        state.module = module;
+        let res = self.global_set(index, state);
+        state.module = current;
+        res
     }
 }
 
