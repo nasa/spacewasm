@@ -68,7 +68,6 @@ pub enum ValidationError {
     VecTooLong,
     IdxTooLarge,
     ModuleIdxTooLarge,
-    MemoryIdxTooLarge,
     MemoryTooLarge,
     MemoryImportTooLarge,
     MemAlignTooLarge,
@@ -124,12 +123,19 @@ pub enum ValidationError {
     GlobalsAcrossModuleNotSupportedYet, // TODO(tumbar) Implement module context isolation
     InvalidConstantExpr(ConstantExprError),
     AllocError(AllocError),
+    MemoryError(MemoryError),
     ReaderError(ReaderError),
 }
 
 impl From<AllocError> for ValidationError {
     fn from(value: AllocError) -> Self {
         ValidationError::AllocError(value)
+    }
+}
+
+impl From<MemoryError> for ValidationError {
+    fn from(value: MemoryError) -> Self {
+        ValidationError::MemoryError(value)
     }
 }
 

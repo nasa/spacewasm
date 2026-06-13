@@ -19,6 +19,9 @@ pub use inner_vec::*;
 mod vec;
 pub use vec::*;
 
+mod rc;
+pub use rc::*;
+
 mod static_vec;
 pub(crate) use static_vec::*;
 

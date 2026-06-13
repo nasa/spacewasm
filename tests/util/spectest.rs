@@ -216,7 +216,7 @@ impl WasmStream for ByteStream {
 }
 
 struct TestContext {
-    store: Store,
+    state: Option<InterpreterState>,
     module_index: usize,
     code_builder: CodeBuilder<256>,
 }
@@ -224,7 +224,7 @@ struct TestContext {
 impl TestContext {
     fn new() -> Self {
         TestContext {
-            store: Store::default(),
+            state: None,
             module_index: 0,
             code_builder: CodeBuilder::<256>::default(),
         }
@@ -468,6 +468,7 @@ fn load_module(
         &mut stream,
         &new_linker,
         &mut ctx.code_builder,
+        &RustSystemAllocator,
         CompilerOptions {
             allow_memory_grow: true,
         },
@@ -718,7 +719,6 @@ fn check_decode_error(err: Error, text: String) {
             (ValidationError::InvalidStartFunctionSignature, "start function") => {}
             (ValidationError::DuplicateExportName, "duplicate export name") => {}
             (ValidationError::InvalidTableIndex, "unknown table") => {}
-            (ValidationError::MemoryIdxTooLarge, "unknown memory") => {}
             err => {
                 assert!(
                     false,

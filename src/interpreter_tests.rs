@@ -53,7 +53,6 @@ mod tests {
                 index: 0,
             }),
             globals: crate::Vec::zero(),
-            data: crate::Vec::zero(),
             start: None,
             imports: crate::Vec::zero(),
             exports: crate::Vec::zero(),

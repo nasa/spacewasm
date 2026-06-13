@@ -1,4 +1,4 @@
-use crate::{Allocator, GlobalAllocator};
+use crate::{AllocError, Allocator, GlobalAllocator};
 use core::alloc::Layout;
 
 pub struct Stack {
@@ -7,16 +7,15 @@ pub struct Stack {
 }
 
 impl Stack {
-    pub fn new(size: usize) -> Self {
-        Stack {
+    pub fn new(size: usize) -> Result<Self, AllocError> {
+        Ok(Stack {
             ptr: unsafe {
                 GlobalAllocator
-                    .alloc(Layout::from_size_align(size * 4, 4).unwrap())
-                    .unwrap()
+                    .alloc(Layout::from_size_align(size * 4, 4).unwrap())?
                     .cast()
             },
             size,
-        }
+        })
     }
 
     pub(crate) fn len(&self) -> usize {

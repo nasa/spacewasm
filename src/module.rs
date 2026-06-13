@@ -1,5 +1,11 @@
 use crate::*;
-use core::cell::RefCell;
+
+#[derive(Clone)]
+pub enum MemoryKind {
+    Owned(Rc<Memory>),
+    Import(ModuleRef),
+    ImportHost(HostModuleRef),
+}
 
 #[derive(Clone)]
 pub struct Module {
@@ -11,7 +17,6 @@ pub struct Module {
     pub globals: Vec<Global>,
     pub imports: Vec<Import>,
     pub exports: Vec<Export>,
-    pub data: Vec<Data>,
     pub start: Option<Ref>,
     pub table_defined: bool, // FIXME(tumbar) This feels sort of pointless?
 }
@@ -47,6 +52,7 @@ impl Module {
         stream: &mut dyn WasmStream,
         store: &StoreLinker,
         code_builder: &mut CodeBuilder<N>,
+        allocator: &'static dyn WasmMemoryAllocator,
         compiler_options: CompilerOptions,
     ) -> Result<Module, ParseError> {
         let mut wasm = Reader::new(stream);
@@ -57,6 +63,7 @@ impl Module {
             store,
             code_builder,
             &mut DefaultCustomSectionHandler,
+            allocator,
             None,
             compiler_options,
         )
@@ -71,6 +78,7 @@ impl Module {
         stream: &mut dyn WasmStream,
         store: &StoreLinker,
         code_builder: &mut CodeBuilder<N>,
+        allocator: &'static dyn WasmMemoryAllocator,
         compiler_options: CompilerOptions,
     ) -> Result<(Module, [MemoryStatistics; SectionKind::N as usize]), ParseError> {
         let mut wasm = Reader::new(stream);
@@ -82,6 +90,7 @@ impl Module {
             store,
             code_builder,
             &mut DefaultCustomSectionHandler,
+            allocator,
             Some(&mut stats),
             compiler_options,
         )
@@ -99,6 +108,7 @@ impl Module {
         store: &StoreLinker,
         code_builder: &mut CodeBuilder<N>,
         custom_handler: &mut dyn CustomSectionHandler,
+        allocator: &'static dyn WasmMemoryAllocator,
         mut stats: Option<&mut [MemoryStatistics; SectionKind::N as usize]>,
         compiler_options: CompilerOptions,
     ) -> Result<Module, SectionDecodeError> {
@@ -131,7 +141,6 @@ impl Module {
             globals: Vec::zero(),
             imports: Vec::zero(),
             exports: Vec::zero(),
-            data: Vec::zero(),
             start: None,
             table_defined: false,
         };
@@ -177,6 +186,7 @@ impl Module {
                     section_ty,
                     custom_handler,
                     code_builder,
+                    allocator,
                     compiler_options,
                 )
                 .map_err(|e| e.with_section(section_ty))?;
@@ -212,6 +222,7 @@ impl Module {
         section_ty: SectionKind,
         custom_handler: &mut dyn CustomSectionHandler,
         code_builder: &mut CodeBuilder<PN>,
+        allocator: &'static dyn WasmMemoryAllocator,
         compiler_options: CompilerOptions,
     ) -> Result<(), ValidationError> {
         use SectionKind::*;
@@ -228,27 +239,32 @@ impl Module {
                 // We need to resolve some imports into the module (i.e. memory and table)
                 for import in &self.imports {
                     match import {
-                        crate::Import::Mem { module, .. } => {
-                            let Some(MemoryKind::Allocate { index, .. }) =
-                                store.modules[module.0 as usize].memory
+                        crate::Import::Mem { module } => {
+                            if self.memory.is_some() {
+                                return Err(ValidationError::MultipleMemories);
+                            }
+
+                            // The import should have already validated with linkage
+                            // We can make the assertion here
+                            let Some(MemoryKind::Owned(_)) =
+                                &store.modules[module.0 as usize].memory
                             else {
                                 unreachable!()
                             };
 
-                            self.memory = Some(MemoryKind::Import(index));
+                            self.memory = Some(MemoryKind::Import(*module));
                         }
-                        crate::Import::HostMem { module, .. } => {
-                            // Count the number of host modules that defined memory before this one
-                            let next_index = store.host_modules[0..(module.0 as usize)]
-                                .iter()
-                                .filter(|hm| hm.memory.is_some())
-                                .count();
-
-                            if next_index > (u8::MAX as usize) {
-                                return Err(ValidationError::MemoryIdxTooLarge);
-                            } else {
-                                self.memory = Some(MemoryKind::Import(next_index as u8))
+                        crate::Import::HostMem { module } => {
+                            if self.memory.is_some() {
+                                return Err(ValidationError::MultipleMemories);
                             }
+
+                            // Make sure this module actually defines a memory
+                            let Some(_) = &store.host_modules[module.0 as usize].memory else {
+                                unreachable!()
+                            };
+
+                            self.memory = Some(MemoryKind::ImportHost(*module))
                         }
                         _ => {}
                     }
@@ -262,7 +278,7 @@ impl Module {
                 self.table_defined = true;
             }
             Memory => {
-                self.memory = MemorySection::read(wasm, store, self)?;
+                self.memory = MemorySection::read(wasm, self, allocator)?;
             }
             Global => {
                 self.globals = GlobalSection::read(wasm, store, self)?;
@@ -310,7 +326,7 @@ impl Module {
                 CodeSection::read::<PN>(wasm, code_builder, store, self, compiler_options)?;
             }
             Data => {
-                self.data = DataSection::read(wasm, store, self)?;
+                DataSection::read(wasm, store, self)?;
             }
             _ => unreachable!(),
         }
@@ -596,25 +612,12 @@ impl TableSection {
     }
 }
 
-#[derive(Clone, Copy)]
-pub enum MemoryKind {
-    Allocate {
-        /// Memory size when allocating for the store
-        ty: MemType,
-        /// Memory index in the store
-        index: u8,
-    },
-    /// Instead of allocating linear memory, import it from another module.
-    /// The value indicates the memory index in the store
-    Import(u8),
-}
-
 pub struct MemorySection;
 impl MemorySection {
     pub fn read(
         wasm: &mut Reader,
-        store: &StoreLinker,
         module: &Module,
+        allocator: &'static dyn WasmMemoryAllocator,
     ) -> Result<Option<MemoryKind>, ValidationError> {
         let len = wasm.read_u32()?;
         if len > 1 {
@@ -625,33 +628,9 @@ impl MemorySection {
             return Err(ValidationError::MultipleMemories);
         } else {
             // We are allocating memory for this module
-            // We need to compute the next index that _will_ be in the store by
-            // looking at what the previous modules do
-            let host_memories = store
-                .host_modules
-                .iter()
-                .filter(|m| m.memory.is_some())
-                .count();
-
-            let wasm_memories = store
-                .modules
-                .iter()
-                .filter(|m| match m.memory {
-                    Some(MemoryKind::Allocate { .. }) => true,
-                    _ => false,
-                })
-                .count();
-
-            let next_index = host_memories + wasm_memories;
-
-            if next_index > (u8::MAX as usize) {
-                Err(ValidationError::MemoryIdxTooLarge)
-            } else {
-                Ok(Some(MemoryKind::Allocate {
-                    ty: MemType::read(wasm)?,
-                    index: next_index as u8,
-                }))
-            }
+            let ty = MemType::read(wasm)?;
+            let memory = Memory::new(ty, allocator)?;
+            Ok(Some(MemoryKind::Owned(Rc::new(memory)?)))
         }
     }
 }
@@ -659,13 +638,12 @@ impl MemorySection {
 #[derive(Clone)]
 pub struct Global {
     pub type_: GlobalType,
-    // FIXME(tumbar) This is terrible!
-    pub value: RefCell<RawValue>,
+    pub value: RawValue,
 }
 
 impl Global {
     pub fn value(&self) -> Value {
-        self.value.borrow().to_value(self.type_.ty)
+        self.value.to_value(self.type_.ty)
     }
 
     pub fn read(
@@ -706,10 +684,7 @@ impl Global {
             }
         };
 
-        Ok(Global {
-            type_,
-            value: RefCell::new(init),
-        })
+        Ok(Global { type_, value: init })
     }
 }
 
@@ -771,7 +746,7 @@ impl Export {
             }
             ExportDesc::Mem(i) => {
                 if i.0 != 0 {
-                    return Err(ValidationError::MemoryIdxTooLarge);
+                    return Err(ValidationError::InvalidMemIndex);
                 } else if module.memory.is_none() {
                     return Err(ValidationError::MemoryNotDefined);
                 }
@@ -796,7 +771,7 @@ impl ExportSection {
             let e = Export::read(wasm, module)?;
             // Check for duplicate export name
             if out.iter().find(|ei| &*ei.name == &*e.name).is_some() {
-                return Err(ValidationError::DuplicateExportName)
+                return Err(ValidationError::DuplicateExportName);
             }
 
             out.push(e);
@@ -943,7 +918,36 @@ impl DataSection {
         wasm: &mut Reader,
         store: &StoreLinker,
         module: &Module,
-    ) -> Result<Vec<Data>, ValidationError> {
-        wasm.read_vec(|r| Data::read(r, store, module))
+    ) -> Result<(), ValidationError> {
+        let len = wasm.read_u32()?;
+        if len == 0 {
+            return Ok(());
+        }
+
+        if let Some(memory) = &module.memory {
+            let memory = match memory {
+                MemoryKind::Owned(memory) => memory,
+                MemoryKind::Import(i) => {
+                    let Some(MemoryKind::Owned(memory)) = &store.modules[i.0 as usize].memory
+                    else {
+                        unreachable!()
+                    };
+
+                    memory
+                }
+                MemoryKind::ImportHost(i) => {
+                    store.host_modules[i.0 as usize].memory.as_ref().unwrap()
+                }
+            };
+
+            for _ in 0..len {
+                let data = Data::read(wasm, store, module)?;
+                memory.store(data.offset as usize, &data.init)?;
+            }
+
+            Ok(())
+        } else {
+            Err(ValidationError::MemoryNotDefined)
+        }
     }
 }

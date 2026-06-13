@@ -51,7 +51,7 @@ impl Clone for Memory {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MemoryError {
     OutOfBounds,
     OutOfMemory,
@@ -104,7 +104,9 @@ impl Memory {
             allocator: Some(allocator),
         })
     }
+}
 
+impl Memory {
     #[inline]
     fn check_in_bounds(&self, addr: usize, size: usize) -> Result<(), MemoryError> {
         if addr + size > self.size {
@@ -114,7 +116,7 @@ impl Memory {
         }
     }
 
-    pub fn store_u8(&mut self, addr: usize, i: u8) -> Result<(), MemoryError> {
+    pub fn store_u8(&self, addr: usize, i: u8) -> Result<(), MemoryError> {
         self.check_in_bounds(addr, 1)?;
         unsafe {
             self.ptr.offset(addr as isize).write(i);
@@ -122,7 +124,7 @@ impl Memory {
         Ok(())
     }
 
-    pub fn store_u16(&mut self, addr: usize, i: u16) -> Result<(), MemoryError> {
+    pub fn store_u16(&self, addr: usize, i: u16) -> Result<(), MemoryError> {
         self.check_in_bounds(addr, 2)?;
         unsafe {
             self.ptr
@@ -133,7 +135,7 @@ impl Memory {
         Ok(())
     }
 
-    pub fn store_u32(&mut self, addr: usize, i: u32) -> Result<(), MemoryError> {
+    pub fn store_u32(&self, addr: usize, i: u32) -> Result<(), MemoryError> {
         self.check_in_bounds(addr, 4)?;
         unsafe {
             self.ptr
@@ -144,7 +146,7 @@ impl Memory {
         Ok(())
     }
 
-    pub fn store_u64(&mut self, addr: usize, i: u64) -> Result<(), MemoryError> {
+    pub fn store_u64(&self, addr: usize, i: u64) -> Result<(), MemoryError> {
         self.check_in_bounds(addr, 8)?;
         unsafe {
             self.ptr
@@ -155,7 +157,7 @@ impl Memory {
         Ok(())
     }
 
-    pub fn store(&mut self, addr: usize, data: &[u8]) -> Result<(), MemoryError> {
+    pub fn store(&self, addr: usize, data: &[u8]) -> Result<(), MemoryError> {
         self.check_in_bounds(addr, data.len())?;
 
         unsafe {
@@ -242,8 +244,16 @@ impl Memory {
         }
     }
 
+    pub fn mem_type(&self) -> MemType {
+        self.limits
+    }
+
     pub fn size(&self) -> u32 {
         (self.size / Self::PAGE_SIZE) as u32
+    }
+
+    pub fn is_zero(&self) -> bool {
+        self.ptr.is_null()
     }
 }
 

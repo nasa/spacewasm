@@ -1,11 +1,9 @@
 use crate::util::Vec;
 use crate::{
-    AllocError, Box, HostFunctionBreak, HostFunctionResult, HostModule, HostModuleRef, Interpreter,
+    AllocError, Box, HostFunctionBreak, HostFunctionResult, HostModule, Interpreter,
     InterpreterBreak, InterpreterResult, InterpreterRunner, InterpreterState, IrReaderError,
-    Memory, MemoryError, MemoryKind, Module, ModuleRef, Ref, TextPage, TrapReason,
-    WasmMemoryAllocator, WasmRef,
+    Memory, MemoryError, MemoryKind, Module, ModuleRef, Rc, Ref, TextPage, TrapReason, WasmRef,
 };
-use core::cell::RefCell;
 use core::ops::ControlFlow;
 
 /// A data structure representing the WebAssembly Store during load / validation time.
@@ -20,11 +18,10 @@ pub struct StoreLinker {
 
 /// Holds ownership of all the loaded modules. As new modules are loaded,
 /// imports/exports are referenced through the store.
-#[derive(Default)]
 pub struct Store {
     pub modules: Vec<Box<Module>>,
     pub host_modules: Vec<HostModule>,
-    pub memory: Vec<RefCell<Memory>>,
+    pub zero_memory: Rc<Memory>,
 }
 
 impl StoreLinker {
@@ -39,112 +36,17 @@ impl StoreLinker {
         })
     }
 
-    pub fn get_memory(&self, index: u8) -> Option<Ref> {
-        // Host memory goes first
-        if let Some((host_index, _)) = self
-            .host_modules
-            .iter()
-            .enumerate()
-            .filter(|(_, hm)| hm.memory.is_some())
-            .nth(index as usize)
-        {
-            return Some(Ref::Host {
-                module: HostModuleRef::new(host_index),
-                index: 0,
-            });
-        }
-
-        let n_host_memories = self
-            .host_modules
-            .iter()
-            .enumerate()
-            .filter(|(_, hm)| hm.memory.is_some())
-            .count();
-
-        let (original_module_index, _) =
-            self.modules
-                .iter()
-                .enumerate()
-                .find(|(_, mp)| match mp.memory {
-                    Some(MemoryKind::Allocate {
-                        index: index_iter, ..
-                    }) if index_iter == ((n_host_memories as u8) - index) => true,
-                    _ => false,
-                })?;
-
-        Some(Ref::Extern {
-            module: ModuleRef(original_module_index as u8),
-            index: 0,
-        })
-    }
-
-    /// Take loaded modules and allocate the linear memory needed into an [UninitializedStore].
-    /// The data is also populated into the linear memory.
-    /// This function must be called _after_ all modules are loaded
-    pub fn allocate(
-        self,
-        allocator: &'static dyn WasmMemoryAllocator,
-    ) -> Result<UninitializedStore, MemoryError> {
-        // Count the owned memories in the entire store
-        let host_memories = self
-            .host_modules
-            .iter()
-            .filter(|m| m.memory.is_some())
-            .count();
-
-        let wasm_memories = self
-            .modules
-            .iter()
-            .filter(|m| match m.memory {
-                Some(MemoryKind::Allocate { .. }) => true,
-                _ => false,
-            })
-            .count();
-
-        let total_memories = host_memories + wasm_memories;
-
-        // Allocate some space to hold all the memories
-        let mut memory = Vec::new(total_memories as u32)?;
-        let mut host_modules = self.host_modules;
-
-        // Initialize the memory and fill up the data
-        for module in &mut host_modules {
-            if let Some(ty) = module.memory {
-                memory.push(RefCell::new(Memory::new(ty, allocator)?));
-            }
-        }
-
-        for module in &self.modules {
-            let mut linear_memory = match &module.memory {
-                Some(MemoryKind::Allocate { ty, index }) => {
-                    // Make sure the module construction is pointing to the index we expect
-                    assert_eq!(*index as usize, memory.len());
-                    memory.push(RefCell::new(Memory::new(*ty, allocator)?));
-                    memory.last().unwrap().borrow_mut()
-                }
-                Some(MemoryKind::Import(mem_idx)) => {
-                    // Make sure this memory index is valid
-                    assert!((*mem_idx as usize) < memory.len());
-                    memory.get(*mem_idx as usize).unwrap().borrow_mut()
-                }
-                None => {
-                    assert!(module.data.is_empty());
-                    continue;
-                }
-            };
-
-            // Initialize the data into linear memory
-            for data in &module.data {
-                linear_memory.store(data.offset as usize, &data.init)?;
-            }
-        }
-
+    /// Finish linking WASM modules and generate the next stage of store
+    pub fn allocate(self, stack_size: usize) -> Result<UninitializedStore, MemoryError> {
         Ok(UninitializedStore {
-            store: Store {
-                modules: self.modules,
-                host_modules,
-                memory,
-            },
+            state: InterpreterState::new(
+                Store {
+                    modules: self.modules,
+                    host_modules: self.host_modules,
+                    zero_memory: Rc::new(Memory::zero())?,
+                },
+                stack_size,
+            )?,
             finished_start: None,
             running_start: None,
         })
@@ -157,7 +59,7 @@ impl StoreLinker {
 ///
 /// This store can be initialized into a [Store] using [UninitializedStore::initialize]
 pub struct UninitializedStore {
-    store: Store,
+    state: InterpreterState,
     finished_start: Option<ModuleRef>,
     running_start: Option<ModuleRef>,
 }
@@ -177,9 +79,10 @@ enum InitializeContinue {
     OutOfFuel(UninitializedStore),
 }
 
-type InitializeImplResult = Result<ControlFlow<Store, InitializeContinue>, InitializeError>;
+type InitializeImplResult =
+    Result<ControlFlow<InterpreterState, InitializeContinue>, InitializeError>;
 pub enum InitializeResult {
-    Finished(Store),
+    Finished(InterpreterState),
     Continue(UninitializedStore),
 }
 
@@ -187,22 +90,17 @@ impl UninitializedStore {
     fn initialize_impl_run_interpreter(
         mut self,
         code: &[Box<TextPage>],
-        state: &mut InterpreterState,
         n_instructions: usize,
     ) -> InitializeImplResult {
-        let interpreter = Interpreter::new(self.store);
-        match interpreter.run(code, state, n_instructions) {
+        let interpreter = Interpreter;
+        match interpreter.run(code, &mut self.state, n_instructions) {
             InterpreterResult::OutOfFuel => {
-                self.store = interpreter.store;
                 Ok(ControlFlow::Continue(InitializeContinue::OutOfFuel(self)))
             }
             InterpreterResult::Instruction(InterpreterBreak::Finished) => {
                 // Finished this function
-                self.store = interpreter.store;
                 self.finished_start = self.running_start;
                 self.running_start = None;
-                self.store.modules[state.module.0 as usize]
-                    .return_memory(&self.store, core::mem::take(&mut state.memory));
                 Ok(ControlFlow::Continue(
                     InitializeContinue::FinishedModuleStart(self),
                 ))
@@ -220,11 +118,10 @@ impl UninitializedStore {
     fn initialize_impl(
         mut self,
         code: &[Box<TextPage>],
-        state: &mut InterpreterState,
         n_instructions: usize,
     ) -> InitializeImplResult {
         if let Some(_) = self.running_start {
-            self.initialize_impl_run_interpreter(code, state, n_instructions)
+            self.initialize_impl_run_interpreter(code, n_instructions)
         } else {
             let next_module = if let Some(finished_start) = self.finished_start {
                 // We have finished running at least one module
@@ -235,7 +132,7 @@ impl UninitializedStore {
                 0
             };
 
-            if let Some(m) = self.store.modules.get(next_module) {
+            if let Some(m) = self.state.store.modules.get(next_module) {
                 let start_ref = match m.start {
                     None => {
                         self.running_start = None;
@@ -252,9 +149,9 @@ impl UninitializedStore {
                     Some(Ref::Host { module, index }) => {
                         // We don't need to run the interpreter for host functions
                         // We can just invoke the function
-                        return match self.store.host_modules[module.0 as usize].functions
+                        return match self.state.store.host_modules[module.0 as usize].functions
                             [index as usize]
-                            .call(state, &[])
+                            .call(&self.state, &[])
                         {
                             HostFunctionResult::Continue(_) => {
                                 self.running_start = None;
@@ -273,17 +170,17 @@ impl UninitializedStore {
                     }
                 };
 
-                match state.invoke(&self.store, start_ref, &[]) {
+                match self.state.invoke(start_ref, &[]) {
                     Ok(_) => {}
                     Err(InterpreterBreak::Trap(t)) => return Err(InitializeError::Trap(t)),
                     _ => unreachable!(),
                 };
 
                 self.running_start = Some(start_ref.module);
-                self.initialize_impl_run_interpreter(code, state, n_instructions)
+                self.initialize_impl_run_interpreter(code, n_instructions)
             } else {
                 // No more modules, we are done
-                Ok(ControlFlow::Break(self.store))
+                Ok(ControlFlow::Break(self.state))
             }
         }
     }
@@ -293,12 +190,11 @@ impl UninitializedStore {
     pub fn initialize(
         mut self,
         code: &[Box<TextPage>],
-        state: &mut InterpreterState,
         n_instructions: usize,
     ) -> Result<InitializeResult, InitializeError> {
         loop {
             // FIXME(tumbar) We should be decrementing n_instructions on every impl run
-            self = match self.initialize_impl(code, state, n_instructions) {
+            self = match self.initialize_impl(code, n_instructions) {
                 Ok(ControlFlow::Continue(InitializeContinue::OutOfFuel(s))) => {
                     return Ok(InitializeResult::Continue(s));
                 }
@@ -310,25 +206,48 @@ impl UninitializedStore {
     }
 }
 
-impl Module {
-    /// Pull out the memory for this module from the store
-    pub fn take_memory(&self, store: &Store) -> Memory {
-        match &self.memory {
-            Some(MemoryKind::Allocate { index, .. } | MemoryKind::Import(index)) => {
-                core::mem::take(&mut store.memory[*index as usize].borrow_mut())
+impl Store {
+    pub fn get_memory(&mut self, module_ref: ModuleRef) -> &Rc<Memory> {
+        match &self.modules[module_ref.0 as usize].memory {
+            None => &self.zero_memory,
+            Some(MemoryKind::Owned(mem)) => mem,
+            Some(MemoryKind::Import(import_module_ref)) => {
+                let r = import_module_ref.0 as usize;
+                let Some(MemoryKind::Owned(mem)) = &self.modules[r].memory else {
+                    unreachable!()
+                };
+
+                mem
             }
-            None => Memory::zero(),
+            Some(MemoryKind::ImportHost(host_import)) => self.host_modules[host_import.0 as usize]
+                .memory
+                .as_ref()
+                .unwrap(),
         }
     }
 
-    /// Return memory back to the store
-    pub fn return_memory(&self, store: &Store, m: Memory) {
-        match &self.memory {
-            Some(MemoryKind::Allocate { index, .. } | MemoryKind::Import(index)) => {
-                let old = core::mem::replace(&mut *store.memory[*index as usize].borrow_mut(), m);
-                assert_eq!(old.size(), 0);
+    pub fn get_memory_mut(&mut self, module_ref: ModuleRef) -> &mut Rc<Memory> {
+        match &self.modules[module_ref.0 as usize].memory {
+            None => &mut self.zero_memory,
+            Some(MemoryKind::Owned(_)) => {
+                let Some(MemoryKind::Owned(mem)) = &mut self.modules[module_ref.0 as usize].memory
+                else {
+                    unreachable!()
+                };
+                mem
             }
-            None => {}
+            Some(MemoryKind::Import(import_module_ref)) => {
+                let r = import_module_ref.0 as usize;
+                let Some(MemoryKind::Owned(mem)) = &mut self.modules[r].memory else {
+                    unreachable!()
+                };
+
+                mem
+            }
+            Some(MemoryKind::ImportHost(host_import)) => self.host_modules[host_import.0 as usize]
+                .memory
+                .as_mut()
+                .unwrap(),
         }
     }
 }

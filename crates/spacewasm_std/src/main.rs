@@ -126,22 +126,22 @@ fn main() {
         &mut file_stream,
         &store,
         &mut code_builder,
+        &RustSystemAllocator,
         CompilerOptions::default(),
     )
     .expect("failed to parse wasm module");
 
     store.modules.push(Box::new(module).unwrap());
     let (text, final_page_offset) = code_builder.finish().unwrap();
-    let mut store = store.allocate(&RustSystemAllocator).unwrap();
-    let mut state = spacewasm::InterpreterState::new(1024);
-    let store = loop {
-        store = match store.initialize(&text, &mut state, usize::MAX).unwrap() {
+    let mut store = store.allocate(1024).unwrap();
+    let mut state = loop {
+        store = match store.initialize(&text, usize::MAX).unwrap() {
             InitializeResult::Finished(s) => break s,
             InitializeResult::Continue(c) => c,
         }
     };
 
-    let module = store.modules.last().unwrap();
+    let module = state.store.modules.last().unwrap();
 
     let mut total: usize = 0;
     for (i, section) in stats.iter().enumerate() {
@@ -190,7 +190,7 @@ fn main() {
     }
     eprintln!("====");
 
-    let module = store.modules.last().unwrap();
+    let module = state.store.modules.last().unwrap();
 
     let fi = {
         let f = module.exports.iter().find(|f| &f.name == "run").unwrap();
@@ -200,14 +200,13 @@ fn main() {
         fi
     };
 
-    let module = store.modules.last().unwrap();
+    let module = state.store.modules.last().unwrap();
     let Ref::Module(fi) = module.get_func_ref(fi).unwrap() else {
         panic!()
     };
 
     state
         .invoke(
-            &store,
             WasmRef {
                 module: ModuleRef(0),
                 index: fi,
@@ -216,7 +215,7 @@ fn main() {
         )
         .unwrap();
 
-    let interpreter = spacewasm::Interpreter::new(store);
+    let interpreter = spacewasm::Interpreter;
 
     // let dbg = Inspector {
     //     v: &interpreter,

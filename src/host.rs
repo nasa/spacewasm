@@ -139,15 +139,15 @@ impl Iterator for HostValListIter {
     }
 }
 
-impl<T: Fn(&mut InterpreterState, &[Value]) -> HostFunctionResult> Box<T> {
+impl<T: Fn(&InterpreterState, &[Value]) -> HostFunctionResult> Box<T> {
     pub fn into_host_function_dyn(
         mut self,
-    ) -> Box<dyn Fn(&mut InterpreterState, &[Value]) -> HostFunctionResult>
+    ) -> Box<dyn Fn(&InterpreterState, &[Value]) -> HostFunctionResult>
     where
-        T: Fn(&mut InterpreterState, &[Value]) -> HostFunctionResult + 'static,
+        T: Fn(&InterpreterState, &[Value]) -> HostFunctionResult + 'static,
     {
         let ptr =
-            self.as_mut_ptr() as *mut dyn Fn(&mut InterpreterState, &[Value]) -> HostFunctionResult;
+            self.as_mut_ptr() as *mut dyn Fn(&InterpreterState, &[Value]) -> HostFunctionResult;
         core::mem::forget(self); // Prevent double free
         unsafe { Box::from_raw(GlobalAllocator, ptr) }
     }
@@ -157,7 +157,7 @@ pub struct HostFunction {
     name: &'static str,
     params: HostValList,
     returns: HostValList,
-    f: Box<dyn Fn(&mut InterpreterState, &[Value]) -> HostFunctionResult>,
+    f: Box<dyn Fn(&InterpreterState, &[Value]) -> HostFunctionResult>,
     param_size: u16,
     return_size: u16,
 }
@@ -167,7 +167,7 @@ pub struct HostModule {
     pub name: &'static str,
     pub globals: Vec<HostGlobal>,
     pub functions: Vec<HostFunction>,
-    pub memory: Option<MemType>,
+    pub memory: Option<Rc<Memory>>,
 }
 
 impl HostFunction {
@@ -175,7 +175,7 @@ impl HostFunction {
         name: &'static str,
         params: HostValList,
         returns: HostValList,
-        f: impl Fn(&mut InterpreterState, &[Value]) -> HostFunctionResult + 'static,
+        f: impl Fn(&InterpreterState, &[Value]) -> HostFunctionResult + 'static,
     ) -> Self {
         let mut o = HostFunction {
             name,
@@ -209,7 +209,7 @@ impl HostFunction {
         self.param_size as usize
     }
 
-    pub fn call(&self, state: &mut InterpreterState, a: &[Value]) -> HostFunctionResult {
+    pub fn call(&self, state: &InterpreterState, a: &[Value]) -> HostFunctionResult {
         (self.f)(state, a)
     }
 

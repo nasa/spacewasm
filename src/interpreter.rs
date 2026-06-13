@@ -23,37 +23,42 @@ pub struct InterpreterState {
     /// The stack
     pub stack: Stack,
 
-    /// Linear memory
-    pub memory: Memory,
+    /// Linear memory from the active module
+    pub memory: Rc<Memory>,
 
     /// Current module we are executing code for
     pub module: ModuleRef,
+
+    /// The WebAssembly Store
+    pub store: Store,
 
     /// The interpreter result when finished executing
     pub result: Option<RawValue>,
 }
 
 impl InterpreterState {
-    pub fn new(stack_size: usize) -> InterpreterState {
-        InterpreterState {
+    pub(crate) fn new(mut store: Store, stack_size: usize) -> Result<InterpreterState, AllocError> {
+        let module = ModuleRef(0);
+        let memory = store.get_memory(module).clone();
+
+        Ok(InterpreterState {
             pc: JumpTarget::SENTINEL,
             sp: 0x0,
             fp: 0x0,
-            stack: Stack::new(stack_size),
-            memory: Memory::zero(),
+            stack: Stack::new(stack_size)?,
+            memory,
             jumped: false,
-            module: ModuleRef(0xFF),
+            module,
+            store,
             result: None,
-        }
-    }
-
-    pub fn module<'store>(&self, store: &'store Store) -> &'store Module {
-        store.modules.get(self.module.0 as usize).unwrap()
+        })
     }
 
     /// Call a function within the _current_ module
-    fn call_impl(&mut self, f: &Func) -> Result<(), InterpreterBreak> {
+    fn call_impl(&mut self, fi: FuncIdx) -> Result<(), InterpreterBreak> {
         // Make sure we have enough stack space for the function call
+        let m = &self.store.modules[self.module.0 as usize];
+        let f = &m.functions[fi.0 as usize];
         let required_stack_space = f.stack_usage as usize + 2 + f.local_size as usize;
         if self.stack.len() < self.sp + required_stack_space {
             return Err(InterpreterBreak::Trap(TrapReason::StackOverflow));
@@ -87,15 +92,15 @@ impl InterpreterState {
         Ok(())
     }
 
+    fn enter_module(&mut self, module: ModuleRef) {
+        self.memory = self.store.get_memory(module).clone();
+        self.module = module;
+    }
+
     /// Invoke a function with some parameters.
     /// This function can only be used to kick off the interpreter.
     /// It cannot be invoked once the interpreter has started.
-    pub fn invoke(
-        &mut self,
-        store: &Store,
-        fref: WasmRef,
-        params: &[Value],
-    ) -> Result<(), InterpreterBreak> {
+    pub fn invoke(&mut self, fref: WasmRef, params: &[Value]) -> Result<(), InterpreterBreak> {
         // Make sure we are looking at the sentinel program counter
         // This is only the case when nothing is running
         assert_eq!(self.pc, JumpTarget::SENTINEL);
@@ -122,25 +127,15 @@ impl InterpreterState {
             }
         }
 
-        if let Some(old_m) = store.modules.get(self.module.0 as usize) {
-            old_m.return_memory(&store, core::mem::take(&mut self.memory));
-        }
-
-        let m = &store.modules[fref.module.0 as usize];
-        self.memory = m.take_memory(&store);
-        self.module = fref.module;
-
-        let f = &m.functions[fref.index as usize];
-        self.call_impl(f)?;
+        self.enter_module(fref.module);
+        self.call_impl(FuncIdx(fref.index as u32))?;
         self.jumped = false;
         self.result = None;
         Ok(())
     }
 }
 
-pub struct Interpreter {
-    pub store: Store,
-}
+pub struct Interpreter;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InterpreterResult {
@@ -153,10 +148,6 @@ pub enum InterpreterResult {
 }
 
 impl Interpreter {
-    pub fn new(store: Store) -> Self {
-        Interpreter { store }
-    }
-
     /// This function performs an unconditional branch to a resolved label target.
     ///
     /// Label targets use a relative offset from their location in the IR. The program
@@ -275,6 +266,8 @@ pub enum TrapReason {
     GlobalSetFailed,
     /// A memory operation is out of bounds
     OutOfMemory,
+    /// memory.grow failed because a host function has taken ownership of a memory
+    MemoryGrowFailed,
     /// A memory operation is out of bounds
     MemoryOutOfBounds,
     /// Ran out of stack space
@@ -638,7 +631,32 @@ impl BaseVisitor for Interpreter {
 
     fn memory_grow(&self, state: &mut Self::State) -> Result<(), Self::Error> {
         let n = state.stack.read_u32(state.sp - 1);
-        match state.memory.grow(n) {
+
+        // To grow memory we need to mutate the inside of the Rc<Memory>
+        // This means we need unique access to it
+        // Theoretically there should only be two references to this memory:
+        // 1. In the owning module/host module
+        // 2. In the interpreter state
+
+        // We need to drop the reference from the interpreter state and then try to
+        // get mutable unqiue access to the Memory. If there is anything else holding
+        // on to the reference (i.e. a host module took a pointer, we will not be
+        // able to grow the memory)
+
+        // Drop the memory reference
+        state.memory = state.store.zero_memory.clone();
+
+        // Look up what _should_ be the final unique reference to this memory
+        let memory = state.store.get_memory_mut(state.module);
+        let result = if memory.is_zero() {
+            Err(MemoryError::OutOfMemory)
+        } else if let Some(memory) = memory.get_mut() {
+            memory.grow(n)
+        } else {
+            return Err(InterpreterBreak::Trap(TrapReason::MemoryGrowFailed));
+        };
+
+        match result {
             Ok(old_size) => {
                 state.stack.write_u32(state.sp - 1, old_size);
             }
@@ -1283,8 +1301,7 @@ impl IrVisitor for Interpreter {
     }
 
     fn call(&self, x: u16, state: &mut Self::State) -> Result<(), Self::Error> {
-        let f = &state.module(&self.store).functions[x as usize];
-        state.call_impl(f)
+        state.call_impl(FuncIdx(x as u32))
     }
 
     fn call_host(
@@ -1293,7 +1310,7 @@ impl IrVisitor for Interpreter {
         x: u16,
         state: &mut Self::State,
     ) -> Result<(), Self::Error> {
-        let m = &self.store.host_modules[module.0 as usize];
+        let m = &state.store.host_modules[module.0 as usize];
         let f = &m.functions[x as usize];
 
         let mut sv: StaticVec<Value, 8> = StaticVec::new();
@@ -1357,7 +1374,7 @@ impl IrVisitor for Interpreter {
         // Pop the table pointer off the stack
         state.sp -= 1;
         let i = state.stack.read_u32(state.sp) as usize;
-        let m = state.module(&self.store);
+        let m = &state.store.modules[state.module.0 as usize];
         let f_expected = &m.types[x.0 as usize];
 
         if i >= m.table.len() {
@@ -1379,11 +1396,11 @@ impl IrVisitor for Interpreter {
                 }
 
                 // Call the function
-                state.call_impl(f)
+                state.call_impl(FuncIdx(fi as u32))
             }
             Ref::Host { module, index } => {
                 // Make sure the type matches our expectations (runtime validation)
-                let m = &self.store.host_modules[module.0 as usize];
+                let m = &state.store.host_modules[module.0 as usize];
                 let f = &m.functions[index as usize];
                 if f.params() != f_expected.params[..] || f.returns() != f_expected.returns[..] {
                     return Err(InterpreterBreak::Trap(TrapReason::InvalidTableFunctionType));
@@ -1455,16 +1472,17 @@ impl IrVisitor for Interpreter {
     }
 
     fn global_get(&self, idx: u16, state: &mut Self::State) -> Result<(), Self::Error> {
-        let g = &state.module(&self.store).globals[idx as usize];
+        let m = &state.store.modules[state.module.0 as usize];
+        let g = &m.globals[idx as usize];
 
         match g.type_.ty {
             ValType::I32 | ValType::F32 => {
-                let val = g.value.borrow().read_32();
+                let val = g.value.read_32();
                 state.stack.write_u32(state.sp, val);
                 state.sp += 1;
             }
             ValType::I64 | ValType::F64 => {
-                let val = g.value.borrow().read_64();
+                let val = g.value.read_64();
                 state.stack.write_u64(state.sp, val);
                 state.sp += 2;
             }
@@ -1479,7 +1497,7 @@ impl IrVisitor for Interpreter {
         index: u16,
         state: &mut Self::State,
     ) -> Result<(), Self::Error> {
-        let m = &self.store.host_modules[module.0 as usize];
+        let m = &state.store.host_modules[module.0 as usize];
         match m.globals[index as usize]
             .value
             .read()
@@ -1507,17 +1525,18 @@ impl IrVisitor for Interpreter {
     }
 
     fn global_set(&self, idx: u16, state: &mut Self::State) -> Result<(), Self::Error> {
-        let g = &state.module(&self.store).globals[idx as usize];
+        let m = &mut state.store.modules[state.module.0 as usize];
+        let g = &mut m.globals[idx as usize];
         match g.type_.ty {
             ValType::I32 | ValType::F32 => {
                 state.sp -= 1;
                 let val = state.stack.read_u32(state.sp);
-                g.value.borrow_mut().write_32(val);
+                g.value.write_32(val);
             }
             ValType::I64 | ValType::F64 => {
                 state.sp -= 2;
                 let val = state.stack.read_u64(state.sp);
-                g.value.borrow_mut().write_64(val);
+                g.value.write_64(val);
             }
         }
 
@@ -1530,7 +1549,7 @@ impl IrVisitor for Interpreter {
         index: u16,
         state: &mut Self::State,
     ) -> Result<(), Self::Error> {
-        let m = &self.store.host_modules[module.0 as usize];
+        let m = &state.store.host_modules[module.0 as usize];
         let g = &m.globals[index as usize];
         match g.value.ty() {
             ValType::I32 => {

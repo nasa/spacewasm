@@ -50,23 +50,23 @@ fn main() {
         &mut FileStream::new(file),
         &store,
         &mut code_builder,
+        &RustSystemAllocator,
         CompilerOptions::default(),
     )
     .expect("failed to parse wasm module");
 
     store.modules.push(spacewasm::Box::new(module).unwrap());
     let (text, _final_page_offset) = code_builder.finish().unwrap();
-    let mut state = spacewasm::InterpreterState::new(1024);
-    let mut store = store.allocate(&RustSystemAllocator).unwrap();
+    let mut store = store.allocate(1024).unwrap();
 
-    let store = loop {
-        store = match store.initialize(&text, &mut state, usize::MAX).unwrap() {
+    let mut state = loop {
+        store = match store.initialize(&text, usize::MAX).unwrap() {
             InitializeResult::Finished(s) => break s,
             InitializeResult::Continue(c) => c,
         }
     };
 
-    let module = store.modules.last().unwrap();
+    let module = state.store.modules.last().unwrap();
     let export = module
         .exports
         .iter()
@@ -85,12 +85,12 @@ fn main() {
         _ => panic!("run export is not a function"),
     };
 
-    state.invoke(&store, func, &[]).unwrap();
+    state.invoke(func, &[]).unwrap();
 
     let bench_start = Instant::now();
 
     eprintln!("Starting execution...");
-    let interpreter = spacewasm::Interpreter::new(store);
+    let interpreter = spacewasm::Interpreter;
     let mut result = InterpreterResult::OutOfFuel;
     while result == InterpreterResult::OutOfFuel {
         result = interpreter.run(&text, &mut state, usize::MAX)

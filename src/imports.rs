@@ -16,32 +16,13 @@ pub struct HostRef {
 
 #[derive(Debug, Clone, Copy)]
 pub enum Import {
-    Func {
-        module: ModuleRef,
-        index: u16,
-    },
-    HostFunc {
-        module: HostModuleRef,
-        index: u16,
-    },
-    Table {
-        module: ModuleRef,
-        index: u16,
-    },
-    Mem {
-        module: ModuleRef,
-    },
-    HostMem {
-        module: HostModuleRef,
-    },
-    Global {
-        module: ModuleRef,
-        index: u16,
-    },
-    HostGlobal {
-        module: HostModuleRef,
-        index: u16,
-    },
+    Func { module: ModuleRef, index: u16 },
+    HostFunc { module: HostModuleRef, index: u16 },
+    Table { module: ModuleRef, index: u16 },
+    Mem { module: ModuleRef },
+    HostMem { module: HostModuleRef },
+    Global { module: ModuleRef, index: u16 },
+    HostGlobal { module: HostModuleRef, index: u16 },
 }
 
 impl From<Import> for Ref {
@@ -252,7 +233,7 @@ impl StoreLinker {
         for (mi, module) in self.host_modules.iter().enumerate() {
             if module.name == module_name {
                 return if let Some(mem) = &module.memory {
-                    if expected_ty.fits_in(*mem) {
+                    if expected_ty.fits_in(mem.mem_type()) {
                         Ok(Import::HostMem {
                             module: HostModuleRef::new(mi),
                         })
@@ -275,13 +256,13 @@ impl StoreLinker {
                         return if let ExportDesc::Mem(mem_i) = e.desc {
                             // WASM 1.0 MVP only supports a single memory
                             if mem_i.0 > 0 {
-                                return Err(ValidationError::MemoryIdxTooLarge);
+                                return Err(ValidationError::InvalidMemIndex);
                             }
 
-                            match module.memory {
+                            match &module.memory {
                                 None => Err(ValidationError::MemoryNotDefined),
-                                Some(MemoryKind::Allocate { index: _, ty }) => {
-                                    if !expected_ty.fits_in(ty) {
+                                Some(MemoryKind::Owned(memory)) => {
+                                    if !expected_ty.fits_in(memory.mem_type()) {
                                         return Err(ValidationError::MemoryImportTooLarge);
                                     }
 
@@ -289,38 +270,33 @@ impl StoreLinker {
                                         module: ModuleRef(mi as u8),
                                     })
                                 }
-                                Some(MemoryKind::Import(idx)) => {
-                                    // This module imported memory from another module
-                                    // This index is the _memory_ index not the module index
-                                    // so we have to do a linear lookup.
-                                    let (original_allocate_ty, import) = match self
-                                        .get_memory(idx)
-                                        .unwrap()
-                                    {
-                                        Ref::Module(_) => unreachable!(),
-                                        Ref::Host { module, .. } => (
-                                            self.host_modules[module.0 as usize].memory.unwrap(),
-                                            Import::HostMem { module },
-                                        ),
-                                        Ref::Extern { module, .. } => {
-                                            let MemoryKind::Allocate { ty, .. } = self.modules
-                                                [module.0 as usize]
-                                                .memory
-                                                .as_ref()
-                                                .unwrap()
-                                            else {
-                                                unreachable!()
-                                            };
-
-                                            (*ty, Import::Mem { module })
-                                        }
+                                Some(MemoryKind::Import(i)) => {
+                                    // Inherit this import from the chain
+                                    // This import should already be resolved to a module with
+                                    // an owned memory.
+                                    let Some(MemoryKind::Owned(memory)) =
+                                        &self.modules[i.0 as usize].memory
+                                    else {
+                                        unreachable!()
                                     };
 
-                                    if !expected_ty.fits_in(original_allocate_ty) {
+                                    if !expected_ty.fits_in(memory.mem_type()) {
                                         return Err(ValidationError::MemoryImportTooLarge);
                                     }
 
-                                    Ok(import)
+                                    Ok(Import::Mem { module: *i })
+                                }
+                                Some(MemoryKind::ImportHost(i)) => {
+                                    let Some(memory) = &self.host_modules[i.0 as usize].memory
+                                    else {
+                                        unreachable!()
+                                    };
+
+                                    if !expected_ty.fits_in(memory.mem_type()) {
+                                        return Err(ValidationError::MemoryImportTooLarge);
+                                    }
+
+                                    Ok(Import::HostMem { module: *i })
                                 }
                             }
                         } else {
