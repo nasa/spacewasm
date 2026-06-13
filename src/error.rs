@@ -113,7 +113,6 @@ pub enum ValidationError {
     AlignmentLargerThanType,
     InvalidStartFunctionSignature,
     TableImportsNotSupportedYet, // TODO(tumbar) Implement dynamic linking
-    FunctionCallsAcrossModuleNotSupportedYet, // TODO(tumbar) Implement module context isolation
     InvalidConstantExpr(ConstantExprError),
     AllocError(AllocError),
     MemoryError(MemoryError),

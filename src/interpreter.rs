@@ -294,6 +294,8 @@ pub enum TrapReason {
     InvalidTableIndex,
     /// The function type in an indirect call does not match the function pointer's type
     InvalidTableFunctionType,
+    /// An indirect call tried to map to a table function out of range
+    UninitializedTableElement,
     /// An imported global could not be read
     GlobalGetFailed,
     /// An imported global could not be set
@@ -301,7 +303,7 @@ pub enum TrapReason {
     /// A memory operation is out of bounds
     OutOfMemory,
     /// memory.grow failed because a host function has taken ownership of a memory
-    MemoryRefNotUnqiue,
+    MemoryRefNotUnique,
     /// A memory operation is out of bounds
     MemoryOutOfBounds,
     /// Ran out of stack space
@@ -689,7 +691,7 @@ impl BaseVisitor for Interpreter {
         } else {
             // This is probably caused by a host function holding onto a memory reference
             // We could panic here... I'd rather just error gracefully.
-            return Err(InterpreterBreak::Trap(TrapReason::MemoryRefNotUnqiue));
+            return Err(InterpreterBreak::Trap(TrapReason::MemoryRefNotUnique));
         };
 
         state.memory = memory.clone();
@@ -1442,7 +1444,7 @@ impl IrVisitor for Interpreter {
         // Look up the internal or host function
         let f_ref = m.table[i];
         match f_ref {
-            Ref::Module(fi) => {
+            TableRef::Module(fi) => {
                 let f = &m.functions[fi as usize];
 
                 // Validate the function is the proper type
@@ -1459,7 +1461,7 @@ impl IrVisitor for Interpreter {
                     index: fi,
                 })
             }
-            Ref::Host { module, index } => {
+            TableRef::Host { module, index } => {
                 // Make sure the type matches our expectations (runtime validation)
                 let m = &state.store.host_modules[module.0 as usize];
                 let f = &m.functions[index as usize];
@@ -1469,7 +1471,7 @@ impl IrVisitor for Interpreter {
 
                 self.call_host(module, i as u16, state)
             }
-            Ref::Extern { module, index } => {
+            TableRef::Extern { module, index } => {
                 let m = &state.store.modules[module.0 as usize];
                 let f = &m.functions[index as usize];
 
@@ -1484,6 +1486,9 @@ impl IrVisitor for Interpreter {
                 // Call the function
                 state.call_impl(WasmRef { module, index })
             }
+            TableRef::Uninitialized => Err(InterpreterBreak::Trap(
+                TrapReason::UninitializedTableElement,
+            )),
         }
     }
 

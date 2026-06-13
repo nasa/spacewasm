@@ -219,6 +219,9 @@ struct TestContext {
     state: Option<InterpreterState>,
     module_index: usize,
     code_builder: CodeBuilder<256>,
+    /// Maps instance names (like "$Mf") to module indices
+    /// This is separate from the module's name field which is used for linking/imports
+    instance_names: std::collections::HashMap<String, usize>,
 }
 
 impl TestContext {
@@ -227,6 +230,7 @@ impl TestContext {
             state: None,
             module_index: 0,
             code_builder: CodeBuilder::<256>::default(),
+            instance_names: std::collections::HashMap::new(),
         }
     }
 
@@ -240,6 +244,11 @@ impl TestContext {
     }
 
     fn find_module_by_name(&self, name: &str) -> Option<usize> {
+        // First check instance names
+        if let Some(&idx) = self.instance_names.get(name) {
+            return Some(idx);
+        }
+        // Fall back to checking the module's name field (registered name)
         let state = self.state.as_ref().expect("No state initialized");
         state.store.modules.iter().position(|m| m.name == name)
     }
@@ -439,14 +448,14 @@ fn load_module(
 
     // Create new linker with the preserved modules
     // We need to move the modules out of the old state, not clone them, to avoid duplicating Rc<Memory> references
-    let mut new_linker = if let Some(mut state) = ctx.state.take() {
+    let (mut new_linker, old_state_to_restore) = if let Some(mut state) = ctx.state.take() {
         let mut linker = StoreLinker::new(254, [test_host_module()]).unwrap();
 
         // Move modules out of the old store (this transfers ownership without cloning Rc references)
         let old_modules = core::mem::take(&mut state.store.modules);
 
-        // Explicitly drop the old state now to release its memory reference before we proceed
-        drop(state);
+        // Keep the old state around so we can restore it if module parsing fails
+        let modules_backup = old_modules.clone();
 
         // Only preserve modules that have non-empty names (these can be imported/referenced)
         // This prevents accumulation of memory references from unnamed temporary modules
@@ -455,9 +464,12 @@ fn load_module(
                 linker.modules.push(module);
             }
         }
-        linker
+
+        // Restore the modules back to the state so we can restore it on error
+        state.store.modules = modules_backup;
+        (linker, Some(state))
     } else {
-        StoreLinker::new(254, [test_host_module()]).unwrap()
+        (StoreLinker::new(254, [test_host_module()]).unwrap(), None)
     };
 
     // Parse and validate the module
@@ -470,7 +482,14 @@ fn load_module(
         CompilerOptions {
             allow_memory_grow: true,
         },
-    )?;
+    )
+    .map_err(|e| {
+        // On error, restore the old state
+        if let Some(state) = old_state_to_restore {
+            ctx.state = Some(state);
+        }
+        e
+    })?;
 
     // Push module to linker
     let module_index = new_linker.modules.len();
@@ -502,17 +521,12 @@ fn invoke_function(
     args: &[ValueSpec],
     test_log: Rc<RefCell<LimitedVec<String>>>,
 ) -> Result<Option<Value>, InterpreterBreak> {
-    let state = ctx.state.as_mut().expect("No state initialized");
-
-    // Resolve module index by name lookup or use current (last) module
+    // Resolve module index by name lookup before borrowing state mutably
     let module_index = if let Some(name) = module_name {
-        state
-            .store
-            .modules
-            .iter()
-            .position(|m| &*m.name == name)
+        ctx.find_module_by_name(name)
             .unwrap_or_else(|| panic!("Module '{name}' not found"))
     } else {
+        let state = ctx.state.as_ref().expect("No state initialized");
         if state.store.modules.len() == 0 {
             0
         } else {
@@ -520,8 +534,10 @@ fn invoke_function(
         }
     };
 
+    let state = ctx.state.as_mut().expect("No state initialized");
+
     // Scope the immutable borrow
-    let (func_index, return_types, params) = {
+    let (f_ref, return_types, params) = {
         let module = &*state
             .store
             .modules
@@ -545,29 +561,31 @@ fn invoke_function(
             .get_func_ref(func_idx)
             .expect(&format!("Function {} not found in exports", func_name));
 
-        let func_index = match func_ref {
-            Ref::Module(idx) => idx as usize,
-            _ => panic!("Function {} is not a function export", func_name),
+        let func_ref = match func_ref {
+            Ref::Module(index) => WasmRef {
+                module: ModuleRef(module_index as u8),
+                index,
+            },
+            Ref::Extern { module, index } => WasmRef { module, index },
+            _ => panic!(
+                "Function {} is not a function export: {:?}",
+                func_name, func_ref
+            ),
         };
 
         // Get all the immutable data we need
-        let func = &module.functions[func_index];
-        let func_type = &module.types[func.ty.0 as usize];
+        let m = &state.store.modules[func_ref.module.0 as usize];
+        let f = &m.functions[func_ref.index as usize];
+        let func_type = &m.types[f.ty.0 as usize];
         let return_types = func_type.returns.clone();
 
         // Convert arguments
         let params: Vec<Value> = args.iter().map(parse_value).collect();
 
-        (func_index, return_types, params)
+        (func_ref, return_types, params)
     };
 
-    state.invoke(
-        WasmRef {
-            module: ModuleRef(module_index as u8),
-            index: func_index as u16,
-        },
-        &params,
-    )?;
+    state.invoke(f_ref, &params)?;
 
     let interpreter = Interpreter;
 
@@ -638,6 +656,7 @@ fn check_trap_reason(reason: TrapReason, text: &str) {
         (TrapReason::UnrepresentableResult, "integer overflow") => {}
         (TrapReason::BadConversionToInteger, "invalid conversion to integer") => {}
         (TrapReason::IntegerOverflow, "integer overflow") => {}
+        (TrapReason::UninitializedTableElement, "uninitialized element") => {}
         err => {
             assert!(
                 false,
@@ -717,6 +736,16 @@ fn check_decode_error(err: ParseError, text: String) {
         (ValidationError::InvalidTableIndex, "unknown table") => {}
         (ValidationError::MemoryError(MemoryError::OutOfBounds), "data segment does not fit") => {}
         (ValidationError::InvalidMemIndex, "unknown memory") => {}
+        (ValidationError::FunctionImportNotFound, "unknown import") => {}
+        (ValidationError::GlobalImportNotFound, "unknown import") => {}
+        (ValidationError::MemoryImportNotFound, "unknown import") => {}
+        (ValidationError::FunctionImportTypeMismatch, "incompatible import type") => {}
+        (ValidationError::GlobalImportTypeMismatch, "incompatible import type") => {}
+        (ValidationError::MemoryImportTypeMismatch, "incompatible import type") => {}
+        (ValidationError::FunctionImportNotFound, "incompatible import type") => {}
+        (ValidationError::GlobalImportNotFound, "incompatible import type") => {}
+        (ValidationError::MemoryImportNotFound, "incompatible import type") => {}
+        (ValidationError::GlobalIsNotMutable, "incompatible import type") => {}
         err => {
             assert!(
                 false,
@@ -822,7 +851,13 @@ fn run_wast_command(
             let wasm_path = format!("{test_dir}/{filename}");
             let wasm_bytes =
                 std::fs::read(&wasm_path).unwrap_or_else(|e| panic!("Failed to read module: {e}"));
-            load_module(ctx, name, &wasm_bytes).unwrap();
+            load_module(ctx, name.clone(), &wasm_bytes).unwrap();
+
+            // Register the instance name if provided
+            if let Some(instance_name) = name {
+                let module_index = ctx.current_module_index();
+                ctx.instance_names.insert(instance_name, module_index);
+            }
         }
         Command::AssertReturn {
             action, expected, ..

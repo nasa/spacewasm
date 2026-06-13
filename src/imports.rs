@@ -151,7 +151,7 @@ impl StoreLinker {
                         // Validate the imported type matches the global type defined here
                         return if g.value.ty() != expected_ty.ty {
                             Err(ValidationError::GlobalImportTypeMismatch)
-                        } else if !g.value.mutable() && expected_ty.mutable {
+                        } else if g.value.mutable() != expected_ty.mutable {
                             Err(ValidationError::GlobalIsNotMutable)
                         } else {
                             Ok(Import::HostGlobal {
@@ -181,7 +181,7 @@ impl StoreLinker {
                                     let g = &module.globals[idx as usize];
                                     if g.type_.ty != expected_ty.ty {
                                         Err(ValidationError::GlobalImportTypeMismatch)
-                                    } else if expected_ty.mutable && !g.type_.mutable {
+                                    } else if expected_ty.mutable != g.type_.mutable {
                                         Err(ValidationError::GlobalIsNotMutable)
                                     } else {
                                         Ok(Import::Global {
@@ -195,7 +195,7 @@ impl StoreLinker {
                                     let g = &em.globals[index as usize];
                                     if g.type_.ty != expected_ty.ty {
                                         Err(ValidationError::GlobalImportTypeMismatch)
-                                    } else if expected_ty.mutable && !g.type_.mutable {
+                                    } else if expected_ty.mutable != g.type_.mutable {
                                         Err(ValidationError::GlobalIsNotMutable)
                                     } else {
                                         Ok(Import::Global { module, index })
@@ -206,7 +206,7 @@ impl StoreLinker {
                                     let g = &hm.globals[index as usize];
                                     if g.value.ty() != expected_ty.ty {
                                         Err(ValidationError::GlobalImportTypeMismatch)
-                                    } else if expected_ty.mutable && !g.value.mutable() {
+                                    } else if expected_ty.mutable != g.value.mutable() {
                                         Err(ValidationError::GlobalIsNotMutable)
                                     } else {
                                         Ok(Import::HostGlobal { module, index })

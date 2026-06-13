@@ -7,12 +7,24 @@ pub enum MemoryKind {
     ImportHost(HostModuleRef),
 }
 
+#[derive(Clone, Copy, Default)]
+pub enum TableRef {
+    #[default]
+    Uninitialized,
+    /// A symbol in the current WASM module
+    Module(u16),
+    /// A symbol in an external host module
+    Host { module: HostModuleRef, index: u16 },
+    /// A symbol in another WASM module
+    Extern { module: ModuleRef, index: u16 },
+}
+
 #[derive(Clone)]
 pub struct Module {
     pub name: String,
     pub types: Vec<FuncType>,
     pub functions: Vec<Func>,
-    pub table: Vec<Ref>,
+    pub table: Vec<TableRef>,
     pub memory: Option<MemoryKind>,
     pub globals: Vec<Global>,
     pub imports: Vec<Import>,
@@ -594,7 +606,7 @@ impl FunctionSection {
 pub struct TableSection;
 
 impl TableSection {
-    pub fn read(wasm: &mut Reader) -> Result<Vec<Ref>, ValidationError> {
+    pub fn read(wasm: &mut Reader) -> Result<Vec<TableRef>, ValidationError> {
         let n = wasm.read_u32()?;
         if n == 0 {
             Ok(Vec::zero())
@@ -602,7 +614,7 @@ impl TableSection {
             let table_type = TableType::read(wasm)?;
             let mut v = Vec::new(table_type.limits.min)?;
             for _ in 0..table_type.limits.min {
-                v.push(Ref::Module(0xFFFF))
+                v.push(TableRef::Uninitialized)
             }
 
             Ok(v)
@@ -812,11 +824,14 @@ impl Element {
             let r = module
                 .get_func_ref(*idx)
                 .ok_or(ValidationError::FunctionIdxOutOfRange)?;
-            if let Ref::Extern { .. } = &r {
-                return Err(ValidationError::FunctionCallsAcrossModuleNotSupportedYet);
-            }
 
-            module.table[(offset as usize) + i] = r;
+            let tr = match r {
+                Ref::Module(module) => TableRef::Module(module),
+                Ref::Host { module, index } => TableRef::Host { module, index },
+                Ref::Extern { module, index } => TableRef::Extern { module, index },
+            };
+
+            module.table[(offset as usize) + i] = tr;
         }
 
         Ok(())
