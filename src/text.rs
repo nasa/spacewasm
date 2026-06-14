@@ -734,16 +734,34 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
                 stack_start,
                 patch_target,
             }
-            | ControlFrame::If {
-                result,
-                stack_start,
-                patch_target,
-            }
             | ControlFrame::Else {
                 result,
                 stack_start,
                 patch_target,
             } => {
+                let pc = self.pc();
+                self.code.backpatch(patch_target, |code, address, label| {
+                    let patched = label.with_jump(JumpOffset::new(address, pc)?);
+                    code.write_32(address, patched.0)?;
+                    Ok(())
+                })?;
+
+                self.validate_block_result(result, stack_start)?;
+
+                // Clear unreachable flag since we are entering a new control block
+                self.unreachable = false;
+            }
+            ControlFrame::If {
+                result,
+                stack_start,
+                patch_target,
+            } => {
+                // An if without else can only have a result type if the block is unreachable
+                // or if the result type is None
+                if result.0.is_some() && !self.unreachable {
+                    return Err(ValidationError::BlockResultTypeMismatch);
+                }
+
                 let pc = self.pc();
                 self.code.backpatch(patch_target, |code, address, label| {
                     let patched = label.with_jump(JumpOffset::new(address, pc)?);
