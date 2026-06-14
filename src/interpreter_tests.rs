@@ -2,7 +2,7 @@
 mod tests {
     use crate::{
         AllocError, BaseVisitor, Interpreter, InterpreterState, IrVisitor, MemArg, MemType, Memory,
-        MemoryKind, Module, ValType,
+        MemoryKind, Module, ModuleRef, ValType,
     };
     use crate::{InitializeResult, StoreLinker};
 
@@ -61,13 +61,15 @@ mod tests {
         store.modules.push(crate::Box::new(module).unwrap());
         let mut store = store.allocate(1024).unwrap();
 
-        let state = loop {
+        let mut state = loop {
             store = match store.initialize(&[], 10).unwrap() {
                 InitializeResult::Finished(state) => break state,
                 InitializeResult::Continue(c) => c,
             }
         };
 
+        state.memory = state.store.get_memory(ModuleRef(0)).clone();
+        state.table = state.store.get_table(ModuleRef(0)).clone();
         state
     }
 

@@ -475,13 +475,13 @@ fn load_module(
 
     // Create new linker with the preserved modules
     // We need to move the modules out of the old state, not clone them, to avoid duplicating Rc<Memory> references
-    let (mut new_linker, old_state_to_restore) = if let Some(mut state) = ctx.state.take() {
+    let (mut new_linker, modules_backup, old_state) = if let Some(mut state) = ctx.state.take() {
         let mut linker = StoreLinker::new(254, [test_host_module()]).unwrap();
 
         // Move modules out of the old store (this transfers ownership without cloning Rc references)
         let old_modules = core::mem::take(&mut state.store.modules);
 
-        // Keep the old state around so we can restore it if module parsing fails
+        // Keep a backup of the modules so we can restore them if module parsing fails
         let modules_backup = spacewasm::Vec::from_iter(
             old_modules
                 .iter()
@@ -496,11 +496,17 @@ fn load_module(
             }
         }
 
-        // Restore the modules back to the state so we can restore it on error
-        state.store.modules = modules_backup;
-        (linker, Some(state))
+        // IMPORTANT: Clear the memory and table references in the old state to avoid
+        // holding Rc references during module parsing. This allows Rc::get_mut() to
+        // succeed when Element::read needs to modify imported tables.
+        state.memory = state.store.zero_memory.clone();
+        state.table = state.store.zero_table.clone();
+
+        // Do NOT restore modules_backup to state.store.modules yet - that would create
+        // duplicate Rc references that prevent table mutation during parsing
+        (linker, Some(modules_backup), Some(state))
     } else {
-        (StoreLinker::new(254, [test_host_module()]).unwrap(), None)
+        (StoreLinker::new(254, [test_host_module()]).unwrap(), None, None)
     };
 
     // Parse and validate the module
@@ -515,8 +521,9 @@ fn load_module(
         },
     )
     .map_err(|e| {
-        // On error, restore the old state
-        if let Some(state) = old_state_to_restore {
+        // On error, restore the old state with the backup modules
+        if let (Some(mut state), Some(backup)) = (old_state, modules_backup) {
+            state.store.modules = backup;
             ctx.state = Some(state);
         }
         e

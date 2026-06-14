@@ -59,22 +59,18 @@ impl CallFrame {
 }
 
 impl InterpreterState {
-    pub(crate) fn new(mut store: Store, stack_size: usize) -> Result<InterpreterState, AllocError> {
-        let module = ModuleRef(0);
-        let memory = store.get_memory(module).clone();
-        let table = store.get_table(module).clone();
-
+    pub(crate) fn new(store: Store, stack_size: usize) -> Result<InterpreterState, AllocError> {
         Ok(InterpreterState {
             pc: JumpTarget::SENTINEL,
             sp: 0x0,
             fp: 0x0,
             stack: Stack::new(stack_size)?,
-            memory,
+            memory: store.zero_memory.clone(),
+            table: store.zero_table.clone(),
             jumped: false,
-            module,
+            module: ModuleRef(0),
             store,
             result: None,
-            table,
         })
     }
 
@@ -164,7 +160,12 @@ impl InterpreterState {
             }
         }
 
-        self.call_impl_enter_module(f_ref)?;
+        // Swap to the extern module's context
+        self.module = f_ref.module;
+        self.memory = self.store.get_memory(self.module).clone();
+        self.table = self.store.get_table(self.module).clone();
+
+        self.call_impl(0, f_ref.index)?;
         self.jumped = false;
         self.result = None;
         Ok(())
