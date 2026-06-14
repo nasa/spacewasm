@@ -285,13 +285,6 @@ pub enum Ref {
     },
 }
 
-/// A reference to a WASM symbol in the store
-#[derive(Debug, Clone, Copy)]
-pub struct WasmRef {
-    pub module: ModuleRef,
-    pub index: u16,
-}
-
 /// An abstraction over IR Bytecode.
 /// Used to implement the interpreter.
 pub trait IrVisitor: BaseVisitor {

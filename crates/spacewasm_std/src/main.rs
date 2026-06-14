@@ -1,7 +1,7 @@
 use spacewasm::{
-    vec, Box, CodeBuilder, CompilerOptions, ExportDesc, HostFunction, HostFunctionBreak,
-    HostModule, InitializeResult, InterpreterBreak, InterpreterResult, InterpreterRunner,
-    ModuleRef, PageAllocator, Ref, SectionKind, StoreLinker, ValType, Value, WasmRef,
+    Box, CodeBuilder, CompilerOptions, ExportDesc, HostFunction, HostFunctionBreak, HostModule,
+    InitializeResult, InterpreterBreak, InterpreterResult, InterpreterRunner, ModuleRef,
+    PageAllocator, Ref, SectionKind, StoreLinker, ValType, Value, WasmRef, vec,
 };
 use spacewasm_util::{FileStream, RustSystemAllocator};
 use std::ops::ControlFlow;
@@ -98,7 +98,8 @@ fn main() {
                 ControlFlow::Continue(Some(Value::I32(0)))
             }),
         ],
-        memory: None,
+        memory: spacewasm::Vec::zero(),
+        table: spacewasm::Vec::zero(),
     };
     let env = HostModule {
         name: "env",
@@ -114,7 +115,8 @@ fn main() {
                 ControlFlow::Continue(Some(Value::I64(ms as i64)))
             },
         )],
-        memory: None,
+        memory: spacewasm::Vec::zero(),
+        table: spacewasm::Vec::zero(),
     };
 
     let mut store = StoreLinker::new(3, [fprime_core, env]).unwrap();
@@ -124,7 +126,7 @@ fn main() {
     let (module, stats) = spacewasm::Module::new_with_statistics(
         "main",
         &mut file_stream,
-        &store,
+        &mut store,
         &mut code_builder,
         &RustSystemAllocator,
         CompilerOptions::default(),

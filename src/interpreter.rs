@@ -7,6 +7,7 @@ impl LocalVariable {
     }
 }
 
+#[derive(Debug)]
 pub struct InterpreterState {
     /// Current program counter
     pub pc: JumpTarget,
@@ -25,6 +26,9 @@ pub struct InterpreterState {
 
     /// Linear memory from the active module
     pub memory: Rc<Memory>,
+
+    /// Table from the active module
+    pub table: Rc<[TableElement]>,
 
     /// Current module we are executing code for
     pub module: ModuleRef,
@@ -58,6 +62,7 @@ impl InterpreterState {
     pub(crate) fn new(mut store: Store, stack_size: usize) -> Result<InterpreterState, AllocError> {
         let module = ModuleRef(0);
         let memory = store.get_memory(module).clone();
+        let table = store.get_table(module).clone();
 
         Ok(InterpreterState {
             pc: JumpTarget::SENTINEL,
@@ -69,11 +74,11 @@ impl InterpreterState {
             module,
             store,
             result: None,
+            table,
         })
     }
 
-    /// Call a function within the _current_ module
-    fn call_impl(&mut self, f_ref: WasmRef) -> Result<(), InterpreterBreak> {
+    fn call_impl_enter_module(&mut self, f_ref: WasmRef) -> Result<(), InterpreterBreak> {
         // If we are calling across module we need to swap out the current memory
         let module_delta = if f_ref.module == self.module {
             0
@@ -82,12 +87,18 @@ impl InterpreterState {
             let delta = f_ref.module.0.wrapping_sub(self.module.0);
             self.module = f_ref.module;
             self.memory = self.store.get_memory(self.module).clone();
+            self.table = self.store.get_table(self.module).clone();
             delta
         };
 
+        self.call_impl(module_delta, f_ref.index)
+    }
+
+    /// Call a function within the _current_ module
+    fn call_impl(&mut self, module_delta: u8, index: u16) -> Result<(), InterpreterBreak> {
         // Make sure we have enough stack space for the function call
         let m = &self.store.modules[self.module.0 as usize];
-        let f = &m.functions[f_ref.index as usize];
+        let f = &m.functions[index as usize];
         let required_stack_space = f.stack_usage as usize + 2 + f.local_size as usize;
         if self.stack.len() < self.sp + required_stack_space {
             return Err(InterpreterBreak::Trap(TrapReason::StackOverflow));
@@ -153,7 +164,7 @@ impl InterpreterState {
             }
         }
 
-        self.call_impl(f_ref)?;
+        self.call_impl_enter_module(f_ref)?;
         self.jumped = false;
         self.result = None;
         Ok(())
@@ -1321,6 +1332,7 @@ impl IrVisitor for Interpreter {
             let restore_module = state.module.0.wrapping_sub(call_frame.module_delta);
             state.module = ModuleRef(restore_module);
             state.memory = state.store.get_memory(state.module).clone();
+            state.table = state.store.get_table(state.module).clone();
         }
 
         if return_pc == JumpTarget::SENTINEL {
@@ -1346,10 +1358,7 @@ impl IrVisitor for Interpreter {
     }
 
     fn call(&self, x: u16, state: &mut Self::State) -> Result<(), Self::Error> {
-        state.call_impl(WasmRef {
-            module: state.module,
-            index: x,
-        })
+        state.call_impl(0, x)
     }
 
     fn call_host(
@@ -1424,7 +1433,7 @@ impl IrVisitor for Interpreter {
         x: u16,
         state: &mut Self::State,
     ) -> Result<(), Self::Error> {
-        state.call_impl(WasmRef {
+        state.call_impl_enter_module(WasmRef {
             module: module_ref,
             index: x,
         })
@@ -1437,15 +1446,12 @@ impl IrVisitor for Interpreter {
         let m = &state.store.modules[state.module.0 as usize];
         let f_expected = &m.types[x.0 as usize];
 
-        if i >= m.table.len() {
-            return Err(InterpreterBreak::Trap(TrapReason::InvalidTableIndex));
-        }
-
         // Look up the internal or host function
-        let f_ref = m.table[i];
-        match f_ref {
-            TableRef::Module(fi) => {
-                let f = &m.functions[fi as usize];
+        match state.table.get(i) {
+            None => Err(InterpreterBreak::Trap(TrapReason::InvalidTableIndex)),
+            Some(TableElement::Func { module, index }) => {
+                let m = &state.store.modules[module.0 as usize];
+                let f = &m.functions[*index as usize];
 
                 // Validate the function is the proper type
                 // This asserts that it's safe to call the function with the current stack
@@ -1456,37 +1462,22 @@ impl IrVisitor for Interpreter {
                 }
 
                 // Call the function
-                state.call_impl(WasmRef {
-                    module: state.module,
-                    index: fi,
+                state.call_impl_enter_module(WasmRef {
+                    module: *module,
+                    index: *index,
                 })
             }
-            TableRef::Host { module, index } => {
+            Some(TableElement::Host { module, index }) => {
                 // Make sure the type matches our expectations (runtime validation)
                 let m = &state.store.host_modules[module.0 as usize];
-                let f = &m.functions[index as usize];
+                let f = &m.functions[*index as usize];
                 if f.params() != f_expected.params[..] || f.returns() != f_expected.returns[..] {
                     return Err(InterpreterBreak::Trap(TrapReason::InvalidTableFunctionType));
                 }
 
-                self.call_host(module, i as u16, state)
+                self.call_host(*module, i as u16, state)
             }
-            TableRef::Extern { module, index } => {
-                let m = &state.store.modules[module.0 as usize];
-                let f = &m.functions[index as usize];
-
-                // Validate the function is the proper type
-                // This asserts that it's safe to call the function with the current stack
-                let f_actual = &m.types[f.ty.0 as usize];
-
-                if f_actual.params != f_expected.params || f_actual.returns != f_expected.returns {
-                    return Err(InterpreterBreak::Trap(TrapReason::InvalidTableFunctionType));
-                }
-
-                // Call the function
-                state.call_impl(WasmRef { module, index })
-            }
-            TableRef::Uninitialized => Err(InterpreterBreak::Trap(
+            Some(TableElement::Uninitialized) => Err(InterpreterBreak::Trap(
                 TrapReason::UninitializedTableElement,
             )),
         }

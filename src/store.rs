@@ -2,7 +2,8 @@ use crate::util::Vec;
 use crate::{
     AllocError, Box, HostFunctionBreak, HostFunctionResult, HostModule, Interpreter,
     InterpreterBreak, InterpreterResult, InterpreterRunner, InterpreterState, IrReaderError,
-    Memory, MemoryError, MemoryKind, Module, ModuleRef, Rc, Ref, TextPage, TrapReason, WasmRef,
+    Memory, MemoryError, MemoryKind, Module, ModuleRef, Rc, Ref, TableElement, TableKind, TextPage,
+    TrapReason, WasmRef,
 };
 use core::ops::ControlFlow;
 
@@ -18,10 +19,12 @@ pub struct StoreLinker {
 
 /// Holds ownership of all the loaded modules. As new modules are loaded,
 /// imports/exports are referenced through the store.
+#[derive(Debug)]
 pub struct Store {
     pub modules: Vec<Box<Module>>,
     pub host_modules: Vec<HostModule>,
     pub zero_memory: Rc<Memory>,
+    pub zero_table: Rc<[TableElement]>,
 }
 
 impl StoreLinker {
@@ -44,6 +47,7 @@ impl StoreLinker {
                     modules: self.modules,
                     host_modules: self.host_modules,
                     zero_memory: Rc::new(Memory::zero())?,
+                    zero_table: Rc::new_slice_with_default(0)?,
                 },
                 stack_size,
             )?,
@@ -219,10 +223,30 @@ impl Store {
 
                 mem
             }
-            Some(MemoryKind::ImportHost(host_import)) => self.host_modules[host_import.0 as usize]
-                .memory
-                .as_ref()
-                .unwrap(),
+            Some(MemoryKind::ImportHost(host_import)) => {
+                &self.host_modules[host_import.module.0 as usize].memory[host_import.index as usize]
+                    .value
+            }
+        }
+    }
+
+    pub fn get_table(&mut self, module_ref: ModuleRef) -> &Rc<[TableElement]> {
+        match &self.modules[module_ref.0 as usize].table {
+            None => &self.zero_table,
+            Some(TableKind::Owned(table)) => &table.0,
+            Some(TableKind::Import(import_module_ref)) => {
+                let r = import_module_ref.0 as usize;
+                let Some(TableKind::Owned(table)) = &self.modules[r].table else {
+                    unreachable!()
+                };
+
+                &table.0
+            }
+            Some(TableKind::ImportHost(host_import)) => {
+                &self.host_modules[host_import.module.0 as usize].table[host_import.index as usize]
+                    .value
+                    .0
+            }
         }
     }
 
@@ -244,10 +268,11 @@ impl Store {
 
                 mem
             }
-            Some(MemoryKind::ImportHost(host_import)) => self.host_modules[host_import.0 as usize]
-                .memory
-                .as_mut()
-                .unwrap(),
+            Some(MemoryKind::ImportHost(host_import)) => {
+                &mut self.host_modules[host_import.module.0 as usize].memory
+                    [host_import.index as usize]
+                    .value
+            }
         }
     }
 }

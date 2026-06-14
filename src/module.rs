@@ -1,36 +1,40 @@
 use crate::*;
 
-#[derive(Clone)]
+#[derive(Debug)]
 pub enum MemoryKind {
     Owned(Rc<Memory>),
     Import(ModuleRef),
-    ImportHost(HostModuleRef),
+    ImportHost(HostRef),
 }
 
-#[derive(Clone, Copy, Default)]
-pub enum TableRef {
+#[derive(Debug)]
+pub enum TableKind {
+    Owned((Rc<[TableElement]>, TableType)),
+    Import(ModuleRef),
+    ImportHost(HostRef),
+}
+
+#[derive(Clone, Copy, Default, Debug)]
+pub enum TableElement {
     #[default]
     Uninitialized,
-    /// A symbol in the current WASM module
-    Module(u16),
-    /// A symbol in an external host module
+    /// A function in a host module
     Host { module: HostModuleRef, index: u16 },
-    /// A symbol in another WASM module
-    Extern { module: ModuleRef, index: u16 },
+    /// A WebAssembly function
+    Func { module: ModuleRef, index: u16 },
 }
 
-#[derive(Clone)]
+#[derive(Debug)]
 pub struct Module {
     pub name: String,
     pub types: Vec<FuncType>,
     pub functions: Vec<Func>,
-    pub table: Vec<TableRef>,
+    pub table: Option<TableKind>,
     pub memory: Option<MemoryKind>,
     pub globals: Vec<Global>,
     pub imports: Vec<Import>,
     pub exports: Vec<Export>,
     pub start: Option<Ref>,
-    pub table_defined: bool, // FIXME(tumbar) This feels sort of pointless?
 }
 
 pub trait CustomSectionHandler {
@@ -62,7 +66,7 @@ impl Module {
     pub fn new<const N: usize>(
         name: &str,
         stream: &mut dyn WasmStream,
-        store: &StoreLinker,
+        store: &mut StoreLinker,
         code_builder: &mut CodeBuilder<N>,
         allocator: &'static dyn WasmMemoryAllocator,
         compiler_options: CompilerOptions,
@@ -88,7 +92,7 @@ impl Module {
     pub fn new_with_statistics<const N: usize>(
         name: &str,
         stream: &mut dyn WasmStream,
-        store: &StoreLinker,
+        store: &mut StoreLinker,
         code_builder: &mut CodeBuilder<N>,
         allocator: &'static dyn WasmMemoryAllocator,
         compiler_options: CompilerOptions,
@@ -117,7 +121,7 @@ impl Module {
     fn read<const N: usize>(
         name: &str,
         wasm: &mut Reader,
-        store: &StoreLinker,
+        store: &mut StoreLinker,
         code_builder: &mut CodeBuilder<N>,
         custom_handler: &mut dyn CustomSectionHandler,
         allocator: &'static dyn WasmMemoryAllocator,
@@ -148,13 +152,12 @@ impl Module {
             name: name.try_into()?,
             types: Vec::zero(),
             functions: Vec::zero(),
-            table: Vec::zero(),
+            table: None,
             memory: None,
             globals: Vec::zero(),
             imports: Vec::zero(),
             exports: Vec::zero(),
             start: None,
-            table_defined: false,
         };
 
         let mut last_section: SectionKind = SectionKind::Custom;
@@ -229,7 +232,7 @@ impl Module {
     fn read_section<const PN: usize>(
         &mut self,
         wasm: &mut Reader,
-        store: &StoreLinker,
+        store: &mut StoreLinker,
         section_size: usize,
         section_ty: SectionKind,
         custom_handler: &mut dyn CustomSectionHandler,
@@ -251,7 +254,7 @@ impl Module {
                 // We need to resolve some imports into the module (i.e. memory and table)
                 for import in &self.imports {
                     match import {
-                        crate::Import::Mem { module } => {
+                        crate::Import::Memory { module, .. } => {
                             if self.memory.is_some() {
                                 return Err(ValidationError::MultipleMemories);
                             }
@@ -266,17 +269,46 @@ impl Module {
 
                             self.memory = Some(MemoryKind::Import(*module));
                         }
-                        crate::Import::HostMem { module } => {
+                        crate::Import::HostMemory { module, index } => {
                             if self.memory.is_some() {
                                 return Err(ValidationError::MultipleMemories);
                             }
 
                             // Make sure this module actually defines a memory
-                            let Some(_) = &store.host_modules[module.0 as usize].memory else {
+                            let _ = &store.host_modules[module.0 as usize].memory[*index as usize]
+                                .value;
+
+                            self.memory = Some(MemoryKind::ImportHost(HostRef {
+                                module: *module,
+                                index: *index,
+                            }))
+                        }
+                        crate::Import::Table { module, .. } => {
+                            if self.table.is_some() {
+                                return Err(ValidationError::MultipleTables);
+                            }
+
+                            let Some(TableKind::Owned(_)) =
+                                &mut store.modules[module.0 as usize].table
+                            else {
                                 unreachable!()
                             };
 
-                            self.memory = Some(MemoryKind::ImportHost(*module))
+                            self.table = Some(TableKind::Import(*module));
+                        }
+                        crate::Import::HostTable { module, index } => {
+                            if self.table.is_some() {
+                                return Err(ValidationError::MultipleTables);
+                            }
+
+                            // Make sure this module actually defines a table
+                            let _ =
+                                &store.host_modules[module.0 as usize].table[*index as usize].value;
+
+                            self.table = Some(TableKind::ImportHost(HostRef {
+                                module: *module,
+                                index: *index,
+                            }));
                         }
                         _ => {}
                     }
@@ -286,8 +318,11 @@ impl Module {
                 self.functions = FunctionSection::read(wasm, self)?;
             }
             Table => {
+                if self.table.is_some() {
+                    return Err(ValidationError::MultipleTables);
+                }
+
                 self.table = TableSection::read(wasm)?;
-                self.table_defined = true;
             }
             Memory => {
                 self.memory = MemorySection::read(wasm, self, allocator)?;
@@ -606,20 +641,17 @@ impl FunctionSection {
 pub struct TableSection;
 
 impl TableSection {
-    pub fn read(wasm: &mut Reader) -> Result<Vec<TableRef>, ValidationError> {
+    pub fn read(wasm: &mut Reader) -> Result<Option<TableKind>, ValidationError> {
         let n = wasm.read_u32()?;
         if n == 0 {
-            Ok(Vec::zero())
+            Ok(None)
         } else if n == 1 {
             let table_type = TableType::read(wasm)?;
-            let mut v = Vec::new(table_type.limits.min)?;
-            for _ in 0..table_type.limits.min {
-                v.push(TableRef::Uninitialized)
-            }
+            let table = Rc::new_slice_with_default(table_type.limits.min as usize)?;
 
-            Ok(v)
+            Ok(Some(TableKind::Owned((table, table_type))))
         } else {
-            Err(ValidationError::InvalidTableIndex)
+            Err(ValidationError::MultipleTables)
         }
     }
 }
@@ -647,7 +679,7 @@ impl MemorySection {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Global {
     pub type_: GlobalType,
     pub value: RawValue,
@@ -711,7 +743,7 @@ impl GlobalSection {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum ExportDesc {
     Func(FuncIdx),
     Table(TableIdx),
@@ -731,7 +763,7 @@ impl ExportDesc {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Export {
     pub name: String,
     pub desc: ExportDesc,
@@ -752,7 +784,7 @@ impl Export {
             ExportDesc::Table(i) => {
                 if i.0 != 0 {
                     return Err(ValidationError::InvalidTableIndex);
-                } else if !module.table_defined {
+                } else if module.table.is_none() {
                     return Err(ValidationError::TableNotDefined);
                 }
             }
@@ -793,12 +825,42 @@ impl ExportSection {
     }
 }
 
+impl Module {
+    pub(crate) fn get_table<'store>(
+        &'store mut self,
+        store: &'store mut StoreLinker,
+    ) -> Option<&'store mut [TableElement]> {
+        if let Some(table) = &mut self.table {
+            let table = match table {
+                TableKind::Owned(table) => &mut table.0,
+                TableKind::Import(i) => {
+                    let Some(TableKind::Owned(table)) = &mut store.modules[i.0 as usize].table
+                    else {
+                        unreachable!()
+                    };
+
+                    &mut table.0
+                }
+                TableKind::ImportHost(i) => {
+                    &mut store.host_modules[i.module.0 as usize].table[i.index as usize]
+                        .value
+                        .0
+                }
+            };
+
+            Some(table.get_mut().unwrap())
+        } else {
+            None
+        }
+    }
+}
+
 pub struct Element;
 
 impl Element {
     pub fn read(
         wasm: &mut Reader,
-        store: &StoreLinker,
+        store: &mut StoreLinker,
         module: &mut Module,
     ) -> Result<(), ValidationError> {
         let table = TableIdx::read(wasm)?;
@@ -806,17 +868,19 @@ impl Element {
             return Err(ValidationError::InvalidTableIndex);
         }
 
-        if !module.table_defined {
-            return Err(ValidationError::TableNotDefined);
-        }
-
         let Value::I32(offset) = Expr::read_constant(wasm, store, module)? else {
             return Err(ValidationError::InvalidElementOffset);
         };
 
         let init = wasm.read_vec(FuncIdx::read)?;
-        if (offset as usize + init.len()) > module.table.len() {
-            return Err(ValidationError::InvalidElementOutOfBounds);
+        if let Some(table) = module.get_table(store) {
+            if offset < 0 || (offset as usize) > table.len() {
+                return Err(ValidationError::InvalidElementOffset);
+            } else if (offset as usize + init.len()) > table.len() {
+                return Err(ValidationError::InvalidElementOutOfBounds);
+            }
+        } else {
+            return Err(ValidationError::TableNotDefined);
         }
 
         // Write the function indexes into the table
@@ -826,12 +890,24 @@ impl Element {
                 .ok_or(ValidationError::FunctionIdxOutOfRange)?;
 
             let tr = match r {
-                Ref::Module(module) => TableRef::Module(module),
-                Ref::Host { module, index } => TableRef::Host { module, index },
-                Ref::Extern { module, index } => TableRef::Extern { module, index },
+                Ref::Module(index) => TableElement::Func {
+                    module: ModuleRef(store.modules.len() as u8),
+                    index,
+                },
+                Ref::Host { module, index } => TableElement::Host { module, index },
+                Ref::Extern { module, index } => TableElement::Func { module, index },
             };
 
-            module.table[(offset as usize) + i] = tr;
+            let index = (offset as usize) + i;
+            if let Some(table) = module.get_table(store) {
+                if index >= table.len() {
+                    return Err(ValidationError::InvalidElementOutOfBounds);
+                }
+
+                table[index] = tr;
+            } else {
+                return Err(ValidationError::TableNotDefined);
+            }
         }
 
         Ok(())
@@ -842,7 +918,7 @@ pub struct ElementSection;
 impl ElementSection {
     pub fn read(
         wasm: &mut Reader,
-        store: &StoreLinker,
+        store: &mut StoreLinker,
         module: &mut Module,
     ) -> Result<(), ValidationError> {
         let len = wasm.read_u32()?;
@@ -951,7 +1027,7 @@ impl DataSection {
                     memory
                 }
                 MemoryKind::ImportHost(i) => {
-                    store.host_modules[i.0 as usize].memory.as_ref().unwrap()
+                    &store.host_modules[i.module.0 as usize].memory[i.index as usize].value
                 }
             };
 

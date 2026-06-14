@@ -1,5 +1,6 @@
 use crate::{AllocError, MemType};
 use core::alloc::Layout;
+use core::fmt::{Debug, Formatter};
 use core::ptr::NonNull;
 
 /// An allocator for allocating WASM pages
@@ -24,6 +25,12 @@ pub struct Memory {
     size: usize,
     limits: MemType,
     allocator: Option<&'static dyn WasmMemoryAllocator>,
+}
+
+impl Debug for Memory {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("Memory").finish()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -37,7 +37,8 @@ fn main() {
                 ControlFlow::Continue(Some(Value::I64(ms)))
             },
         )],
-        memory: None,
+        memory: spacewasm::Vec::zero(),
+        table: spacewasm::Vec::zero(),
     };
 
     let mut store = StoreLinker::new(2, [env]).unwrap();
@@ -48,7 +49,7 @@ fn main() {
     let module = spacewasm::Module::new::<256>(
         "coremark",
         &mut FileStream::new(file),
-        &store,
+        &mut store,
         &mut code_builder,
         &RustSystemAllocator,
         CompilerOptions::default(),

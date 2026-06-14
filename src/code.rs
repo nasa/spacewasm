@@ -1,7 +1,7 @@
 use crate::constant::ConstantCompiler;
 use crate::*;
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Expr(pub JumpTarget);
 
 impl Expr {
@@ -41,7 +41,7 @@ impl From<Expr> for JumpTarget {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Func {
     /// Function signature.
     pub ty: TypeIdx,

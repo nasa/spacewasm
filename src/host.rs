@@ -1,5 +1,6 @@
 use crate::util::Vec;
 use crate::*;
+use core::fmt::{Debug, Formatter};
 use ::core::ops::ControlFlow;
 
 pub struct GlobalValueError;
@@ -24,6 +25,14 @@ pub trait GlobalValue {
 pub struct HostGlobal {
     pub name: &'static str,
     pub value: Box<dyn GlobalValue>,
+}
+
+impl Debug for HostGlobal {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("HostGlobal")
+            .field("name", &self.name)
+            .finish()
+    }
 }
 
 impl<T: GlobalValue> Box<T> {
@@ -162,12 +171,30 @@ pub struct HostFunction {
     return_size: u16,
 }
 
+impl Debug for HostFunction {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("HostFunction")
+            .field("name", &self.name)
+            .field("params", &self.params.0)
+            .field("returns", &self.returns.0)
+            .finish()
+    }
+}
+
+#[derive(Debug)]
+pub struct HostSymbol<T> {
+    pub name: &'static str,
+    pub value: T,
+}
+
+#[derive(Debug)]
 pub struct HostModule {
     /// Module name
     pub name: &'static str,
     pub globals: Vec<HostGlobal>,
     pub functions: Vec<HostFunction>,
-    pub memory: Option<Rc<Memory>>,
+    pub memory: Vec<HostSymbol<Rc<Memory>>>,
+    pub table: Vec<HostSymbol<(Rc<[TableElement]>, Limit)>>,
 }
 
 impl HostFunction {

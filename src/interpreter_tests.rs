@@ -47,13 +47,15 @@ mod tests {
             name: "test".try_into().unwrap(),
             types: crate::Vec::zero(),
             functions: crate::Vec::zero(),
-            table: crate::Vec::zero(),
-            memory: Some(MemoryKind::Owned(crate::Rc::new(Memory::new(MemType::from(1, None), &TestAllocator).unwrap()).unwrap())),
+            table: None,
+            memory: Some(MemoryKind::Owned(
+                crate::Rc::new(Memory::new(MemType::from(1, None), &TestAllocator).unwrap())
+                    .unwrap(),
+            )),
             globals: crate::Vec::zero(),
             start: None,
             imports: crate::Vec::zero(),
             exports: crate::Vec::zero(),
-            table_defined: false,
         };
 
         store.modules.push(crate::Box::new(module).unwrap());

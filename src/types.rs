@@ -240,6 +240,18 @@ impl Limit {
             c => Err(ValidationError::MalformedLimit(c)),
         }
     }
+
+    pub fn matches(&self, other: &Limit) -> bool {
+        if self.min < other.min {
+            return false;
+        }
+
+        match (self.max, other.max) {
+            (_, None) => true,
+            (Some(m1), Some(m2)) => m1 <= m2,
+            _ => false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -290,23 +302,12 @@ impl MemType {
         self.0.min <= n_pages
     }
 
-    pub fn fits_in(&self, other: MemType) -> bool {
-        // if let Some(self_max) = self.0.max {
-        //     if self_max < other.0.min {
-        //         return false;
-        //     }
-        //
-        //     if let Some(other_max) = other.0.max {
-        //         if self_max > other_max {
-        //             return false;
-        //         }
-        //     }
-        // }
-
-        self.0.min <= other.0.min
+    pub fn matches(&self, other: &MemType) -> bool {
+        self.0.matches(&other.0)
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ElemType {
     FuncRef,
 }
@@ -320,6 +321,7 @@ impl ElemType {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
 pub struct TableType {
     pub elem_type: ElemType,
     pub limits: Limit,

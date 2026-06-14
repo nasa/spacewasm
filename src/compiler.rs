@@ -237,7 +237,7 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
     }
 
     fn call_indirect(&self, x: TypeIdx, state: &mut Self::State) -> Result<(), Self::Error> {
-        if !state.module().table_defined {
+        if state.module().table.is_none() {
             return Err(ValidationError::TableNotDefined);
         }
 

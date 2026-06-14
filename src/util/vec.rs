@@ -13,6 +13,16 @@ pub struct Vec<T: Sized, A: Allocator = GlobalAllocator> {
     alloc: A,
 }
 
+impl<T> Vec<T, GlobalAllocator> {
+    pub fn from_iter(iter: impl ExactSizeIterator<Item = T>) -> Self {
+        let mut o = Self::new(iter.len() as u32).unwrap();
+        for i in iter {
+            o.push(i);
+        }
+        o
+    }
+}
+
 #[macro_export]
 macro_rules! vec {
     () => (
@@ -55,10 +65,7 @@ impl<T: Clone, A: Allocator + Clone> Clone for Vec<T, A> {
             // Use ptr::write to initialize each element.
             unsafe {
                 for i in 0..self.len() {
-                    core::ptr::write(
-                        n.inner.ptr.add(i),
-                        self[i].clone()
-                    );
+                    core::ptr::write(n.inner.ptr.add(i), self[i].clone());
                 }
             }
         }

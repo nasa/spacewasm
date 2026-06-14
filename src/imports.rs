@@ -1,16 +1,16 @@
 use crate::*;
 
-/// A general purpose
-#[derive(Debug, Clone, Copy)]
-pub struct ExternalRef {
-    pub module: ModuleRef,
-    pub index: u16,
-}
-
-/// A general purpose
+/// A general purpose reference to a symbol in a host module
 #[derive(Debug, Clone, Copy)]
 pub struct HostRef {
     pub module: HostModuleRef,
+    pub index: u16,
+}
+
+/// A reference to a WASM symbol in the store
+#[derive(Debug, Clone, Copy)]
+pub struct WasmRef {
+    pub module: ModuleRef,
     pub index: u16,
 }
 
@@ -19,8 +19,9 @@ pub enum Import {
     Func { module: ModuleRef, index: u16 },
     HostFunc { module: HostModuleRef, index: u16 },
     Table { module: ModuleRef, index: u16 },
-    Mem { module: ModuleRef },
-    HostMem { module: HostModuleRef },
+    HostTable { module: HostModuleRef, index: u16 },
+    Memory { module: ModuleRef, index: u16 },
+    HostMemory { module: HostModuleRef, index: u16 },
     Global { module: ModuleRef, index: u16 },
     HostGlobal { module: HostModuleRef, index: u16 },
 }
@@ -29,15 +30,14 @@ impl From<Import> for Ref {
     fn from(value: Import) -> Self {
         match value {
             Import::Func { module, index }
+            | Import::Global { module, index }
             | Import::Table { module, index }
-            | Import::Global { module, index } => Ref::Extern { module, index },
+            | Import::Memory { module, index } => Ref::Extern { module, index },
 
-            Import::HostFunc { module, index } | Import::HostGlobal { module, index } => {
-                Ref::Host { module, index }
-            }
-
-            Import::Mem { module } => Ref::Extern { module, index: 0 },
-            Import::HostMem { module } => Ref::Host { module, index: 0 },
+            Import::HostFunc { module, index }
+            | Import::HostGlobal { module, index }
+            | Import::HostTable { module, index }
+            | Import::HostMemory { module, index } => Ref::Host { module, index },
         }
     }
 }
@@ -224,6 +224,88 @@ impl StoreLinker {
         Err(ValidationError::GlobalImportNotFound)
     }
 
+    fn link_table(
+        &self,
+        module_name: &str,
+        name: &str,
+        expected_ty: TableType,
+    ) -> Result<Import, ValidationError> {
+        for (mi, module) in self.host_modules.iter().enumerate() {
+            if module.name == module_name {
+                for (ti, table) in module.table.iter().enumerate() {
+                    if table.name == name {
+                        if !table.value.1.matches(&expected_ty.limits) {
+                            return Err(ValidationError::TableImportIncompatibleSize);
+                        }
+
+                        return Ok(Import::HostTable {
+                            module: HostModuleRef::new(mi),
+                            index: ti as u16,
+                        });
+                    }
+                }
+
+                return Err(ValidationError::TableImportNotFound);
+            }
+        }
+
+        for (mi, module) in self.modules.iter().enumerate() {
+            // Check if this module is the module we are looking for
+            if module.name == module_name {
+                // Look for any exports that match this function name
+                for e in &module.exports {
+                    if e.name == name {
+                        // Make sure this is a memory
+                        return if let ExportDesc::Table(table_i) = e.desc {
+                            // WASM 1.0 MVP only supports a single table
+                            if table_i.0 > 0 {
+                                return Err(ValidationError::InvalidTableIndex);
+                            }
+
+                            let table_ty = match &module.table {
+                                None => return Err(ValidationError::TableNotDefined),
+                                Some(TableKind::Owned(table)) => table.1,
+                                Some(TableKind::Import(import_module_ref)) => {
+                                    let r = import_module_ref.0 as usize;
+                                    let Some(TableKind::Owned(table)) = &self.modules[r].table
+                                    else {
+                                        unreachable!()
+                                    };
+
+                                    table.1
+                                }
+                                Some(TableKind::ImportHost(host_import)) => {
+                                    let l = self.host_modules[host_import.module.0 as usize].table
+                                        [host_import.index as usize]
+                                        .value
+                                        .1;
+
+                                    TableType {
+                                        elem_type: ElemType::FuncRef,
+                                        limits: l,
+                                    }
+                                }
+                            };
+
+                            if !table_ty.limits.matches(&expected_ty.limits) {
+                                return Err(ValidationError::TableImportIncompatibleSize);
+                            }
+
+                            Ok(Import::Table {
+                                module: ModuleRef(mi as u8),
+                                index: 0,
+                            })
+                        } else {
+                            Err(ValidationError::TableImportTypeMismatch)
+                        };
+                    }
+                }
+            }
+        }
+
+        Err(ValidationError::TableImportNotFound)
+    }
+
     fn link_memory(
         &self,
         module_name: &str,
@@ -232,17 +314,19 @@ impl StoreLinker {
     ) -> Result<Import, ValidationError> {
         for (mi, module) in self.host_modules.iter().enumerate() {
             if module.name == module_name {
-                return if let Some(mem) = &module.memory {
-                    if expected_ty.fits_in(mem.mem_type()) {
-                        Ok(Import::HostMem {
-                            module: HostModuleRef::new(mi),
-                        })
-                    } else {
-                        Err(ValidationError::MemoryImportTooLarge)
+                for (i, symbol) in module.memory.iter().enumerate() {
+                    if name == symbol.name {
+                        let mem = &symbol.value;
+                        return if mem.mem_type().matches(&expected_ty) {
+                            Ok(Import::HostMemory {
+                                module: HostModuleRef::new(mi),
+                                index: i as u16,
+                            })
+                        } else {
+                            Err(ValidationError::MemoryImportTooLarge)
+                        };
                     }
-                } else {
-                    Err(ValidationError::MemoryNotDefined)
-                };
+                }
             }
         }
 
@@ -262,12 +346,13 @@ impl StoreLinker {
                             match &module.memory {
                                 None => Err(ValidationError::MemoryNotDefined),
                                 Some(MemoryKind::Owned(memory)) => {
-                                    if !expected_ty.fits_in(memory.mem_type()) {
+                                    if !memory.mem_type().matches(&expected_ty) {
                                         return Err(ValidationError::MemoryImportTooLarge);
                                     }
 
-                                    Ok(Import::Mem {
+                                    Ok(Import::Memory {
                                         module: ModuleRef(mi as u8),
+                                        index: 0,
                                     })
                                 }
                                 Some(MemoryKind::Import(i)) => {
@@ -280,23 +365,28 @@ impl StoreLinker {
                                         unreachable!()
                                     };
 
-                                    if !expected_ty.fits_in(memory.mem_type()) {
+                                    if !memory.mem_type().matches(&expected_ty) {
                                         return Err(ValidationError::MemoryImportTooLarge);
                                     }
 
-                                    Ok(Import::Mem { module: *i })
+                                    Ok(Import::Memory {
+                                        module: *i,
+                                        index: 0,
+                                    })
                                 }
                                 Some(MemoryKind::ImportHost(i)) => {
-                                    let Some(memory) = &self.host_modules[i.0 as usize].memory
-                                    else {
-                                        unreachable!()
-                                    };
+                                    let symbol = &self.host_modules[i.module.0 as usize].memory
+                                        [i.index as usize];
 
-                                    if !expected_ty.fits_in(memory.mem_type()) {
+                                    let memory = &symbol.value;
+                                    if !memory.mem_type().matches(&expected_ty) {
                                         return Err(ValidationError::MemoryImportTooLarge);
                                     }
 
-                                    Ok(Import::HostMem { module: *i })
+                                    Ok(Import::HostMemory {
+                                        module: i.module,
+                                        index: i.index,
+                                    })
                                 }
                             }
                         } else {
@@ -327,20 +417,17 @@ impl Import {
 
         // Look up this import given its name/module
         match desc {
-            ImportDesc::Func(f) => {
+            ImportDesc::Func(ty_idx) => {
                 // Look up the function type from the WASM module
                 let ty = module
                     .types
-                    .get(f.0 as usize)
-                    .ok_or(ValidationError::FunctionImportOutOfRange)?;
+                    .get(ty_idx.0 as usize)
+                    .ok_or(ValidationError::TypeIdxOutOfRange)?;
 
                 store.link_function(module_name, name, ty)
             }
-            ImportDesc::Mem(ty) => {
-                // Look up the function type from the WASM module
-                store.link_memory(module_name, name, ty)
-            }
-            ImportDesc::Table(_) => Err(ValidationError::TableImportsNotSupportedYet),
+            ImportDesc::Mem(ty) => store.link_memory(module_name, name, ty),
+            ImportDesc::Table(ty) => store.link_table(module_name, name, ty),
             ImportDesc::Global(g_ty) => store.link_global(module_name, name, g_ty),
         }
     }

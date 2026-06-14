@@ -4,9 +4,9 @@ use spacewasm::{
     global_allocator, vec, AllocError, Allocator, CodeBuilder, CompilerOptions,
     ConstantExprError, ExportDesc, GlobalValue, GlobalValueError, HostFunction, HostGlobal,
     HostModule, InitializeError, InitializeResult, InnerVec, Interpreter,
-    InterpreterBreak, InterpreterResult, InterpreterRunner, InterpreterState, Memory, MemoryError, MemoryStatistics,
-    Module, ModuleRef, ParseError, ReaderError, Ref, StoreLinker, TrapReason, ValType,
-    ValidationError, Value, WasmMemoryAllocator, WasmRef, WasmStream,
+    InterpreterBreak, InterpreterResult, InterpreterRunner, InterpreterState, Limit, Memory, MemoryError,
+    MemoryKind, MemoryStatistics, Module, ModuleRef, ParseError, ReaderError, Ref, StoreLinker, TableKind,
+    TrapReason, ValType, ValidationError, Value, WasmMemoryAllocator, WasmRef, WasmStream,
 };
 use std::alloc::Layout;
 use std::cell::RefCell;
@@ -435,6 +435,33 @@ impl From<MemoryError> for ModuleLoadError {
     }
 }
 
+fn clone_module(module: &Module) -> Module {
+    Module {
+        name: module.name.clone(),
+        types: module.types.clone(),
+        functions: module.functions.clone(),
+        table: match &module.table {
+            None => None,
+            Some(TableKind::Import(r)) => Some(TableKind::Import(*r)),
+            Some(TableKind::ImportHost(r)) => Some(TableKind::ImportHost(*r)),
+            Some(TableKind::Owned((r, ty))) => Some(TableKind::Owned((
+                spacewasm::Rc::new_slice(r.len(), |i| r[i].clone()).unwrap(),
+                *ty,
+            ))),
+        },
+        memory: match &module.memory {
+            None => None,
+            Some(MemoryKind::Import(r)) => Some(MemoryKind::Import(*r)),
+            Some(MemoryKind::ImportHost(r)) => Some(MemoryKind::ImportHost(*r)),
+            Some(MemoryKind::Owned(r)) => Some(MemoryKind::Owned(r.clone())),
+        },
+        globals: module.globals.clone(),
+        imports: module.imports.clone(),
+        exports: module.exports.clone(),
+        start: module.start.clone(),
+    }
+}
+
 fn load_module(
     ctx: &mut TestContext,
     module_name: Option<String>,
@@ -455,7 +482,11 @@ fn load_module(
         let old_modules = core::mem::take(&mut state.store.modules);
 
         // Keep the old state around so we can restore it if module parsing fails
-        let modules_backup = old_modules.clone();
+        let modules_backup = spacewasm::Vec::from_iter(
+            old_modules
+                .iter()
+                .map(|d| spacewasm::Box::new(clone_module(d)).unwrap()),
+        );
 
         // Only preserve modules that have non-empty names (these can be imported/referenced)
         // This prevents accumulation of memory references from unnamed temporary modules
@@ -476,7 +507,7 @@ fn load_module(
     let module = Module::new::<256>(
         module_name.as_ref().map(|f| f.as_ref()).unwrap_or(""),
         &mut stream,
-        &new_linker,
+        &mut new_linker,
         &mut ctx.code_builder,
         &RustSystemAllocator,
         CompilerOptions {
@@ -746,6 +777,14 @@ fn check_decode_error(err: ParseError, text: String) {
         (ValidationError::GlobalImportNotFound, "incompatible import type") => {}
         (ValidationError::MemoryImportNotFound, "incompatible import type") => {}
         (ValidationError::GlobalIsNotMutable, "incompatible import type") => {}
+        (ValidationError::InvalidElementOutOfBounds, "elements segment does not fit") => {}
+        (ValidationError::InvalidElementOffset, "elements segment does not fit") => {}
+        (ValidationError::MultipleTables, "multiple tables") => {}
+        (ValidationError::TableImportNotFound, "unknown import") => {}
+        (ValidationError::TableImportIncompatibleSize, "incompatible import type") => {}
+        (ValidationError::TableImportTypeMismatch, "incompatible import type") => {}
+        (ValidationError::TableImportNotFound, "incompatible import type") => {}
+        (ValidationError::MemoryImportTooLarge, "incompatible import type") => {}
         err => {
             assert!(
                 false,
@@ -831,12 +870,23 @@ fn test_host_module() -> HostModule {
                 ControlFlow::Continue(None)
             }),
         ],
-        memory: Some(
-            spacewasm::Rc::new(
+        memory: vec![spacewasm::HostSymbol {
+            name: "memory",
+            value: spacewasm::Rc::new(
                 Memory::new(spacewasm::MemType::from(1, Some(2)), &RustSystemAllocator).unwrap(),
             )
             .unwrap(),
-        ),
+        }],
+        table: vec![spacewasm::HostSymbol {
+            name: "table",
+            value: (
+                spacewasm::Rc::new_slice_with_default(10).unwrap(),
+                Limit {
+                    min: 10,
+                    max: Some(20),
+                },
+            ),
+        }],
     }
 }
 

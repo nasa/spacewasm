@@ -1,18 +1,25 @@
 use crate::{AllocError, Allocator, GlobalAllocator};
 use core::cell::Cell;
+use core::fmt::{Debug, Formatter};
 use core::hint;
 use core::ops::Deref;
 use core::panic::{RefUnwindSafe, UnwindSafe};
 use core::ptr::NonNull;
 
 struct RcInner<T: ?Sized> {
-    count: Cell<usize>,
+    count: Cell<u32>,
     value: T,
 }
 
 pub struct Rc<T: ?Sized, A: Allocator = GlobalAllocator> {
     ptr: NonNull<RcInner<T>>,
     alloc: A,
+}
+
+impl<T: ?Sized + Debug> Debug for Rc<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        (**self).fmt(f)
+    }
 }
 
 impl<T: RefUnwindSafe + ?Sized, A: Allocator + UnwindSafe> UnwindSafe for Rc<T, A> {}
@@ -38,26 +45,76 @@ impl<T> Rc<T> {
             ))
         }
     }
+}
 
-    #[inline]
-    fn is_unique(&self) -> bool {
-        self.inner().count() == 1
-    }
+impl<T> Rc<[T]> {
+    /// Creates a new `Rc<[T]>` with uninitialized memory for `len` elements.
+    /// Returns a pointer to the start of the slice data and the Rc.
+    ///
+    /// # Safety
+    /// Caller must initialize all `len` elements before using the Rc.
+    unsafe fn new_uninit_slice(len: usize) -> Result<(*mut T, Rc<[T]>), AllocError> {
+        unsafe {
+            if len == 0 {
+                // For empty slices, just allocate the RcInner with empty slice
+                let layout = core::alloc::Layout::new::<Cell<u32>>();
+                let ptr = GlobalAllocator.alloc(layout)?;
+                core::ptr::write(ptr as *mut Cell<u32>, Cell::new(1));
 
-    #[inline]
-    pub fn get_mut(&mut self) -> Option<&mut T> {
-        if Rc::is_unique(self) {
-            unsafe { Some(Rc::get_mut_unchecked(self)) }
-        } else {
-            None
+                let rc_inner_ptr =
+                    core::ptr::slice_from_raw_parts_mut(ptr as *mut (), 0) as *mut RcInner<[T]>;
+
+                let rc = Self::from_inner(NonNull::new_unchecked(rc_inner_ptr));
+                return Ok((core::ptr::null_mut(), rc));
+            }
+
+            // Calculate the layout we need: Cell<u32> + align padding + [T; len]
+            let count_layout = core::alloc::Layout::new::<Cell<u32>>();
+            let slice_layout = core::alloc::Layout::array::<T>(len)?;
+            let (full_layout, slice_offset) = count_layout.extend(slice_layout)?;
+            let full_layout = full_layout.pad_to_align();
+
+            // Allocate new memory for RcInner<[T]>
+            let ptr = GlobalAllocator.alloc(full_layout)?;
+
+            // Write the count field (note: count is u32, not usize)
+            core::ptr::write(ptr as *mut Cell<u32>, Cell::new(1));
+
+            // Get pointer to the slice data (uninitialized)
+            let slice_ptr = ptr.add(slice_offset) as *mut T;
+
+            // Create the fat pointer for RcInner<[T]>
+            let rc_inner_ptr =
+                core::ptr::slice_from_raw_parts_mut(ptr as *mut (), len) as *mut RcInner<[T]>;
+
+            let rc = Self::from_inner(NonNull::new_unchecked(rc_inner_ptr));
+            Ok((slice_ptr, rc))
         }
     }
 
-    #[inline]
-    pub unsafe fn get_mut_unchecked(&mut self) -> &mut T {
-        // We are careful to *not* create a reference covering the "count" fields, as
-        // this would conflict with accesses to the reference counts (e.g. by `Weak`).
-        unsafe { &mut (*self.ptr.as_ptr()).value }
+    /// Creates a new `Rc<[T]>` by calling `init` for each element.
+    pub fn new_slice<F>(len: usize, mut init: F) -> Result<Rc<[T]>, AllocError>
+    where
+        F: FnMut(usize) -> T,
+    {
+        unsafe {
+            let (slice_ptr, rc) = Self::new_uninit_slice(len)?;
+
+            // Initialize each element
+            for i in 0..len {
+                core::ptr::write(slice_ptr.add(i), init(i));
+            }
+
+            Ok(rc)
+        }
+    }
+
+    /// Creates a new `Rc<[T]>` with `len` default-initialized elements.
+    pub fn new_slice_with_default(len: usize) -> Result<Rc<[T]>, AllocError>
+    where
+        T: Default,
+    {
+        Self::new_slice(len, |_| T::default())
     }
 }
 
@@ -90,6 +147,27 @@ impl<T: ?Sized> Rc<T> {
     unsafe fn from_inner(ptr: NonNull<RcInner<T>>) -> Self {
         unsafe { Self::from_inner_in(ptr, GlobalAllocator) }
     }
+
+    #[inline]
+    fn is_unique(&self) -> bool {
+        self.inner().count() == 1
+    }
+
+    #[inline]
+    pub fn get_mut(&mut self) -> Option<&mut T> {
+        if Rc::is_unique(self) {
+            unsafe { Some(Rc::get_mut_unchecked(self)) }
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    pub unsafe fn get_mut_unchecked(&mut self) -> &mut T {
+        // We are careful to *not* create a reference covering the "count" fields, as
+        // this would conflict with accesses to the reference counts (e.g. by `Weak`).
+        unsafe { &mut (*self.ptr.as_ptr()).value }
+    }
 }
 
 impl<T: ?Sized, A: Allocator> Rc<T, A> {
@@ -109,7 +187,7 @@ impl<T: ?Sized, A: Allocator> Rc<T, A> {
 impl<T: ?Sized> RcInner<T> {
     #[inline]
     fn count(&self) -> usize {
-        self.count.get()
+        self.count.get() as usize
     }
 
     #[inline]
@@ -125,7 +203,7 @@ impl<T: ?Sized> RcInner<T> {
         }
 
         let strong = count.wrapping_add(1);
-        self.count.set(strong);
+        self.count.set(strong as u32);
 
         // We want to abort on overflow instead of dropping the value.
         // Checking for overflow after the store instead of before
@@ -146,7 +224,7 @@ impl<T: ?Sized> RcInner<T> {
         }
 
         let new_count = count - 1;
-        self.count.set(new_count);
+        self.count.set(new_count as u32);
         new_count
     }
 }
@@ -329,5 +407,104 @@ mod tests {
         // Drop the rest
         clones.clear();
         assert_eq!(rc1.inner().count(), 1); // Just the original
+    }
+
+    #[test]
+    fn test_rc_new_slice() {
+        let rc = Rc::new_slice(5, |i| (i * 2) as i32).unwrap();
+
+        assert_eq!(rc.len(), 5);
+        assert_eq!(&*rc, &[0, 2, 4, 6, 8]);
+        assert_eq!(rc.inner().count(), 1);
+    }
+
+    #[test]
+    fn test_rc_new_slice_empty() {
+        let rc = Rc::new_slice(0, |_| 42i32).unwrap();
+
+        assert_eq!(rc.len(), 0);
+        assert_eq!(&*rc, &[]);
+        assert_eq!(rc.inner().count(), 1);
+    }
+
+    #[test]
+    fn test_rc_new_slice_clone() {
+        let rc1 = Rc::new_slice(3, |i| i as i32 + 10).unwrap();
+        let rc2 = rc1.clone();
+
+        assert_eq!(rc1.inner().count(), 2);
+        assert_eq!(rc2.inner().count(), 2);
+        assert_eq!(&*rc1, &[10, 11, 12]);
+        assert_eq!(&*rc2, &[10, 11, 12]);
+    }
+
+    #[test]
+    fn test_rc_new_slice_with_default() {
+        let rc: Rc<[i32]> = Rc::new_slice_with_default(3).unwrap();
+
+        assert_eq!(rc.len(), 3);
+        assert_eq!(&*rc, &[0, 0, 0]);
+        assert_eq!(rc.inner().count(), 1);
+    }
+
+    #[test]
+    fn test_rc_new_slice_with_default_empty() {
+        let rc: Rc<[i32]> = Rc::new_slice_with_default(0).unwrap();
+
+        assert_eq!(rc.len(), 0);
+        assert_eq!(&*rc, &[]);
+        assert_eq!(rc.inner().count(), 1);
+    }
+
+    #[test]
+    fn test_rc_new_slice_with_default_string() {
+        let rc: Rc<[std::string::String]> = Rc::new_slice_with_default(3).unwrap();
+
+        assert_eq!(rc.len(), 3);
+        assert_eq!(
+            &*rc,
+            &[
+                std::string::String::new(),
+                std::string::String::new(),
+                std::string::String::new()
+            ]
+        );
+        assert_eq!(rc.inner().count(), 1);
+    }
+
+    #[test]
+    fn test_rc_slice_drop_runs_destructors() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        static DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+        struct DropCounter;
+        impl Drop for DropCounter {
+            fn drop(&mut self) {
+                DROP_COUNT.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+
+        DROP_COUNT.store(0, Ordering::SeqCst);
+
+        {
+            let rc = Rc::new_slice(5, |_| DropCounter).unwrap();
+            assert_eq!(rc.len(), 5);
+            assert_eq!(DROP_COUNT.load(Ordering::SeqCst), 0);
+        }
+
+        // All 5 elements should have been dropped
+        assert_eq!(DROP_COUNT.load(Ordering::SeqCst), 5);
+    }
+
+    #[test]
+    fn test_rc_slice_large() {
+        let rc = Rc::new_slice(1000, |i| i as u32).unwrap();
+
+        assert_eq!(rc.len(), 1000);
+        assert_eq!(rc[0], 0);
+        assert_eq!(rc[500], 500);
+        assert_eq!(rc[999], 999);
+        assert_eq!(rc.inner().count(), 1);
     }
 }

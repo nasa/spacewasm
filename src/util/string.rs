@@ -24,6 +24,12 @@ impl<A: Allocator> fmt::Display for String<A> {
     }
 }
 
+impl<A: Allocator> fmt::Debug for String<A> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.write_str(&self)
+    }
+}
+
 impl TryFrom<&str> for String<GlobalAllocator> {
     type Error = ValidationError;
 
