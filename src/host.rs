@@ -1,5 +1,6 @@
 use crate::util::Vec;
 use crate::*;
+use core::fmt::{Debug, Formatter};
 use ::core::ops::ControlFlow;
 
 pub struct GlobalValueError;
@@ -24,6 +25,14 @@ pub trait GlobalValue {
 pub struct HostGlobal {
     pub name: &'static str,
     pub value: Box<dyn GlobalValue>,
+}
+
+impl Debug for HostGlobal {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("HostGlobal")
+            .field("name", &self.name)
+            .finish()
+    }
 }
 
 impl<T: GlobalValue> Box<T> {
@@ -70,6 +79,10 @@ impl HostValList {
             data: self.0,
         }
     }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
 }
 
 impl From<&'static str> for HostValList {
@@ -99,6 +112,25 @@ pub struct HostValListIter {
     data: &'static str,
 }
 
+impl DoubleEndedIterator for HostValListIter {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        if self.index == self.data.len() {
+            return None;
+        }
+
+        let c = match self.data.chars().nth(self.data.len() - self.index - 1)? {
+            'i' => ValType::I32,
+            'I' => ValType::I64,
+            'f' => ValType::F32,
+            'd' => ValType::F64,
+            _ => unreachable!(),
+        };
+
+        self.index += 1;
+        Some(c)
+    }
+}
+
 impl Iterator for HostValListIter {
     type Item = ValType;
 
@@ -116,34 +148,53 @@ impl Iterator for HostValListIter {
     }
 }
 
-impl<T: Fn(&mut InterpreterState, &[Value]) -> HostFunctionResult> Box<T> {
+impl<T: Fn(&InterpreterState, &[Value]) -> HostFunctionResult> Box<T> {
     pub fn into_host_function_dyn(
         mut self,
-    ) -> Box<dyn Fn(&mut InterpreterState, &[Value]) -> HostFunctionResult>
+    ) -> Box<dyn Fn(&InterpreterState, &[Value]) -> HostFunctionResult>
     where
-        T: Fn(&mut InterpreterState, &[Value]) -> HostFunctionResult + 'static,
+        T: Fn(&InterpreterState, &[Value]) -> HostFunctionResult + 'static,
     {
         let ptr =
-            self.as_mut_ptr() as *mut dyn Fn(&mut InterpreterState, &[Value]) -> HostFunctionResult;
+            self.as_mut_ptr() as *mut dyn Fn(&InterpreterState, &[Value]) -> HostFunctionResult;
         core::mem::forget(self); // Prevent double free
         unsafe { Box::from_raw(GlobalAllocator, ptr) }
     }
 }
 
-pub struct HostFunction{
+pub struct HostFunction {
     name: &'static str,
     params: HostValList,
     returns: HostValList,
-    f: Box<dyn Fn(&mut InterpreterState, &[Value]) -> HostFunctionResult>,
+    f: Box<dyn Fn(&InterpreterState, &[Value]) -> HostFunctionResult>,
     param_size: u16,
     return_size: u16,
 }
 
+impl Debug for HostFunction {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("HostFunction")
+            .field("name", &self.name)
+            .field("params", &self.params.0)
+            .field("returns", &self.returns.0)
+            .finish()
+    }
+}
+
+#[derive(Debug)]
+pub struct HostSymbol<T> {
+    pub name: &'static str,
+    pub value: T,
+}
+
+#[derive(Debug)]
 pub struct HostModule {
     /// Module name
     pub name: &'static str,
     pub globals: Vec<HostGlobal>,
     pub functions: Vec<HostFunction>,
+    pub memory: Vec<HostSymbol<Rc<Memory>>>,
+    pub table: Vec<HostSymbol<(Rc<[TableElement]>, Limit)>>,
 }
 
 impl HostFunction {
@@ -151,7 +202,7 @@ impl HostFunction {
         name: &'static str,
         params: HostValList,
         returns: HostValList,
-        f: impl Fn(&mut InterpreterState, &[Value]) -> HostFunctionResult + 'static,
+        f: impl Fn(&InterpreterState, &[Value]) -> HostFunctionResult + 'static,
     ) -> Self {
         let mut o = HostFunction {
             name,
@@ -185,7 +236,7 @@ impl HostFunction {
         self.param_size as usize
     }
 
-    pub fn call(&self, state: &mut InterpreterState, a: &[Value]) -> HostFunctionResult {
+    pub fn call(&self, state: &InterpreterState, a: &[Value]) -> HostFunctionResult {
         (self.f)(state, a)
     }
 

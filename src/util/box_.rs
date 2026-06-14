@@ -59,7 +59,10 @@ impl<T: Sized, A: Allocator> Box<T, A> {
     /// Create a new box with a custom allocator
     pub fn new_in(alloc: A, value: T) -> Result<Box<T, A>, AllocError> {
         if size_of::<T>() == 0 {
-            Ok(Box { ptr: ptr::null_mut(), alloc })
+            Ok(Box {
+                ptr: ptr::null_mut(),
+                alloc,
+            })
         } else {
             let layout = Layout::new::<T>();
             let ptr = unsafe { alloc.alloc(layout)? } as *mut T;
@@ -105,14 +108,17 @@ impl<T: ?Sized, A: Allocator> DerefMut for Box<T, A> {
 
 impl<T: ?Sized, A: Allocator> Drop for Box<T, A> {
     fn drop(&mut self) {
+        // Null pointers do not have an allocation, they are usually just for dyn* on ZSTs
         if !self.ptr.is_null() {
-            let layout = unsafe { Layout::for_value(&*self.ptr) };
-
             unsafe {
+                // SAFETY: Compute the layout before dropping the value.
+                // Creating a reference to get metadata is safe even though we're about to drop.
+                let layout = Layout::for_value(&*self.ptr);
+
+                // Drop the contained value
                 ptr::drop_in_place(self.ptr);
-            }
 
-            unsafe {
+                // Deallocate the memory
                 self.alloc.dealloc(self.ptr as *mut u8, layout);
             }
         }
@@ -212,6 +218,21 @@ mod tests {
         }
 
         assert!(DROPPED.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn test_box_slice() {
+        use crate::Vec;
+
+        let mut v = Vec::new(3).unwrap();
+        v.push(1);
+        v.push(2);
+        v.push(3);
+
+        let b = v.into_boxed_slice();
+        assert_eq!(b.len(), 3);
+        assert_eq!(&*b, &[1, 2, 3]);
+        drop(b);
     }
 }
 

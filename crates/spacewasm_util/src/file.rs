@@ -6,6 +6,7 @@ pub struct FileStream {
     file: std::fs::File,
     ready: VecDeque<Vec<u8>>,
     used: HashMap<*mut u8, Vec<u8>>,
+    n: usize,
 }
 
 impl FileStream {
@@ -19,7 +20,12 @@ impl FileStream {
             file,
             ready,
             used: Default::default(),
+            n: 0,
         }
+    }
+
+    pub fn len(&self) -> usize {
+        self.n
     }
 }
 
@@ -41,6 +47,7 @@ impl WasmStream for FileStream {
                 len: n as u32,
             };
 
+            self.n += n;
             self.used.insert(buf.as_mut_ptr(), buf);
             Ok(Some(m))
         }

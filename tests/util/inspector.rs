@@ -1,6 +1,6 @@
 use spacewasm::{
     BaseVisitor, FuncIdx, GlobalIdx, HostModuleRef, IrVisitor, LabelIdx, LabelTarget, LocalIdx,
-    LocalVariable, MemArg, ResultType, TypeIdx, ValType, WasmVisitor,
+    LocalVariable, MemArg, ModuleRef, ResultType, TypeIdx, ValType, WasmVisitor,
 };
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -295,6 +295,7 @@ impl<'a, S, E, T: BaseVisitor<State = S, Error = E> + IrVisitor> IrVisitor
     visit_fn!(return_, return_size: u8);
     visit_fn!(call, x: u16);
     visit_fn!(call_host, module: HostModuleRef, x: u16);
+    visit_fn!(call_extern, module: ModuleRef, x: u16);
     visit_fn!(call_indirect, x: TypeIdx);
 
     // Variable instructions
@@ -302,7 +303,9 @@ impl<'a, S, E, T: BaseVisitor<State = S, Error = E> + IrVisitor> IrVisitor
     visit_fn!(local_set, l: LocalVariable);
     visit_fn!(local_tee, l: LocalVariable);
     visit_fn!(global_get, idx: u16);
-    visit_fn!(global_get_host, module: HostModuleRef, index: u16);
     visit_fn!(global_set, idx: u16);
+    visit_fn!(global_get_host, module: HostModuleRef, index: u16);
     visit_fn!(global_set_host, module: HostModuleRef, index: u16);
+    visit_fn!(global_get_extern, module: ModuleRef, index: u16);
+    visit_fn!(global_set_extern, module: ModuleRef, index: u16);
 }

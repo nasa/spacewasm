@@ -27,6 +27,7 @@ use ::core::ops::AddAssign;
 /// - **Jump target**: 2 words encoding a 32-bit address
 
 /// A page of compiled IR code containing 256 16-bit words (512 bytes).
+#[derive(Clone)]
 pub struct TextPage(pub [u16; 256]);
 impl Default for TextPage {
     fn default() -> TextPage {
@@ -234,9 +235,16 @@ pub struct GlobalVariable {
 ///
 /// Manages allocation of pages and writing 16-bit words to the current position.
 /// The `N` generic parameter limits the maximum number of pages that can be allocated.
+#[derive(Clone)]
 pub struct CodeBuilder<const N: usize> {
     pages: StaticVec<Box<TextPage>, N>,
     offset: usize,
+}
+
+impl<const N: usize> Default for CodeBuilder<N> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<const N: usize> CodeBuilder<N> {
@@ -391,7 +399,7 @@ impl<const N: usize> CodeBuilder<N> {
 /// The `N` generic parameter limits the maximum number of code pages.
 pub struct TextBuilder<'a, const N: usize> {
     code: &'a mut CodeBuilder<N>,
-    store: &'a Store,
+    store: &'a StoreLinker,
     module: &'a Module,
     func: &'a Func,
     control_frames: StaticVec<ControlFrame, 64>,
@@ -403,7 +411,7 @@ pub struct TextBuilder<'a, const N: usize> {
 impl<'a, const N: usize> TextBuilder<'a, N> {
     pub fn new(
         code: &'a mut CodeBuilder<N>,
-        store: &'a Store,
+        store: &'a StoreLinker,
         module: &'a Module,
         func: &'a Func,
     ) -> TextBuilder<'a, N> {
@@ -419,7 +427,7 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
         }
     }
 
-    pub fn store(&self) -> &'a Store {
+    pub fn store(&self) -> &'a StoreLinker {
         self.store
     }
 
@@ -501,24 +509,8 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
     pub fn get_global(&self, x: GlobalIdx) -> Result<GlobalVariable, ValidationError> {
         let reference = self
             .module
-            .imports
-            .iter()
-            .filter_map(|i| match &i {
-                Import::Global { module, index } => Some(Ref::Extern {
-                    module: *module,
-                    index: *index,
-                }),
-                Import::HostGlobal { module, index } => Some(Ref::Host {
-                    module: *module,
-                    index: *index,
-                }),
-                _ => None,
-            })
-            .skip(x.0 as usize)
-            .next()
-            .unwrap_or(Ref::Module(
-                (x.0 as usize - self.module.global_import_count()) as u16,
-            ));
+            .get_global_ref(x)
+            .ok_or(ValidationError::GlobalIdxOutOfRange)?;
 
         match reference {
             // This index is one of the WASM defined globals
@@ -549,7 +541,6 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
             }
             Ref::Extern { module, index } => {
                 let module = self.store.modules.get(module.0 as usize).unwrap();
-
                 let global = module.globals.get(index as usize).unwrap();
 
                 Ok(GlobalVariable {
@@ -743,16 +734,34 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
                 stack_start,
                 patch_target,
             }
-            | ControlFrame::If {
-                result,
-                stack_start,
-                patch_target,
-            }
             | ControlFrame::Else {
                 result,
                 stack_start,
                 patch_target,
             } => {
+                let pc = self.pc();
+                self.code.backpatch(patch_target, |code, address, label| {
+                    let patched = label.with_jump(JumpOffset::new(address, pc)?);
+                    code.write_32(address, patched.0)?;
+                    Ok(())
+                })?;
+
+                self.validate_block_result(result, stack_start)?;
+
+                // Clear unreachable flag since we are entering a new control block
+                self.unreachable = false;
+            }
+            ControlFrame::If {
+                result,
+                stack_start,
+                patch_target,
+            } => {
+                // An if without else can only have a result type if the block is unreachable
+                // or if the result type is None
+                if result.0.is_some() && !self.unreachable {
+                    return Err(ValidationError::BlockResultTypeMismatch);
+                }
+
                 let pc = self.pc();
                 self.code.backpatch(patch_target, |code, address, label| {
                     let patched = label.with_jump(JumpOffset::new(address, pc)?);

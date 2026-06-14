@@ -88,6 +88,7 @@ dependencies = [
  "libm",
  "serde",
  "serde_json",
+ "spacewasm",
 ]
 
 [[package]]

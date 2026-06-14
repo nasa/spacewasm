@@ -1,7 +1,7 @@
 use crate::alloc::AllocError;
 use crate::constant::ConstantExprError;
-use crate::ReaderError;
 use crate::SectionKind;
+use crate::{MemoryError, ReaderError};
 
 #[derive(Debug, Clone)]
 pub struct ParseError {
@@ -43,6 +43,7 @@ pub enum ValidationError {
     MalformedVersion,
     MalformedUtf8,
     DuplicateModuleName,
+    DuplicateExportName,
     MalformedSectionId(u8),
     MalformedValueType(u8),
     MalformedFunction(u8),
@@ -61,6 +62,8 @@ pub enum ValidationError {
     VecTooLong,
     IdxTooLarge,
     ModuleIdxTooLarge,
+    MemoryTooLarge,
+    MemoryImportTooLarge,
     MemAlignTooLarge,
     ControlFlowTooDeep,
     StackUnderflow,
@@ -77,6 +80,7 @@ pub enum ValidationError {
     TableNotDefined,
     InvalidElementCount,
     InvalidMemIndex,
+    MemoryNotDefined,
     InvalidMemOffsetType,
     InvalidNegativeMemOffset,
     InvalidMemOffset,
@@ -84,6 +88,7 @@ pub enum ValidationError {
     InvalidElseBlock,
     InvalidEndBlock,
     MultipleMemories,
+    MultipleTables,
     PossibleBackpatchCycle,
     PageFault,
     InstructionOutsideOfFunction,
@@ -94,10 +99,15 @@ pub enum ValidationError {
     GlobalIdxOutOfRange,
     FunctionImportNotFound,
     GlobalImportNotFound,
+    MemoryImportNotFound,
+    TableImportNotFound,
     FunctionImportOutOfRange,
     FunctionImportTypeMismatch,
     GlobalIsNotMutable,
     GlobalImportTypeMismatch,
+    MemoryImportTypeMismatch,
+    TableImportTypeMismatch,
+    TableImportIncompatibleSize,
     FunctionParametersTooLarge,
     FunctionReturnsTooLarge,
     TooManyLocals,
@@ -105,18 +115,22 @@ pub enum ValidationError {
     BrTableHasTooManyCases,
     GlobalTypeMismatch,
     AlignmentLargerThanType,
-    TableImportsNotSupportedYet, // TODO(tumbar) Implement dynamic linking
-    MemoryImportsNotSupportedYet, // TODO(tumbar) Implement implement shared memory
-    FunctionCallsAcrossModuleNotSupportedYet, // TODO(tumbar) Implement module context isolation
-    GlobalsAcrossModuleNotSupportedYet, // TODO(tumbar) Implement module context isolation
+    InvalidStartFunctionSignature,
     InvalidConstantExpr(ConstantExprError),
     AllocError(AllocError),
+    MemoryError(MemoryError),
     ReaderError(ReaderError),
 }
 
 impl From<AllocError> for ValidationError {
     fn from(value: AllocError) -> Self {
         ValidationError::AllocError(value)
+    }
+}
+
+impl From<MemoryError> for ValidationError {
+    fn from(value: MemoryError) -> Self {
+        ValidationError::MemoryError(value)
     }
 }
 

@@ -1,89 +1,178 @@
 use crate::*;
 use core::ops::ControlFlow;
 
-pub struct InterpreterState {
-    pub pc: JumpTarget,
-    pub jumped: bool,
-    pub fp: u32,
-    pub sp: usize,
-    pub stack: Stack,
-    pub ram: Memory,
-}
-
 impl LocalVariable {
     fn addr(&self, fp: u32) -> usize {
         (fp as i32 + self.frame_offset as i32) as usize
     }
 }
 
+#[derive(Debug)]
+pub struct InterpreterState {
+    /// Current program counter
+    pub pc: JumpTarget,
+
+    /// Flag tracking if the current instruction jumps to another PC
+    pub jumped: bool,
+
+    /// Frame pointer. Base address of local variables in the current stack frame
+    pub fp: u32,
+
+    /// Stack pointer
+    pub sp: usize,
+
+    /// The stack
+    pub stack: Stack,
+
+    /// Linear memory from the active module
+    pub memory: Rc<Memory>,
+
+    /// Table from the active module
+    pub table: Rc<[TableElement]>,
+
+    /// Current module we are executing code for
+    pub module: ModuleRef,
+
+    /// The WebAssembly Store
+    pub store: Store,
+
+    /// The interpreter result when finished executing
+    pub result: Option<RawValue>,
+}
+
+struct CallFrame {
+    frame_length: u16,
+    module_delta: u8,
+    parameter_size: u8,
+}
+
+impl CallFrame {
+    pub fn from_bits(bits: u32) -> CallFrame {
+        // SAFETY: We are converting from the serialized form. The sizes are checked at compile time.
+        unsafe { core::mem::transmute(bits) }
+    }
+
+    // SAFETY: We are converting to the serialized form. The sizes are checked at compile time.
+    pub fn to_bits(self) -> u32 {
+        unsafe { core::mem::transmute(self) }
+    }
+}
+
 impl InterpreterState {
-    pub fn new(stack_size: usize, ram: Memory) -> Self {
-        InterpreterState {
+    pub(crate) fn new(store: Store, stack_size: usize) -> Result<InterpreterState, AllocError> {
+        Ok(InterpreterState {
             pc: JumpTarget::SENTINEL,
             sp: 0x0,
             fp: 0x0,
-            stack: Stack::new(stack_size),
-            ram,
+            stack: Stack::new(stack_size)?,
+            memory: store.zero_memory.clone(),
+            table: store.zero_table.clone(),
             jumped: false,
-        }
+            module: ModuleRef(0),
+            store,
+            result: None,
+        })
     }
 
-    /// Before executing code from a module, the global and data must be initialized into
-    /// the state. This function will do the following for module [m]
-    ///
-    /// Assert the stack pointer and frame pointer are zero. This function should be called
-    /// before any function invocation
-    ///
-    /// For each global, g, in [m]:
-    ///    With init constant, c, of g:
-    ///    Write c to the stack
-    ///
-    /// For each data, d, in [m]
-    ///     For d with init data i and offset o:
-    ///     Write i to the RAM at offset o.
-    pub fn initialize(&mut self, m: &Module) -> Result<(), MemoryError> {
-        // Globals must be initialized before any invocation
-        assert_eq!(self.sp, 0);
-        assert_eq!(self.fp, 0);
+    fn call_impl_enter_module(&mut self, f_ref: WasmRef) -> Result<(), InterpreterBreak> {
+        // If we are calling across module we need to swap out the current memory
+        let module_delta = if f_ref.module == self.module {
+            0
+        } else {
+            // Swap to the extern module's context
+            let delta = f_ref.module.0.wrapping_sub(self.module.0);
+            self.module = f_ref.module;
+            self.memory = self.store.get_memory(self.module).clone();
+            self.table = self.store.get_table(self.module).clone();
+            delta
+        };
 
-        for global in &m.globals {
-            match global.type_.ty {
-                ValType::I32 => {
-                    let i = global.init as u32;
-                    self.stack.write_u32(self.sp, i);
+        self.call_impl(module_delta, f_ref.index)
+    }
+
+    /// Call a function within the _current_ module
+    fn call_impl(&mut self, module_delta: u8, index: u16) -> Result<(), InterpreterBreak> {
+        // Make sure we have enough stack space for the function call
+        let m = &self.store.modules[self.module.0 as usize];
+        let f = &m.functions[index as usize];
+        let required_stack_space = f.stack_usage as usize + 2 + f.local_size as usize;
+        if self.stack.len() < self.sp + required_stack_space {
+            return Err(InterpreterBreak::Trap(TrapReason::StackOverflow));
+        }
+
+        // The arguments are already at the top of the stack
+        // We need to push the frame pointer and the return instruction pointer to the stack
+        // We also encode the parameter size into the stack frame so that the return can unwind the stack
+        let frame_length = (self.sp - self.fp as usize) as u32;
+        assert!(frame_length <= 0xFFFFF);
+        let frame = CallFrame {
+            frame_length: frame_length as u16,
+            module_delta,
+            parameter_size: f.parameter_size,
+        };
+
+        self.stack.write_u32(self.sp, frame.to_bits());
+        self.stack.write_u32(self.sp + 1, self.pc.0);
+        self.fp = self.sp as u32;
+
+        // Zero out the local variables
+        for i in 0..(f.local_size as usize) {
+            self.stack.write_u32(self.sp + 2 + i, 0);
+        }
+
+        // Allocate space for frame and the local variables
+        self.sp += 2 + f.local_size as usize;
+
+        // Jump to the function's execution point
+        self.pc = f.expr.0;
+        self.jumped = true;
+
+        Ok(())
+    }
+
+    /// Invoke a function with some parameters.
+    /// This function can only be used to kick off the interpreter.
+    /// It cannot be invoked once the interpreter has started.
+    pub fn invoke(&mut self, f_ref: WasmRef, params: &[Value]) -> Result<(), InterpreterBreak> {
+        // Make sure we are looking at the sentinel program counter
+        // This is only the case when nothing is running
+        assert_eq!(self.pc, JumpTarget::SENTINEL);
+
+        for p in params {
+            // TODO(tumbar) Validate input parameters
+            match p {
+                Value::I32(i) => {
+                    self.stack.write_u32(self.sp, *i as u32);
                     self.sp += 1;
                 }
-                ValType::I64 => {
-                    let i = global.init;
-                    self.stack.write_u64(self.sp, i);
+                Value::I64(i) => {
+                    self.stack.write_u64(self.sp, *i as u64);
                     self.sp += 2;
                 }
-                ValType::F32 => {
-                    let z = f32::from_bits(global.init as u32);
-                    self.stack.write_f32(self.sp, z);
+                Value::F32(z) => {
+                    self.stack.write_f32(self.sp, *z);
                     self.sp += 1;
                 }
-                ValType::F64 => {
-                    let z = f64::from_bits(global.init);
-                    self.stack.write_f64(self.sp, z);
+                Value::F64(z) => {
+                    self.stack.write_f64(self.sp, *z);
                     self.sp += 2;
                 }
             }
         }
 
-        for data in &m.data {
-            self.ram.store(data.offset as usize, &data.init)?;
-        }
+        // Swap to the extern module's context
+        self.module = f_ref.module;
+        self.memory = self.store.get_memory(self.module).clone();
+        self.table = self.store.get_table(self.module).clone();
 
-        self.fp = self.sp as u32;
+        self.call_impl(0, f_ref.index)?;
+        self.jumped = false;
+        self.result = None;
         Ok(())
     }
 }
 
-pub struct Interpreter<'store> {
-    pub store: &'store Store,
-    pub module: &'store Module,
-}
+pub struct Interpreter;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InterpreterResult {
@@ -95,47 +184,7 @@ pub enum InterpreterResult {
     ReaderError(IrReaderError),
 }
 
-impl<'store> Interpreter<'store> {
-    pub fn new(store: &'store Store, module: &'store Module) -> Self {
-        Interpreter { store, module }
-    }
-
-    fn call_impl(&self, f: &Func, state: &mut InterpreterState) -> Result<(), InterpreterBreak> {
-        // Make sure we have enough stack space for the function call
-        let required_stack_space = f.stack_usage as usize + 2 + f.local_size as usize;
-        if state.stack.len() < state.sp + required_stack_space {
-            return Err(InterpreterBreak::Trap(TrapReason::StackOverflow));
-        }
-
-        // The arguments are already at the top of the stack
-        // We need to push the frame pointer and the return instruction pointer to the stack
-        // We also encode the parameter size into the stack frame so that the return can unwind the stack
-        let frame_length = (state.sp - state.fp as usize) as u32;
-        assert!(frame_length <= 0xFFFFF);
-
-        let frame_length = frame_length << 16;
-
-        state
-            .stack
-            .write_u32(state.sp, frame_length | (f.parameter_size as u32));
-        state.stack.write_u32(state.sp + 1, state.pc.0);
-        state.fp = state.sp as u32;
-
-        // Zero out the local variables
-        for i in 0..(f.local_size as usize) {
-            state.stack.write_u32(state.sp + 2 + i, 0);
-        }
-
-        // Allocate space for frame and the local variables
-        state.sp += 2 + f.local_size as usize;
-
-        // Jump to the function's execution point
-        state.pc = f.expr.0;
-        state.jumped = true;
-
-        Ok(())
-    }
-
+impl Interpreter {
     /// This function performs an unconditional branch to a resolved label target.
     ///
     /// Label targets use a relative offset from their location in the IR. The program
@@ -188,42 +237,6 @@ impl<'store> Interpreter<'store> {
         state.jumped = true;
         Ok(())
     }
-
-    /// Invoke a function with some parameters
-    /// Warning! If this is being used as an interrupt rather than an entry point,
-    /// make sure that the function does not return any values as that will cause stack pollution!
-    pub fn invoke(
-        &self,
-        state: &mut InterpreterState,
-        f: &Func,
-        params: &[Value],
-    ) -> Result<(), InterpreterBreak> {
-        for p in params {
-            // TODO(tumbar) Validate input parameters
-            match p {
-                Value::I32(i) => {
-                    state.stack.write_u32(state.sp, *i as u32);
-                    state.sp += 1;
-                }
-                Value::I64(i) => {
-                    state.stack.write_u64(state.sp, *i as u64);
-                    state.sp += 2;
-                }
-                Value::F32(z) => {
-                    state.stack.write_f32(state.sp, *z);
-                    state.sp += 1;
-                }
-                Value::F64(z) => {
-                    state.stack.write_f64(state.sp, *z);
-                    state.sp += 2;
-                }
-            }
-        }
-
-        self.call_impl(f, state)?;
-        state.jumped = false;
-        Ok(())
-    }
 }
 
 /// This is a meta-trait that provides an auto implementation of run() for all IrVisitors
@@ -264,26 +277,20 @@ impl<T: IrVisitor<State = InterpreterState, Error = InterpreterBreak>> Interpret
 
             match i_res {
                 Ok(_) => {}
+                Err(InterpreterBreak::Trap(trap_reason)) => {
+                    // TODO(tumbar) How do we expose a backtrace?
+                    // We trapped, we need to unwind and reset the state
+                    state.sp = 0;
+                    state.pc = JumpTarget::SENTINEL;
+                    state.fp = 0;
+                    state.jumped = false;
+                    return InterpreterResult::Instruction(InterpreterBreak::Trap(trap_reason));
+                }
                 Err(e) => return InterpreterResult::Instruction(e),
             }
         }
 
         InterpreterResult::OutOfFuel
-    }
-}
-
-/// A raw value
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RawValue(pub u64);
-
-impl RawValue {
-    pub fn to_value(self, ty: ValType) -> Value {
-        match ty {
-            ValType::I32 => Value::I32((self.0 as u32) as i32),
-            ValType::I64 => Value::I64(self.0 as i64),
-            ValType::F32 => Value::F32(f32::from_bits(self.0 as u32)),
-            ValType::F64 => Value::F64(f64::from_bits(self.0)),
-        }
     }
 }
 
@@ -293,18 +300,22 @@ pub enum TrapReason {
     Unreachable,
     /// A host function has noted an unrecoverable failure
     Host,
-    ///
+    /// Integer or floating point division by zero
     DivideByZero,
     /// An indirect call tried to map to a table function out of range
     InvalidTableIndex,
     /// The function type in an indirect call does not match the function pointer's type
     InvalidTableFunctionType,
+    /// An indirect call tried to map to a table function out of range
+    UninitializedTableElement,
     /// An imported global could not be read
     GlobalGetFailed,
     /// An imported global could not be set
     GlobalSetFailed,
     /// A memory operation is out of bounds
     OutOfMemory,
+    /// memory.grow failed because a host function has taken ownership of a memory
+    MemoryRefNotUnique,
     /// A memory operation is out of bounds
     MemoryOutOfBounds,
     /// Ran out of stack space
@@ -320,7 +331,7 @@ pub enum TrapReason {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InterpreterBreak {
     /// The program has completed
-    Finished(RawValue),
+    Finished,
     /// The program has been aborted
     Trap(TrapReason),
     /// An instruction or host function has requested the interpreter to pause
@@ -332,6 +343,7 @@ impl From<MemoryError> for InterpreterBreak {
         match e {
             MemoryError::OutOfBounds => InterpreterBreak::Trap(TrapReason::MemoryOutOfBounds),
             MemoryError::OutOfMemory => InterpreterBreak::Trap(TrapReason::OutOfMemory),
+            MemoryError::AllocError(_) => unreachable!(),
         }
     }
 }
@@ -469,7 +481,7 @@ macro_rules! instruction {
     };
 }
 
-impl<'module> BaseVisitor for Interpreter<'module> {
+impl BaseVisitor for Interpreter {
     type Error = InterpreterBreak;
     type State = InterpreterState;
 
@@ -483,14 +495,14 @@ impl<'module> BaseVisitor for Interpreter<'module> {
 
     fn i32_load(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
         let addr = state.stack.read_u32(state.sp - 1) as usize;
-        let val = state.ram.load_u32(addr + m.offset as usize)?;
+        let val = state.memory.load_u32(addr + m.offset as usize)?;
         state.stack.write_u32(state.sp - 1, val);
         Ok(())
     }
 
     fn i64_load(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
         let addr = state.stack.read_u32(state.sp - 1) as usize;
-        let val = state.ram.load_u64(addr + m.offset as usize)?;
+        let val = state.memory.load_u64(addr + m.offset as usize)?;
         state.stack.write_u64(state.sp - 1, val);
         state.sp += 1;
         Ok(())
@@ -498,14 +510,14 @@ impl<'module> BaseVisitor for Interpreter<'module> {
 
     fn f32_load(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
         let addr = state.stack.read_u32(state.sp - 1) as usize;
-        let val = state.ram.load_u32(addr + m.offset as usize)?;
+        let val = state.memory.load_u32(addr + m.offset as usize)?;
         state.stack.write_u32(state.sp - 1, val);
         Ok(())
     }
 
     fn f64_load(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
         let addr = state.stack.read_u32(state.sp - 1) as usize;
-        let val = state.ram.load_u64(addr + m.offset as usize)?;
+        let val = state.memory.load_u64(addr + m.offset as usize)?;
         state.stack.write_u64(state.sp - 1, val);
         state.sp += 1;
         Ok(())
@@ -513,35 +525,35 @@ impl<'module> BaseVisitor for Interpreter<'module> {
 
     fn i32_load8_s(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
         let addr = state.stack.read_u32(state.sp - 1) as usize;
-        let val = state.ram.load_u8(addr + m.offset as usize)? as i8 as i32;
+        let val = state.memory.load_u8(addr + m.offset as usize)? as i8 as i32;
         state.stack.write_u32(state.sp - 1, val as u32);
         Ok(())
     }
 
     fn i32_load8_u(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
         let addr = state.stack.read_u32(state.sp - 1) as usize;
-        let val = state.ram.load_u8(addr + m.offset as usize)? as u32;
+        let val = state.memory.load_u8(addr + m.offset as usize)? as u32;
         state.stack.write_u32(state.sp - 1, val);
         Ok(())
     }
 
     fn i32_load16_s(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
         let addr = state.stack.read_u32(state.sp - 1) as usize;
-        let val = state.ram.load_u16(addr + m.offset as usize)? as i16 as i32;
+        let val = state.memory.load_u16(addr + m.offset as usize)? as i16 as i32;
         state.stack.write_u32(state.sp - 1, val as u32);
         Ok(())
     }
 
     fn i32_load16_u(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
         let addr = state.stack.read_u32(state.sp - 1) as usize;
-        let val = state.ram.load_u16(addr + m.offset as usize)? as u32;
+        let val = state.memory.load_u16(addr + m.offset as usize)? as u32;
         state.stack.write_u32(state.sp - 1, val);
         Ok(())
     }
 
     fn i64_load8_s(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
         let addr = state.stack.read_u32(state.sp - 1) as usize;
-        let val = state.ram.load_u8(addr + m.offset as usize)? as i8 as i64 as u64;
+        let val = state.memory.load_u8(addr + m.offset as usize)? as i8 as i64 as u64;
         state.stack.write_u64(state.sp - 1, val);
         state.sp += 1;
         Ok(())
@@ -549,7 +561,7 @@ impl<'module> BaseVisitor for Interpreter<'module> {
 
     fn i64_load8_u(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
         let addr = state.stack.read_u32(state.sp - 1) as usize;
-        let val = state.ram.load_u8(addr + m.offset as usize)? as u64;
+        let val = state.memory.load_u8(addr + m.offset as usize)? as u64;
         state.stack.write_u64(state.sp - 1, val);
         state.sp += 1;
         Ok(())
@@ -557,7 +569,7 @@ impl<'module> BaseVisitor for Interpreter<'module> {
 
     fn i64_load16_s(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
         let addr = state.stack.read_u32(state.sp - 1) as usize;
-        let val = state.ram.load_u16(addr + m.offset as usize)? as i16 as i64 as u64;
+        let val = state.memory.load_u16(addr + m.offset as usize)? as i16 as i64 as u64;
         state.stack.write_u64(state.sp - 1, val);
         state.sp += 1;
         Ok(())
@@ -565,7 +577,7 @@ impl<'module> BaseVisitor for Interpreter<'module> {
 
     fn i64_load16_u(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
         let addr = state.stack.read_u32(state.sp - 1) as usize;
-        let val = state.ram.load_u16(addr + m.offset as usize)? as u64;
+        let val = state.memory.load_u16(addr + m.offset as usize)? as u64;
         state.stack.write_u64(state.sp - 1, val);
         state.sp += 1;
         Ok(())
@@ -573,7 +585,7 @@ impl<'module> BaseVisitor for Interpreter<'module> {
 
     fn i64_load32_s(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
         let addr = state.stack.read_u32(state.sp - 1) as usize;
-        let val = state.ram.load_u32(addr + m.offset as usize)? as i32 as i64 as u64;
+        let val = state.memory.load_u32(addr + m.offset as usize)? as i32 as i64 as u64;
         state.stack.write_u64(state.sp - 1, val);
         state.sp += 1;
         Ok(())
@@ -581,7 +593,7 @@ impl<'module> BaseVisitor for Interpreter<'module> {
 
     fn i64_load32_u(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
         let addr = state.stack.read_u32(state.sp - 1) as usize;
-        let val = state.ram.load_u32(addr + m.offset as usize)? as u64;
+        let val = state.memory.load_u32(addr + m.offset as usize)? as u64;
         state.stack.write_u64(state.sp - 1, val);
         state.sp += 1;
         Ok(())
@@ -591,7 +603,7 @@ impl<'module> BaseVisitor for Interpreter<'module> {
         state.sp -= 2;
         let val = state.stack.read_u32(state.sp + 1);
         let addr = state.stack.read_u32(state.sp) as usize;
-        state.ram.store_u32(addr + m.offset as usize, val)?;
+        state.memory.store_u32(addr + m.offset as usize, val)?;
         Ok(())
     }
 
@@ -599,7 +611,7 @@ impl<'module> BaseVisitor for Interpreter<'module> {
         state.sp -= 3;
         let val = state.stack.read_u64(state.sp + 1);
         let addr = state.stack.read_u32(state.sp) as usize;
-        state.ram.store_u64(addr + m.offset as usize, val)?;
+        state.memory.store_u64(addr + m.offset as usize, val)?;
         Ok(())
     }
 
@@ -607,7 +619,7 @@ impl<'module> BaseVisitor for Interpreter<'module> {
         state.sp -= 2;
         let val = state.stack.read_u32(state.sp + 1);
         let addr = state.stack.read_u32(state.sp) as usize;
-        state.ram.store_u32(addr + m.offset as usize, val)?;
+        state.memory.store_u32(addr + m.offset as usize, val)?;
         Ok(())
     }
 
@@ -615,7 +627,7 @@ impl<'module> BaseVisitor for Interpreter<'module> {
         state.sp -= 3;
         let val = state.stack.read_u64(state.sp + 1);
         let addr = state.stack.read_u32(state.sp) as usize;
-        state.ram.store_u64(addr + m.offset as usize, val)?;
+        state.memory.store_u64(addr + m.offset as usize, val)?;
         Ok(())
     }
 
@@ -623,7 +635,7 @@ impl<'module> BaseVisitor for Interpreter<'module> {
         state.sp -= 2;
         let val = state.stack.read_u32(state.sp + 1) as u8;
         let addr = state.stack.read_u32(state.sp) as usize;
-        state.ram.store_u8(addr + m.offset as usize, val)?;
+        state.memory.store_u8(addr + m.offset as usize, val)?;
         Ok(())
     }
 
@@ -631,7 +643,7 @@ impl<'module> BaseVisitor for Interpreter<'module> {
         state.sp -= 2;
         let val = state.stack.read_u32(state.sp + 1) as u16;
         let addr = state.stack.read_u32(state.sp) as usize;
-        state.ram.store_u16(addr + m.offset as usize, val)?;
+        state.memory.store_u16(addr + m.offset as usize, val)?;
         Ok(())
     }
 
@@ -639,7 +651,7 @@ impl<'module> BaseVisitor for Interpreter<'module> {
         state.sp -= 3;
         let val = state.stack.read_u64(state.sp + 1) as u8;
         let addr = state.stack.read_u32(state.sp) as usize;
-        state.ram.store_u8(addr + m.offset as usize, val)?;
+        state.memory.store_u8(addr + m.offset as usize, val)?;
         Ok(())
     }
 
@@ -647,7 +659,7 @@ impl<'module> BaseVisitor for Interpreter<'module> {
         state.sp -= 3;
         let val = state.stack.read_u64(state.sp + 1) as u16;
         let addr = state.stack.read_u32(state.sp) as usize;
-        state.ram.store_u16(addr + m.offset as usize, val)?;
+        state.memory.store_u16(addr + m.offset as usize, val)?;
         Ok(())
     }
 
@@ -655,19 +667,48 @@ impl<'module> BaseVisitor for Interpreter<'module> {
         state.sp -= 3;
         let val = state.stack.read_u64(state.sp + 1) as u32;
         let addr = state.stack.read_u32(state.sp) as usize;
-        state.ram.store_u32(addr + m.offset as usize, val)?;
+        state.memory.store_u32(addr + m.offset as usize, val)?;
         Ok(())
     }
 
     fn memory_size(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        state.stack.write_u32(state.sp, state.ram.size());
+        state.stack.write_u32(state.sp, state.memory.size());
         state.sp += 1;
         Ok(())
     }
 
     fn memory_grow(&self, state: &mut Self::State) -> Result<(), Self::Error> {
         let n = state.stack.read_u32(state.sp - 1);
-        match state.ram.grow(n) {
+
+        // To grow memory we need to mutate the inside of the Rc<Memory>
+        // This means we need unique access to it
+        // Theoretically there should only be two references to this memory:
+        // 1. In the owning module/host module
+        // 2. In the interpreter state
+
+        // We need to drop the reference from the interpreter state and then try to
+        // get mutable unqiue access to the Memory. If there is anything else holding
+        // on to the reference (i.e. a host module took a pointer, we will not be
+        // able to grow the memory)
+
+        // Drop the memory reference
+        state.memory = state.store.zero_memory.clone();
+
+        // Look up what _should_ be the final unique reference to this memory
+        let memory = state.store.get_memory_mut(state.module);
+        let result: Result<u32, MemoryError> = if memory.is_zero() {
+            Err(MemoryError::OutOfMemory)
+        } else if let Some(memory) = memory.get_mut() {
+            memory.grow(n)
+        } else {
+            // This is probably caused by a host function holding onto a memory reference
+            // We could panic here... I'd rather just error gracefully.
+            return Err(InterpreterBreak::Trap(TrapReason::MemoryRefNotUnique));
+        };
+
+        state.memory = memory.clone();
+
+        match result {
             Ok(old_size) => {
                 state.stack.write_u32(state.sp - 1, old_size);
             }
@@ -1177,7 +1218,7 @@ impl<'module> BaseVisitor for Interpreter<'module> {
     }
 }
 
-impl<'module> IrVisitor for Interpreter<'module> {
+impl IrVisitor for Interpreter {
     fn drop(&self, ty: ValType, state: &mut Self::State) -> Result<(), Self::Error> {
         state.sp -= match ty {
             ValType::I32 | ValType::F32 => 1,
@@ -1274,12 +1315,9 @@ impl<'module> IrVisitor for Interpreter<'module> {
         let return_pc = JumpTarget(state.stack.read_u32(state.fp as usize + 1));
 
         // The frame pointer on the stack actually encodes ((sp - fp) << 16) | prm_size
-        let frame_length_and_prm_size = state.stack.read_u32(state.fp as usize);
-        let frame_length = (frame_length_and_prm_size >> 16) as u16;
-        let parameter_size = (frame_length_and_prm_size as u16) as usize;
-        let return_fp = (fp as u32) - (frame_length as u32);
-
-        let parameter_start = fp - parameter_size;
+        let call_frame = CallFrame::from_bits(state.stack.read_u32(state.fp as usize));
+        let return_fp = (fp as u32) - (call_frame.frame_length as u32);
+        let parameter_start = fp - (call_frame.parameter_size as usize);
 
         // Copy the return value over the parameters/frame information
         for i in 0..return_size {
@@ -1289,19 +1327,29 @@ impl<'module> IrVisitor for Interpreter<'module> {
 
         state.fp = return_fp;
 
+        // Check if we are leaving the context of this module
+        if call_frame.module_delta != 0 {
+            // Restore the old module context outside this frame
+            let restore_module = state.module.0.wrapping_sub(call_frame.module_delta);
+            state.module = ModuleRef(restore_module);
+            state.memory = state.store.get_memory(state.module).clone();
+            state.table = state.store.get_table(state.module).clone();
+        }
+
         if return_pc == JumpTarget::SENTINEL {
             state.sp = parameter_start;
             state.pc = JumpTarget::SENTINEL;
             state.jumped = true;
             let return_value = match return_size {
-                0 => RawValue(0),
-                1 => RawValue(state.stack.read_u32(state.sp) as u64),
-                2 => RawValue(state.stack.read_u64(state.sp)),
+                0 => RawValue::from_64(0),
+                1 => RawValue::from_32(state.stack.read_u32(state.sp)),
+                2 => RawValue::from_64(state.stack.read_u64(state.sp)),
                 // TODO(tumbar) We need to verify that the entrypoint function does not return anything unexpected
                 _ => unreachable!(),
             };
 
-            Err(InterpreterBreak::Finished(return_value))
+            state.result = Some(return_value);
+            Err(InterpreterBreak::Finished)
         } else {
             state.sp = parameter_start + return_size;
             state.pc = return_pc + 2; // +2 to skip over the call or call_indirect
@@ -1311,8 +1359,7 @@ impl<'module> IrVisitor for Interpreter<'module> {
     }
 
     fn call(&self, x: u16, state: &mut Self::State) -> Result<(), Self::Error> {
-        let f = &self.module.functions[x as usize];
-        self.call_impl(f, state)
+        state.call_impl(0, x)
     }
 
     fn call_host(
@@ -1321,7 +1368,7 @@ impl<'module> IrVisitor for Interpreter<'module> {
         x: u16,
         state: &mut Self::State,
     ) -> Result<(), Self::Error> {
-        let m = &self.store.host_modules[module.0 as usize];
+        let m = &state.store.host_modules[module.0 as usize];
         let f = &m.functions[x as usize];
 
         let mut sv: StaticVec<Value, 8> = StaticVec::new();
@@ -1381,45 +1428,59 @@ impl<'module> IrVisitor for Interpreter<'module> {
         }
     }
 
+    fn call_extern(
+        &self,
+        module_ref: ModuleRef,
+        x: u16,
+        state: &mut Self::State,
+    ) -> Result<(), Self::Error> {
+        state.call_impl_enter_module(WasmRef {
+            module: module_ref,
+            index: x,
+        })
+    }
+
     fn call_indirect(&self, x: TypeIdx, state: &mut Self::State) -> Result<(), Self::Error> {
         // Pop the table pointer off the stack
         state.sp -= 1;
         let i = state.stack.read_u32(state.sp) as usize;
-        let f_expected = &self.module.types[x.0 as usize];
-
-        if i >= self.module.table.len() {
-            return Err(InterpreterBreak::Trap(TrapReason::InvalidTableIndex));
-        }
+        let m = &state.store.modules[state.module.0 as usize];
+        let f_expected = &m.types[x.0 as usize];
 
         // Look up the internal or host function
-        let f_ref = self.module.table[i];
-        match f_ref {
-            Ref::Module(fi) => {
-                let f = &self.module.functions[fi as usize];
+        match state.table.get(i) {
+            None => Err(InterpreterBreak::Trap(TrapReason::InvalidTableIndex)),
+            Some(TableElement::Func { module, index }) => {
+                let m = &state.store.modules[module.0 as usize];
+                let f = &m.functions[*index as usize];
 
                 // Validate the function is the proper type
                 // This asserts that it's safe to call the function with the current stack
-                let f_actual = &self.module.types[f.ty.0 as usize];
+                let f_actual = &m.types[f.ty.0 as usize];
 
                 if f_actual.params != f_expected.params || f_actual.returns != f_expected.returns {
                     return Err(InterpreterBreak::Trap(TrapReason::InvalidTableFunctionType));
                 }
 
                 // Call the function
-                self.call_impl(f, state)
+                state.call_impl_enter_module(WasmRef {
+                    module: *module,
+                    index: *index,
+                })
             }
-            Ref::Host { module, index } => {
+            Some(TableElement::Host { module, index }) => {
                 // Make sure the type matches our expectations (runtime validation)
-                let m = &self.store.host_modules[module.0 as usize];
-                let f = &m.functions[index as usize];
+                let m = &state.store.host_modules[module.0 as usize];
+                let f = &m.functions[*index as usize];
                 if f.params() != f_expected.params[..] || f.returns() != f_expected.returns[..] {
                     return Err(InterpreterBreak::Trap(TrapReason::InvalidTableFunctionType));
                 }
 
-                self.call_host(module, i as u16, state)
+                self.call_host(*module, i as u16, state)
             }
-            // TODO(tumbar) This is currently disallowed at compile time
-            Ref::Extern { .. } => unreachable!(),
+            Some(TableElement::Uninitialized) => Err(InterpreterBreak::Trap(
+                TrapReason::UninitializedTableElement,
+            )),
         }
     }
 
@@ -1482,16 +1543,17 @@ impl<'module> IrVisitor for Interpreter<'module> {
     }
 
     fn global_get(&self, idx: u16, state: &mut Self::State) -> Result<(), Self::Error> {
-        let g = &self.module.globals[idx as usize];
+        let m = &state.store.modules[state.module.0 as usize];
+        let g = &m.globals[idx as usize];
 
         match g.type_.ty {
             ValType::I32 | ValType::F32 => {
-                let val = state.stack.read_u32(g.addr as usize);
+                let val = g.value.read_32();
                 state.stack.write_u32(state.sp, val);
                 state.sp += 1;
             }
             ValType::I64 | ValType::F64 => {
-                let val = state.stack.read_u64(g.addr as usize);
+                let val = g.value.read_64();
                 state.stack.write_u64(state.sp, val);
                 state.sp += 2;
             }
@@ -1506,7 +1568,7 @@ impl<'module> IrVisitor for Interpreter<'module> {
         index: u16,
         state: &mut Self::State,
     ) -> Result<(), Self::Error> {
-        let m = &self.store.host_modules[module.0 as usize];
+        let m = &state.store.host_modules[module.0 as usize];
         match m.globals[index as usize]
             .value
             .read()
@@ -1534,17 +1596,18 @@ impl<'module> IrVisitor for Interpreter<'module> {
     }
 
     fn global_set(&self, idx: u16, state: &mut Self::State) -> Result<(), Self::Error> {
-        let g = &self.module.globals[idx as usize];
+        let m = &mut state.store.modules[state.module.0 as usize];
+        let g = &mut m.globals[idx as usize];
         match g.type_.ty {
             ValType::I32 | ValType::F32 => {
                 state.sp -= 1;
                 let val = state.stack.read_u32(state.sp);
-                state.stack.write_u32(g.addr as usize, val);
+                g.value.write_32(val);
             }
             ValType::I64 | ValType::F64 => {
                 state.sp -= 2;
                 let val = state.stack.read_u64(state.sp);
-                state.stack.write_u64(g.addr as usize, val);
+                g.value.write_64(val);
             }
         }
 
@@ -1557,7 +1620,7 @@ impl<'module> IrVisitor for Interpreter<'module> {
         index: u16,
         state: &mut Self::State,
     ) -> Result<(), Self::Error> {
-        let m = &self.store.host_modules[module.0 as usize];
+        let m = &state.store.host_modules[module.0 as usize];
         let g = &m.globals[index as usize];
         match g.value.ty() {
             ValType::I32 => {
@@ -1582,6 +1645,32 @@ impl<'module> IrVisitor for Interpreter<'module> {
             }
         }
         .or(Err(InterpreterBreak::Trap(TrapReason::GlobalSetFailed)))
+    }
+
+    fn global_get_extern(
+        &self,
+        module: ModuleRef,
+        index: u16,
+        state: &mut Self::State,
+    ) -> Result<(), Self::Error> {
+        let current = state.module;
+        state.module = module;
+        let res = self.global_get(index, state);
+        state.module = current;
+        res
+    }
+
+    fn global_set_extern(
+        &self,
+        module: ModuleRef,
+        index: u16,
+        state: &mut Self::State,
+    ) -> Result<(), Self::Error> {
+        let current = state.module;
+        state.module = module;
+        let res = self.global_set(index, state);
+        state.module = current;
+        res
     }
 }
 

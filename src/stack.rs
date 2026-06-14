@@ -1,22 +1,28 @@
-use crate::{Allocator, GlobalAllocator};
+use crate::{AllocError, Allocator, GlobalAllocator};
 use core::alloc::Layout;
+use core::fmt::Debug;
 
 pub struct Stack {
     ptr: *mut u32,
     size: usize,
 }
 
+impl Debug for Stack {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("Stack").finish()
+    }
+}
+
 impl Stack {
-    pub fn new(size: usize) -> Self {
-        Stack {
+    pub fn new(size: usize) -> Result<Self, AllocError> {
+        Ok(Stack {
             ptr: unsafe {
                 GlobalAllocator
-                    .alloc(Layout::from_size_align(size * 4, 4).unwrap())
-                    .unwrap()
+                    .alloc(Layout::from_size_align(size * 4, 4).unwrap())?
                     .cast()
             },
             size,
-        }
+        })
     }
 
     pub(crate) fn len(&self) -> usize {

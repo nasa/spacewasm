@@ -1,8 +1,9 @@
 use spacewasm::{
-    CompilerOptions, ExportDesc, Ref, HostFunction, HostModule, InterpreterBreak,
-    InterpreterResult, InterpreterRunner, Memory, Store, Value,
+    CodeBuilder, CompilerOptions, ExportDesc, HostFunction, HostModule, InitializeResult,
+    InterpreterBreak, InterpreterResult, InterpreterRunner, ModuleRef, RawValue, Ref, StoreLinker,
+    Value, WasmRef,
 };
-use spacewasm_util::FileStream;
+use spacewasm_util::{FileStream, RustSystemAllocator};
 use std::ops::ControlFlow;
 use std::time::Instant;
 
@@ -36,32 +37,37 @@ fn main() {
                 ControlFlow::Continue(Some(Value::I64(ms)))
             },
         )],
+        memory: spacewasm::Vec::zero(),
+        table: spacewasm::Vec::zero(),
     };
 
-    let mut store = Store::new(2, [env]).unwrap();
+    let mut store = StoreLinker::new(2, [env]).unwrap();
+    let mut code_builder = CodeBuilder::<256>::default();
 
     let file = std::fs::File::open("benches/coremark-minimal.wasm")
         .expect("failed to open coremark-minimal.wasm");
     let module = spacewasm::Module::new::<256>(
         "coremark",
         &mut FileStream::new(file),
-        &store,
+        &mut store,
+        &mut code_builder,
+        &RustSystemAllocator,
         CompilerOptions::default(),
     )
     .expect("failed to parse wasm module");
 
     store.modules.push(spacewasm::Box::new(module).unwrap());
-    let module = store.modules.last().unwrap();
+    let (text, _final_page_offset) = code_builder.finish().unwrap();
+    let mut store = store.allocate(1024).unwrap();
 
-    let heap_size = if let Some(spacewasm::MemType(spacewasm::Limit { min })) = module.memory {
-        min
-    } else {
-        0
-    } * 65536;
+    let mut state = loop {
+        store = match store.initialize(&text, usize::MAX).unwrap() {
+            InitializeResult::Finished(s) => break s,
+            InitializeResult::Continue(c) => c,
+        }
+    };
 
-    let mut state = spacewasm::InterpreterState::new(1024, Memory::new(heap_size as usize));
-    state.initialize(&module).unwrap();
-
+    let module = state.store.modules.last().unwrap();
     let export = module
         .exports
         .iter()
@@ -72,26 +78,23 @@ fn main() {
             let Ref::Module(fdi) = module.get_func_ref(fi).unwrap() else {
                 panic!("invalid function ref")
             };
-            module.functions.get(fdi as usize).unwrap()
+            WasmRef {
+                module: ModuleRef(0),
+                index: fdi,
+            }
         }
         _ => panic!("run export is not a function"),
     };
 
-    let interpreter = spacewasm::Interpreter::new(&store, &module);
-
-    let f_ty = &module.types[func.ty.0 as usize];
-    eprintln!(
-        "Running CoreMark run() => ({:?}) -> {:?}\n",
-        f_ty.params, f_ty.returns
-    );
-    interpreter.invoke(&mut state, func, &[]).unwrap();
+    state.invoke(func, &[]).unwrap();
 
     let bench_start = Instant::now();
 
     eprintln!("Starting execution...");
+    let interpreter = spacewasm::Interpreter;
     let mut result = InterpreterResult::OutOfFuel;
     while result == InterpreterResult::OutOfFuel {
-        result = interpreter.run(&module.text, &mut state, usize::MAX)
+        result = interpreter.run(&text, &mut state, usize::MAX)
     }
     let elapsed = bench_start.elapsed();
 
@@ -108,9 +111,9 @@ fn main() {
     // "Call f32 run() function. It should take 12..20 seconds to execute and return a CoreMark result."
     // "if res > 1: print(f'Result: {res:.3f}') else: print('Error')"
     match result {
-        InterpreterResult::Instruction(InterpreterBreak::Finished(raw_value)) => {
+        InterpreterResult::Instruction(InterpreterBreak::Finished) => {
             // The run function returns f32, so interpret the bits as float
-            let coremark_score = f32::from_bits(raw_value.0 as u32);
+            let coremark_score = state.result.unwrap_or(RawValue::from_32(0)).read_f32();
 
             println!("Execution time: {:.3}s", elapsed.as_secs_f64());
             println!("Return value: {:.3}", coremark_score);

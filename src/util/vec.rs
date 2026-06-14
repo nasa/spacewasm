@@ -13,6 +13,16 @@ pub struct Vec<T: Sized, A: Allocator = GlobalAllocator> {
     alloc: A,
 }
 
+impl<T> Vec<T, GlobalAllocator> {
+    pub fn from_iter(iter: impl ExactSizeIterator<Item = T>) -> Self {
+        let mut o = Self::new(iter.len() as u32).unwrap();
+        for i in iter {
+            o.push(i);
+        }
+        o
+    }
+}
+
 #[macro_export]
 macro_rules! vec {
     () => (
@@ -34,6 +44,12 @@ macro_rules! vec {
     );
 }
 
+impl<T> Default for Vec<T> {
+    fn default() -> Self {
+        Vec::<T>::zero()
+    }
+}
+
 impl<A: Allocator, T: core::fmt::Debug> core::fmt::Debug for Vec<T, A> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         self.inner.fmt(f)
@@ -42,13 +58,20 @@ impl<A: Allocator, T: core::fmt::Debug> core::fmt::Debug for Vec<T, A> {
 
 impl<T: Clone, A: Allocator + Clone> Clone for Vec<T, A> {
     fn clone(&self) -> Self {
-        let mut n = Vec::new_in(self.alloc.clone(), self.inner.capacity).unwrap();
-        n.inner.len = self.inner.len;
-        n.inner.capacity = self.inner.capacity;
+        let mut n: Vec<T, A> = Vec::new_in(self.alloc.clone(), self.inner.capacity).unwrap();
 
         if self.len() > 0 {
-            n[0..self.len()].clone_from_slice(self);
+            // SAFETY: We need to write to uninitialized memory without creating a reference to it.
+            // Use ptr::write to initialize each element.
+            unsafe {
+                for i in 0..self.len() {
+                    core::ptr::write(n.inner.ptr.add(i), self[i].clone());
+                }
+            }
         }
+
+        // Only set len after initializing the memory
+        n.inner.len = self.inner.len;
 
         n
     }
@@ -145,12 +168,46 @@ impl<T: Sized, A: Allocator> Vec<T, A> {
         self.inner.capacity()
     }
 
-    /// Push a new item to the vector
-    /// If the capacity is exceeded, this will panic
+    /// Appends an element to the back of a collection.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the new length exceeds the capacity.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let mut vec = vec![1, 2];
+    /// vec.push(3);
+    /// assert_eq!(vec, [1, 2, 3]);
+    /// ```
+    ///
+    /// # Time complexity
+    ///
+    /// Takes *O*(1) time.
     pub fn push(&mut self, value: T) {
         self.inner.push(value)
     }
 
+    /// Removes the last element from a vector and returns it, or [`None`] if it
+    /// is empty.
+    ///
+    /// If you'd like to pop the first element, consider using
+    /// [`VecDeque::pop_front`] instead.
+    ///
+    /// [`VecDeque::pop_front`]: crate::collections::VecDeque::pop_front
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let mut vec = vec![1, 2, 3];
+    /// assert_eq!(vec.pop(), Some(3));
+    /// assert_eq!(vec, [1, 2]);
+    /// ```
+    ///
+    /// # Time complexity
+    ///
+    /// Takes *O*(1) time.
     pub fn pop(&mut self) -> Option<T> {
         self.inner.pop()
     }
@@ -205,11 +262,7 @@ impl<T: Sized, A: Allocator> Drop for Vec<T, A> {
             unsafe {
                 self.alloc.dealloc(
                     self.inner.ptr as *mut u8,
-                    Layout::from_size_align(
-                        size_of::<T>() * self.inner.capacity as usize,
-                        align_of::<T>(),
-                    )
-                    .unwrap(),
+                    Layout::array::<T>(self.inner.capacity as usize).unwrap(),
                 );
             }
         }

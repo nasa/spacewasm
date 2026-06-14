@@ -11,6 +11,12 @@ pub const BR_IF: u8 = 0x0D;
 pub const BR_TABLE: u8 = 0x0E;
 pub const RETURN: u8 = 0x0F;
 pub const CALL: u8 = 0x10;
+
+// IR Start
+pub const CALL_HOST: u8 = 0x12;
+pub const CALL_EXTERN: u8 = 0x13;
+// IR End
+
 pub const DROP: u8 = 0x1A;
 pub const SELECT: u8 = 0x1B;
 pub const CALL_INDIRECT: u8 = 0x11;
@@ -23,8 +29,8 @@ pub const GLOBAL_SET: u8 = 0x24;
 // IR start
 pub const GLOBAL_GET_HOST: u8 = 0x25;
 pub const GLOBAL_SET_HOST: u8 = 0x26;
-pub const GLOBAL_GET_EXTERNAL: u8 = 0x27;
-pub const GLOBAL_SET_EXTERNAL: u8 = 0x1C;
+pub const GLOBAL_GET_EXTERN: u8 = 0x27;
+pub const GLOBAL_SET_EXTERN: u8 = 0x1C;
 // IR end
 
 pub const I32_LOAD: u8 = 0x28;

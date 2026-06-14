@@ -61,6 +61,7 @@ macro_rules! instruction {
     // An instruction with a MemArg operand
     ($name:ident, $opcode:expr, mem, $ty_align:tt, ($($in_ty:ident)*) -> ($($out_ty:ident)*)) => {
         fn $name(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
+            state.module().check_memory_defined()?;
             validate!(state, ($($in_ty)*) -> ($($out_ty)*));
             if m.align > alignment!($ty_align) {
                 return Err(ValidationError::AlignmentLargerThanType);
@@ -184,8 +185,8 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
         match f_ref {
             Ref::Module(index) => {
                 // Check the call signature
-                let f = state.module().functions.get(index as usize).unwrap();
-                let ty = state.module().types.get(f.ty.0 as usize).unwrap();
+                let f = &state.module().functions[index as usize];
+                let ty = &state.module().types[f.ty.0 as usize];
 
                 for p in ty.params.iter().rev() {
                     state.pop_stack(*p)?;
@@ -200,42 +201,43 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
                 Ok(())
             }
             Ref::Host { module, index } => {
-                if module.0 >= 0x80 {
-                    return Err(ValidationError::ModuleIdxTooLarge);
-                }
-
-                let hm = state.store().host_modules.get(module.0 as usize).unwrap();
-                let f = hm.functions.get(index as usize).unwrap();
-                for p in f.params().iter() {
+                let hm = &state.store().host_modules[module.0 as usize];
+                let f = &hm.functions[index as usize];
+                for p in f.params().iter().rev() {
                     state.pop_stack(p)?;
                 }
 
-                for r in f.returns().iter() {
+                for r in f.returns().iter().rev() {
                     state.push_stack(r)?;
                 }
 
-                state.instr_imm_8(CALL, 0x80 | module.0)?;
+                state.instr_imm_8(CALL_HOST, module.0)?;
                 state.write_16(index)?;
                 Ok(())
             }
             Ref::Extern { module, index } => {
-                if module.0 >= 0x80 {
-                    return Err(ValidationError::ModuleIdxTooLarge);
+                // Check the call signature
+                let m = &state.store().modules[module.0 as usize];
+                let f = &m.functions[index as usize];
+                let ty = &m.types[f.ty.0 as usize];
+
+                for p in ty.params.iter().rev() {
+                    state.pop_stack(*p)?;
                 }
 
-                state.instr_imm_8(CALL, module.0)?;
-                state.write_16(index)?;
+                for r in ty.returns.iter().rev() {
+                    state.push_stack(*r)?;
+                }
 
-                // TODO(tumbar) We do not yet support calling WASM functions across modules
-                //              This would require isolation of memory and instruction (and stack?)
-                //              space.
-                Err(ValidationError::FunctionCallsAcrossModuleNotSupportedYet)
+                state.instr_imm_8(CALL_EXTERN, module.0)?;
+                state.write_16(index)?;
+                Ok(())
             }
         }
     }
 
     fn call_indirect(&self, x: TypeIdx, state: &mut Self::State) -> Result<(), Self::Error> {
-        if !state.module().table_defined {
+        if state.module().table.is_none() {
             return Err(ValidationError::TableNotDefined);
         }
 
@@ -293,9 +295,9 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
                 Ok(())
             }
             Ref::Extern { module, index } => {
-                state.instr_imm_8(GLOBAL_GET_EXTERNAL, module.0)?;
+                state.instr_imm_8(GLOBAL_GET_EXTERN, module.0)?;
                 state.write_16(index)?;
-                Err(ValidationError::GlobalsAcrossModuleNotSupportedYet)
+                Ok(())
             }
             Ref::Host { module, index } => {
                 state.instr_imm_8(GLOBAL_GET_HOST, module.0)?;
@@ -317,9 +319,9 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
                     Ok(())
                 }
                 Ref::Extern { module, index } => {
-                    state.instr_imm_8(GLOBAL_SET_EXTERNAL, module.0)?;
+                    state.instr_imm_8(GLOBAL_SET_EXTERN, module.0)?;
                     state.write_16(index)?;
-                    Err(ValidationError::GlobalsAcrossModuleNotSupportedYet)
+                    Ok(())
                 }
                 Ref::Host { module, index } => {
                     state.instr_imm_8(GLOBAL_SET_HOST, module.0)?;
@@ -392,9 +394,15 @@ impl<'a, const N: usize> BaseVisitor for Compiler<'a, N> {
     instruction!(i64_store16, I64_STORE16, mem, 16, (I64 I32) -> ());
     instruction!(i64_store32, I64_STORE32, mem, 32, (I64 I32) -> ());
 
-    instruction!(memory_size, MEMORY_SIZE, () -> (I32));
+    fn memory_size(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        state.module().check_memory_defined()?;
+        validate!(state, () -> (I32));
+        state.instr(MEMORY_SIZE)?;
+        Ok(())
+    }
 
     fn memory_grow(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        state.module().check_memory_defined()?;
         validate!(state, (I32) -> (I32));
         if self.options.allow_memory_grow {
             state.instr(MEMORY_GROW)?;

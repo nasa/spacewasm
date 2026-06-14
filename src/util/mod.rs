@@ -19,11 +19,11 @@ pub use inner_vec::*;
 mod vec;
 pub use vec::*;
 
+mod rc;
+pub use rc::*;
+
 mod static_vec;
 pub(crate) use static_vec::*;
 
 mod string;
 pub(crate) use string::*;
-
-// mod binary_tree;
-// pub(crate) use binary_tree::*;

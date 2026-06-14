@@ -1,7 +1,7 @@
 use crate::constant::ConstantCompiler;
 use crate::*;
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Expr(pub JumpTarget);
 
 impl Expr {
@@ -9,7 +9,11 @@ impl Expr {
         Expr(JumpTarget(0))
     }
 
-    pub fn read_constant(wasm: &mut Reader, store: &Store, module: &Module) -> Result<Value, ValidationError> {
+    pub fn read_constant(
+        wasm: &mut Reader,
+        store: &StoreLinker,
+        module: &Module,
+    ) -> Result<Value, ValidationError> {
         let mut value: Option<Value> = None;
         wasm.read_code(&ConstantCompiler::new(store, module), &mut value)?;
         Ok(value.unwrap())
@@ -18,7 +22,7 @@ impl Expr {
     pub fn read<const N: usize>(
         wasm: &mut Reader,
         builder: &mut CodeBuilder<N>,
-        store: &Store,
+        store: &StoreLinker,
         module: &Module,
         ctx: &Func,
         compiler_options: CompilerOptions,
@@ -37,7 +41,7 @@ impl From<Expr> for JumpTarget {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Func {
     /// Function signature.
     pub ty: TypeIdx,
@@ -50,7 +54,7 @@ pub struct Func {
     pub local_size: u16,
 
     /// Parameter size in 32-bit words
-    pub parameter_size: u16,
+    pub parameter_size: u8,
 
     /// Return value size in 32-bit words
     pub return_ty: Option<ValType>,
@@ -67,7 +71,7 @@ impl Module {
     pub fn read_function_code<const N: usize>(
         &mut self,
         wasm: &mut Reader,
-        store: &Store,
+        store: &StoreLinker,
         builder: &mut CodeBuilder<N>,
         i: usize,
         compiler_options: CompilerOptions,
@@ -210,10 +214,13 @@ impl<'wasm> Reader<'wasm> {
                 BR => instruction!(br, LabelIdx),
                 BR_IF => instruction!(br_if, LabelIdx),
                 BR_TABLE => {
-                    let lut = self.read_vec(LabelIdx::read)?;
-                    if lut.len() > 256 {
-                        return Err(ValidationError::BrTableHasTooManyCases);
-                    }
+                    // FIXME(tumbar) Is it possible to use an iterator and not require up-front allocation?
+                    let lut = self
+                        .read_vec_stack::<256, LabelIdx>(LabelIdx::read)
+                        .map_err(|e| match e {
+                            ValidationError::VecTooLong => ValidationError::BrTableHasTooManyCases,
+                            e => e,
+                        })?;
 
                     let default_ = LabelIdx::read(self)?;
                     visitor.br_table(&lut, default_, state)?;

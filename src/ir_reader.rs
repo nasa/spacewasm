@@ -179,15 +179,15 @@ impl<'code> IrReader<'code> {
             }
             CALL => {
                 let idx = self.read(pc).unwrap();
-                let is_host = (imm & 0x80) != 0;
-                if imm == 0 {
-                    visitor.call(idx, state)?;
-                } else if is_host {
-                    visitor.call_host(HostModuleRef(imm & 0x7F), idx, state)?
-                } else {
-                    // TODO(tumbar) Implement external WASM function calls
-                    unimplemented!()
-                }
+                visitor.call(idx, state)?;
+            }
+            CALL_HOST => {
+                let idx = self.read(pc).unwrap();
+                visitor.call_host(HostModuleRef(imm), idx, state)?;
+            }
+            CALL_EXTERN => {
+                let idx = self.read(pc).unwrap();
+                visitor.call_extern(ModuleRef(imm), idx, state)?;
             }
             CALL_INDIRECT => {
                 let n = self.read(pc).unwrap();
@@ -233,6 +233,16 @@ impl<'code> IrReader<'code> {
                 let module = HostModuleRef(imm);
                 let index = self.read(pc).unwrap();
                 visitor.global_set_host(module, index, state)?;
+            }
+            GLOBAL_GET_EXTERN => {
+                let module = ModuleRef(imm);
+                let index = self.read(pc).unwrap();
+                visitor.global_get_extern(module, index, state)?;
+            }
+            GLOBAL_SET_EXTERN => {
+                let module = ModuleRef(imm);
+                let index = self.read(pc).unwrap();
+                visitor.global_set_extern(module, index, state)?;
             }
             // Memory instructions - loads
             I32_LOAD => instruction!(i32_load, MemArg),

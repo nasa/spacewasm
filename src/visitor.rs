@@ -258,8 +258,8 @@ pub struct LocalVariable {
 /// An index offset from the current module.
 /// Module imports can only refer to modules loaded before it.
 /// References store a relative offset from the 'current' module. 0 indicates the current module.
-#[derive(Debug, Clone, Copy)]
-pub struct ExternalModuleRef(pub u8);
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ModuleRef(pub u8);
 
 #[derive(Debug, Clone, Copy)]
 pub struct HostModuleRef(pub u8);
@@ -271,7 +271,7 @@ impl HostModuleRef {
     }
 }
 
-/// A reference to a symbol in the WASM store
+/// A reference to a symbol in the WASM store relative to an implicit 'self' module
 #[derive(Debug, Clone, Copy)]
 pub enum Ref {
     /// A symbol in the current WASM module
@@ -280,7 +280,7 @@ pub enum Ref {
     Host { module: HostModuleRef, index: u16 },
     /// A symbol in another WASM module
     Extern {
-        module: ExternalModuleRef,
+        module: ModuleRef,
         index: u16,
     },
 }
@@ -299,9 +299,8 @@ pub trait IrVisitor: BaseVisitor {
 
     visit_fn!(return_, return_size: u8);
     visit_fn!(call, x: u16);
-    // TODO(tumbar) Support calling functions across WASM modules
-    // visit_fn!(call_external, module: WasmModuleRef, x: u16);
     visit_fn!(call_host, module: HostModuleRef, x: u16);
+    visit_fn!(call_extern, module: ModuleRef, x: u16);
     visit_fn!(call_indirect, x: TypeIdx);
 
     // Variable instructions
@@ -312,4 +311,6 @@ pub trait IrVisitor: BaseVisitor {
     visit_fn!(global_set, idx: u16);
     visit_fn!(global_get_host, module: HostModuleRef, index: u16);
     visit_fn!(global_set_host, module: HostModuleRef, index: u16);
+    visit_fn!(global_get_extern, module: ModuleRef, index: u16);
+    visit_fn!(global_set_extern, module: ModuleRef, index: u16);
 }
