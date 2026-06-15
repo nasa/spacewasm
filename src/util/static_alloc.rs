@@ -27,6 +27,10 @@ impl<const SIZE: usize, const DEPTH: usize> StaticAllocator<SIZE, DEPTH> {
     }
 }
 
+// Note: Kani has issues with generic const parameters in trait impls.
+// This impl works fine in regular Rust but causes Kani verification to fail
+// when analyzing code that doesn't use concrete type parameters.
+#[cfg(not(kani))]
 unsafe impl<const SIZE: usize, const DEPTH: usize> Allocator for StaticAllocator<SIZE, DEPTH> {
     unsafe fn alloc(&self, layout: Layout) -> Result<*mut u8, AllocError> {
         unsafe { (*self.inner.get()).alloc(layout) }
@@ -44,6 +48,7 @@ unsafe impl<const SIZE: usize, const DEPTH: usize> Allocator for StaticAllocator
         }
     }
 }
+
 
 impl<const SIZE: usize, const DEPTH: usize> StackAllocatorInner<SIZE, DEPTH> {
     fn alloc(&mut self, layout: Layout) -> Result<*mut u8, AllocError> {
@@ -107,8 +112,69 @@ impl<const SIZE: usize, const DEPTH: usize> StackAllocatorInner<SIZE, DEPTH> {
 }
 
 #[cfg(kani)]
-mod kani_proofs {
+pub mod kani_proofs {
     use super::*;
+
+    // Macro to generate concrete Allocator implementations for specific size combinations.
+    // Needed because Kani has issues with generic const parameters.
+    macro_rules! impl_allocator_for_size {
+        ($size:expr, $depth:expr) => {
+            unsafe impl Allocator for StaticAllocator<$size, $depth> {
+                unsafe fn alloc(&self, layout: Layout) -> Result<*mut u8, AllocError> {
+                    unsafe { (*self.inner.get()).alloc(layout) }
+                }
+
+                unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+                    unsafe { (*self.inner.get()).dealloc(ptr, layout) }.unwrap()
+                }
+
+                fn memory_statistics(&self) -> crate::MemoryStatistics {
+                    let inner = unsafe { &*self.inner.get() };
+                    crate::MemoryStatistics {
+                        total_bytes: inner.allocated as i32,
+                        pad_bytes: 0,
+                    }
+                }
+            }
+        };
+    }
+
+    /// FixedSizeAllocator: Non-generic allocator wrapper for use in Kani proofs.
+    /// This avoids the need for concrete implementations of every size combination.
+    /// Uses a fixed-size StaticAllocator<4096, 8> internally, which is large enough for all tests.
+    pub struct FixedSizeAllocator {
+        inner: StaticAllocator<4096, 8>,
+    }
+
+    impl FixedSizeAllocator {
+        pub const fn new() -> Self {
+            Self {
+                inner: StaticAllocator::new(),
+            }
+        }
+    }
+
+    unsafe impl Allocator for FixedSizeAllocator {
+        unsafe fn alloc(&self, layout: Layout) -> Result<*mut u8, AllocError> {
+            unsafe { self.inner.alloc(layout) }
+        }
+
+        unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+            unsafe { self.inner.dealloc(ptr, layout) }
+        }
+
+        fn memory_statistics(&self) -> crate::MemoryStatistics {
+            self.inner.memory_statistics()
+        }
+    }
+
+    // Concrete implementations needed for static_alloc.rs's own Kani proofs
+    impl_allocator_for_size!(128, 8);
+    impl_allocator_for_size!(512, 8);
+    impl_allocator_for_size!(1024, 3);
+    impl_allocator_for_size!(1024, 8);
+    // Concrete impl needed for FixedSizeAllocator's inner StaticAllocator
+    impl_allocator_for_size!(4096, 8);
 
     /// No overlapping allocations
     /// LIFO deallocation enforcement

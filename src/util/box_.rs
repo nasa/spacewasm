@@ -239,12 +239,12 @@ mod tests {
 #[cfg(kani)]
 mod kani_proofs {
     use super::*;
-    use crate::util::StaticAllocator;
+    use crate::util::static_alloc::kani_proofs::FixedSizeAllocator;
 
     /// Verify Box allocation, initialization, and dereference operations.
     #[kani::proof]
     fn proof_box_allocation_and_deref() {
-        let alloc = StaticAllocator::<64, 8>::new();
+        let alloc = FixedSizeAllocator::new();
         let value: u32 = kani::any();
 
         let boxed = Box::new_in(alloc, value);
@@ -260,7 +260,7 @@ mod kani_proofs {
     /// Verify Box ZST (zero-sized type) handling.
     #[kani::proof]
     fn proof_box_zst_handling() {
-        let alloc = StaticAllocator::<64, 8>::new();
+        let alloc = FixedSizeAllocator::new();
 
         let boxed = Box::new_in(alloc, ());
         assert!(boxed.is_ok(), "allocation should succeed for ZST");
@@ -276,7 +276,7 @@ mod kani_proofs {
     /// Verify Box deref_mut operation.
     #[kani::proof]
     fn proof_box_deref_mut() {
-        let alloc = StaticAllocator::<64, 8>::new();
+        let alloc = FixedSizeAllocator::new();
         let value: u32 = kani::any();
 
         let boxed = Box::new_in(alloc, value);
@@ -292,7 +292,7 @@ mod kani_proofs {
     /// Verify Box drop safety.
     #[kani::proof]
     fn proof_box_drop_safety() {
-        let alloc = StaticAllocator::<64, 8>::new();
+        let alloc = FixedSizeAllocator::new();
         let value: u32 = kani::any();
 
         {
@@ -309,7 +309,7 @@ mod kani_proofs {
     fn proof_box_layout_matching() {
         /// Wrapper allocator that verifies layout consistency between alloc and dealloc
         struct LayoutCheckingAllocator<'a> {
-            inner: &'a StaticAllocator<64, 8>,
+            inner: &'a FixedSizeAllocator,
         }
 
         static mut ALLOC_PTR: *mut u8 = core::ptr::null_mut();
@@ -346,7 +346,7 @@ mod kani_proofs {
             }
         }
 
-        let backing = StaticAllocator::<64, 8>::new();
+        let backing = FixedSizeAllocator::new();
         let alloc = LayoutCheckingAllocator { inner: &backing };
         let value: u32 = kani::any();
 
@@ -362,7 +362,7 @@ mod kani_proofs {
     /// Verify Box leak operation.
     #[kani::proof]
     fn proof_box_leak() {
-        let alloc = StaticAllocator::<64, 8>::new();
+        let alloc = FixedSizeAllocator::new();
         let value: u32 = kani::any();
 
         let boxed = Box::new_in(alloc, value);
@@ -381,7 +381,7 @@ mod kani_proofs {
     /// Verify Box equality operations.
     #[kani::proof]
     fn proof_box_equality() {
-        let alloc = StaticAllocator::<256, 8>::new();
+        let alloc = FixedSizeAllocator::new();
         let value1: u32 = kani::any();
         let value2: u32 = kani::any();
 
@@ -407,7 +407,7 @@ mod kani_proofs {
     /// Verify Box ordering operations.
     #[kani::proof]
     fn proof_box_ordering() {
-        let alloc = StaticAllocator::<128, 8>::new();
+        let alloc = FixedSizeAllocator::new();
         let value1: u32 = kani::any();
         let value2: u32 = kani::any();
 

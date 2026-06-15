@@ -107,15 +107,11 @@ mod tests {
 mod kani_proofs {
     use super::*;
     use core::alloc::Layout;
-    use crate::util::static_alloc::StaticAllocator;
+    use crate::util::static_alloc::kani_proofs::FixedSizeAllocator;
     use crate::util::alloc::Allocator;
 
-    // Use a static allocator for tests
-    const ALLOC_SIZE: usize = 4096;
-    const ALLOC_DEPTH: usize = 16;
-
     // Helper to create a valid InnerVec with allocated memory
-    unsafe fn create_valid_inner_vec<T>(capacity: u32, alloc: &StaticAllocator<ALLOC_SIZE, ALLOC_DEPTH>) -> InnerVec<T> {
+    unsafe fn create_valid_inner_vec<T>(capacity: u32, alloc: &FixedSizeAllocator) -> InnerVec<T> {
         if capacity == 0 {
             return InnerVec::zero();
         }
@@ -131,7 +127,7 @@ mod kani_proofs {
     }
 
     // Helper to deallocate an InnerVec
-    unsafe fn dealloc_inner_vec<T>(vec: InnerVec<T>, alloc: &StaticAllocator<ALLOC_SIZE, ALLOC_DEPTH>) {
+    unsafe fn dealloc_inner_vec<T>(vec: InnerVec<T>, alloc: &FixedSizeAllocator) {
         if vec.capacity > 0 && !vec.ptr.is_null() {
             let layout = Layout::array::<T>(vec.capacity as usize).unwrap();
             unsafe { alloc.dealloc(vec.ptr as *mut u8, layout) };
@@ -156,7 +152,7 @@ mod kani_proofs {
     #[kani::proof]
     fn verify_len_invariants() {
         unsafe {
-            let alloc = StaticAllocator::<ALLOC_SIZE, ALLOC_DEPTH>::new();
+            let alloc = FixedSizeAllocator::new();
             let capacity: u32 = kani::any();
             kani::assume(capacity > 0 && capacity <= 10);
 
@@ -206,7 +202,7 @@ mod kani_proofs {
     #[kani::proof]
     fn verify_pointer_arithmetic_in_bounds() {
         unsafe {
-            let alloc = StaticAllocator::<ALLOC_SIZE, ALLOC_DEPTH>::new();
+            let alloc = FixedSizeAllocator::new();
             let capacity: u32 = kani::any();
             kani::assume(capacity > 0 && capacity <= 10);
 
@@ -258,7 +254,7 @@ mod kani_proofs {
     #[kani::unwind(4)]  // Limit loop unrolling
     fn verify_push_pop_operations() {
         unsafe {
-            let alloc = StaticAllocator::<ALLOC_SIZE, ALLOC_DEPTH>::new();
+            let alloc = FixedSizeAllocator::new();
             let capacity: u32 = kani::any();
             kani::assume(capacity > 0 && capacity <= 3);
 
@@ -302,7 +298,7 @@ mod kani_proofs {
     #[kani::unwind(4)]  // Limit loop unrolling
     fn verify_deref_only_initialized_region() {
         unsafe {
-            let alloc = StaticAllocator::<ALLOC_SIZE, ALLOC_DEPTH>::new();
+            let alloc = FixedSizeAllocator::new();
             let capacity: u32 = kani::any();
             kani::assume(capacity > 0 && capacity <= 3);  // Reduced bound
 
@@ -337,7 +333,7 @@ mod kani_proofs {
         unsafe {
             let mut drop_count: u32 = 0;  // Local counter
 
-            let alloc = StaticAllocator::<ALLOC_SIZE, ALLOC_DEPTH>::new();
+            let alloc = FixedSizeAllocator::new();
             let mut vec = create_valid_inner_vec::<Droppable>(2, &alloc);
 
             // Push 2 droppable values (both share the same counter via raw pointer)
