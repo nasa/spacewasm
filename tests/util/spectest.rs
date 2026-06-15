@@ -435,6 +435,8 @@ impl From<MemoryError> for ModuleLoadError {
     }
 }
 
+// Clone a module with deep copies of memory and table contents
+// This creates a true snapshot that can be restored after a failed module load
 fn clone_module(module: &Module) -> Module {
     Module {
         name: module.name.clone(),
@@ -444,16 +446,27 @@ fn clone_module(module: &Module) -> Module {
             None => None,
             Some(TableKind::Import(r)) => Some(TableKind::Import(*r)),
             Some(TableKind::ImportHost(r)) => Some(TableKind::ImportHost(*r)),
-            Some(TableKind::Owned((r, ty))) => Some(TableKind::Owned((
-                spacewasm::Rc::new_slice(r.len(), |i| r[i].clone()).unwrap(),
-                *ty,
-            ))),
+            Some(TableKind::Owned((r, ty))) => {
+                // Deep clone table elements
+                Some(TableKind::Owned((
+                    spacewasm::Rc::new_slice(r.len(), |i| r[i].clone()).unwrap(),
+                    *ty,
+                )))
+            }
         },
         memory: match &module.memory {
             None => None,
             Some(MemoryKind::Import(r)) => Some(MemoryKind::Import(*r)),
             Some(MemoryKind::ImportHost(r)) => Some(MemoryKind::ImportHost(*r)),
-            Some(MemoryKind::Owned(r)) => Some(MemoryKind::Owned(r.clone())),
+            Some(MemoryKind::Owned(r)) => {
+                // Deep clone memory contents
+                let mem_type = r.mem_type();
+                let new_memory = Memory::new(mem_type, &RustSystemAllocator).unwrap();
+                let size_in_bytes = (r.size() as usize) * 65536;
+                r.store(0, r.load(0, size_in_bytes).unwrap()).unwrap();
+
+                Some(MemoryKind::Owned(spacewasm::Rc::new(new_memory).unwrap()))
+            }
         },
         globals: module.globals.clone(),
         imports: module.imports.clone(),
@@ -496,7 +509,7 @@ fn load_module(
             }
         }
 
-        // IMPORTANT: Clear the memory and table references in the old state to avoid
+        // Clear the memory and table references in the old state to avoid
         // holding Rc references during module parsing. This allows Rc::get_mut() to
         // succeed when Element::read needs to modify imported tables.
         state.memory = state.store.zero_memory.clone();
@@ -506,7 +519,11 @@ fn load_module(
         // duplicate Rc references that prevent table mutation during parsing
         (linker, Some(modules_backup), Some(state))
     } else {
-        (StoreLinker::new(254, [test_host_module()]).unwrap(), None, None)
+        (
+            StoreLinker::new(254, [test_host_module()]).unwrap(),
+            None,
+            None,
+        )
     };
 
     // Parse and validate the module

@@ -140,12 +140,15 @@ impl Module {
         }
 
         // Make sure that the module name is not a duplicate in the store
-        if let Some(_) = store.modules.iter().find(|m| m.name == name) {
-            return Err(ValidationError::DuplicateModuleName.into());
-        }
+        // Allow multiple modules with empty names since they can't be imported
+        if !name.is_empty() {
+            if let Some(_) = store.modules.iter().find(|m| m.name == name) {
+                return Err(ValidationError::DuplicateModuleName.into());
+            }
 
-        if let Some(_) = store.host_modules.iter().find(|m| m.name == name) {
-            return Err(ValidationError::DuplicateModuleName.into());
+            if let Some(_) = store.host_modules.iter().find(|m| m.name == name) {
+                return Err(ValidationError::DuplicateModuleName.into());
+            }
         }
 
         let mut module = Module {
