@@ -930,7 +930,18 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
         mut expected_stack_height: u16,
     ) -> Result<(), ValidationError> {
         if self.unreachable {
-            // Stack is polymorphic
+            // Check if there are unconsumed values before truncating
+            let current_len = self.value_stack.len();
+            let expected_len_with_result = if result.0.is_some() {
+                expected_stack_height as usize + 1
+            } else {
+                expected_stack_height as usize
+            };
+
+            if current_len > expected_len_with_result {
+                return Err(ValidationError::BlockResultTypeMismatch);
+            }
+
             // Reset the stack height and push the expected type
             self.value_stack.truncate(expected_stack_height as usize);
             if let Some(ty) = result.0 {
@@ -971,14 +982,21 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
     }
 
     pub(crate) fn pop_stack(&mut self, ty: ValType) -> Result<(), ValidationError> {
-        if self.control_frame_stack_len() == 0 && self.unreachable {
-            // We are grabing items from the polymorphic stack
-            // This will always succeed
-            return Ok(());
-        } else if self.control_frame_stack_len() == 0 {
-            return Err(ValidationError::StackUnderflow);
+        // Per WASM spec algorithm:
+        // if (opds.size() = ctrls[0].height && ctrls[0].unreachable) return Unknown
+        // This means: if we're at the frame boundary AND unreachable, treat as polymorphic (success).
+        // Otherwise, we must still type-check even in unreachable code.
+
+        if self.control_frame_stack_len() == 0 {
+            return if self.unreachable {
+                // Polymorphic stack underflow: accept any type
+                Ok(())
+            } else {
+                Err(ValidationError::StackUnderflow)
+            }
         }
 
+        // We have values on the stack - pop and check type even if unreachable
         let top_ty = self
             .value_stack
             .pop()

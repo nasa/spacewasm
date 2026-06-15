@@ -695,6 +695,7 @@ fn check_trap_reason(reason: TrapReason, text: &str) {
         (TrapReason::BadConversionToInteger, "invalid conversion to integer") => {}
         (TrapReason::IntegerOverflow, "integer overflow") => {}
         (TrapReason::UninitializedTableElement, "uninitialized element") => {}
+        (TrapReason::StackOverflow, "call stack exhausted") => {}
         err => {
             assert!(
                 false,
@@ -1040,9 +1041,24 @@ fn run_wast_command(
                 }
             }
         }
-        Command::AssertExhaustion { .. } => {
-            // todo!()
-        }
+        Command::AssertExhaustion { action, text, .. } => match action {
+            Action::Invoke {
+                module,
+                field,
+                args,
+            } => match invoke_function(ctx, &module, &field, &args, log) {
+                Err(InterpreterBreak::Trap(reason)) => check_trap_reason(reason, &text),
+                Err(err) => {
+                    panic!("Expected exhaustion '{text}', got error: {err:?}")
+                }
+                Ok(_) => {
+                    panic!("Expected exhaustion '{text}', but execution succeeded")
+                }
+            },
+            Action::Get { .. } => {
+                panic!("Get actions not implemented yet")
+            }
+        },
         Command::Register { name, as_name, .. } => {
             // Register updates the module name in the store to the alias
             let module_index = if let Some(ref module_name) = name {
@@ -1067,7 +1083,7 @@ fn run_wast_command(
                 invoke_function(ctx, &module, &field, &args, log).unwrap();
             }
             Action::Get { .. } => {
-                // todo!()
+                panic!("Get actions not implemented yet")
             }
         },
     }
