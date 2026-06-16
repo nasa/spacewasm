@@ -1,3 +1,0 @@
-[submodule "tests/spec"]
-	path = tests/spectest
-	url = git@github.com:WasmEdge/wasmedge-spectest.git

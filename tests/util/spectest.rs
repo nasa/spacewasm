@@ -12,8 +12,11 @@ use std::alloc::Layout;
 use std::cell::RefCell;
 use std::ops::ControlFlow;
 use std::panic::catch_unwind;
+use std::path::PathBuf;
+use std::process::Command as ProcessCommand;
 use std::ptr::NonNull;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -831,6 +834,33 @@ fn check_initialization_error(err: InitializeError, text: &str) {
     }
 }
 
+// Simple temp directory that cleans up on drop
+struct TempDir {
+    path: PathBuf,
+}
+
+impl TempDir {
+    fn new() -> std::io::Result<Self> {
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let pid = std::process::id();
+        let count = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let dir_name = format!("spacewasm-test-{}-{}", pid, count);
+        let path = std::env::temp_dir().join(dir_name);
+        std::fs::create_dir(&path)?;
+        Ok(TempDir { path })
+    }
+
+    fn path(&self) -> &std::path::Path {
+        &self.path
+    }
+}
+
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.path);
+    }
+}
+
 fn test_host_module() -> HostModule {
     HostModule {
         name: "spectest",
@@ -917,13 +947,13 @@ fn test_host_module() -> HostModule {
 
 fn run_wast_command(
     command: Command,
-    test_dir: &str,
+    test_dir: &PathBuf,
     ctx: &mut TestContext,
     log: Rc<RefCell<LimitedVec<String>>>,
 ) {
     match command {
         Command::Module { name, filename, .. } => {
-            let wasm_path = format!("{test_dir}/{filename}");
+            let wasm_path = test_dir.join(&filename);
             let wasm_bytes =
                 std::fs::read(&wasm_path).unwrap_or_else(|e| panic!("Failed to read module: {e}"));
             load_module(ctx, name.clone(), &wasm_bytes).unwrap();
@@ -970,7 +1000,7 @@ fn run_wast_command(
             ..
         } => {
             if module_type != "text" {
-                let wasm_path = format!("{test_dir}/{filename}");
+                let wasm_path = test_dir.join(&filename);
                 let wasm_bytes = std::fs::read(&wasm_path)
                     .unwrap_or_else(|e| panic!("Failed to read module: {e}"));
 
@@ -1019,7 +1049,7 @@ fn run_wast_command(
         } => {
             // Skip text format tests as we only handle binary WASM
             if module_type != "text" {
-                let wasm_path = format!("{test_dir}/{filename}");
+                let wasm_path = test_dir.join(&filename);
                 let wasm_bytes = std::fs::read(&wasm_path).unwrap();
 
                 match load_module(ctx, None, &wasm_bytes) {
@@ -1043,9 +1073,9 @@ fn run_wast_command(
             ..
         } => {
             if module_type != "text" {
-                let wasm_path = format!("{test_dir}/{filename}");
+                let wasm_path = test_dir.join(&filename);
                 let wasm_bytes = std::fs::read(&wasm_path)
-                    .unwrap_or_else(|e| panic!("Failed to read {wasm_path}: {e}"));
+                    .unwrap_or_else(|e| panic!("Failed to read {}: {e}", wasm_path.display()));
 
                 match load_module(ctx, None, &wasm_bytes) {
                     Err(ModuleLoadError::DecodeError(err)) => check_decode_error(err.into(), text),
@@ -1107,18 +1137,18 @@ fn run_wast_command(
 }
 
 fn run_wast_test_file_inner(
-    test_dir: &str,
+    test_dir: PathBuf,
     test_name: &str,
     wast_line: Arc<Mutex<Option<u32>>>,
     subtest_log: Arc<Mutex<Option<Rc<RefCell<LimitedVec<String>>>>>>,
 ) {
-    let json_path = format!("{}/{}.json", test_dir, test_name);
+    let json_path = test_dir.join(format!("{}.json", test_name));
 
     let json_content = std::fs::read_to_string(&json_path)
-        .unwrap_or_else(|e| panic!("Failed to read JSON file: {}: {e}", json_path));
+        .unwrap_or_else(|e| panic!("Failed to read JSON file: {}: {e}", json_path.display()));
 
     let test_file: TestFile = serde_json::from_str(&json_content)
-        .unwrap_or_else(|e| panic!("Failed to parse JSON file {}: {}", json_path, e));
+        .unwrap_or_else(|e| panic!("Failed to parse JSON file {}: {}", json_path.display(), e));
 
     let mut ctx = TestContext::new();
 
@@ -1147,14 +1177,41 @@ fn run_wast_test_file_inner(
 
 pub fn run_wast_test_file(test_name: &str) {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    let test_dir = format!("{}/tests/spectest/wasm-1.0/{}", manifest_dir, test_name);
-    let wast_path = format!("{test_dir}/{test_name}.wast");
+    let source_wast_path = PathBuf::from(manifest_dir)
+        .join("tests")
+        .join(format!("{}.wast", test_name));
+
+    // Create a temporary directory for generated files
+    let temp_dir = TempDir::new()
+        .unwrap_or_else(|e| panic!("Failed to create temp directory: {e}"));
+    let temp_path = temp_dir.path();
+
+    // Extract just the filename (without directory path) for the JSON output
+    let test_filename = PathBuf::from(test_name)
+        .file_stem()
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
+
+    // Run wast2json to generate WASM modules and JSON descriptor
+    let output = ProcessCommand::new("wast2json")
+        .arg(&source_wast_path)
+        .arg("-o")
+        .arg(temp_path.join(format!("{}.json", test_filename)))
+        .current_dir(temp_path)
+        .output()
+        .unwrap_or_else(|e| panic!("Failed to run wast2json: {e}"));
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        panic!("wast2json failed: {}", stderr);
+    }
 
     let wast_line = Arc::new(Mutex::new(None));
     let subtest_log = Arc::new(Mutex::new(None));
 
     match catch_unwind(|| {
-        run_wast_test_file_inner(&test_dir, test_name, wast_line.clone(), subtest_log.clone())
+        run_wast_test_file_inner(temp_path.to_path_buf(), &test_filename, wast_line.clone(), subtest_log.clone())
     }) {
         Ok(_) => {}
         Err(err) => {
@@ -1178,9 +1235,9 @@ pub fn run_wast_test_file(test_name: &str) {
             };
 
             if let Some(line_no) = *wast_line.lock().unwrap() {
-                panic!("{wast_path}:{line_no}: {msg}")
+                panic!("{}:{}: {}", source_wast_path.display(), line_no, msg)
             } else {
-                panic!("{wast_path}: {msg}")
+                panic!("{}: {}", source_wast_path.display(), msg)
             }
         }
     }
