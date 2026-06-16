@@ -76,7 +76,13 @@ macro_rules! instruction {
 impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
     fn drop(&self, state: &mut Self::State) -> Result<(), Self::Error> {
         let ty = state.pop_stack_t()?;
-        state.instr_imm_8(DROP, ty as u8)?;
+        state.instr_imm_8(
+            DROP,
+            match ty {
+                OperandType::Unknown => ValType::I32,
+                OperandType::Known(t) => t,
+            } as u8,
+        )?;
         Ok(())
     }
 
@@ -84,8 +90,8 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
         state.pop_stack(ValType::I32)?;
         let ty = state.pop_stack_t()?;
         state.pop_stack(ty)?;
-        state.push_stack(ty)?;
-        state.instr_imm_8(SELECT, ty as u8)?;
+        state.pop_stack(ty)?;
+        state.instr_imm_8(SELECT, ty.into())?;
         Ok(())
     }
 
@@ -94,26 +100,28 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
         block_type: ResultType,
         state: &mut Self::State,
     ) -> Result<(), Self::Error> {
-        state.enter_block(block_type)
+        state.push_control(BlockKind::Forward, block_type, block_type)
     }
 
     fn exit_block(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        state.exit_block()
+        let results = state.pop_control()?;
+        state.push_result_type(results)?;
+        Ok(())
     }
 
     fn finish(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        state.validate_block_result(ResultType(state.func().return_ty), 0)?;
+        state.pop_result_type(ResultType(state.func().return_ty))?;
         self.return_(state)
     }
 
     fn loop_(&self, block_type: ResultType, state: &mut Self::State) -> Result<(), Self::Error> {
-        state.enter_loop(block_type)
+        state.push_control(BlockKind::Backward, ResultType(None), block_type)
     }
 
     fn if_(&self, block_type: ResultType, state: &mut Self::State) -> Result<(), Self::Error> {
         state.pop_stack(ValType::I32)?;
         state.instr(IF)?;
-        state.enter_if_block(block_type)?;
+        state.push_control(BlockKind::Forward, block_type, block_type)?;
         Ok(())
     }
 
@@ -121,16 +129,16 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
         // Perform an unconditional branch to the end of the 'if'
         state.instr(BR)?;
         state.write_label_target(LabelIdx(0))?;
-
-        // Fill in the else branch target
-        state.enter_else_block()?;
+        let results = state.pop_control()?;
+        state.push_control(BlockKind::Forward, results, results)?;
 
         Ok(())
     }
 
     fn br(&self, l: LabelIdx, state: &mut Self::State) -> Result<(), Self::Error> {
         state.instr(BR)?;
-        state.write_label_target(l)?;
+        let lbl_types = state.write_label_target(l)?;
+        state.pop_result_type(lbl_types)?;
         state.mark_unreachable();
         Ok(())
     }
@@ -138,7 +146,9 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
     fn br_if(&self, l: LabelIdx, state: &mut Self::State) -> Result<(), Self::Error> {
         state.pop_stack(ValType::I32)?;
         state.instr(BR_IF)?;
-        let _ = state.write_label_target(l)?;
+        let lbl_types = state.write_label_target(l)?;
+        state.pop_result_type(lbl_types)?;
+        state.push_result_type(lbl_types)?;
         Ok(())
     }
 
@@ -158,6 +168,7 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
             }
         }
 
+        state.pop_result_type(def_result)?;
         state.mark_unreachable();
         Ok(())
     }
@@ -193,7 +204,7 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
                 }
 
                 for r in ty.returns.iter().rev() {
-                    state.push_stack(*r)?;
+                    state.push_stack(r)?;
                 }
 
                 state.instr_imm_8(CALL, 0)?;
@@ -222,7 +233,7 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
                 let ty = &m.types[f.ty.0 as usize];
 
                 for p in ty.params.iter().rev() {
-                    state.pop_stack(*p)?;
+                    state.pop_stack(p)?;
                 }
 
                 for r in ty.returns.iter().rev() {
@@ -249,7 +260,7 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
             .ok_or(ValidationError::TypeIdxOutOfRange)?;
 
         for p in ty.params.iter().rev() {
-            state.pop_stack(*p)?;
+            state.pop_stack(p)?;
         }
 
         for r in &ty.returns {

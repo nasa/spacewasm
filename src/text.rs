@@ -195,31 +195,21 @@ impl JumpTarget {
     }
 }
 
+#[derive(Clone, Copy)]
+pub enum BlockKind {
+    Backward, // Loops
+    Forward,  // Block, If, Else
+}
+
 /// A control flow frame tracking jump targets for blocks, loops, and if-else statements.
 #[derive(Clone, Copy)]
-enum ControlFrame {
-    Loop {
-        result: ResultType,
-        stack_start: u16,
-        target: JumpTarget,
-    },
-    Block {
-        result: ResultType,
-        stack_start: u16,
-        patch_target: JumpTarget,
-    },
-    If {
-        result: ResultType,
-        stack_start: u16,
-        patch_target: JumpTarget,
-    },
-    Else {
-        result: ResultType,
-        stack_start: u16,
-        patch_target: JumpTarget,
-    },
-    UnreachableBlock,
-    UnreachableIf,
+struct ControlFrame {
+    kind: BlockKind,
+    label: ResultType,
+    out: ResultType,
+    height: u16,
+    target: JumpTarget,
+    unreachable: bool,
 }
 
 /// The decoded representation of a global variable
@@ -403,9 +393,43 @@ pub struct TextBuilder<'a, const N: usize> {
     module: &'a Module,
     func: &'a Func,
     control_frames: StaticVec<ControlFrame, 64>,
-    value_stack: StaticVec<ValType, 512>,
-    unreachable: bool,
-    stack_highwater: u16,
+    value_stack: StaticVec<OperandType, 512>,
+    stack_highwater: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub(crate) enum OperandType {
+    Unknown,
+    Known(ValType),
+}
+
+impl From<ValType> for OperandType {
+    fn from(value: ValType) -> Self {
+        OperandType::Known(value)
+    }
+}
+
+impl From<&ValType> for OperandType {
+    fn from(value: &ValType) -> Self {
+        OperandType::Known(*value)
+    }
+}
+
+impl From<OperandType> for ValType {
+    fn from(value: OperandType) -> Self {
+        match value {
+            OperandType::Unknown => ValType::I32,
+            OperandType::Known(t) => t,
+        }
+    }
+}
+
+impl From<OperandType> for u8 {
+    fn from(value: OperandType) -> Self {
+        let vty: ValType = value.into();
+        vty as u8
+    }
 }
 
 impl<'a, const N: usize> TextBuilder<'a, N> {
@@ -422,7 +446,6 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
             func,
             control_frames: Default::default(),
             value_stack: Default::default(),
-            unreachable: false,
             stack_highwater: 0,
         }
     }
@@ -439,7 +462,7 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
         self.module
     }
 
-    pub fn stack_usage(&self) -> u16 {
+    pub fn stack_usage(&self) -> usize {
         self.stack_highwater
     }
 
@@ -557,231 +580,29 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
     }
 
     pub(crate) fn mark_unreachable(&mut self) {
-        self.value_stack
-            .truncate(self.value_stack.len() - self.control_frame_stack_len());
-        self.unreachable = true;
+        match self.control_frames.last_mut() {
+            None => {}
+            Some(frame) => {
+                self.value_stack.truncate(frame.height as usize);
+                frame.unreachable = true;
+            }
+        }
+    }
+
+    fn is_unreachable(&self) -> bool {
+        match self.control_frames.last() {
+            None => false,
+            Some(c) => c.unreachable,
+        }
     }
 
     fn control_frame_stack_len(&self) -> usize {
-        let start = match self.control_frames.last() {
+        let height = match self.control_frames.last() {
             None => 0,
-            Some(
-                ControlFrame::If { stack_start, .. }
-                | ControlFrame::Else { stack_start, .. }
-                | ControlFrame::Block { stack_start, .. }
-                | ControlFrame::Loop { stack_start, .. },
-            ) => *stack_start as usize,
-            Some(ControlFrame::UnreachableIf) | Some(ControlFrame::UnreachableBlock) => 0,
+            Some(c) => c.height as usize,
         };
 
-        self.value_stack.len() - start
-    }
-
-    /// Enter a forward control block (block statement).
-    pub(crate) fn enter_block(&mut self, result: ResultType) -> Result<(), ValidationError> {
-        if self.unreachable {
-            self.control_frames
-                .push(ControlFrame::UnreachableBlock)
-                .or(Err(ValidationError::ControlFlowTooDeep))
-        } else {
-            self.control_frames
-                .push(ControlFrame::Block {
-                    result,
-                    stack_start: self.value_stack.len() as u16,
-                    patch_target: JumpTarget::SENTINEL,
-                })
-                .or(Err(ValidationError::ControlFlowTooDeep))
-        }
-    }
-
-    /// Enter a forward control block for an if statement.
-    ///
-    /// This is tracked separately to handle if-without-else cases properly.
-    pub(crate) fn enter_if_block(&mut self, result: ResultType) -> Result<(), ValidationError> {
-        if self.unreachable {
-            self.control_frames
-                .push(ControlFrame::UnreachableIf)
-                .or(Err(ValidationError::ControlFlowTooDeep))
-        } else {
-            self.control_frames
-                .push(ControlFrame::If {
-                    result,
-                    stack_start: self.value_stack.len() as u16,
-                    patch_target: self.pc(),
-                })
-                .or(Err(ValidationError::ControlFlowTooDeep))?;
-
-            self.write_32(LabelTarget::new(result, 0, JumpOffset::sentinel()).0)?;
-            Ok(())
-        }
-    }
-
-    /// Mark the start of an else block for an if statement.
-    ///
-    /// Emits placeholder words (0x3FFF_FFFF sentinel) that will be back-patched
-    /// with the else branch target address when `finish_else` is called.
-    /// The current PC is saved so we know where to back-patch.
-    pub(crate) fn enter_else_block(&mut self) -> Result<(), ValidationError> {
-        // The top control frame should be the parent if statement
-        // Pop it off the stack to backpatch the if statement
-        let (result, stack_start, patch_target) = match self.control_frames.pop() {
-            Some(ControlFrame::If {
-                result,
-                stack_start,
-                patch_target,
-            }) => (result, stack_start, patch_target),
-            Some(ControlFrame::UnreachableIf) => {
-                self.control_frames.push(ControlFrame::UnreachableBlock)?;
-                self.unreachable = true;
-                return Ok(());
-            }
-            _ => return Err(ValidationError::InvalidElseBlock),
-        };
-
-        self.validate_block_result(result, stack_start)?;
-
-        // Reset the value stack to the beginning of the if block for the else branch
-        self.value_stack.truncate(stack_start as usize);
-
-        // We can't backpatch the entire 'then' block since labels inside should branch
-        // after the end of the if/else statement.
-        // We _do_ need to backpatch the single else placeholder though...
-        let mut prev = JumpTarget::SENTINEL;
-        let pc = self.pc();
-        self.code.backpatch(patch_target, |code, address, label| {
-            if label.is_sentinel() {
-                // We have reached the final patch target, this is the else branch placeholder.
-                // Overwrite the next address with our program counter
-                let patched_target = label.with_jump(JumpOffset::new(address, pc)?);
-                code.write_32(address, patched_target.0)?;
-
-                // Update the penultimate patch target to be the new sentinel
-                // If the prev is not the sentinel, there is at least one value in the new chain
-                if prev != JumpTarget::SENTINEL {
-                    let old_end = LabelTarget(code.read_32(prev)?);
-                    let new_end = old_end.with_jump(JumpOffset::sentinel());
-                    code.write_32(prev, new_end.0)?;
-                }
-            } else {
-                prev = address;
-            }
-
-            Ok(())
-        })?;
-
-        self.control_frames.push(ControlFrame::Else {
-            result,
-            stack_start,
-            patch_target,
-        })?;
-
-        // Clear unreachable flag since we are entering a new control block
-        self.unreachable = false;
-
-        Ok(())
-    }
-
-    /// Enter a backward control block (loop statement).
-    pub(crate) fn enter_loop(&mut self, result: ResultType) -> Result<(), ValidationError> {
-        if self.unreachable {
-            self.control_frames
-                .push(ControlFrame::UnreachableBlock)
-                .or(Err(ValidationError::ControlFlowTooDeep))
-        } else {
-            self.control_frames
-                .push(ControlFrame::Loop {
-                    result,
-                    target: self.code.pc(),
-                    stack_start: self.value_stack.len() as u16,
-                })
-                .or(Err(ValidationError::ControlFlowTooDeep))
-        }
-    }
-
-    /// Exit the current control block and back-patch any forward jump targets.
-    ///
-    /// For forward blocks (block/if):
-    /// - Walks the linked list of jump locations that need the exit address
-    /// - Each jump location stores the address of the next jump in the list
-    /// - Overwrites each jump with the actual target (current PC)
-    ///
-    /// For backward blocks (loop):
-    /// - No back-patching needed since jumps already knew the target
-    ///
-    /// The linked list structure:
-    /// ```text
-    /// control_frame.address -> [addr1] -> [addr2] -> ... -> SENTINEL
-    /// ```
-    /// Each location in brackets holds 2 words encoding the next address.
-    pub(crate) fn exit_block(&mut self) -> Result<(), ValidationError> {
-        let Some(last) = self.control_frames.pop() else {
-            return Err(ValidationError::InvalidEndBlock);
-        };
-
-        match last {
-            // Backward control frame, no need to back-patch
-            ControlFrame::Loop {
-                result,
-                stack_start,
-                target: _,
-            } => {
-                self.validate_block_result(result, stack_start)?;
-                self.unreachable = false;
-            }
-            // Forward control frames need to be backpatched
-            ControlFrame::Block {
-                result,
-                stack_start,
-                patch_target,
-            }
-            | ControlFrame::Else {
-                result,
-                stack_start,
-                patch_target,
-            } => {
-                let pc = self.pc();
-                self.code.backpatch(patch_target, |code, address, label| {
-                    let patched = label.with_jump(JumpOffset::new(address, pc)?);
-                    code.write_32(address, patched.0)?;
-                    Ok(())
-                })?;
-
-                self.validate_block_result(result, stack_start)?;
-
-                // Clear unreachable flag since we are entering a new control block
-                self.unreachable = false;
-            }
-            ControlFrame::If {
-                result,
-                stack_start,
-                patch_target,
-            } => {
-                // An if without else can only have a result type if the block is unreachable
-                // or if the result type is None
-                if result.0.is_some() && !self.unreachable {
-                    return Err(ValidationError::BlockResultTypeMismatch);
-                }
-
-                let pc = self.pc();
-                self.code.backpatch(patch_target, |code, address, label| {
-                    let patched = label.with_jump(JumpOffset::new(address, pc)?);
-                    code.write_32(address, patched.0)?;
-                    Ok(())
-                })?;
-
-                self.validate_block_result(result, stack_start)?;
-
-                // Clear unreachable flag since we are entering a new control block
-                self.unreachable = false;
-            }
-            ControlFrame::UnreachableBlock => {
-                self.unreachable = true;
-            }
-            ControlFrame::UnreachableIf => {
-                self.unreachable = true;
-            }
-        }
-        Ok(())
+        self.value_stack.len() - height
     }
 
     /// Emit a jump to the specified label (control frame).
@@ -815,79 +636,43 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
             self.code.push(lt.0 as u16)?;
             self.code.push((lt.0 >> 16) as u16)?;
 
-            // Make sure we can pull 'return type' off the stack
-            if let Some(result) = self.func.return_ty {
-                if self.control_frame_stack_len() == 0 && self.unreachable {
-                    return Ok(ResultType(self.func.return_ty));
-                } else if self.control_frame_stack_len() == 0 {
-                    return Err(ValidationError::BlockResultTypeMismatch);
-                }
-
-                let Some(got) = self.value_stack.last() else {
-                    return Err(ValidationError::BlockResultTypeMismatch);
-                };
-
-                if *got != result {
-                    return Err(ValidationError::BlockResultTypeMismatch);
-                }
-
-                ResultType(Some(result))
-            } else {
-                ResultType(None)
-            }
+            ResultType(self.func.return_ty)
         } else {
             let idx = self.control_frames.len() - 1 - label.0 as usize;
             let pc = self.pc();
 
-            match &mut self.control_frames[idx] {
+            let control_frame = &mut self.control_frames[idx];
+            match control_frame.kind {
                 // Backward jump target
-                ControlFrame::Loop {
-                    result,
-                    stack_start,
-                    target,
-                } => {
-                    let stack_delta = self.value_stack.len() - *stack_start as usize;
+                BlockKind::Backward => {
+                    let stack_delta = self.value_stack.len() - (control_frame.height as usize);
                     if stack_delta > 0xFF {
                         return Err(ValidationError::LabelStackJumpTooDeep);
                     }
 
                     let lt = LabelTarget::new(
-                        *result,
+                        control_frame.out,
                         (stack_delta & 0xFF) as u8,
-                        JumpOffset::new(pc, *target)?,
+                        JumpOffset::new(pc, control_frame.target)?,
                     );
 
                     self.code.push(lt.0 as u16)?;
                     self.code.push((lt.0 >> 16) as u16)?;
                     ResultType(None)
                 }
-                ControlFrame::Block {
-                    result,
-                    stack_start,
-                    patch_target,
-                }
-                | ControlFrame::If {
-                    result,
-                    stack_start,
-                    patch_target,
-                }
-                | ControlFrame::Else {
-                    result,
-                    stack_start,
-                    patch_target,
-                } => {
+                BlockKind::Forward => {
                     // Forward jump targets use a linked-list of addresses to denote their back-patching
                     // We write the last head here and update the head to our address
-                    let target = *patch_target;
-                    *patch_target = self.code.pc();
+                    let target = control_frame.target;
+                    control_frame.target = self.code.pc();
 
-                    let stack_delta = self.value_stack.len() - *stack_start as usize;
+                    let stack_delta = self.value_stack.len() - (control_frame.height as usize);
                     if stack_delta > 0xFF {
                         return Err(ValidationError::LabelStackJumpTooDeep);
                     }
 
                     let lt = LabelTarget::new(
-                        *result,
+                        control_frame.out,
                         (stack_delta & 0xFF) as u8,
                         JumpOffset::new(pc, target)?,
                     );
@@ -895,28 +680,7 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
                     self.code.push(lt.0 as u16)?;
                     self.code.push((lt.0 >> 16) as u16)?;
 
-                    // Make sure we can pull 'result' off the stack
-                    let result = result.0;
-                    if let Some(result_v) = result {
-                        if self.control_frame_stack_len() == 0 && self.unreachable {
-                            return Ok(ResultType(result));
-                        } else if self.control_frame_stack_len() == 0 {
-                            return Err(ValidationError::BlockResultTypeMismatch);
-                        }
-
-                        let Some(got) = self.value_stack.last() else {
-                            return Err(ValidationError::BlockResultTypeMismatch);
-                        };
-
-                        if *got != result_v {
-                            return Err(ValidationError::BlockResultTypeMismatch);
-                        }
-                    }
-
-                    ResultType(result)
-                }
-                ControlFrame::UnreachableBlock | ControlFrame::UnreachableIf => {
-                    return Ok(ResultType(None));
+                    control_frame.label
                 }
             }
         };
@@ -924,105 +688,149 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
         Ok(result)
     }
 
-    pub(crate) fn validate_block_result(
-        &mut self,
-        result: ResultType,
-        mut expected_stack_height: u16,
-    ) -> Result<(), ValidationError> {
-        if self.unreachable {
-            // Check if there are unconsumed values before truncating
-            let current_len = self.value_stack.len();
-            let expected_len_with_result = if result.0.is_some() {
-                expected_stack_height as usize + 1
-            } else {
-                expected_stack_height as usize
-            };
-
-            if current_len > expected_len_with_result {
-                return Err(ValidationError::BlockResultTypeMismatch);
-            }
-
-            // Reset the stack height and push the expected type
-            self.value_stack.truncate(expected_stack_height as usize);
-            if let Some(ty) = result.0 {
-                self.value_stack.push(ty)?;
-            }
-        } else {
-            if let Some(ty) = result.0 {
-                expected_stack_height += 1;
-                let Some(got) = self.value_stack.last() else {
-                    return Err(ValidationError::BlockResultTypeMismatch);
-                };
-
-                if *got != ty {
-                    return Err(ValidationError::BlockResultTypeMismatch);
-                }
-            }
-
-            if self.value_stack.len() != expected_stack_height as usize {
-                return Err(ValidationError::BlockResultTypeMismatch);
-            }
+    pub(crate) fn push_stack(&mut self, ty: impl Into<OperandType>) -> Result<(), ValidationError> {
+        self.value_stack.push(ty.into())?;
+        let l = self.value_stack.len();
+        if l > self.stack_highwater {
+            self.stack_highwater = l;
         }
 
         Ok(())
     }
 
-    pub(crate) fn pop_stack_t(&mut self) -> Result<ValType, ValidationError> {
-        if self.unreachable {
-            return Ok(ValType::I32);
-        }
+    pub(crate) fn pop_stack_t(&mut self) -> Result<OperandType, ValidationError> {
+        // func pop_opd() : val_type | Unknown =
+        //     if (opds.size() = ctrls[0].height && ctrls[0].unreachable) return Unknown
+        // error_if(opds.size() = ctrls[0].height)
+        // return opds.pop()
 
-        if self.control_frame_stack_len() == 0 {
-            return Err(ValidationError::StackUnderflow);
+        if self.control_frame_stack_len() == 0 && self.is_unreachable() {
+            Ok(OperandType::Unknown)
+        } else if self.control_frame_stack_len() == 0 {
+            Err(ValidationError::StackUnderflow)
+        } else {
+            Ok(self
+                .value_stack
+                .pop()
+                .ok_or(ValidationError::StackUnderflow)?)
         }
-
-        self.value_stack
-            .pop()
-            .ok_or(ValidationError::StackUnderflow)
     }
 
-    pub(crate) fn pop_stack(&mut self, ty: ValType) -> Result<(), ValidationError> {
-        // Per WASM spec algorithm:
-        // if (opds.size() = ctrls[0].height && ctrls[0].unreachable) return Unknown
-        // This means: if we're at the frame boundary AND unreachable, treat as polymorphic (success).
-        // Otherwise, we must still type-check even in unreachable code.
+    pub(crate) fn pop_result_type(&mut self, result: ResultType) -> Result<(), ValidationError> {
+        if let Some(result) = result.0 {
+            self.pop_stack(result)
+        } else {
+            Ok(())
+        }
+    }
 
-        if self.control_frame_stack_len() == 0 {
-            return if self.unreachable {
-                // Polymorphic stack underflow: accept any type
-                Ok(())
-            } else {
-                Err(ValidationError::StackUnderflow)
-            };
+    pub(crate) fn push_result_type(&mut self, result: ResultType) -> Result<(), ValidationError> {
+        if let Some(result) = result.0 {
+            self.push_stack(result)
+        } else {
+            Ok(())
+        }
+    }
+
+    pub(crate) fn pop_stack(
+        &mut self,
+        expect: impl Into<OperandType>,
+    ) -> Result<(), ValidationError> {
+        // func pop_opd(expect : val_type | Unknown) : val_type | Unknown =
+        //      let actual = pop_opd()
+        //      if (actual = Unknown) return expect
+        //      if (expect = Unknown) return actual
+        //      error_if(actual =/= expect)
+        //      return actual
+
+        let expect = expect.into();
+        let actual = self.pop_stack_t()?;
+        if actual == OperandType::Unknown {
+            return Ok(());
         }
 
-        // We have values on the stack - pop and check type even if unreachable
-        let top_ty = self
-            .value_stack
-            .pop()
-            .ok_or(ValidationError::StackUnderflow)?;
+        if expect == OperandType::Unknown {
+            return Ok(());
+        }
 
-        if top_ty != ty {
+        if actual != expect {
             Err(ValidationError::TypeMismatch)
         } else {
             Ok(())
         }
     }
 
-    pub(crate) fn push_stack(&mut self, ty: ValType) -> Result<(), ValidationError> {
-        if self.unreachable {
-            return Ok(());
-        }
+    pub(crate) fn push_control(
+        &mut self,
+        kind: BlockKind,
+        label: ResultType,
+        out: ResultType,
+    ) -> Result<(), ValidationError> {
+        // func push_ctrl(label : list(val_type), out : list(val_type)) =
+        //     let frame = ctrl_frame(label, out, opds.size(), false)
+        //     ctrls.push(frame)
 
-        self.value_stack.push(ty)?;
-        let l = self.value_stack.len();
-        if l > (u16::MAX as usize) {
-            return Err(ValidationError::StackTooLarge);
-        } else if l > self.stack_highwater as usize {
-            self.stack_highwater = l as u16;
-        }
+        let frame = ControlFrame {
+            kind,
+            label,
+            out,
+            height: self.value_stack.len() as u16,
+            target: JumpTarget::SENTINEL,
+            unreachable: false,
+        };
 
+        self.control_frames.push(frame)?;
         Ok(())
+    }
+
+    /// Exit the current control block and back-patch any forward jump targets.
+    ///
+    /// For forward blocks (block/if/else):
+    /// - Walks the linked list of jump locations that need the exit address
+    /// - Each jump location stores the address of the next jump in the list
+    /// - Overwrites each jump with the actual target (current PC)
+    ///
+    /// For backward blocks (loop):
+    /// - No back-patching needed since jumps already knew the target
+    ///
+    /// The linked list structure:
+    /// ```text
+    /// control_frame.address -> [addr1] -> [addr2] -> ... -> SENTINEL
+    /// ```
+    /// Each location in brackets holds 2 words encoding the next address.
+    pub(crate) fn pop_control(&mut self) -> Result<ResultType, ValidationError> {
+        // func pop_ctrl() : list(val_type) =
+        //     error_if(ctrls.is_empty())
+        //     let frame = ctrls[0]
+        //     pop_opds(frame.end_types)
+        //     error_if(opds.size() =/= frame.height)
+        //     ctrls.pop()
+        //     return frame.end_types
+
+        let Some(last) = self.control_frames.pop() else {
+            return Err(ValidationError::InvalidEndBlock);
+        };
+
+        self.pop_result_type(last.out)?;
+
+        if self.value_stack.len() != last.height as usize {
+            return Err(ValidationError::BlockResultTypeMismatch);
+        }
+
+        // Patch in the forward jump targets with the current PC.
+        match last.kind {
+            BlockKind::Backward => (),
+            BlockKind::Forward => {
+                let pc = self.pc();
+                self.code.backpatch(last.target, |code, address, label| {
+                    let patched = label.with_jump(JumpOffset::new(address, pc)?);
+                    code.write_32(address, patched.0)?;
+                    Ok(())
+                })?;
+            }
+        }
+
+        Ok(last.out)
     }
 
     /// Emit an instruction with no operand.

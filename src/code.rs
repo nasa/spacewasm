@@ -31,7 +31,7 @@ impl Expr {
         let tb = &mut TextBuilder::new(builder, store, module, ctx);
         wasm.read_code(&Compiler::<'_, N>::new(compiler_options), tb)?;
 
-        Ok((e, tb.stack_usage()))
+        Ok((e, tb.stack_usage() as u16))
     }
 }
 
