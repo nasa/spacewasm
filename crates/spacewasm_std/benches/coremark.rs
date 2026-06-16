@@ -52,18 +52,18 @@ fn main() {
     )
     .expect("failed to parse wasm module");
 
-    store.modules.push(spacewasm::Box::new(module).unwrap());
     let (text, _final_page_offset) = code_builder.finish().unwrap();
-    let mut store = store.allocate(1024).unwrap();
 
-    let mut state = loop {
-        store = match store.initialize(&text, usize::MAX).unwrap() {
-            InitializeResult::Finished(s) => break s,
-            InitializeResult::Continue(c) => c,
-        }
-    };
+    let mut state = store.allocate(1024).unwrap();
+    match state.initialize_module(spacewasm::Box::new(module).unwrap(), &text, usize::MAX) {
+        InitializeResult::Ok => {}
+        InitializeResult::OutOfFuel => panic!("insufficient fuel for initialization"),
+        InitializeResult::Trap(t) => panic!("trap during initialization {t:?}"),
+        InitializeResult::ReaderError(e) => panic!("ir reader error {e:?}"),
+        InitializeResult::Pause => panic!("pause during init"),
+    }
 
-    let module = state.store.modules.last().unwrap();
+    let module = state.store.modules().last().unwrap();
     let export = module
         .exports
         .iter()
@@ -82,12 +82,12 @@ fn main() {
         _ => panic!("run export is not a function"),
     };
 
-    state.invoke(func, &[]).unwrap();
+    state.invoke(func, &[]);
 
     let bench_start = Instant::now();
 
     eprintln!("Starting execution...");
-    let interpreter = spacewasm::Interpreter;
+    let interpreter = spacewasm::Interpreter::default();
     let mut result = InterpreterResult::OutOfFuel;
     while result == InterpreterResult::OutOfFuel {
         result = interpreter.run(&text, &mut state, usize::MAX)
