@@ -470,14 +470,21 @@ fn clone_memory(memory: &Memory) -> spacewasm::Rc<Memory> {
 
     // Grow the new memory to match the source memory size
     let current_size = memory.size();
-    if current_size > 0 {
-        if let Ok(_) = new_memory.grow(current_size) {
-            // Copy the memory contents
-            let size_in_bytes = (current_size as usize) * 65536;
-            let data = memory.load(0, size_in_bytes).unwrap();
-            new_memory.store(0, data).unwrap();
+    let initial_size = mem_type.min();
+
+    // Only grow if the current size is larger than the initial size
+    if current_size > initial_size {
+        let grow_by = current_size - initial_size;
+        if let Err(e) = new_memory.grow(grow_by) {
+            panic!("Failed to grow cloned memory: {:?}", e);
         }
-        // If grow fails, we just return an empty memory with the same type
+    }
+
+    // Copy the memory contents
+    if current_size > 0 {
+        let size_in_bytes = (current_size as usize) * 65536;
+        let data = memory.load(0, size_in_bytes).unwrap();
+        new_memory.store(0, data).unwrap();
     }
 
     spacewasm::Rc::new(new_memory).unwrap()
