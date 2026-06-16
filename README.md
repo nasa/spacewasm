@@ -51,9 +51,42 @@ same regions of memory may be reused for different purposes. Flight software on 
 portions of memory for certain purposes. Therefore, requiring the entire WASM binary to fit into a single chunk of
 memory is not feasible.
 
+SpaceWASM is highly optimized to reduce peak memory usage and not require deallocation after allocation required for
+streaming. To this end there are certain [constraints](#interpreter-limitations) imposed on the WebAssembly specification.
+
 SpaceWASM supports decoding and compiling WASM binary in a single pass via a streaming mechanism. Chunks of the WASM
 binary may be provided to the interpreter as they are read/requested from the filesystem. The stream must provide chunks
 synchronously.
+
+## Interpreter Limitations
+
+This WASM interpreter imposes additional constraints beyond the WebAssembly 1.0 specification to support resource-constrained spacecraft environments:
+
+### Module & Store Limits
+- **Modules in store**: Maximum 256 modules
+- **Host modules**: Maximum 256 host modules
+- **Function parameters**: Maximum 255 32-bit words
+- **Local variables**: Maximum 65,535 32-bit words total per function
+
+### IR Code Pages
+- **Code pages**: Configurable via generic parameter `N`, typically set at module instantiation
+- **Page size**: 256 16-bit words (512 bytes)
+- **Maximum page address**: 24-bit (16,777,216 pages)
+- **Word offset in page**: 8-bit (0-255)
+
+### Control Flow
+- **Nesting depth**: Maximum 64 control frames (blocks/loops/if-else)
+- **Value stack**: Maximum 512 values per function
+- **Label jumps**: 22-bit signed offset (±2,097,151 instructions)
+- **Stack truncation depth**: Maximum 255 32-bit words per label jump
+- **br_table cases**: Maximum 256 branch targets
+
+### Instruction Encoding
+- **8-bit or 16-bit indexes**: 0-65,535
+- **8-bit or 32-bit immediates**: 0-254 inline, 255+ extended
+- **8-bit or 64-bit immediates**: 0-254 inline, 255+ extended
+
+These constraints enable deterministic memory usage and efficient execution in resource-constrained environments while maintaining compatibility with most standard WebAssembly modules.
 
 ## Execution
 
