@@ -8,7 +8,7 @@ impl LocalVariable {
 }
 
 #[derive(Debug)]
-pub struct InterpreterState {
+pub struct InterpreterState<'store> {
     /// Current program counter
     pub pc: JumpTarget,
 
@@ -34,7 +34,7 @@ pub struct InterpreterState {
     pub module: ModuleRef,
 
     /// The WebAssembly Store
-    pub store: Store,
+    pub store: &'store mut Store,
 
     /// The interpreter result when finished executing
     pub result: Option<RawValue>,
@@ -58,22 +58,7 @@ impl CallFrame {
     }
 }
 
-impl InterpreterState {
-    pub(crate) fn new(store: Store, stack_size: usize) -> Result<InterpreterState, AllocError> {
-        Ok(InterpreterState {
-            pc: JumpTarget::SENTINEL,
-            sp: 0x0,
-            fp: 0x0,
-            stack: Stack::new(stack_size)?,
-            memory: store.zero_memory.clone(),
-            table: store.zero_table.clone(),
-            jumped: false,
-            module: ModuleRef(0),
-            store,
-            result: None,
-        })
-    }
-
+impl<'store> InterpreterState<'store> {
     fn call_impl_enter_module(&mut self, f_ref: WasmRef) -> Result<(), InterpreterBreak> {
         // If we are calling across module we need to swap out the current memory
         let module_delta = if f_ref.module == self.module {
@@ -93,7 +78,7 @@ impl InterpreterState {
     /// Call a function within the _current_ module
     fn call_impl(&mut self, module_delta: u8, index: u16) -> Result<(), InterpreterBreak> {
         // Make sure we have enough stack space for the function call
-        let m = &self.store.modules[self.module.0 as usize];
+        let m = &self.store.modules()[self.module.0 as usize];
         let f = &m.functions[index as usize];
         let required_stack_space = f.stack_usage as usize + 2 + f.local_size as usize;
         if self.stack.len() < self.sp + required_stack_space {
@@ -133,10 +118,12 @@ impl InterpreterState {
     /// Invoke a function with some parameters.
     /// This function can only be used to kick off the interpreter.
     /// It cannot be invoked once the interpreter has started.
-    pub fn invoke(&mut self, f_ref: WasmRef, params: &[Value]) -> Result<(), InterpreterBreak> {
+    pub fn invoke(&mut self, f_ref: WasmRef, params: &[Value]) {
         // Make sure we are looking at the sentinel program counter
         // This is only the case when nothing is running
         assert_eq!(self.pc, JumpTarget::SENTINEL);
+        assert_eq!(self.sp, 0);
+        assert_eq!(self.fp, 0);
 
         for p in params {
             // TODO(tumbar) Validate input parameters
@@ -165,14 +152,19 @@ impl InterpreterState {
         self.memory = self.store.get_memory(self.module).clone();
         self.table = self.store.get_table(self.module).clone();
 
-        self.call_impl(0, f_ref.index)?;
+        self.call_impl(0, f_ref.index).unwrap();
         self.jumped = false;
         self.result = None;
-        Ok(())
     }
 }
 
-pub struct Interpreter;
+pub struct Interpreter<'store>(core::marker::PhantomData<&'store ()>);
+
+impl<'store> Default for Interpreter<'store> {
+    fn default() -> Self {
+        Interpreter(core::marker::PhantomData)
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InterpreterResult {
@@ -184,7 +176,7 @@ pub enum InterpreterResult {
     ReaderError(IrReaderError),
 }
 
-impl Interpreter {
+impl<'store> Interpreter<'store> {
     /// This function performs an unconditional branch to a resolved label target.
     ///
     /// Label targets use a relative offset from their location in the IR. The program
@@ -204,7 +196,7 @@ impl Interpreter {
         &self,
         label_pc_offset: JumpOffset,
         addr: LabelTarget,
-        state: &mut InterpreterState,
+        state: &mut InterpreterState<'store>,
     ) -> Result<(), InterpreterBreak> {
         if addr.is_sentinel() {
             return self.return_(addr.arity() as u8, state);
@@ -244,20 +236,22 @@ impl Interpreter {
 ///
 /// For all types that implement [IrVisitor<State = InterpreterState, Error = InstructionError>],
 /// this trait will be implemented to execute instructions given the state and store.
-pub trait InterpreterRunner {
+pub trait InterpreterRunner<'store> {
     fn run(
         &self,
         code: &[Box<TextPage>],
-        state: &mut InterpreterState,
+        state: &mut InterpreterState<'store>,
         n_instructions: usize,
     ) -> InterpreterResult;
 }
 
-impl<T: IrVisitor<State = InterpreterState, Error = InterpreterBreak>> InterpreterRunner for T {
+impl<'store, T: IrVisitor<State = InterpreterState<'store>, Error = InterpreterBreak>>
+    InterpreterRunner<'store> for T
+{
     fn run(
         &self,
         code: &[Box<TextPage>],
-        state: &mut InterpreterState,
+        state: &mut T::State,
         n_instructions: usize,
     ) -> InterpreterResult {
         let reader = IrReader::new(code);
@@ -265,6 +259,11 @@ impl<T: IrVisitor<State = InterpreterState, Error = InterpreterBreak>> Interpret
         // Run up to n instructions
         for _ in 0..n_instructions {
             let mut pc = state.pc;
+
+            // If PC is SENTINEL, we're not executing anything
+            if pc == JumpTarget::SENTINEL {
+                return InterpreterResult::Instruction(InterpreterBreak::Finished);
+            }
 
             let i_res = reader.visit_instruction(state, &mut pc, self);
             if state.jumped {
@@ -481,9 +480,9 @@ macro_rules! instruction {
     };
 }
 
-impl BaseVisitor for Interpreter {
+impl<'store> BaseVisitor for Interpreter<'store> {
     type Error = InterpreterBreak;
-    type State = InterpreterState;
+    type State = InterpreterState<'store>;
 
     fn unreachable(&self, _: &mut Self::State) -> Result<(), Self::Error> {
         Err(InterpreterBreak::Trap(TrapReason::Unreachable))
@@ -692,7 +691,7 @@ impl BaseVisitor for Interpreter {
         // able to grow the memory)
 
         // Drop the memory reference
-        state.memory = state.store.zero_memory.clone();
+        state.clear_memory();
 
         // Look up what _should_ be the final unique reference to this memory
         let memory = state.store.get_memory_mut(state.module);
@@ -1218,7 +1217,7 @@ impl BaseVisitor for Interpreter {
     }
 }
 
-impl IrVisitor for Interpreter {
+impl<'store> IrVisitor for Interpreter<'store> {
     fn drop(&self, ty: ValType, state: &mut Self::State) -> Result<(), Self::Error> {
         state.sp -= match ty {
             ValType::I32 | ValType::F32 => 1,
@@ -1368,7 +1367,7 @@ impl IrVisitor for Interpreter {
         x: u16,
         state: &mut Self::State,
     ) -> Result<(), Self::Error> {
-        let m = &state.store.host_modules[module.0 as usize];
+        let m = &state.store.host_modules()[module.0 as usize];
         let f = &m.functions[x as usize];
 
         let mut sv: StaticVec<Value, 8> = StaticVec::new();
@@ -1444,14 +1443,14 @@ impl IrVisitor for Interpreter {
         // Pop the table pointer off the stack
         state.sp -= 1;
         let i = state.stack.read_u32(state.sp) as usize;
-        let m = &state.store.modules[state.module.0 as usize];
+        let m = &state.store.modules()[state.module.0 as usize];
         let f_expected = &m.types[x.0 as usize];
 
         // Look up the internal or host function
         match state.table.get(i) {
             None => Err(InterpreterBreak::Trap(TrapReason::InvalidTableIndex)),
             Some(TableElement::Func { module, index }) => {
-                let m = &state.store.modules[module.0 as usize];
+                let m = &state.store.modules()[module.0 as usize];
                 let f = &m.functions[*index as usize];
 
                 // Validate the function is the proper type
@@ -1470,7 +1469,7 @@ impl IrVisitor for Interpreter {
             }
             Some(TableElement::Host { module, index }) => {
                 // Make sure the type matches our expectations (runtime validation)
-                let m = &state.store.host_modules[module.0 as usize];
+                let m = &state.store.host_modules()[module.0 as usize];
                 let f = &m.functions[*index as usize];
                 if f.params() != f_expected.params[..] || f.returns() != f_expected.returns[..] {
                     return Err(InterpreterBreak::Trap(TrapReason::InvalidTableFunctionType));
@@ -1543,7 +1542,7 @@ impl IrVisitor for Interpreter {
     }
 
     fn global_get(&self, idx: u16, state: &mut Self::State) -> Result<(), Self::Error> {
-        let m = &state.store.modules[state.module.0 as usize];
+        let m = &state.store.modules()[state.module.0 as usize];
         let g = &m.globals[idx as usize];
 
         match g.type_.ty {
@@ -1568,7 +1567,7 @@ impl IrVisitor for Interpreter {
         index: u16,
         state: &mut Self::State,
     ) -> Result<(), Self::Error> {
-        let m = &state.store.host_modules[module.0 as usize];
+        let m = &state.store.host_modules()[module.0 as usize];
         match m.globals[index as usize]
             .value
             .read()
@@ -1596,7 +1595,7 @@ impl IrVisitor for Interpreter {
     }
 
     fn global_set(&self, idx: u16, state: &mut Self::State) -> Result<(), Self::Error> {
-        let m = &mut state.store.modules[state.module.0 as usize];
+        let m = &mut state.store.modules_mut()[state.module.0 as usize];
         let g = &mut m.globals[idx as usize];
         match g.type_.ty {
             ValType::I32 | ValType::F32 => {
@@ -1620,7 +1619,7 @@ impl IrVisitor for Interpreter {
         index: u16,
         state: &mut Self::State,
     ) -> Result<(), Self::Error> {
-        let m = &state.store.host_modules[module.0 as usize];
+        let m = &state.store.host_modules()[module.0 as usize];
         let g = &m.globals[index as usize];
         match g.value.ty() {
             ValType::I32 => {

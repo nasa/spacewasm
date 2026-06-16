@@ -1,10 +1,9 @@
 #[cfg(test)]
 mod tests {
     use crate::{
-        AllocError, BaseVisitor, Interpreter, InterpreterState, IrVisitor, MemArg, MemType, Memory,
-        MemoryKind, Module, ModuleRef, ValType,
+        AllocError, BaseVisitor, InitializeResult, Interpreter, InterpreterState, IrVisitor,
+        MemArg, MemType, Memory, MemoryKind, Module, ModuleRef, Store, ValType,
     };
-    use crate::{InitializeResult, StoreLinker};
 
     extern crate std;
 
@@ -39,8 +38,11 @@ mod tests {
         }
     }
 
-    fn create_test_context() -> InterpreterState {
-        let mut store = StoreLinker::new(1, []).unwrap();
+    fn with_test_context<F>(f: F)
+    where
+        F: for<'a> FnOnce(&mut InterpreterState<'a>),
+    {
+        let mut store = Store::new(1, []).unwrap();
 
         // Create a minimal valid module
         let module = Module {
@@ -58,19 +60,19 @@ mod tests {
             exports: crate::Vec::zero(),
         };
 
-        store.modules.push(crate::Box::new(module).unwrap());
-        let mut store = store.allocate(1024).unwrap();
-
-        let mut state = loop {
-            store = match store.initialize(&[], 10).unwrap() {
-                InitializeResult::Finished(state) => break state,
-                InitializeResult::Continue(c) => c,
-            }
-        };
+        let mut state = store.allocate(1024).unwrap();
+        match state.initialize_module(crate::Box::new(module).unwrap(), &[], usize::MAX) {
+            InitializeResult::Ok => {}
+            InitializeResult::OutOfFuel => panic!("insufficient fuel for initialization"),
+            InitializeResult::Trap(t) => panic!("trap during initialization {t:?}"),
+            InitializeResult::ReaderError(e) => panic!("ir reader error {e:?}"),
+            InitializeResult::Pause => panic!("pause during init"),
+        }
 
         state.memory = state.store.get_memory(ModuleRef(0)).clone();
         state.table = state.store.get_table(ModuleRef(0)).clone();
-        state
+
+        f(&mut state);
     }
 
     // Helper macro for testing operations
@@ -79,16 +81,17 @@ mod tests {
         ($test_name:ident, $op:ident, i32: $input:expr => $expected:expr) => {
             #[test]
             fn $test_name() {
-                let mut state = create_test_context();
-                let interpreter = Interpreter;
+                with_test_context(|state| {
+                    let interpreter = Interpreter::default();
 
-                state.stack.write_u32(0, $input);
-                state.sp = 1;
+                    state.stack.write_u32(0, $input);
+                    state.sp = 1;
 
-                (&interpreter).$op(&mut state).unwrap();
+                    interpreter.$op(state).unwrap();
 
-                assert_eq!(state.sp, 1);
-                assert_eq!(state.stack.read_u32(0), $expected);
+                    assert_eq!(state.sp, 1);
+                    assert_eq!(state.stack.read_u32(0), $expected);
+                });
             }
         };
 
@@ -96,17 +99,18 @@ mod tests {
         ($test_name:ident, $op:ident, i32, i32: $a:expr, $b:expr => $expected:expr) => {
             #[test]
             fn $test_name() {
-                let mut state = create_test_context();
-                let interpreter = Interpreter;
+                with_test_context(|state| {
+                    let interpreter = Interpreter::default();
 
-                state.stack.write_u32(0, $a);
-                state.stack.write_u32(1, $b);
-                state.sp = 2;
+                    state.stack.write_u32(0, $a);
+                    state.stack.write_u32(1, $b);
+                    state.sp = 2;
 
-                (&interpreter).$op(&mut state).unwrap();
+                    interpreter.$op(state).unwrap();
 
-                assert_eq!(state.sp, 1);
-                assert_eq!(state.stack.read_u32(0), $expected);
+                    assert_eq!(state.sp, 1);
+                    assert_eq!(state.stack.read_u32(0), $expected);
+                });
             }
         };
 
@@ -114,18 +118,19 @@ mod tests {
         ($test_name:ident, $op:ident, i64: $input:expr => $expected:expr) => {
             #[test]
             fn $test_name() {
-                let mut state = create_test_context();
-                let interpreter = Interpreter;
+                with_test_context(|state| {
+                    let interpreter = Interpreter::default();
 
-                let input_val = $input as u64;
-                state.stack.write_u64(0, input_val);
-                state.sp = 2;
+                    let input_val = $input as u64;
+                    state.stack.write_u64(0, input_val);
+                    state.sp = 2;
 
-                (&interpreter).$op(&mut state).unwrap();
+                    interpreter.$op(state).unwrap();
 
-                assert_eq!(state.sp, 2);
-                let result = state.stack.read_u64(0);
-                assert_eq!(result, $expected as u64);
+                    assert_eq!(state.sp, 2);
+                    let result = state.stack.read_u64(0);
+                    assert_eq!(result, $expected as u64);
+                });
             }
         };
 
@@ -133,18 +138,19 @@ mod tests {
         ($test_name:ident, $op:ident, i64 bool: $input:expr => $expected:expr) => {
             #[test]
             fn $test_name() {
-                let mut state = create_test_context();
-                let interpreter = Interpreter;
+                with_test_context(|state| {
+                    let interpreter = Interpreter::default();
 
-                let input_val = $input as u64;
-                state.stack.write_u64(0, input_val);
-                state.sp = 2;
+                    let input_val = $input as u64;
+                    state.stack.write_u64(0, input_val);
+                    state.sp = 2;
 
-                (&interpreter).$op(&mut state).unwrap();
+                    interpreter.$op(state).unwrap();
 
-                assert_eq!(state.sp, 1);
-                let result = state.stack.read_u32(0);
-                assert_eq!(result, $expected as u32);
+                    assert_eq!(state.sp, 1);
+                    let result = state.stack.read_u32(0);
+                    assert_eq!(result, $expected as u32);
+                });
             }
         };
 
@@ -152,20 +158,21 @@ mod tests {
         ($test_name:ident, $op:ident, i64, i64: $a:expr, $b:expr => $expected:expr) => {
             #[test]
             fn $test_name() {
-                let mut state = create_test_context();
-                let interpreter = Interpreter;
+                with_test_context(|state| {
+                    let interpreter = Interpreter::default();
 
-                let a_val = $a as u64;
-                let b_val = $b as u64;
-                state.stack.write_u64(0, a_val);
-                state.stack.write_u64(2, b_val);
-                state.sp = 4;
+                    let a_val = $a as u64;
+                    let b_val = $b as u64;
+                    state.stack.write_u64(0, a_val);
+                    state.stack.write_u64(2, b_val);
+                    state.sp = 4;
 
-                (&interpreter).$op(&mut state).unwrap();
+                    interpreter.$op(state).unwrap();
 
-                assert_eq!(state.sp, 2);
-                let result = state.stack.read_u64(0);
-                assert_eq!(result, $expected as u64);
+                    assert_eq!(state.sp, 2);
+                    let result = state.stack.read_u64(0);
+                    assert_eq!(result, $expected as u64);
+                });
             }
         };
 
@@ -173,17 +180,18 @@ mod tests {
         ($test_name:ident, $op:ident, f32: $input:expr => $expected:expr) => {
             #[test]
             fn $test_name() {
-                let mut state = create_test_context();
-                let interpreter = Interpreter;
+                with_test_context(|state| {
+                    let interpreter = Interpreter::default();
 
-                state.stack.write_f32(0, $input);
-                state.sp = 1;
+                    state.stack.write_f32(0, $input);
+                    state.sp = 1;
 
-                (&interpreter).$op(&mut state).unwrap();
+                    interpreter.$op(state).unwrap();
 
-                assert_eq!(state.sp, 1);
-                let result = state.stack.read_f32(0);
-                assert!((result - $expected).abs() < 0.0001);
+                    assert_eq!(state.sp, 1);
+                    let result = state.stack.read_f32(0);
+                    assert!((result - $expected).abs() < 0.0001);
+                });
             }
         };
 
@@ -191,18 +199,19 @@ mod tests {
         ($test_name:ident, $op:ident, f32, f32: $a:expr, $b:expr => $expected:expr) => {
             #[test]
             fn $test_name() {
-                let mut state = create_test_context();
-                let interpreter = Interpreter;
+                with_test_context(|state| {
+                    let interpreter = Interpreter::default();
 
-                state.stack.write_f32(0, $a);
-                state.stack.write_f32(1, $b);
-                state.sp = 2;
+                    state.stack.write_f32(0, $a);
+                    state.stack.write_f32(1, $b);
+                    state.sp = 2;
 
-                (&interpreter).$op(&mut state).unwrap();
+                    interpreter.$op(state).unwrap();
 
-                assert_eq!(state.sp, 1);
-                let result = state.stack.read_f32(0);
-                assert!((result - $expected).abs() < 0.0001);
+                    assert_eq!(state.sp, 1);
+                    let result = state.stack.read_f32(0);
+                    assert!((result - $expected).abs() < 0.0001);
+                });
             }
         };
 
@@ -210,17 +219,18 @@ mod tests {
         ($test_name:ident, $op:ident, f64: $input:expr => $expected:expr) => {
             #[test]
             fn $test_name() {
-                let mut state = create_test_context();
-                let interpreter = Interpreter;
+                with_test_context(|state| {
+                    let interpreter = Interpreter::default();
 
-                state.stack.write_f64(0, $input);
-                state.sp = 2;
+                    state.stack.write_f64(0, $input);
+                    state.sp = 2;
 
-                (&interpreter).$op(&mut state).unwrap();
+                    interpreter.$op(state).unwrap();
 
-                assert_eq!(state.sp, 2);
-                let result = state.stack.read_f64(0);
-                assert!((result - $expected).abs() < 0.0001);
+                    assert_eq!(state.sp, 2);
+                    let result = state.stack.read_f64(0);
+                    assert!((result - $expected).abs() < 0.0001);
+                });
             }
         };
 
@@ -228,18 +238,19 @@ mod tests {
         ($test_name:ident, $op:ident, f64, f64: $a:expr, $b:expr => $expected:expr) => {
             #[test]
             fn $test_name() {
-                let mut state = create_test_context();
-                let interpreter = Interpreter;
+                with_test_context(|state| {
+                    let interpreter = Interpreter::default();
 
-                state.stack.write_f64(0, $a);
-                state.stack.write_f64(2, $b);
-                state.sp = 4;
+                    state.stack.write_f64(0, $a);
+                    state.stack.write_f64(2, $b);
+                    state.sp = 4;
 
-                (&interpreter).$op(&mut state).unwrap();
+                    interpreter.$op(state).unwrap();
 
-                assert_eq!(state.sp, 2);
-                let result = state.stack.read_f64(0);
-                assert!((result - $expected).abs() < 0.0001);
+                    assert_eq!(state.sp, 2);
+                    let result = state.stack.read_f64(0);
+                    assert!((result - $expected).abs() < 0.0001);
+                });
             }
         };
     }
@@ -247,429 +258,445 @@ mod tests {
     // ===== Const Operations =====
     #[test]
     fn test_i32_const() {
-        let mut state = create_test_context();
-        let interpreter = Interpreter;
+        with_test_context(|state| {
+            let interpreter = Interpreter::default();
 
-        (&interpreter).i32_const(42, &mut state).unwrap();
-        assert_eq!(state.sp, 1);
-        assert_eq!(state.stack.read_u32(0), 42);
+            interpreter.i32_const(42, state).unwrap();
+            assert_eq!(state.sp, 1);
+            assert_eq!(state.stack.read_u32(0), 42);
 
-        (&interpreter).i32_const(-1, &mut state).unwrap();
-        assert_eq!(state.sp, 2);
-        assert_eq!(state.stack.read_u32(1) as i32, -1);
+            interpreter.i32_const(-1, state).unwrap();
+            assert_eq!(state.sp, 2);
+            assert_eq!(state.stack.read_u32(1) as i32, -1);
+        });
     }
 
     #[test]
     fn test_i64_const() {
-        let mut state = create_test_context();
-        let interpreter = Interpreter;
+        with_test_context(|state| {
+            let interpreter = Interpreter::default();
 
-        (&interpreter)
-            .i64_const(0x123456789ABCDEF0i64, &mut state)
-            .unwrap();
-        assert_eq!(state.sp, 2);
-        assert_eq!(state.stack.read_u64(0), 0x123456789ABCDEF0u64);
+            interpreter.i64_const(0x123456789ABCDEF0i64, state).unwrap();
+            assert_eq!(state.sp, 2);
+            assert_eq!(state.stack.read_u64(0), 0x123456789ABCDEF0u64);
 
-        (&interpreter).i64_const(-1, &mut state).unwrap();
-        assert_eq!(state.sp, 4);
-        assert_eq!(state.stack.read_u64(2) as i64, -1);
+            interpreter.i64_const(-1, state).unwrap();
+            assert_eq!(state.sp, 4);
+            assert_eq!(state.stack.read_u64(2) as i64, -1);
+        });
     }
 
     #[test]
     fn test_f32_const() {
-        let mut state = create_test_context();
-        let interpreter = Interpreter;
+        with_test_context(|state| {
+            let interpreter = Interpreter::default();
 
-        (&interpreter).f32_const(3.14f32, &mut state).unwrap();
-        assert_eq!(state.sp, 1);
-        assert!((state.stack.read_f32(0) - 3.14f32).abs() < 0.0001);
+            interpreter.f32_const(3.14f32, state).unwrap();
+            assert_eq!(state.sp, 1);
+            assert!((state.stack.read_f32(0) - 3.14f32).abs() < 0.0001);
+        });
     }
 
     #[test]
     fn test_f64_const() {
-        let mut state = create_test_context();
-        let interpreter = Interpreter;
+        with_test_context(|state| {
+            let interpreter = Interpreter::default();
 
-        (&interpreter)
-            .f64_const(3.14159265358979, &mut state)
-            .unwrap();
-        assert_eq!(state.sp, 2);
-        assert!((state.stack.read_f64(0) - 3.14159265358979).abs() < 0.0001);
+            interpreter.f64_const(3.14159265358979, state).unwrap();
+            assert_eq!(state.sp, 2);
+            assert!((state.stack.read_f64(0) - 3.14159265358979).abs() < 0.0001);
+        });
     }
 
     // ===== Memory Load Operations =====
     #[test]
     fn test_i32_load() {
-        let mut state = create_test_context();
-        let interpreter = Interpreter;
+        with_test_context(|state| {
+            let interpreter = Interpreter::default();
 
-        // Store a value in memory
-        state.memory.store_u32(100, 0x12345678).unwrap();
+            // Store a value in memory
+            state.memory.store_u32(100, 0x12345678).unwrap();
 
-        // Push address onto stack
-        state.stack.write_u32(0, 100);
-        state.sp = 1;
+            // Push address onto stack
+            state.stack.write_u32(0, 100);
+            state.sp = 1;
 
-        (&interpreter)
-            .i32_load(
-                MemArg {
-                    align: 2,
-                    offset: 0,
-                },
-                &mut state,
-            )
-            .unwrap();
+            interpreter
+                .i32_load(
+                    MemArg {
+                        align: 2,
+                        offset: 0,
+                    },
+                    state,
+                )
+                .unwrap();
 
-        assert_eq!(state.sp, 1);
-        assert_eq!(state.stack.read_u32(0), 0x12345678);
+            assert_eq!(state.sp, 1);
+            assert_eq!(state.stack.read_u32(0), 0x12345678);
+        });
     }
 
     #[test]
     fn test_i32_load_with_offset() {
-        let mut state = create_test_context();
-        let interpreter = Interpreter;
+        with_test_context(|state| {
+            let interpreter = Interpreter::default();
 
-        state.memory.store_u32(108, 0xDEADBEEF).unwrap();
+            state.memory.store_u32(108, 0xDEADBEEF).unwrap();
 
-        state.stack.write_u32(0, 100);
-        state.sp = 1;
+            state.stack.write_u32(0, 100);
+            state.sp = 1;
 
-        (&interpreter)
-            .i32_load(
-                MemArg {
-                    align: 2,
-                    offset: 8,
-                },
-                &mut state,
-            )
-            .unwrap();
+            interpreter
+                .i32_load(
+                    MemArg {
+                        align: 2,
+                        offset: 8,
+                    },
+                    state,
+                )
+                .unwrap();
 
-        assert_eq!(state.stack.read_u32(0), 0xDEADBEEF);
+            assert_eq!(state.stack.read_u32(0), 0xDEADBEEF);
+        });
     }
 
     #[test]
     fn test_i64_load() {
-        let mut state = create_test_context();
-        let interpreter = Interpreter;
+        with_test_context(|state| {
+            let interpreter = Interpreter::default();
 
-        state.memory.store_u64(100, 0x123456789ABCDEF0).unwrap();
+            state.memory.store_u64(100, 0x123456789ABCDEF0).unwrap();
 
-        state.stack.write_u32(0, 100);
-        state.sp = 1;
+            state.stack.write_u32(0, 100);
+            state.sp = 1;
 
-        (&interpreter)
-            .i64_load(
-                MemArg {
-                    align: 3,
-                    offset: 0,
-                },
-                &mut state,
-            )
-            .unwrap();
+            interpreter
+                .i64_load(
+                    MemArg {
+                        align: 3,
+                        offset: 0,
+                    },
+                    state,
+                )
+                .unwrap();
 
-        assert_eq!(state.sp, 2);
-        assert_eq!(state.stack.read_u64(0), 0x123456789ABCDEF0);
+            assert_eq!(state.sp, 2);
+            assert_eq!(state.stack.read_u64(0), 0x123456789ABCDEF0);
+        });
     }
 
     #[test]
     fn test_i32_load8_s() {
-        let mut state = create_test_context();
-        let interpreter = Interpreter;
+        with_test_context(|state| {
+            let interpreter = Interpreter::default();
 
-        state.memory.store_u8(100, 0xFF).unwrap(); // -1 in i8
+            state.memory.store_u8(100, 0xFF).unwrap(); // -1 in i8
 
-        state.stack.write_u32(0, 100);
-        state.sp = 1;
+            state.stack.write_u32(0, 100);
+            state.sp = 1;
 
-        (&interpreter)
-            .i32_load8_s(
-                MemArg {
-                    align: 0,
-                    offset: 0,
-                },
-                &mut state,
-            )
-            .unwrap();
+            interpreter
+                .i32_load8_s(
+                    MemArg {
+                        align: 0,
+                        offset: 0,
+                    },
+                    state,
+                )
+                .unwrap();
 
-        assert_eq!(state.stack.read_u32(0) as i32, -1);
+            assert_eq!(state.stack.read_u32(0) as i32, -1);
+        });
     }
 
     #[test]
     fn test_i32_load8_u() {
-        let mut state = create_test_context();
-        let interpreter = Interpreter;
+        with_test_context(|state| {
+            let interpreter = Interpreter::default();
 
-        state.memory.store_u8(100, 0xFF).unwrap();
+            state.memory.store_u8(100, 0xFF).unwrap();
 
-        state.stack.write_u32(0, 100);
-        state.sp = 1;
+            state.stack.write_u32(0, 100);
+            state.sp = 1;
 
-        (&interpreter)
-            .i32_load8_u(
-                MemArg {
-                    align: 0,
-                    offset: 0,
-                },
-                &mut state,
-            )
-            .unwrap();
+            interpreter
+                .i32_load8_u(
+                    MemArg {
+                        align: 0,
+                        offset: 0,
+                    },
+                    state,
+                )
+                .unwrap();
 
-        assert_eq!(state.stack.read_u32(0), 0xFF);
+            assert_eq!(state.stack.read_u32(0), 0xFF);
+        });
     }
 
     #[test]
     fn test_i32_load16_s() {
-        let mut state = create_test_context();
-        let interpreter = Interpreter;
+        with_test_context(|state| {
+            let interpreter = Interpreter::default();
 
-        state.memory.store_u16(100, 0xFFFF).unwrap(); // -1 in i16
+            state.memory.store_u16(100, 0xFFFF).unwrap(); // -1 in i16
 
-        state.stack.write_u32(0, 100);
-        state.sp = 1;
+            state.stack.write_u32(0, 100);
+            state.sp = 1;
 
-        (&interpreter)
-            .i32_load16_s(
-                MemArg {
-                    align: 1,
-                    offset: 0,
-                },
-                &mut state,
-            )
-            .unwrap();
+            interpreter
+                .i32_load16_s(
+                    MemArg {
+                        align: 1,
+                        offset: 0,
+                    },
+                    state,
+                )
+                .unwrap();
 
-        assert_eq!(state.stack.read_u32(0) as i32, -1);
+            assert_eq!(state.stack.read_u32(0) as i32, -1);
+        });
     }
 
     #[test]
     fn test_i32_load16_u() {
-        let mut state = create_test_context();
-        let interpreter = Interpreter;
+        with_test_context(|state| {
+            let interpreter = Interpreter::default();
 
-        state.memory.store_u16(100, 0xFFFF).unwrap();
+            state.memory.store_u16(100, 0xFFFF).unwrap();
 
-        state.stack.write_u32(0, 100);
-        state.sp = 1;
+            state.stack.write_u32(0, 100);
+            state.sp = 1;
 
-        (&interpreter)
-            .i32_load16_u(
-                MemArg {
-                    align: 1,
-                    offset: 0,
-                },
-                &mut state,
-            )
-            .unwrap();
+            interpreter
+                .i32_load16_u(
+                    MemArg {
+                        align: 1,
+                        offset: 0,
+                    },
+                    state,
+                )
+                .unwrap();
 
-        assert_eq!(state.stack.read_u32(0), 0xFFFF);
+            assert_eq!(state.stack.read_u32(0), 0xFFFF);
+        });
     }
 
     #[test]
     fn test_i64_load8_s() {
-        let mut state = create_test_context();
-        let interpreter = Interpreter;
+        with_test_context(|state| {
+            let interpreter = Interpreter::default();
 
-        state.memory.store_u8(100, 0xFF).unwrap();
+            state.memory.store_u8(100, 0xFF).unwrap();
 
-        state.stack.write_u32(0, 100);
-        state.sp = 1;
+            state.stack.write_u32(0, 100);
+            state.sp = 1;
 
-        (&interpreter)
-            .i64_load8_s(
-                MemArg {
-                    align: 0,
-                    offset: 0,
-                },
-                &mut state,
-            )
-            .unwrap();
+            interpreter
+                .i64_load8_s(
+                    MemArg {
+                        align: 0,
+                        offset: 0,
+                    },
+                    state,
+                )
+                .unwrap();
 
-        assert_eq!(state.sp, 2);
-        assert_eq!(state.stack.read_u64(0) as i64, -1);
+            assert_eq!(state.sp, 2);
+            assert_eq!(state.stack.read_u64(0) as i64, -1);
+        });
     }
 
     #[test]
     fn test_i64_load32_u() {
-        let mut state = create_test_context();
-        let interpreter = Interpreter;
+        with_test_context(|state| {
+            let interpreter = Interpreter::default();
 
-        state.memory.store_u32(100, 0xDEADBEEF).unwrap();
+            state.memory.store_u32(100, 0xDEADBEEF).unwrap();
 
-        state.stack.write_u32(0, 100);
-        state.sp = 1;
+            state.stack.write_u32(0, 100);
+            state.sp = 1;
 
-        (&interpreter)
-            .i64_load32_u(
-                MemArg {
-                    align: 2,
-                    offset: 0,
-                },
-                &mut state,
-            )
-            .unwrap();
+            interpreter
+                .i64_load32_u(
+                    MemArg {
+                        align: 2,
+                        offset: 0,
+                    },
+                    state,
+                )
+                .unwrap();
 
-        assert_eq!(state.sp, 2);
-        assert_eq!(state.stack.read_u64(0), 0xDEADBEEF);
+            assert_eq!(state.sp, 2);
+            assert_eq!(state.stack.read_u64(0), 0xDEADBEEF);
+        });
     }
 
     // ===== Memory Store Operations =====
     #[test]
     fn test_i32_store() {
-        let mut state = create_test_context();
-        let interpreter = Interpreter;
+        with_test_context(|state| {
+            let interpreter = Interpreter::default();
 
-        state.stack.write_u32(0, 100); // address
-        state.stack.write_u32(1, 0x12345678); // value
-        state.sp = 2;
+            state.stack.write_u32(0, 100); // address
+            state.stack.write_u32(1, 0x12345678); // value
+            state.sp = 2;
 
-        (&interpreter)
-            .i32_store(
-                MemArg {
-                    align: 2,
-                    offset: 0,
-                },
-                &mut state,
-            )
-            .unwrap();
+            interpreter
+                .i32_store(
+                    MemArg {
+                        align: 2,
+                        offset: 0,
+                    },
+                    state,
+                )
+                .unwrap();
 
-        assert_eq!(state.sp, 0);
-        assert_eq!(state.memory.load_u32(100).unwrap(), 0x12345678);
+            assert_eq!(state.sp, 0);
+            assert_eq!(state.memory.load_u32(100).unwrap(), 0x12345678);
+        });
     }
 
     #[test]
     fn test_i32_store_with_offset() {
-        let mut state = create_test_context();
-        let interpreter = Interpreter;
+        with_test_context(|state| {
+            let interpreter = Interpreter::default();
 
-        state.stack.write_u32(0, 100);
-        state.stack.write_u32(1, 0xDEADBEEF);
-        state.sp = 2;
+            state.stack.write_u32(0, 100);
+            state.stack.write_u32(1, 0xDEADBEEF);
+            state.sp = 2;
 
-        (&interpreter)
-            .i32_store(
-                MemArg {
-                    align: 2,
-                    offset: 8,
-                },
-                &mut state,
-            )
-            .unwrap();
+            interpreter
+                .i32_store(
+                    MemArg {
+                        align: 2,
+                        offset: 8,
+                    },
+                    state,
+                )
+                .unwrap();
 
-        assert_eq!(state.memory.load_u32(108).unwrap(), 0xDEADBEEF);
+            assert_eq!(state.memory.load_u32(108).unwrap(), 0xDEADBEEF);
+        });
     }
 
     #[test]
     fn test_i64_store() {
-        let mut state = create_test_context();
-        let interpreter = Interpreter;
+        with_test_context(|state| {
+            let interpreter = Interpreter::default();
 
-        state.stack.write_u32(0, 100); // address
-        state.stack.write_u64(1, 0x123456789ABCDEF0); // value
-        state.sp = 3;
+            state.stack.write_u32(0, 100); // address
+            state.stack.write_u64(1, 0x123456789ABCDEF0); // value
+            state.sp = 3;
 
-        (&interpreter)
-            .i64_store(
-                MemArg {
-                    align: 3,
-                    offset: 0,
-                },
-                &mut state,
-            )
-            .unwrap();
+            interpreter
+                .i64_store(
+                    MemArg {
+                        align: 3,
+                        offset: 0,
+                    },
+                    state,
+                )
+                .unwrap();
 
-        assert_eq!(state.sp, 0);
-        assert_eq!(state.memory.load_u64(100).unwrap(), 0x123456789ABCDEF0);
+            assert_eq!(state.sp, 0);
+            assert_eq!(state.memory.load_u64(100).unwrap(), 0x123456789ABCDEF0);
+        });
     }
 
     #[test]
     fn test_i32_store8() {
-        let mut state = create_test_context();
-        let interpreter = Interpreter;
+        with_test_context(|state| {
+            let interpreter = Interpreter::default();
 
-        state.stack.write_u32(0, 100);
-        state.stack.write_u32(1, 0x123456FF);
-        state.sp = 2;
+            state.stack.write_u32(0, 100);
+            state.stack.write_u32(1, 0x123456FF);
+            state.sp = 2;
 
-        (&interpreter)
-            .i32_store8(
-                MemArg {
-                    align: 0,
-                    offset: 0,
-                },
-                &mut state,
-            )
-            .unwrap();
+            interpreter
+                .i32_store8(
+                    MemArg {
+                        align: 0,
+                        offset: 0,
+                    },
+                    state,
+                )
+                .unwrap();
 
-        assert_eq!(state.sp, 0);
-        assert_eq!(state.memory.load_u8(100).unwrap(), 0xFF);
+            assert_eq!(state.sp, 0);
+            assert_eq!(state.memory.load_u8(100).unwrap(), 0xFF);
+        });
     }
 
     #[test]
     fn test_i32_store16() {
-        let mut state = create_test_context();
-        let interpreter = Interpreter;
+        with_test_context(|state| {
+            let interpreter = Interpreter::default();
 
-        state.stack.write_u32(0, 100);
-        state.stack.write_u32(1, 0x1234FFFF);
-        state.sp = 2;
+            state.stack.write_u32(0, 100);
+            state.stack.write_u32(1, 0x1234FFFF);
+            state.sp = 2;
 
-        (&interpreter)
-            .i32_store16(
-                MemArg {
-                    align: 1,
-                    offset: 0,
-                },
-                &mut state,
-            )
-            .unwrap();
+            interpreter
+                .i32_store16(
+                    MemArg {
+                        align: 1,
+                        offset: 0,
+                    },
+                    state,
+                )
+                .unwrap();
 
-        assert_eq!(state.sp, 0);
-        assert_eq!(state.memory.load_u16(100).unwrap(), 0xFFFF);
+            assert_eq!(state.sp, 0);
+            assert_eq!(state.memory.load_u16(100).unwrap(), 0xFFFF);
+        });
     }
 
     #[test]
     fn test_i64_store8() {
-        let mut state = create_test_context();
-        let interpreter = Interpreter;
+        with_test_context(|state| {
+            let interpreter = Interpreter::default();
 
-        state.stack.write_u32(0, 100);
-        state.stack.write_u64(1, 0x123456789ABCDEFF);
-        state.sp = 3;
+            state.stack.write_u32(0, 100);
+            state.stack.write_u64(1, 0x123456789ABCDEFF);
+            state.sp = 3;
 
-        (&interpreter)
-            .i64_store8(
-                MemArg {
-                    align: 0,
-                    offset: 0,
-                },
-                &mut state,
-            )
-            .unwrap();
+            interpreter
+                .i64_store8(
+                    MemArg {
+                        align: 0,
+                        offset: 0,
+                    },
+                    state,
+                )
+                .unwrap();
 
-        assert_eq!(state.sp, 0);
-        assert_eq!(state.memory.load_u8(100).unwrap(), 0xFF);
+            assert_eq!(state.sp, 0);
+            assert_eq!(state.memory.load_u8(100).unwrap(), 0xFF);
+        });
     }
 
     #[test]
     fn test_i64_store32() {
-        let mut state = create_test_context();
-        let interpreter = Interpreter;
+        with_test_context(|state| {
+            let interpreter = Interpreter::default();
 
-        state.stack.write_u32(0, 100);
-        state.stack.write_u64(1, 0x12345678DEADBEEF);
-        state.sp = 3;
+            state.stack.write_u32(0, 100);
+            state.stack.write_u64(1, 0x12345678DEADBEEF);
+            state.sp = 3;
 
-        (&interpreter)
-            .i64_store32(
-                MemArg {
-                    align: 2,
-                    offset: 0,
-                },
-                &mut state,
-            )
-            .unwrap();
+            interpreter
+                .i64_store32(
+                    MemArg {
+                        align: 2,
+                        offset: 0,
+                    },
+                    state,
+                )
+                .unwrap();
 
-        assert_eq!(state.sp, 0);
-        assert_eq!(state.memory.load_u32(100).unwrap(), 0xDEADBEEF);
+            assert_eq!(state.sp, 0);
+            assert_eq!(state.memory.load_u32(100).unwrap(), 0xDEADBEEF);
+        });
     }
 
     // ===== i32 Test/Relational Operations =====
@@ -754,409 +781,437 @@ mod tests {
     // ===== Conversion Operations =====
     #[test]
     fn test_i32_wrap_i64() {
-        let mut state = create_test_context();
-        let interpreter = Interpreter;
+        with_test_context(|state| {
+            let interpreter = Interpreter::default();
 
-        state.stack.write_u64(0, 0x123456789ABCDEF0);
-        state.sp = 2;
+            state.stack.write_u64(0, 0x123456789ABCDEF0);
+            state.sp = 2;
 
-        (&interpreter).i32_wrap_i64(&mut state).unwrap();
+            interpreter.i32_wrap_i64(state).unwrap();
 
-        assert_eq!(state.sp, 1);
-        assert_eq!(state.stack.read_u32(0), 0x9ABCDEF0);
+            assert_eq!(state.sp, 1);
+            assert_eq!(state.stack.read_u32(0), 0x9ABCDEF0);
+        });
     }
 
     #[test]
     fn test_i32_trunc_f32_s() {
-        let mut state = create_test_context();
-        let interpreter = Interpreter;
+        with_test_context(|state| {
+            let interpreter = Interpreter::default();
 
-        state.stack.write_f32(0, 3.99);
-        state.sp = 1;
+            state.stack.write_f32(0, 3.99);
+            state.sp = 1;
 
-        (&interpreter).i32_trunc_f32_s(&mut state).unwrap();
+            interpreter.i32_trunc_f32_s(state).unwrap();
 
-        assert_eq!(state.sp, 1);
-        assert_eq!(state.stack.read_u32(0) as i32, 3);
+            assert_eq!(state.sp, 1);
+            assert_eq!(state.stack.read_u32(0) as i32, 3);
+        });
     }
 
     #[test]
     fn test_i32_trunc_f32_u() {
-        let mut state = create_test_context();
-        let interpreter = Interpreter;
+        with_test_context(|state| {
+            let interpreter = Interpreter::default();
 
-        state.stack.write_f32(0, 3.99);
-        state.sp = 1;
+            state.stack.write_f32(0, 3.99);
+            state.sp = 1;
 
-        (&interpreter).i32_trunc_f32_u(&mut state).unwrap();
+            interpreter.i32_trunc_f32_u(state).unwrap();
 
-        assert_eq!(state.sp, 1);
-        assert_eq!(state.stack.read_u32(0), 3);
+            assert_eq!(state.sp, 1);
+            assert_eq!(state.stack.read_u32(0), 3);
+        });
     }
 
     #[test]
     fn test_i32_trunc_f64_s() {
-        let mut state = create_test_context();
-        let interpreter = Interpreter;
+        with_test_context(|state| {
+            let interpreter = Interpreter::default();
 
-        state.stack.write_f64(0, 3.99);
-        state.sp = 2;
+            state.stack.write_f64(0, 3.99);
+            state.sp = 2;
 
-        (&interpreter).i32_trunc_f64_s(&mut state).unwrap();
+            interpreter.i32_trunc_f64_s(state).unwrap();
 
-        assert_eq!(state.sp, 1);
-        assert_eq!(state.stack.read_u32(0) as i32, 3);
+            assert_eq!(state.sp, 1);
+            assert_eq!(state.stack.read_u32(0) as i32, 3);
+        });
     }
 
     #[test]
     fn test_i64_extend_i32_s() {
-        let mut state = create_test_context();
-        let interpreter = Interpreter;
+        with_test_context(|state| {
+            let interpreter = Interpreter::default();
 
-        state.stack.write_u32(0, (-1i32) as u32);
-        state.sp = 1;
+            state.stack.write_u32(0, (-1i32) as u32);
+            state.sp = 1;
 
-        (&interpreter).i64_extend_i32_s(&mut state).unwrap();
+            interpreter.i64_extend_i32_s(state).unwrap();
 
-        assert_eq!(state.sp, 2);
-        assert_eq!(state.stack.read_u64(0) as i64, -1);
+            assert_eq!(state.sp, 2);
+            assert_eq!(state.stack.read_u64(0) as i64, -1);
+        });
     }
 
     #[test]
     fn test_i64_extend_i32_u() {
-        let mut state = create_test_context();
-        let interpreter = Interpreter;
+        with_test_context(|state| {
+            let interpreter = Interpreter::default();
 
-        state.stack.write_u32(0, 0xFFFFFFFF);
-        state.sp = 1;
+            state.stack.write_u32(0, 0xFFFFFFFF);
+            state.sp = 1;
 
-        (&interpreter).i64_extend_i32_u(&mut state).unwrap();
+            interpreter.i64_extend_i32_u(state).unwrap();
 
-        assert_eq!(state.sp, 2);
-        assert_eq!(state.stack.read_u64(0), 0xFFFFFFFF);
+            assert_eq!(state.sp, 2);
+            assert_eq!(state.stack.read_u64(0), 0xFFFFFFFF);
+        });
     }
 
     #[test]
     fn test_i64_trunc_f32_s() {
-        let mut state = create_test_context();
-        let interpreter = Interpreter;
+        with_test_context(|state| {
+            let interpreter = Interpreter::default();
 
-        state.stack.write_f32(0, 123.99);
-        state.sp = 1;
+            state.stack.write_f32(0, 123.99);
+            state.sp = 1;
 
-        (&interpreter).i64_trunc_f32_s(&mut state).unwrap();
+            interpreter.i64_trunc_f32_s(state).unwrap();
 
-        assert_eq!(state.sp, 2);
-        assert_eq!(state.stack.read_u64(0) as i64, 123);
+            assert_eq!(state.sp, 2);
+            assert_eq!(state.stack.read_u64(0) as i64, 123);
+        });
     }
 
     #[test]
     fn test_i64_trunc_f64_s() {
-        let mut state = create_test_context();
-        let interpreter = Interpreter;
+        with_test_context(|state| {
+            let interpreter = Interpreter::default();
 
-        state.stack.write_f64(0, 123.99);
-        state.sp = 2;
+            state.stack.write_f64(0, 123.99);
+            state.sp = 2;
 
-        (&interpreter).i64_trunc_f64_s(&mut state).unwrap();
+            interpreter.i64_trunc_f64_s(state).unwrap();
 
-        assert_eq!(state.sp, 2);
-        assert_eq!(state.stack.read_u64(0) as i64, 123);
+            assert_eq!(state.sp, 2);
+            assert_eq!(state.stack.read_u64(0) as i64, 123);
+        });
     }
 
     #[test]
     fn test_f32_convert_i32_s() {
-        let mut state = create_test_context();
-        let interpreter = Interpreter;
+        with_test_context(|state| {
+            let interpreter = Interpreter::default();
 
-        state.stack.write_u32(0, (-42i32) as u32);
-        state.sp = 1;
+            state.stack.write_u32(0, (-42i32) as u32);
+            state.sp = 1;
 
-        (&interpreter).f32_convert_i32_s(&mut state).unwrap();
+            interpreter.f32_convert_i32_s(state).unwrap();
 
-        assert_eq!(state.sp, 1);
-        assert!((state.stack.read_f32(0) - (-42.0f32)).abs() < 0.0001);
+            assert_eq!(state.sp, 1);
+            assert!((state.stack.read_f32(0) - (-42.0f32)).abs() < 0.0001);
+        });
     }
 
     #[test]
     fn test_f32_convert_i32_u() {
-        let mut state = create_test_context();
-        let interpreter = Interpreter;
+        with_test_context(|state| {
+            let interpreter = Interpreter::default();
 
-        state.stack.write_u32(0, 42);
-        state.sp = 1;
+            state.stack.write_u32(0, 42);
+            state.sp = 1;
 
-        (&interpreter).f32_convert_i32_u(&mut state).unwrap();
+            interpreter.f32_convert_i32_u(state).unwrap();
 
-        assert_eq!(state.sp, 1);
-        assert!((state.stack.read_f32(0) - 42.0f32).abs() < 0.0001);
+            assert_eq!(state.sp, 1);
+            assert!((state.stack.read_f32(0) - 42.0f32).abs() < 0.0001);
+        });
     }
 
     #[test]
     fn test_f32_convert_i64_s() {
-        let mut state = create_test_context();
-        let interpreter = Interpreter;
+        with_test_context(|state| {
+            let interpreter = Interpreter::default();
 
-        state.stack.write_u64(0, (-42i64) as u64);
-        state.sp = 2;
+            state.stack.write_u64(0, (-42i64) as u64);
+            state.sp = 2;
 
-        (&interpreter).f32_convert_i64_s(&mut state).unwrap();
+            interpreter.f32_convert_i64_s(state).unwrap();
 
-        assert_eq!(state.sp, 1);
-        assert!((state.stack.read_f32(0) - (-42.0f32)).abs() < 0.0001);
+            assert_eq!(state.sp, 1);
+            assert!((state.stack.read_f32(0) - (-42.0f32)).abs() < 0.0001);
+        });
     }
 
     #[test]
     fn test_f32_demote_f64() {
-        let mut state = create_test_context();
-        let interpreter = Interpreter;
+        with_test_context(|state| {
+            let interpreter = Interpreter::default();
 
-        state.stack.write_f64(0, 3.141592653589793);
-        state.sp = 2;
+            state.stack.write_f64(0, 3.141592653589793);
+            state.sp = 2;
 
-        (&interpreter).f32_demote_f64(&mut state).unwrap();
+            interpreter.f32_demote_f64(state).unwrap();
 
-        assert_eq!(state.sp, 1);
-        assert!((state.stack.read_f32(0) - 3.14159265f32).abs() < 0.0001);
+            assert_eq!(state.sp, 1);
+            assert!((state.stack.read_f32(0) - 3.14159265f32).abs() < 0.0001);
+        });
     }
 
     #[test]
     fn test_f64_convert_i32_s() {
-        let mut state = create_test_context();
-        let interpreter = Interpreter;
+        with_test_context(|state| {
+            let interpreter = Interpreter::default();
 
-        state.stack.write_u32(0, (-42i32) as u32);
-        state.sp = 1;
+            state.stack.write_u32(0, (-42i32) as u32);
+            state.sp = 1;
 
-        (&interpreter).f64_convert_i32_s(&mut state).unwrap();
+            interpreter.f64_convert_i32_s(state).unwrap();
 
-        assert_eq!(state.sp, 2);
-        assert!((state.stack.read_f64(0) - (-42.0)).abs() < 0.0001);
+            assert_eq!(state.sp, 2);
+            assert!((state.stack.read_f64(0) - (-42.0)).abs() < 0.0001);
+        });
     }
 
     #[test]
     fn test_f64_convert_i64_s() {
-        let mut state = create_test_context();
-        let interpreter = Interpreter;
+        with_test_context(|state| {
+            let interpreter = Interpreter::default();
 
-        state.stack.write_u64(0, (-42i64) as u64);
-        state.sp = 2;
+            state.stack.write_u64(0, (-42i64) as u64);
+            state.sp = 2;
 
-        (&interpreter).f64_convert_i64_s(&mut state).unwrap();
+            interpreter.f64_convert_i64_s(state).unwrap();
 
-        assert_eq!(state.sp, 2);
-        assert!((state.stack.read_f64(0) - (-42.0)).abs() < 0.0001);
+            assert_eq!(state.sp, 2);
+            assert!((state.stack.read_f64(0) - (-42.0)).abs() < 0.0001);
+        });
     }
 
     #[test]
     fn test_f64_promote_f32() {
-        let mut state = create_test_context();
-        let interpreter = Interpreter;
+        with_test_context(|state| {
+            let interpreter = Interpreter::default();
 
-        state.stack.write_f32(0, 3.14159f32);
-        state.sp = 1;
+            state.stack.write_f32(0, 3.14159f32);
+            state.sp = 1;
 
-        (&interpreter).f64_promote_f32(&mut state).unwrap();
+            interpreter.f64_promote_f32(state).unwrap();
 
-        assert_eq!(state.sp, 2);
-        assert!((state.stack.read_f64(0) - 3.14159).abs() < 0.001);
+            assert_eq!(state.sp, 2);
+            assert!((state.stack.read_f64(0) - 3.14159).abs() < 0.001);
+        });
     }
 
     // ===== Parametric Operations =====
     #[test]
     fn test_drop() {
-        let mut state = create_test_context();
-        let interpreter = Interpreter;
+        with_test_context(|state| {
+            let interpreter = Interpreter::default();
 
-        state.stack.write_u32(0, 42);
-        state.sp = 1;
+            state.stack.write_u32(0, 42);
+            state.sp = 1;
 
-        (&interpreter).drop(ValType::I32, &mut state).unwrap();
+            interpreter.drop(ValType::I32, state).unwrap();
 
-        assert_eq!(state.sp, 0);
+            assert_eq!(state.sp, 0);
+        });
     }
 
     #[test]
     fn test_select_true() {
-        let mut state = create_test_context();
-        let interpreter = Interpreter;
+        with_test_context(|state| {
+            let interpreter = Interpreter::default();
 
-        state.stack.write_u32(0, 10); // val1
-        state.stack.write_u32(1, 20); // val2
-        state.stack.write_u32(2, 1); // condition (true)
-        state.sp = 3;
+            state.stack.write_u32(0, 10); // val1
+            state.stack.write_u32(1, 20); // val2
+            state.stack.write_u32(2, 1); // condition (true)
+            state.sp = 3;
 
-        (&interpreter).select(ValType::I32, &mut state).unwrap();
+            interpreter.select(ValType::I32, state).unwrap();
 
-        assert_eq!(state.sp, 1);
-        assert_eq!(state.stack.read_u32(0), 10);
+            assert_eq!(state.sp, 1);
+            assert_eq!(state.stack.read_u32(0), 10);
+        });
     }
 
     #[test]
     fn test_select_false() {
-        let mut state = create_test_context();
-        let interpreter = Interpreter;
+        with_test_context(|state| {
+            let interpreter = Interpreter::default();
 
-        state.stack.write_u32(0, 10); // val1
-        state.stack.write_u32(1, 20); // val2
-        state.stack.write_u32(2, 0); // condition (false)
-        state.sp = 3;
+            state.stack.write_u32(0, 10); // val1
+            state.stack.write_u32(1, 20); // val2
+            state.stack.write_u32(2, 0); // condition (false)
+            state.sp = 3;
 
-        (&interpreter).select(ValType::I32, &mut state).unwrap();
+            interpreter.select(ValType::I32, state).unwrap();
 
-        assert_eq!(state.sp, 1);
-        assert_eq!(state.stack.read_u32(0), 20);
+            assert_eq!(state.sp, 1);
+            assert_eq!(state.stack.read_u32(0), 20);
+        });
     }
 
     // ===== Memory Size/Grow Operations =====
     #[test]
     fn test_memory_size() {
-        let mut state = create_test_context();
-        let interpreter = Interpreter;
+        with_test_context(|state| {
+            let interpreter = Interpreter::default();
 
-        state.sp = 0;
+            state.sp = 0;
 
-        (&interpreter).memory_size(&mut state).unwrap();
+            interpreter.memory_size(state).unwrap();
 
-        assert_eq!(state.sp, 1);
-        assert_eq!(state.stack.read_u32(0), 1); // 65536 / 65536 = 1 page
+            assert_eq!(state.sp, 1);
+            assert_eq!(state.stack.read_u32(0), 1); // 65536 / 65536 = 1 page
+        });
     }
 
     // ===== Float Comparison Operations =====
     #[test]
     fn test_f32_eq() {
-        let mut state = create_test_context();
-        let interpreter = Interpreter;
+        with_test_context(|state| {
+            let interpreter = Interpreter::default();
 
-        state.stack.write_f32(0, 3.14);
-        state.stack.write_f32(1, 3.14);
-        state.sp = 2;
+            state.stack.write_f32(0, 3.14);
+            state.stack.write_f32(1, 3.14);
+            state.sp = 2;
 
-        (&interpreter).f32_eq(&mut state).unwrap();
+            interpreter.f32_eq(state).unwrap();
 
-        assert_eq!(state.sp, 1);
-        assert_eq!(state.stack.read_u32(0), 1);
+            assert_eq!(state.sp, 1);
+            assert_eq!(state.stack.read_u32(0), 1);
+        });
     }
 
     #[test]
     fn test_f32_ne() {
-        let mut state = create_test_context();
-        let interpreter = Interpreter;
+        with_test_context(|state| {
+            let interpreter = Interpreter::default();
 
-        state.stack.write_f32(0, 3.14);
-        state.stack.write_f32(1, 2.71);
-        state.sp = 2;
+            state.stack.write_f32(0, 3.14);
+            state.stack.write_f32(1, 2.71);
+            state.sp = 2;
 
-        (&interpreter).f32_ne(&mut state).unwrap();
+            interpreter.f32_ne(state).unwrap();
 
-        assert_eq!(state.sp, 1);
-        assert_eq!(state.stack.read_u32(0), 1);
+            assert_eq!(state.sp, 1);
+            assert_eq!(state.stack.read_u32(0), 1);
+        });
     }
 
     #[test]
     fn test_f32_lt() {
-        let mut state = create_test_context();
-        let interpreter = Interpreter;
+        with_test_context(|state| {
+            let interpreter = Interpreter::default();
 
-        state.stack.write_f32(0, 2.0);
-        state.stack.write_f32(1, 3.0);
-        state.sp = 2;
+            state.stack.write_f32(0, 2.0);
+            state.stack.write_f32(1, 3.0);
+            state.sp = 2;
 
-        (&interpreter).f32_lt(&mut state).unwrap();
+            interpreter.f32_lt(state).unwrap();
 
-        assert_eq!(state.sp, 1);
-        assert_eq!(state.stack.read_u32(0), 1);
+            assert_eq!(state.sp, 1);
+            assert_eq!(state.stack.read_u32(0), 1);
+        });
     }
 
     #[test]
     fn test_f64_eq() {
-        let mut state = create_test_context();
-        let interpreter = Interpreter;
+        with_test_context(|state| {
+            let interpreter = Interpreter::default();
 
-        state.stack.write_f64(0, 3.14159);
-        state.stack.write_f64(2, 3.14159);
-        state.sp = 4;
+            state.stack.write_f64(0, 3.14159);
+            state.stack.write_f64(2, 3.14159);
+            state.sp = 4;
 
-        (&interpreter).f64_eq(&mut state).unwrap();
+            interpreter.f64_eq(state).unwrap();
 
-        assert_eq!(state.sp, 1);
-        assert_eq!(state.stack.read_u32(0), 1);
+            assert_eq!(state.sp, 1);
+            assert_eq!(state.stack.read_u32(0), 1);
+        });
     }
 
     // ===== i64 Comparison Operations (return i32) =====
     #[test]
     fn test_i64_eq_true() {
-        let mut state = create_test_context();
-        let interpreter = Interpreter;
+        with_test_context(|state| {
+            let interpreter = Interpreter::default();
 
-        state.stack.write_u64(0, 0x123456789ABCDEF0);
-        state.stack.write_u64(2, 0x123456789ABCDEF0);
-        state.sp = 4;
+            state.stack.write_u64(0, 0x123456789ABCDEF0);
+            state.stack.write_u64(2, 0x123456789ABCDEF0);
+            state.sp = 4;
 
-        (&interpreter).i64_eq(&mut state).unwrap();
+            interpreter.i64_eq(state).unwrap();
 
-        assert_eq!(state.sp, 1);
-        assert_eq!(state.stack.read_u32(0), 1);
+            assert_eq!(state.sp, 1);
+            assert_eq!(state.stack.read_u32(0), 1);
+        });
     }
 
     #[test]
     fn test_i64_ne_true() {
-        let mut state = create_test_context();
-        let interpreter = Interpreter;
+        with_test_context(|state| {
+            let interpreter = Interpreter::default();
 
-        state.stack.write_u64(0, 0x123456789ABCDEF0);
-        state.stack.write_u64(2, 0xFEDCBA9876543210);
-        state.sp = 4;
+            state.stack.write_u64(0, 0x123456789ABCDEF0);
+            state.stack.write_u64(2, 0xFEDCBA9876543210);
+            state.sp = 4;
 
-        (&interpreter).i64_ne(&mut state).unwrap();
+            interpreter.i64_ne(state).unwrap();
 
-        assert_eq!(state.sp, 1);
-        assert_eq!(state.stack.read_u32(0), 1);
+            assert_eq!(state.sp, 1);
+            assert_eq!(state.stack.read_u32(0), 1);
+        });
     }
 
     #[test]
     fn test_i64_lt_s_true() {
-        let mut state = create_test_context();
-        let interpreter = Interpreter;
+        with_test_context(|state| {
+            let interpreter = Interpreter::default();
 
-        state.stack.write_u64(0, (-5i64) as u64);
-        state.stack.write_u64(2, 5);
-        state.sp = 4;
+            state.stack.write_u64(0, (-5i64) as u64);
+            state.stack.write_u64(2, 5);
+            state.sp = 4;
 
-        (&interpreter).i64_lt_s(&mut state).unwrap();
+            interpreter.i64_lt_s(state).unwrap();
 
-        assert_eq!(state.sp, 1);
-        assert_eq!(state.stack.read_u32(0), 1);
+            assert_eq!(state.sp, 1);
+            assert_eq!(state.stack.read_u32(0), 1);
+        });
     }
 
     // ===== Additional Edge Cases =====
     #[test]
     fn test_i32_add_wrapping() {
-        let mut state = create_test_context();
-        let interpreter = Interpreter;
+        with_test_context(|state| {
+            let interpreter = Interpreter::default();
 
-        state.stack.write_u32(0, 0xFFFFFFFF);
-        state.stack.write_u32(1, 2);
-        state.sp = 2;
+            state.stack.write_u32(0, 0xFFFFFFFF);
+            state.stack.write_u32(1, 2);
+            state.sp = 2;
 
-        (&interpreter).i32_add(&mut state).unwrap();
+            interpreter.i32_add(state).unwrap();
 
-        assert_eq!(state.sp, 1);
-        assert_eq!(state.stack.read_u32(0), 1); // Wraps around
+            assert_eq!(state.sp, 1);
+            assert_eq!(state.stack.read_u32(0), 1); // Wraps around
+        });
     }
 
     #[test]
     fn test_i64_add_wrapping() {
-        let mut state = create_test_context();
-        let interpreter = Interpreter;
+        with_test_context(|state| {
+            let interpreter = Interpreter::default();
 
-        state.stack.write_u64(0, 0xFFFFFFFFFFFFFFFF);
-        state.stack.write_u64(2, 2);
-        state.sp = 4;
+            state.stack.write_u64(0, 0xFFFFFFFFFFFFFFFF);
+            state.stack.write_u64(2, 2);
+            state.sp = 4;
 
-        (&interpreter).i64_add(&mut state).unwrap();
+            interpreter.i64_add(state).unwrap();
 
-        assert_eq!(state.sp, 2);
-        assert_eq!(state.stack.read_u64(0), 1); // Wraps around
+            assert_eq!(state.sp, 2);
+            assert_eq!(state.stack.read_u64(0), 1); // Wraps around
+        });
     }
 }

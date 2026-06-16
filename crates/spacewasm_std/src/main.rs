@@ -1,7 +1,7 @@
 use spacewasm::{
-    Box, CodeBuilder, CompilerOptions, ExportDesc, HostFunction, HostFunctionBreak, HostModule,
-    InitializeResult, InterpreterBreak, InterpreterResult, InterpreterRunner, ModuleRef,
-    PageAllocator, Ref, SectionKind, StoreLinker, ValType, Value, WasmRef, vec,
+    vec, Box, CodeBuilder, CompilerOptions, ExportDesc, HostFunction, HostFunctionBreak,
+    HostModule, InitializeResult, InterpreterBreak, InterpreterResult, InterpreterRunner,
+    ModuleRef, PageAllocator, Ref, SectionKind, ValType, Value, WasmRef,
 };
 use spacewasm_util::{FileStream, RustSystemAllocator};
 use std::ops::ControlFlow;
@@ -119,7 +119,7 @@ fn main() {
         table: spacewasm::Vec::zero(),
     };
 
-    let mut store = StoreLinker::new(3, [fprime_core, env]).unwrap();
+    let mut store = spacewasm::Store::new(3, [fprime_core, env]).unwrap();
 
     let file = std::fs::File::open(path).expect("failed to open file");
     let mut file_stream = FileStream::new(file);
@@ -133,17 +133,18 @@ fn main() {
     )
     .expect("failed to parse wasm module");
 
-    store.modules.push(Box::new(module).unwrap());
     let (text, final_page_offset) = code_builder.finish().unwrap();
-    let mut store = store.allocate(1024).unwrap();
-    let mut state = loop {
-        store = match store.initialize(&text, usize::MAX).unwrap() {
-            InitializeResult::Finished(s) => break s,
-            InitializeResult::Continue(c) => c,
-        }
-    };
 
-    let module = state.store.modules.last().unwrap();
+    let mut state = store.allocate(1024).unwrap();
+    match state.initialize_module(Box::new(module).unwrap(), &text, usize::MAX) {
+        InitializeResult::Ok => {}
+        InitializeResult::OutOfFuel => panic!("insufficient fuel for initialization"),
+        InitializeResult::Trap(t) => panic!("trap during initialization {t:?}"),
+        InitializeResult::ReaderError(e) => panic!("ir reader error {e:?}"),
+        InitializeResult::Pause => panic!("pause during init"),
+    }
+
+    let module = state.store.modules().last().unwrap();
 
     let mut total: usize = 0;
     for (i, section) in stats.iter().enumerate() {
@@ -192,7 +193,7 @@ fn main() {
     }
     eprintln!("====");
 
-    let module = state.store.modules.last().unwrap();
+    let module = state.store.modules().last().unwrap();
 
     let fi = {
         let f = module.exports.iter().find(|f| &f.name == "run").unwrap();
@@ -202,22 +203,20 @@ fn main() {
         fi
     };
 
-    let module = state.store.modules.last().unwrap();
+    let module = state.store.modules().last().unwrap();
     let Ref::Module(fi) = module.get_func_ref(fi).unwrap() else {
         panic!()
     };
 
-    state
-        .invoke(
-            WasmRef {
-                module: ModuleRef(0),
-                index: fi,
-            },
-            &[],
-        )
-        .unwrap();
+    state.invoke(
+        WasmRef {
+            module: ModuleRef(0),
+            index: fi,
+        },
+        &[],
+    );
 
-    let interpreter = spacewasm::Interpreter;
+    let interpreter = spacewasm::Interpreter::default();
 
     // let dbg = Inspector {
     //     v: &interpreter,

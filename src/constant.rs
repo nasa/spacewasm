@@ -1,15 +1,15 @@
 use crate::{
-    BaseVisitor, FuncIdx, GlobalIdx, LabelIdx, LocalIdx, MemArg, Module, Ref, ResultType,
-    StoreLinker, TypeIdx, Value, WasmVisitor,
+    BaseVisitor, FuncIdx, GlobalIdx, LabelIdx, LocalIdx, MemArg, Module, Ref, ResultType, Store,
+    TypeIdx, Value, WasmVisitor,
 };
 
 pub struct ConstantCompiler<'a> {
-    store: &'a StoreLinker,
+    store: &'a Store,
     module: &'a Module,
 }
 
 impl<'a> ConstantCompiler<'a> {
-    pub fn new(store: &'a StoreLinker, module: &'a Module) -> Self {
+    pub fn new(store: &'a Store, module: &'a Module) -> Self {
         Self { store, module }
     }
 }
@@ -301,7 +301,7 @@ impl<'a> WasmVisitor for ConstantCompiler<'a> {
             Ref::Host { module, index } => {
                 // Look up the host module/global and read its value
                 self.store
-                    .host_modules
+                    .host_modules()
                     .get(module.0 as usize)
                     .ok_or(ConstantExprError::InvalidGlobal)?
                     .globals
@@ -315,7 +315,7 @@ impl<'a> WasmVisitor for ConstantCompiler<'a> {
             Ref::Extern { module, index } => {
                 // Look up the external wasm module and read the globals value
                 self.store
-                    .modules
+                    .modules()
                     .get(module.0 as usize)
                     .ok_or(ConstantExprError::InvalidGlobal)?
                     .globals

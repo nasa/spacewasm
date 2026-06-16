@@ -3,10 +3,11 @@ use serde::{Deserialize, Serialize};
 use spacewasm::{
     global_allocator, vec, AllocError, Allocator, CodeBuilder, CompilerOptions,
     ConstantExprError, ExportDesc, GlobalValue, GlobalValueError, HostFunction, HostGlobal,
-    HostModule, InitializeError, InitializeResult, InnerVec, Interpreter,
-    InterpreterBreak, InterpreterResult, InterpreterRunner, InterpreterState, Limit, Memory, MemoryError,
-    MemoryKind, MemoryStatistics, Module, ModuleRef, ParseError, ReaderError, Ref, StoreLinker, TableKind,
-    TrapReason, ValType, ValidationError, Value, WasmMemoryAllocator, WasmRef, WasmStream,
+    HostModule, InitializeResult, InnerVec, Interpreter,
+    InterpreterBreak, InterpreterResult, InterpreterRunner, InterpreterState, Limit, Memory,
+    MemoryError, MemoryStatistics, Module, ModuleRef, ParseError, ReaderError, Ref,
+    Stack, Store, TrapReason, ValType, ValidationError, Value,
+    WasmMemoryAllocator, WasmRef, WasmStream,
 };
 use std::alloc::Layout;
 use std::cell::RefCell;
@@ -219,8 +220,8 @@ impl WasmStream for ByteStream {
 }
 
 struct TestContext {
-    state: Option<InterpreterState>,
-    module_index: usize,
+    store: Store,
+    stack: Stack,
     code_builder: CodeBuilder<256>,
     /// Maps instance names (like "$Mf") to module indices
     /// This is separate from the module's name field which is used for linking/imports
@@ -229,20 +230,32 @@ struct TestContext {
 
 impl TestContext {
     fn new() -> Self {
+        let store = Store::new(256, [test_host_module()]).unwrap();
+
         TestContext {
-            state: None,
-            module_index: 0,
+            store,
+            stack: Stack::new(1024).unwrap(),
             code_builder: CodeBuilder::<256>::default(),
             instance_names: std::collections::HashMap::new(),
         }
     }
 
+    fn with_state<F, R>(&mut self, f: F) -> R
+    where
+        F: for<'a> FnOnce(&mut InterpreterState<'a>) -> R,
+    {
+        let mut state = self.store.allocate(1024).unwrap();
+        state.stack = core::mem::replace(&mut self.stack, Stack::new(1024).unwrap());
+        let result = f(&mut state);
+        self.stack = state.stack;
+        result
+    }
+
     fn current_module_index(&self) -> usize {
-        let state = self.state.as_ref().expect("No state initialized");
-        if state.store.modules.len() == 0 {
+        if self.store.modules().len() == 0 {
             0
         } else {
-            state.store.modules.len() - 1
+            self.store.modules().len() - 1
         }
     }
 
@@ -252,8 +265,26 @@ impl TestContext {
             return Some(idx);
         }
         // Fall back to checking the module's name field (registered name)
-        let state = self.state.as_ref().expect("No state initialized");
-        state.store.modules.iter().position(|m| m.name == name)
+        self.store.modules().iter().position(|m| m.name == name)
+    }
+
+    /// Save the current store state
+    /// Used to restore state after failed module loads that mutate the store (memory/tables)
+    fn save_store(&self) -> Store {
+        let mut cloned = Store::new(256, [test_host_module()]).unwrap();
+
+        // Clone all modules into the new store
+        for module in self.store.modules().iter() {
+            let cloned_module = clone_module(module);
+            cloned.push_module(spacewasm::Box::new(cloned_module).unwrap());
+        }
+
+        cloned
+    }
+
+    /// Restore the store from a saved copy
+    fn restore_store(&mut self, saved: Store) {
+        self.store = saved;
     }
 }
 
@@ -417,18 +448,12 @@ fn compare_values(actual: Value, expected: &ValueSpec) {
 enum ModuleLoadError {
     DecodeError(ParseError),
     AllocationError(MemoryError),
-    InitializeError(InitializeError),
+    InitializeError(InitializeResult),
 }
 
 impl From<ParseError> for ModuleLoadError {
     fn from(e: ParseError) -> Self {
         ModuleLoadError::DecodeError(e)
-    }
-}
-
-impl From<InitializeError> for ModuleLoadError {
-    fn from(value: InitializeError) -> Self {
-        ModuleLoadError::InitializeError(value)
     }
 }
 
@@ -438,9 +463,31 @@ impl From<MemoryError> for ModuleLoadError {
     }
 }
 
+fn clone_memory(memory: &Memory) -> spacewasm::Rc<Memory> {
+    // Deep clone memory contents
+    let mem_type = memory.mem_type();
+    let mut new_memory = Memory::new(mem_type, &RustSystemAllocator).unwrap();
+
+    // Grow the new memory to match the source memory size
+    let current_size = memory.size();
+    if current_size > 0 {
+        if let Ok(_) = new_memory.grow(current_size) {
+            // Copy the memory contents
+            let size_in_bytes = (current_size as usize) * 65536;
+            let data = memory.load(0, size_in_bytes).unwrap();
+            new_memory.store(0, data).unwrap();
+        }
+        // If grow fails, we just return an empty memory with the same type
+    }
+
+    spacewasm::Rc::new(new_memory).unwrap()
+}
+
 // Clone a module with deep copies of memory and table contents
 // This creates a true snapshot that can be restored after a failed module load
 fn clone_module(module: &Module) -> Module {
+    use spacewasm::{MemoryKind, TableKind};
+
     Module {
         name: module.name.clone(),
         types: module.types.clone(),
@@ -461,15 +508,7 @@ fn clone_module(module: &Module) -> Module {
             None => None,
             Some(MemoryKind::Import(r)) => Some(MemoryKind::Import(*r)),
             Some(MemoryKind::ImportHost(r)) => Some(MemoryKind::ImportHost(*r)),
-            Some(MemoryKind::Owned(r)) => {
-                // Deep clone memory contents
-                let mem_type = r.mem_type();
-                let new_memory = Memory::new(mem_type, &RustSystemAllocator).unwrap();
-                let size_in_bytes = (r.size() as usize) * 65536;
-                r.store(0, r.load(0, size_in_bytes).unwrap()).unwrap();
-
-                Some(MemoryKind::Owned(spacewasm::Rc::new(new_memory).unwrap()))
-            }
+            Some(MemoryKind::Owned(r)) => Some(MemoryKind::Owned(clone_memory(&r))),
         },
         globals: module.globals.clone(),
         imports: module.imports.clone(),
@@ -478,98 +517,49 @@ fn clone_module(module: &Module) -> Module {
     }
 }
 
+// We need to add a method to Store to support pushing modules
+// For now, TestContext will manage store cloning by saving/restoring the entire Store
+
 fn load_module(
     ctx: &mut TestContext,
     module_name: Option<String>,
     wasm_bytes: &[u8],
 ) -> Result<(), ModuleLoadError> {
+    // Remove the last module if it has an empty name (unreferenceable)
+    // This prevents hitting the 256 module limit in long test suites
+    // We can only remove the last module to maintain index-based references
+    {
+        let modules = ctx.store.modules();
+        if modules.len() > 0 && modules[modules.len() - 1].name.is_empty() {
+            ctx.store.pop_module();
+        }
+    }
+
     // Create a ByteStream
     let mut stream = ByteStream::new(wasm_bytes);
-
-    // We are loading a new module. We need to construct a new store using the old modules
-    // Move modules back from store to a new linker
-
-    // Create new linker with the preserved modules
-    // We need to move the modules out of the old state, not clone them, to avoid duplicating Rc<Memory> references
-    let (mut new_linker, modules_backup, old_state) = if let Some(mut state) = ctx.state.take() {
-        let mut linker = StoreLinker::new(254, [test_host_module()]).unwrap();
-
-        // Move modules out of the old store (this transfers ownership without cloning Rc references)
-        let old_modules = core::mem::take(&mut state.store.modules);
-
-        // Keep a backup of the modules so we can restore them if module parsing fails
-        let modules_backup = spacewasm::Vec::from_iter(
-            old_modules
-                .iter()
-                .map(|d| spacewasm::Box::new(clone_module(d)).unwrap()),
-        );
-
-        // Only preserve modules that have non-empty names (these can be imported/referenced)
-        // This prevents accumulation of memory references from unnamed temporary modules
-        for module in old_modules.into_iter() {
-            if !module.name.is_empty() {
-                linker.modules.push(module);
-            }
-        }
-
-        // Clear the memory and table references in the old state to avoid
-        // holding Rc references during module parsing. This allows Rc::get_mut() to
-        // succeed when Element::read needs to modify imported tables.
-        state.memory = state.store.zero_memory.clone();
-        state.table = state.store.zero_table.clone();
-
-        // Do NOT restore modules_backup to state.store.modules yet - that would create
-        // duplicate Rc references that prevent table mutation during parsing
-        (linker, Some(modules_backup), Some(state))
-    } else {
-        (
-            StoreLinker::new(254, [test_host_module()]).unwrap(),
-            None,
-            None,
-        )
-    };
 
     // Parse and validate the module
     let module = Module::new::<256>(
         module_name.as_ref().map(|f| f.as_ref()).unwrap_or(""),
         &mut stream,
-        &mut new_linker,
+        &mut ctx.store,
         &mut ctx.code_builder,
         &RustSystemAllocator,
         CompilerOptions {
             allow_memory_grow: true,
         },
-    )
-    .map_err(|e| {
-        // On error, restore the old state with the backup modules
-        if let (Some(mut state), Some(backup)) = (old_state, modules_backup) {
-            state.store.modules = backup;
-            ctx.state = Some(state);
-        }
-        e
-    })?;
-
-    // Push module to linker
-    let module_index = new_linker.modules.len();
-    new_linker
-        .modules
-        .push(spacewasm::Box::new(module).unwrap());
+    )?;
 
     // Finish the code builder to get the text
     let (text, _final_page_offset) = ctx.code_builder.clone().finish().unwrap();
 
-    // Initialize the linker into a store
-    let mut store = new_linker.allocate(1024)?;
-    ctx.state = Some(loop {
-        store = match store.initialize(&text, usize::MAX)? {
-            InitializeResult::Finished(state) => break state,
-            InitializeResult::Continue(c) => c,
+    // Initialize the module
+    ctx.with_state(|state| {
+        match state.initialize_module(spacewasm::Box::new(module).unwrap(), &text, usize::MAX) {
+            InitializeResult::Ok => Ok(()),
+            result => Err(ModuleLoadError::InitializeError(result)),
         }
-    });
-
-    // Update module index - don't finish the linker yet, as more modules might be loaded
-    ctx.module_index = module_index;
-    Ok(())
+    })
 }
 
 fn invoke_function(
@@ -579,26 +569,19 @@ fn invoke_function(
     args: &[ValueSpec],
     test_log: Rc<RefCell<LimitedVec<String>>>,
 ) -> Result<Option<Value>, InterpreterBreak> {
-    // Resolve module index by name lookup before borrowing state mutably
+    // Resolve module index by name lookup
     let module_index = if let Some(name) = module_name {
         ctx.find_module_by_name(name)
             .unwrap_or_else(|| panic!("Module '{name}' not found"))
     } else {
-        let state = ctx.state.as_ref().expect("No state initialized");
-        if state.store.modules.len() == 0 {
-            0
-        } else {
-            state.store.modules.len() - 1
-        }
+        ctx.current_module_index()
     };
 
-    let state = ctx.state.as_mut().expect("No state initialized");
-
-    // Scope the immutable borrow
+    // Look up function metadata from the store
     let (f_ref, return_types, params) = {
-        let module = &*state
+        let module = ctx
             .store
-            .modules
+            .modules()
             .get(module_index)
             .unwrap_or_else(|| panic!("Module at index {module_index} not found"));
 
@@ -632,7 +615,7 @@ fn invoke_function(
         };
 
         // Get all the immutable data we need
-        let m = &state.store.modules[func_ref.module.0 as usize];
+        let m = &ctx.store.modules()[func_ref.module.0 as usize];
         let f = &m.functions[func_ref.index as usize];
         let func_type = &m.types[f.ty.0 as usize];
         let return_types = func_type.returns.clone();
@@ -643,40 +626,42 @@ fn invoke_function(
         (func_ref, return_types, params)
     };
 
-    state.invoke(f_ref, &params)?;
-
-    let interpreter = Interpreter;
-
-    let test_runner = Inspector {
-        v: &interpreter,
-        out: test_log,
-    };
-
-    test_runner
-        .out
-        .borrow_mut()
-        .push(format!("invoke {}({:?})", func_name, params));
-
-    // Run until completion
-    // Run up to 10-million instructions to catch infinite loops
     let (text, _final_page_offset) = ctx.code_builder.clone().finish().unwrap();
-    let result = test_runner.run(&text, state, 10000000);
 
-    // Check the result
-    match result {
-        InterpreterResult::Instruction(InterpreterBreak::Finished) => {
-            if return_types.is_empty() {
-                Ok(None)
-            } else if return_types.len() == 1 {
-                Ok(Some(state.result.unwrap().to_value(return_types[0])))
-            } else {
-                panic!("Multi-value returns not supported");
+    ctx.with_state(|state| {
+        state.invoke(f_ref, &params);
+
+        let interpreter = Interpreter::default();
+
+        let test_runner = Inspector {
+            v: &interpreter,
+            out: test_log.clone(),
+        };
+
+        test_runner
+            .out
+            .borrow_mut()
+            .push(format!("invoke {}({:?})", func_name, params));
+
+        // Run until completion - up to 10-million instructions to catch infinite loops
+        let result = test_runner.run(&text, state, 10000000);
+
+        // Check the result
+        match result {
+            InterpreterResult::Instruction(InterpreterBreak::Finished) => {
+                if return_types.is_empty() {
+                    Ok(None)
+                } else if return_types.len() == 1 {
+                    Ok(Some(state.result.unwrap().to_value(return_types[0])))
+                } else {
+                    panic!("Multi-value returns not supported");
+                }
             }
+            InterpreterResult::Instruction(err) => Err(err),
+            InterpreterResult::ReaderError(err) => panic!("Reader error: {err:?}"),
+            InterpreterResult::OutOfFuel => panic!("Infinite loop detected"),
         }
-        InterpreterResult::Instruction(err) => Err(err),
-        InterpreterResult::ReaderError(err) => panic!("Reader error: {err:?}"),
-        InterpreterResult::OutOfFuel => panic!("Infinite loop detected"),
-    }
+    })
 }
 
 fn check_trap_reason(reason: TrapReason, text: &str) {
@@ -822,13 +807,13 @@ fn check_decode_error(err: ParseError, text: String) {
     }
 }
 
-fn check_initialization_error(err: InitializeError, text: &str) {
-    match (err, text) {
-        (InitializeError::Trap(TrapReason::Unreachable), "unreachable") => {}
-        err => {
+fn check_initialization_error(result: InitializeResult, text: &str) {
+    match (result, text) {
+        (InitializeResult::Trap(TrapReason::Unreachable), "unreachable") => {}
+        (result, text) => {
             assert!(
                 false,
-                "Could not match initialization error text '{text}' with error {err:?}"
+                "Could not match initialization error text '{text}' with result {result:?}"
             )
         }
     }
@@ -1004,18 +989,12 @@ fn run_wast_command(
                 let wasm_bytes = std::fs::read(&wasm_path)
                     .unwrap_or_else(|e| panic!("Failed to read module: {e}"));
 
-                // Save the previous state to restore it after we lose this one
-                let prev_state = ctx.state.take();
-
                 match load_module(ctx, None, &wasm_bytes) {
                     Ok(_) => {
                         panic!("Expected error when linking/initializing module");
                     }
-                    Err(ModuleLoadError::InitializeError(err)) => {
-                        check_initialization_error(err, &text);
-
-                        // Restore the previous state since this one is now wiped out.
-                        ctx.state = prev_state;
+                    Err(ModuleLoadError::InitializeError(result)) => {
+                        check_initialization_error(result, &text);
                     }
                     Err(err) => {
                         panic!("Failed to decode module '{err:?}'");
@@ -1028,15 +1007,19 @@ fn run_wast_command(
                 module,
                 field,
                 args,
-            } => match invoke_function(ctx, &module, &field, &args, log) {
-                Err(InterpreterBreak::Trap(reason)) => check_trap_reason(reason, &text),
-                Err(err) => {
-                    panic!("Expected trap '{text}', got error: {err:?}")
+            } => {
+                match invoke_function(ctx, &module, &field, &args, log) {
+                    Err(InterpreterBreak::Trap(reason)) => {
+                        check_trap_reason(reason, &text);
+                    }
+                    Err(err) => {
+                        panic!("Expected trap '{text}', got error: {err:?}")
+                    }
+                    Ok(_) => {
+                        panic!("Expected trap '{text}', but execution succeeded")
+                    }
                 }
-                Ok(_) => {
-                    panic!("Expected trap '{text}', but execution succeeded")
-                }
-            },
+            }
             Action::Get { .. } => {
                 panic!("Get actions not implemented yet")
             }
@@ -1052,9 +1035,14 @@ fn run_wast_command(
                 let wasm_path = test_dir.join(&filename);
                 let wasm_bytes = std::fs::read(&wasm_path).unwrap();
 
+                let saved_store = ctx.save_store();
                 match load_module(ctx, None, &wasm_bytes) {
-                    Err(ModuleLoadError::DecodeError(err)) => check_decode_error(err.into(), text),
+                    Err(ModuleLoadError::DecodeError(err)) => {
+                        check_decode_error(err.into(), text);
+                        ctx.restore_store(saved_store);
+                    }
                     _ => {
+                        ctx.restore_store(saved_store);
                         panic!("Expected error when decoding module");
                     }
                 }
@@ -1077,12 +1065,18 @@ fn run_wast_command(
                 let wasm_bytes = std::fs::read(&wasm_path)
                     .unwrap_or_else(|e| panic!("Failed to read {}: {e}", wasm_path.display()));
 
+                let saved_store = ctx.save_store();
                 match load_module(ctx, None, &wasm_bytes) {
-                    Err(ModuleLoadError::DecodeError(err)) => check_decode_error(err.into(), text),
+                    Err(ModuleLoadError::DecodeError(err)) => {
+                        check_decode_error(err.into(), text);
+                        ctx.restore_store(saved_store);
+                    },
                     Err(ModuleLoadError::AllocationError(err)) => {
+                        ctx.restore_store(saved_store);
                         panic!("Expected error when decoding module '{err:?}'");
                     }
                     _ => {
+                        ctx.restore_store(saved_store);
                         panic!("Expected error when decoding module");
                     }
                 }
@@ -1117,8 +1111,7 @@ fn run_wast_command(
 
             // Update the module name in the store to the registered alias
             // This allows linking to find it by the registered name
-            let state = ctx.state.as_mut().expect("No state initialized");
-            let module = state.store.modules.get_mut(module_index).unwrap();
+            let module = ctx.store.modules_mut().get_mut(module_index).unwrap();
             module.name = as_name.as_str().try_into().unwrap();
         }
         Command::Action { action, .. } => match action {
@@ -1182,8 +1175,8 @@ pub fn run_wast_test_file(test_name: &str) {
         .join(format!("{}.wast", test_name));
 
     // Create a temporary directory for generated files
-    let temp_dir = TempDir::new()
-        .unwrap_or_else(|e| panic!("Failed to create temp directory: {e}"));
+    let temp_dir =
+        TempDir::new().unwrap_or_else(|e| panic!("Failed to create temp directory: {e}"));
     let temp_path = temp_dir.path();
 
     // Extract just the filename (without directory path) for the JSON output
@@ -1211,7 +1204,12 @@ pub fn run_wast_test_file(test_name: &str) {
     let subtest_log = Arc::new(Mutex::new(None));
 
     match catch_unwind(|| {
-        run_wast_test_file_inner(temp_path.to_path_buf(), &test_filename, wast_line.clone(), subtest_log.clone())
+        run_wast_test_file_inner(
+            temp_path.to_path_buf(),
+            &test_filename,
+            wast_line.clone(),
+            subtest_log.clone(),
+        )
     }) {
         Ok(_) => {}
         Err(err) => {

@@ -66,7 +66,7 @@ impl Module {
     pub fn new<const N: usize>(
         name: &str,
         stream: &mut dyn WasmStream,
-        store: &mut StoreLinker,
+        store: &mut Store,
         code_builder: &mut CodeBuilder<N>,
         allocator: &'static dyn WasmMemoryAllocator,
         compiler_options: CompilerOptions,
@@ -92,7 +92,7 @@ impl Module {
     pub fn new_with_statistics<const N: usize>(
         name: &str,
         stream: &mut dyn WasmStream,
-        store: &mut StoreLinker,
+        store: &mut Store,
         code_builder: &mut CodeBuilder<N>,
         allocator: &'static dyn WasmMemoryAllocator,
         compiler_options: CompilerOptions,
@@ -121,7 +121,7 @@ impl Module {
     fn read<const N: usize>(
         name: &str,
         wasm: &mut Reader,
-        store: &mut StoreLinker,
+        store: &mut Store,
         code_builder: &mut CodeBuilder<N>,
         custom_handler: &mut dyn CustomSectionHandler,
         allocator: &'static dyn WasmMemoryAllocator,
@@ -142,11 +142,11 @@ impl Module {
         // Make sure that the module name is not a duplicate in the store
         // Allow multiple modules with empty names since they can't be imported
         if !name.is_empty() {
-            if let Some(_) = store.modules.iter().find(|m| m.name == name) {
+            if let Some(_) = store.modules().iter().find(|m| m.name == name) {
                 return Err(ValidationError::DuplicateModuleName.into());
             }
 
-            if let Some(_) = store.host_modules.iter().find(|m| m.name == name) {
+            if let Some(_) = store.host_modules().iter().find(|m| m.name == name) {
                 return Err(ValidationError::DuplicateModuleName.into());
             }
         }
@@ -235,7 +235,7 @@ impl Module {
     fn read_section<const PN: usize>(
         &mut self,
         wasm: &mut Reader,
-        store: &mut StoreLinker,
+        store: &mut Store,
         section_size: usize,
         section_ty: SectionKind,
         custom_handler: &mut dyn CustomSectionHandler,
@@ -265,7 +265,7 @@ impl Module {
                             // The import should have already validated with linkage
                             // We can make the assertion here
                             let Some(MemoryKind::Owned(_)) =
-                                &store.modules[module.0 as usize].memory
+                                &store.modules()[module.0 as usize].memory
                             else {
                                 unreachable!()
                             };
@@ -278,7 +278,8 @@ impl Module {
                             }
 
                             // Make sure this module actually defines a memory
-                            let _ = &store.host_modules[module.0 as usize].memory[*index as usize]
+                            let _ = &store.host_modules()[module.0 as usize].memory
+                                [*index as usize]
                                 .value;
 
                             self.memory = Some(MemoryKind::ImportHost(HostRef {
@@ -292,7 +293,7 @@ impl Module {
                             }
 
                             let Some(TableKind::Owned(_)) =
-                                &mut store.modules[module.0 as usize].table
+                                &mut store.modules_mut()[module.0 as usize].table
                             else {
                                 unreachable!()
                             };
@@ -305,8 +306,8 @@ impl Module {
                             }
 
                             // Make sure this module actually defines a table
-                            let _ =
-                                &store.host_modules[module.0 as usize].table[*index as usize].value;
+                            let _ = &store.host_modules()[module.0 as usize].table[*index as usize]
+                                .value;
 
                             self.table = Some(TableKind::ImportHost(HostRef {
                                 module: *module,
@@ -352,13 +353,13 @@ impl Module {
                         }
                     }
                     Ref::Host { module, index } => {
-                        let f = &store.host_modules[module.0 as usize].functions[index as usize];
+                        let f = &store.host_modules()[module.0 as usize].functions[index as usize];
                         if f.params().len() != 0 || f.returns().len() != 0 {
                             return Err(ValidationError::InvalidStartFunctionSignature);
                         }
                     }
                     Ref::Extern { module, index } => {
-                        let m = &store.modules[module.0 as usize];
+                        let m = &store.modules()[module.0 as usize];
                         let f = &m.functions[index as usize];
                         let ty = &m.types[f.ty.0 as usize];
                         if ty.params.len() != 0 || ty.returns.len() != 0 {
@@ -592,7 +593,7 @@ pub struct ImportSection;
 impl ImportSection {
     pub fn read(
         wasm: &mut Reader,
-        store: &StoreLinker,
+        store: &Store,
         module: &Module,
     ) -> Result<Vec<Import>, ValidationError> {
         wasm.read_vec(|w| Import::read(w, module, store))
@@ -695,7 +696,7 @@ impl Global {
 
     pub fn read(
         wasm: &mut Reader,
-        store: &StoreLinker,
+        store: &Store,
         module: &Module,
     ) -> Result<Self, ValidationError> {
         let type_ = GlobalType::read(wasm)?;
@@ -739,7 +740,7 @@ pub struct GlobalSection;
 impl GlobalSection {
     pub fn read(
         wasm: &mut Reader,
-        store: &StoreLinker,
+        store: &Store,
         module: &Module,
     ) -> Result<Vec<Global>, ValidationError> {
         wasm.read_vec(|wasm| Global::read(wasm, store, module))
@@ -831,13 +832,14 @@ impl ExportSection {
 impl Module {
     pub(crate) fn get_table<'store>(
         &'store mut self,
-        store: &'store mut StoreLinker,
+        store: &'store mut Store,
     ) -> Option<&'store mut [TableElement]> {
         if let Some(table) = &mut self.table {
             let table = match table {
                 TableKind::Owned(table) => &mut table.0,
                 TableKind::Import(i) => {
-                    let Some(TableKind::Owned(table)) = &mut store.modules[i.0 as usize].table
+                    let Some(TableKind::Owned(table)) =
+                        &mut store.modules_mut()[i.0 as usize].table
                     else {
                         unreachable!()
                     };
@@ -845,7 +847,7 @@ impl Module {
                     &mut table.0
                 }
                 TableKind::ImportHost(i) => {
-                    &mut store.host_modules[i.module.0 as usize].table[i.index as usize]
+                    &mut store.host_modules_mut()[i.module.0 as usize].table[i.index as usize]
                         .value
                         .0
                 }
@@ -863,7 +865,7 @@ pub struct Element;
 impl Element {
     pub fn read(
         wasm: &mut Reader,
-        store: &mut StoreLinker,
+        store: &mut Store,
         module: &mut Module,
     ) -> Result<(), ValidationError> {
         let table = TableIdx::read(wasm)?;
@@ -894,7 +896,7 @@ impl Element {
 
             let tr = match r {
                 Ref::Module(index) => TableElement::Func {
-                    module: ModuleRef(store.modules.len() as u8),
+                    module: ModuleRef(store.modules().len() as u8),
                     index,
                 },
                 Ref::Host { module, index } => TableElement::Host { module, index },
@@ -921,7 +923,7 @@ pub struct ElementSection;
 impl ElementSection {
     pub fn read(
         wasm: &mut Reader,
-        store: &mut StoreLinker,
+        store: &mut Store,
         module: &mut Module,
     ) -> Result<(), ValidationError> {
         let len = wasm.read_u32()?;
@@ -939,7 +941,7 @@ impl CodeSection {
     pub fn read<const N: usize>(
         wasm: &mut Reader,
         builder: &mut CodeBuilder<N>,
-        store: &StoreLinker,
+        store: &Store,
         module: &mut Module,
         compiler_options: CompilerOptions,
     ) -> Result<(), ValidationError> {
@@ -975,7 +977,7 @@ impl Module {
 impl Data {
     pub fn read(
         wasm: &mut Reader,
-        store: &StoreLinker,
+        store: &Store,
         module: &Module,
     ) -> Result<Self, ValidationError> {
         let mem = MemIdx::read(wasm)?;
@@ -1008,11 +1010,7 @@ impl Data {
 
 pub struct DataSection;
 impl DataSection {
-    pub fn read(
-        wasm: &mut Reader,
-        store: &StoreLinker,
-        module: &Module,
-    ) -> Result<(), ValidationError> {
+    pub fn read(wasm: &mut Reader, store: &Store, module: &Module) -> Result<(), ValidationError> {
         let len = wasm.read_u32()?;
         if len == 0 {
             return Ok(());
@@ -1022,7 +1020,7 @@ impl DataSection {
             let memory = match memory {
                 MemoryKind::Owned(memory) => memory,
                 MemoryKind::Import(i) => {
-                    let Some(MemoryKind::Owned(memory)) = &store.modules[i.0 as usize].memory
+                    let Some(MemoryKind::Owned(memory)) = &store.modules()[i.0 as usize].memory
                     else {
                         unreachable!()
                     };
@@ -1030,7 +1028,7 @@ impl DataSection {
                     memory
                 }
                 MemoryKind::ImportHost(i) => {
-                    &store.host_modules[i.module.0 as usize].memory[i.index as usize].value
+                    &store.host_modules()[i.module.0 as usize].memory[i.index as usize].value
                 }
             };
 

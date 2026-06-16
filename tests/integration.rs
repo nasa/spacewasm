@@ -317,6 +317,11 @@ fn linking() {
 }
 
 #[test]
+fn linking_dev() {
+    run_wast_test_file("core/linking_dev");
+}
+
+#[test]
 fn memory_size() {
     run_wast_test_file("core/memory_size");
 }

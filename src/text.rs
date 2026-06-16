@@ -399,7 +399,7 @@ impl<const N: usize> CodeBuilder<N> {
 /// The `N` generic parameter limits the maximum number of code pages.
 pub struct TextBuilder<'a, const N: usize> {
     code: &'a mut CodeBuilder<N>,
-    store: &'a StoreLinker,
+    store: &'a Store,
     module: &'a Module,
     func: &'a Func,
     control_frames: StaticVec<ControlFrame, 64>,
@@ -411,7 +411,7 @@ pub struct TextBuilder<'a, const N: usize> {
 impl<'a, const N: usize> TextBuilder<'a, N> {
     pub fn new(
         code: &'a mut CodeBuilder<N>,
-        store: &'a StoreLinker,
+        store: &'a Store,
         module: &'a Module,
         func: &'a Func,
     ) -> TextBuilder<'a, N> {
@@ -427,7 +427,7 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
         }
     }
 
-    pub fn store(&self) -> &'a StoreLinker {
+    pub fn store(&self) -> &'a Store {
         self.store
     }
 
@@ -530,7 +530,7 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
             // This index refers to an imported global
             Ref::Host { module, index } => {
                 // Unwrap() should be fine since the imports are already resolved
-                let module = self.store.host_modules.get(module.0 as usize).unwrap();
+                let module = self.store.host_modules().get(module.0 as usize).unwrap();
                 let global = module.globals.get(index as usize).unwrap();
 
                 Ok(GlobalVariable {
@@ -540,7 +540,7 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
                 })
             }
             Ref::Extern { module, index } => {
-                let module = self.store.modules.get(module.0 as usize).unwrap();
+                let module = self.store.modules().get(module.0 as usize).unwrap();
                 let global = module.globals.get(index as usize).unwrap();
 
                 Ok(GlobalVariable {
@@ -993,7 +993,7 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
                 Ok(())
             } else {
                 Err(ValidationError::StackUnderflow)
-            }
+            };
         }
 
         // We have values on the stack - pop and check type even if unreachable

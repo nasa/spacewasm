@@ -420,7 +420,7 @@ mod tests {
 
     #[test]
     fn test_rc_new_slice_empty() {
-        let rc = Rc::new_slice(0, |_| 42i32).unwrap();
+        let rc: Rc<[i32]> = Rc::new_slice(0, |_| 42i32).unwrap();
 
         assert_eq!(rc.len(), 0);
         assert_eq!(&*rc, &[]);

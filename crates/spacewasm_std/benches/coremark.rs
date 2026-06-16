@@ -1,8 +1,4 @@
-use spacewasm::{
-    CodeBuilder, CompilerOptions, ExportDesc, HostFunction, HostModule, InitializeResult,
-    InterpreterBreak, InterpreterResult, InterpreterRunner, ModuleRef, RawValue, Ref, StoreLinker,
-    Value, WasmRef,
-};
+use spacewasm::{CodeBuilder, CompilerOptions, ExportDesc, HostFunction, HostModule, InitializeResult, InterpreterBreak, InterpreterResult, InterpreterRunner, ModuleRef, RawValue, Ref, Store, Value, WasmRef};
 use spacewasm_util::{FileStream, RustSystemAllocator};
 use std::ops::ControlFlow;
 use std::time::Instant;
@@ -41,7 +37,7 @@ fn main() {
         table: spacewasm::Vec::zero(),
     };
 
-    let mut store = StoreLinker::new(2, [env]).unwrap();
+    let mut store = Store::new(2, [env]).unwrap();
     let mut code_builder = CodeBuilder::<256>::default();
 
     let file = std::fs::File::open("benches/coremark-minimal.wasm")

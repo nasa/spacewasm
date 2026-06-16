@@ -201,7 +201,7 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
                 Ok(())
             }
             Ref::Host { module, index } => {
-                let hm = &state.store().host_modules[module.0 as usize];
+                let hm = &state.store().host_modules()[module.0 as usize];
                 let f = &hm.functions[index as usize];
                 for p in f.params().iter().rev() {
                     state.pop_stack(p)?;
@@ -217,7 +217,7 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
             }
             Ref::Extern { module, index } => {
                 // Check the call signature
-                let m = &state.store().modules[module.0 as usize];
+                let m = &state.store().modules()[module.0 as usize];
                 let f = &m.functions[index as usize];
                 let ty = &m.types[f.ty.0 as usize];
 

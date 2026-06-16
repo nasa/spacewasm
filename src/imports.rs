@@ -42,14 +42,14 @@ impl From<Import> for Ref {
     }
 }
 
-impl StoreLinker {
+impl Store {
     fn link_function(
         &self,
         module_name: &str,
         name: &str,
         expected_ty: &FuncType,
     ) -> Result<Import, ValidationError> {
-        for (mi, module) in self.host_modules.iter().enumerate() {
+        for (mi, module) in self.host_modules().iter().enumerate() {
             if module.name == module_name {
                 for (fi, f) in module.functions.iter().enumerate() {
                     if f.name() == name {
@@ -69,7 +69,7 @@ impl StoreLinker {
             }
         }
 
-        for (mi, module) in self.modules.iter().enumerate() {
+        for (mi, module) in self.modules().iter().enumerate() {
             // Check if this module is the module we are looking for
             if module.name == module_name {
                 // Look for any exports that match this function name
@@ -104,7 +104,7 @@ impl StoreLinker {
                                     }
                                 }
                                 Ref::Extern { module, index } => {
-                                    let em = &self.modules.get(module.0 as usize).unwrap();
+                                    let em = &self.modules().get(module.0 as usize).unwrap();
                                     let f = &em.functions[index as usize];
                                     let ty = &em.types[f.ty.0 as usize];
 
@@ -115,7 +115,7 @@ impl StoreLinker {
                                     Ok(Import::Func { module, index })
                                 }
                                 Ref::Host { module, index } => {
-                                    let hm = &self.host_modules[module.0 as usize];
+                                    let hm = &self.host_modules()[module.0 as usize];
                                     let f = &hm.functions[index as usize];
 
                                     if f.params() == expected_ty.params[..]
@@ -144,7 +144,7 @@ impl StoreLinker {
         name: &str,
         expected_ty: GlobalType,
     ) -> Result<Import, ValidationError> {
-        for (mi, module) in self.host_modules.iter().enumerate() {
+        for (mi, module) in self.host_modules().iter().enumerate() {
             if module.name == module_name {
                 for (gi, g) in module.globals.iter().enumerate() {
                     if g.name == name {
@@ -164,7 +164,7 @@ impl StoreLinker {
             }
         }
 
-        for (mi, module) in self.modules.iter().enumerate() {
+        for (mi, module) in self.modules().iter().enumerate() {
             if module.name == module_name {
                 for e in &module.exports {
                     if e.name == name {
@@ -191,7 +191,7 @@ impl StoreLinker {
                                     }
                                 }
                                 Ref::Extern { module, index } => {
-                                    let em = self.modules.get(module.0 as usize).unwrap();
+                                    let em = self.modules().get(module.0 as usize).unwrap();
                                     let g = &em.globals[index as usize];
                                     if g.type_.ty != expected_ty.ty {
                                         Err(ValidationError::GlobalImportTypeMismatch)
@@ -202,7 +202,7 @@ impl StoreLinker {
                                     }
                                 }
                                 Ref::Host { module, index } => {
-                                    let hm = &self.host_modules[module.0 as usize];
+                                    let hm = &self.host_modules()[module.0 as usize];
                                     let g = &hm.globals[index as usize];
                                     if g.value.ty() != expected_ty.ty {
                                         Err(ValidationError::GlobalImportTypeMismatch)
@@ -230,7 +230,7 @@ impl StoreLinker {
         name: &str,
         expected_ty: TableType,
     ) -> Result<Import, ValidationError> {
-        for (mi, module) in self.host_modules.iter().enumerate() {
+        for (mi, module) in self.host_modules().iter().enumerate() {
             if module.name == module_name {
                 for (ti, table) in module.table.iter().enumerate() {
                     if table.name == name {
@@ -249,7 +249,7 @@ impl StoreLinker {
             }
         }
 
-        for (mi, module) in self.modules.iter().enumerate() {
+        for (mi, module) in self.modules().iter().enumerate() {
             // Check if this module is the module we are looking for
             if module.name == module_name {
                 // Look for any exports that match this function name
@@ -267,7 +267,7 @@ impl StoreLinker {
                                 Some(TableKind::Owned(table)) => table.1,
                                 Some(TableKind::Import(import_module_ref)) => {
                                     let r = import_module_ref.0 as usize;
-                                    let Some(TableKind::Owned(table)) = &self.modules[r].table
+                                    let Some(TableKind::Owned(table)) = &self.modules()[r].table
                                     else {
                                         unreachable!()
                                     };
@@ -275,8 +275,8 @@ impl StoreLinker {
                                     table.1
                                 }
                                 Some(TableKind::ImportHost(host_import)) => {
-                                    let l = self.host_modules[host_import.module.0 as usize].table
-                                        [host_import.index as usize]
+                                    let l = self.host_modules()[host_import.module.0 as usize]
+                                        .table[host_import.index as usize]
                                         .value
                                         .1;
 
@@ -312,7 +312,7 @@ impl StoreLinker {
         name: &str,
         expected_ty: MemType,
     ) -> Result<Import, ValidationError> {
-        for (mi, module) in self.host_modules.iter().enumerate() {
+        for (mi, module) in self.host_modules().iter().enumerate() {
             if module.name == module_name {
                 for (i, symbol) in module.memory.iter().enumerate() {
                     if name == symbol.name {
@@ -330,7 +330,7 @@ impl StoreLinker {
             }
         }
 
-        for (mi, module) in self.modules.iter().enumerate() {
+        for (mi, module) in self.modules().iter().enumerate() {
             // Check if this module is the module we are looking for
             if module.name == module_name {
                 // Look for any exports that match this function name
@@ -360,7 +360,7 @@ impl StoreLinker {
                                     // This import should already be resolved to a module with
                                     // an owned memory.
                                     let Some(MemoryKind::Owned(memory)) =
-                                        &self.modules[i.0 as usize].memory
+                                        &self.modules()[i.0 as usize].memory
                                     else {
                                         unreachable!()
                                     };
@@ -375,7 +375,7 @@ impl StoreLinker {
                                     })
                                 }
                                 Some(MemoryKind::ImportHost(i)) => {
-                                    let symbol = &self.host_modules[i.module.0 as usize].memory
+                                    let symbol = &self.host_modules()[i.module.0 as usize].memory
                                         [i.index as usize];
 
                                     let memory = &symbol.value;
@@ -405,7 +405,7 @@ impl Import {
     pub fn read(
         wasm: &mut Reader,
         module: &Module,
-        store: &StoreLinker,
+        store: &Store,
     ) -> Result<Import, ValidationError> {
         let module_raw = wasm.read_vec_stack::<32, _>(|r| r.read_u8())?;
         let module_name = (&module_raw).try_into()?;
