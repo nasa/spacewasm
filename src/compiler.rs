@@ -24,7 +24,7 @@ impl<'a, const N: usize> Compiler<'a, N> {
 macro_rules! validate {
     ($state:expr, ($($in_ty:ident)*) -> ($($out_ty:ident)*)) => {
         $(
-            $state.pop_stack(ValType::$in_ty)?;
+            let _ = $state.pop_stack(ValType::$in_ty)?;
         )*
 
         $(
@@ -87,11 +87,11 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
     }
 
     fn select(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        state.pop_stack(ValType::I32)?;
-        let ty = state.pop_stack_t()?;
-        state.pop_stack(ty)?;
-        state.pop_stack(ty)?;
-        state.instr_imm_8(SELECT, ty.into())?;
+        let _ = state.pop_stack(ValType::I32)?;
+        let t1 = state.pop_stack_t()?;
+        let t2 = state.pop_stack(t1)?;
+        state.push_stack(t2)?;
+        state.instr_imm_8(SELECT, t2.into())?;
         Ok(())
     }
 
@@ -110,7 +110,6 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
     }
 
     fn finish(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        state.pop_result_type(ResultType(state.func().return_ty))?;
         self.return_(state)
     }
 
@@ -119,17 +118,27 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
     }
 
     fn if_(&self, block_type: ResultType, state: &mut Self::State) -> Result<(), Self::Error> {
-        state.pop_stack(ValType::I32)?;
+        let _ = state.pop_stack(ValType::I32)?;
         state.instr(IF)?;
         state.push_control(BlockKind::Forward, block_type, block_type)?;
+        // Emit a placeholder for the false-branch/else target that will be backpatched
+        state.write_if_else_target()?;
         Ok(())
     }
 
     fn else_(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        // Perform an unconditional branch to the end of the 'if'
+        // Perform an unconditional branch to skip the else block
+        // This gets added to the head of the linked list (before any existing br instructions)
         state.instr(BR)?;
         state.write_label_target(LabelIdx(0))?;
-        let results = state.pop_control()?;
+
+        // Pop the if control frame and patch its false-branch (tail of linked list) to point here
+        // The remaining chain (br instructions from the then block) stays intact
+        let results = state.pop_control_and_patch_if()?;
+
+        // Push a new control frame for the else block
+        // The br chain from the if's then block is now in the new frame (because write_label_target
+        // above added to it, and pop_control_and_patch_if kept the non-tail part)
         state.push_control(BlockKind::Forward, results, results)?;
 
         Ok(())
@@ -144,7 +153,7 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
     }
 
     fn br_if(&self, l: LabelIdx, state: &mut Self::State) -> Result<(), Self::Error> {
-        state.pop_stack(ValType::I32)?;
+        let _ = state.pop_stack(ValType::I32)?;
         state.instr(BR_IF)?;
         let lbl_types = state.write_label_target(l)?;
         state.pop_result_type(lbl_types)?;
@@ -158,7 +167,7 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
         default_: LabelIdx,
         state: &mut Self::State,
     ) -> Result<(), Self::Error> {
-        state.pop_stack(ValType::I32)?;
+        let _ = state.pop_stack(ValType::I32)?;
         state.instr_imm_8_or_16(BR_TABLE, lut.len() as u32)?;
         let def_result = state.write_label_target(default_)?;
         for l in lut {
@@ -177,7 +186,7 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
         // Return instructions also encode the return size from their function's context
         let ty = state.func().return_ty;
         if let Some(ty) = ty {
-            state.pop_stack(ty)?;
+            let _ = state.pop_stack(ty)?;
             state.instr_imm_8(RETURN, ty.size() as u8 / 4)?;
         } else {
             state.instr(RETURN)?;
@@ -200,7 +209,7 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
                 let ty = &state.module().types[f.ty.0 as usize];
 
                 for p in ty.params.iter().rev() {
-                    state.pop_stack(*p)?;
+                    let _ = state.pop_stack(*p)?;
                 }
 
                 for r in ty.returns.iter().rev() {
@@ -215,7 +224,7 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
                 let hm = &state.store().host_modules()[module.0 as usize];
                 let f = &hm.functions[index as usize];
                 for p in f.params().iter().rev() {
-                    state.pop_stack(p)?;
+                    let _ = state.pop_stack(p)?;
                 }
 
                 for r in f.returns().iter().rev() {
@@ -233,7 +242,7 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
                 let ty = &m.types[f.ty.0 as usize];
 
                 for p in ty.params.iter().rev() {
-                    state.pop_stack(p)?;
+                    let _ = state.pop_stack(p)?;
                 }
 
                 for r in ty.returns.iter().rev() {
@@ -252,7 +261,7 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
             return Err(ValidationError::TableNotDefined);
         }
 
-        state.pop_stack(ValType::I32)?;
+        let _ = state.pop_stack(ValType::I32)?;
         let ty = state
             .module()
             .types
@@ -260,7 +269,7 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
             .ok_or(ValidationError::TypeIdxOutOfRange)?;
 
         for p in ty.params.iter().rev() {
-            state.pop_stack(p)?;
+            let _ = state.pop_stack(p)?;
         }
 
         for r in &ty.returns {
@@ -282,7 +291,7 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
 
     fn local_set(&self, x: LocalIdx, state: &mut Self::State) -> Result<(), Self::Error> {
         let l = state.get_local(x)?;
-        state.pop_stack(l.ty)?;
+        let _ = state.pop_stack(l.ty)?;
         state.instr_imm_8(LOCAL_SET, l.ty as u8)?;
         state.write_16(l.frame_offset as u16)?;
         Ok(())
@@ -290,7 +299,7 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
 
     fn local_tee(&self, x: LocalIdx, state: &mut Self::State) -> Result<(), Self::Error> {
         let l = state.get_local(x)?;
-        state.pop_stack(l.ty)?;
+        let _ = state.pop_stack(l.ty)?;
         state.push_stack(l.ty)?;
         state.instr_imm_8(LOCAL_TEE, l.ty as u8)?;
         state.write_16(l.frame_offset as u16)?;
@@ -323,7 +332,7 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
         if !g.mutable {
             Err(ValidationError::GlobalIsNotMutable)
         } else {
-            state.pop_stack(g.ty)?;
+            let _ = state.pop_stack(g.ty)?;
             match g.reference {
                 Ref::Module(idx) => {
                     state.instr_imm_8_or_16(GLOBAL_SET, idx as u32)?;

@@ -202,12 +202,15 @@ pub enum BlockKind {
 }
 
 /// A control flow frame tracking jump targets for blocks, loops, and if-else statements.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct ControlFrame {
     kind: BlockKind,
     label: ResultType,
     out: ResultType,
     height: u16,
+    /// For loops: the backward jump target
+    /// For blocks/if/else: the head of the linked list of forward jumps
+    /// For if: the false-branch placeholder is at the TAIL of this list
     target: JumpTarget,
     unreachable: bool,
 }
@@ -395,6 +398,7 @@ pub struct TextBuilder<'a, const N: usize> {
     control_frames: StaticVec<ControlFrame, 64>,
     value_stack: StaticVec<OperandType, 512>,
     stack_highwater: usize,
+    function_unreachable: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -447,6 +451,7 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
             control_frames: Default::default(),
             value_stack: Default::default(),
             stack_highwater: 0,
+            function_unreachable: false,
         }
     }
 
@@ -581,7 +586,10 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
 
     pub(crate) fn mark_unreachable(&mut self) {
         match self.control_frames.last_mut() {
-            None => {}
+            None => {
+                self.value_stack.truncate(0);
+                self.function_unreachable = true;
+            }
             Some(frame) => {
                 self.value_stack.truncate(frame.height as usize);
                 frame.unreachable = true;
@@ -591,7 +599,7 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
 
     fn is_unreachable(&self) -> bool {
         match self.control_frames.last() {
-            None => false,
+            None => self.function_unreachable,
             Some(c) => c.unreachable,
         }
     }
@@ -718,7 +726,8 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
 
     pub(crate) fn pop_result_type(&mut self, result: ResultType) -> Result<(), ValidationError> {
         if let Some(result) = result.0 {
-            self.pop_stack(result)
+            self.pop_stack(result)?;
+            Ok(())
         } else {
             Ok(())
         }
@@ -735,7 +744,7 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
     pub(crate) fn pop_stack(
         &mut self,
         expect: impl Into<OperandType>,
-    ) -> Result<(), ValidationError> {
+    ) -> Result<OperandType, ValidationError> {
         // func pop_opd(expect : val_type | Unknown) : val_type | Unknown =
         //      let actual = pop_opd()
         //      if (actual = Unknown) return expect
@@ -746,17 +755,17 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
         let expect = expect.into();
         let actual = self.pop_stack_t()?;
         if actual == OperandType::Unknown {
-            return Ok(());
+            return Ok(expect);
         }
 
         if expect == OperandType::Unknown {
-            return Ok(());
+            return Ok(actual);
         }
 
         if actual != expect {
             Err(ValidationError::TypeMismatch)
         } else {
-            Ok(())
+            Ok(actual)
         }
     }
 
@@ -783,6 +792,83 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
         Ok(())
     }
 
+
+    /// Write a placeholder label target for an if's false branch (else or end).
+    /// This is called immediately after pushing an if control frame.
+    /// The placeholder becomes the TAIL of the linked list (any br instructions will be inserted before it).
+    pub(crate) fn write_if_else_target(&mut self) -> Result<(), ValidationError> {
+        // Get the result type from the control frame we just pushed
+        let out = self.control_frames.last()
+            .ok_or(ValidationError::InvalidEndBlock)?
+            .out;
+
+        // Save the current PC - this becomes the initial tail
+        let patch_location = self.pc();
+
+        // Write a sentinel placeholder that will be patched later
+        let placeholder = LabelTarget::new(
+            out,
+            0,
+            JumpOffset::sentinel()
+        );
+        self.code.push(placeholder.0 as u16)?;
+        self.code.push((placeholder.0 >> 16) as u16)?;
+
+        // Initialize target to this location - subsequent br instructions will be inserted at the head
+        self.control_frames.last_mut().unwrap().target = patch_location;
+
+        Ok(())
+    }
+
+    /// Exit an if control block and patch its false-branch to point to the current location.
+    /// This is called when entering an else block.
+    /// Walks the linked list to find the tail (false-branch with sentinel), patches it,
+    /// and breaks it off from the chain. Returns the remaining chain for the else frame.
+    pub(crate) fn pop_control_and_patch_if(&mut self) -> Result<ResultType, ValidationError> {
+        // Read validation data from the frame without popping it yet
+        let (out, height) = {
+            let Some(last) = self.control_frames.last() else {
+                return Err(ValidationError::InvalidEndBlock);
+            };
+            (last.out, last.height)
+        };
+
+        // Pop the expected end types while the frame is still on the stack
+        self.pop_result_type(out)?;
+
+        // Check that the stack height matches
+        if self.value_stack.len() != height as usize {
+            return Err(ValidationError::BlockResultTypeMismatch);
+        }
+
+        // Pop the control frame
+        let last = self.control_frames.pop().unwrap();
+
+        // Walk the linked list to find and patch the tail (false-branch placeholder)
+        let pc = self.pc();
+        let mut prev = JumpTarget::SENTINEL;
+        self.code.backpatch(last.target, |code, address, label| {
+            if label.is_sentinel() {
+                // Found the tail - this is the false-branch placeholder
+                // Patch it to jump here (start of else)
+                let patched = label.with_jump(JumpOffset::new(address, pc)?);
+                code.write_32(address, patched.0)?;
+
+                // Break it off: make the previous node the new tail
+                if prev != JumpTarget::SENTINEL {
+                    let old_label = LabelTarget(code.read_32(prev)?);
+                    let new_tail = old_label.with_jump(JumpOffset::sentinel());
+                    code.write_32(prev, new_tail.0)?;
+                }
+            } else {
+                prev = address;
+            }
+            Ok(())
+        })?;
+
+        Ok(last.out)
+    }
+
     /// Exit the current control block and back-patch any forward jump targets.
     ///
     /// For forward blocks (block/if/else):
@@ -807,21 +893,33 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
         //     ctrls.pop()
         //     return frame.end_types
 
-        let Some(last) = self.control_frames.pop() else {
-            return Err(ValidationError::InvalidEndBlock);
+        // Read validation data from the frame without popping it yet
+        // (needed for unreachable handling in pop_result_type)
+        let (out, height) = {
+            let Some(last) = self.control_frames.last() else {
+                return Err(ValidationError::InvalidEndBlock);
+            };
+            (last.out, last.height)
         };
 
-        self.pop_result_type(last.out)?;
+        // Pop the expected end types while the frame is still on the stack
+        self.pop_result_type(out)?;
 
-        if self.value_stack.len() != last.height as usize {
+        // Check that the stack height matches
+        if self.value_stack.len() != height as usize {
             return Err(ValidationError::BlockResultTypeMismatch);
         }
+
+        // Now pop the control frame and get the actual target value
+        // (which may have been modified by write_label_target calls)
+        let last = self.control_frames.pop().unwrap();
 
         // Patch in the forward jump targets with the current PC.
         match last.kind {
             BlockKind::Backward => (),
             BlockKind::Forward => {
                 let pc = self.pc();
+                // Patch all forward jumps (including false-branch if it's an if without else)
                 self.code.backpatch(last.target, |code, address, label| {
                     let patched = label.with_jump(JumpOffset::new(address, pc)?);
                     code.write_32(address, patched.0)?;
