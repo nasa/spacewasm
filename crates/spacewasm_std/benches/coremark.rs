@@ -82,7 +82,7 @@ fn main() {
         _ => panic!("run export is not a function"),
     };
 
-    state.invoke(func, &[]);
+    state.invoke(func, &[]).unwrap();
 
     let bench_start = Instant::now();
 

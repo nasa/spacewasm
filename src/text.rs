@@ -197,9 +197,9 @@ impl JumpTarget {
 
 #[derive(Clone, Copy)]
 pub enum BlockKind {
-    Backward, // Loops
-    Forward,  // Block, Else
-    ForwardIf,
+    Loop,  // Loops
+    Block, // Block, Else
+    If,
 }
 
 /// A control flow frame tracking jump targets for blocks, loops, and if-else statements.
@@ -208,6 +208,7 @@ struct ControlFrame {
     kind: BlockKind,
     label: ResultType,
     out: ResultType,
+    /// The operand stack height in _number_ of elements rather than stack word usage
     height: u16,
     /// For loops: the backward jump target
     /// For blocks/if/else: the head of the linked list of forward jumps
@@ -456,7 +457,7 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
         // Push the implicit function control frame per the spec
         // This represents the function's return point
         let return_type = ResultType(func.return_ty);
-        let _ = builder.push_control(BlockKind::Forward, return_type, return_type);
+        let _ = builder.push_control(BlockKind::Block, return_type, return_type);
 
         builder
     }
@@ -651,19 +652,22 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
             ResultType(self.func.return_ty)
         } else {
             let pc = self.pc();
+            let start_stack_height = self.stack_height();
+            let end_stack_height = self.stack_height_for(self.control_frames[idx].height as usize);
+            let stack_delta = start_stack_height - end_stack_height;
+
+            if stack_delta > u8::MAX as usize {
+                return Err(ValidationError::LabelStackJumpTooDeep);
+            }
 
             let control_frame = &mut self.control_frames[idx];
             match control_frame.kind {
                 // Backward jump target
-                BlockKind::Backward => {
-                    let stack_delta = self.value_stack.len() - (control_frame.height as usize);
-                    if stack_delta > 0xFF {
-                        return Err(ValidationError::LabelStackJumpTooDeep);
-                    }
-
+                BlockKind::Loop => {
                     let lt = LabelTarget::new(
-                        control_frame.out,
-                        (stack_delta & 0xFF) as u8,
+                        // Loops do not produce a value on every loop
+                        ResultType(None),
+                        stack_delta as u8,
                         JumpOffset::new(pc, control_frame.target)?,
                     );
 
@@ -671,16 +675,12 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
                     self.code.push((lt.0 >> 16) as u16)?;
                     ResultType(None)
                 }
-                BlockKind::Forward | BlockKind::ForwardIf => {
+                // Forward jump targets
+                BlockKind::Block | BlockKind::If => {
                     // Forward jump targets use a linked-list of addresses to denote their back-patching
                     // We write the last head here and update the head to our address
                     let target = control_frame.target;
                     control_frame.target = self.code.pc();
-
-                    let stack_delta = self.value_stack.len() - (control_frame.height as usize);
-                    if stack_delta > 0xFF {
-                        return Err(ValidationError::LabelStackJumpTooDeep);
-                    }
 
                     let lt = LabelTarget::new(
                         control_frame.out,
@@ -699,7 +699,7 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
         Ok(result)
     }
 
-    pub(crate) fn stack_size(&self) -> usize {
+    pub(crate) fn stack_height(&self) -> usize {
         let mut size: usize = 0;
         for i in self.value_stack.iter() {
             size += match i {
@@ -714,9 +714,26 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
         size
     }
 
+    pub(crate) fn stack_height_for(&self, truncate_len: usize) -> usize {
+        assert!(truncate_len <= self.value_stack.len());
+
+        let mut size: usize = 0;
+        for i in self.value_stack[0..truncate_len].iter() {
+            size += match i {
+                OperandType::Unknown => break,
+                OperandType::Known(ValType::I32) => 1,
+                OperandType::Known(ValType::I64) => 2,
+                OperandType::Known(ValType::F32) => 1,
+                OperandType::Known(ValType::F64) => 2,
+            }
+        }
+
+        size
+    }
+
     pub(crate) fn push_stack(&mut self, ty: impl Into<OperandType>) -> Result<(), ValidationError> {
         self.value_stack.push(ty.into())?;
-        let l = self.stack_size();
+        let l = self.stack_height();
         if l > self.stack_highwater {
             self.stack_highwater = l;
         }
@@ -949,8 +966,8 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
 
         // Patch in the forward jump targets with the current PC.
         match last.kind {
-            BlockKind::Backward => (),
-            BlockKind::Forward => {
+            BlockKind::Loop => (),
+            BlockKind::Block => {
                 let pc = self.pc();
                 // Patch all forward jumps (including false-branch if it's an if without else)
                 self.code.backpatch(last.target, |code, address, label| {
@@ -959,7 +976,7 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
                     Ok(())
                 })?;
             }
-            BlockKind::ForwardIf => {
+            BlockKind::If => {
                 // We are currently inside an if-statement without an else.
                 // Only if-statements without return values are valid here (or inside an unreachable state).
                 if last.out.0.is_none() || last.unreachable {

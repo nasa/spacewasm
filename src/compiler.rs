@@ -100,7 +100,7 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
         block_type: ResultType,
         state: &mut Self::State,
     ) -> Result<(), Self::Error> {
-        state.push_control(BlockKind::Forward, block_type, block_type)
+        state.push_control(BlockKind::Block, block_type, block_type)
     }
 
     fn exit_block(&self, state: &mut Self::State) -> Result<(), Self::Error> {
@@ -125,7 +125,7 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
     }
 
     fn loop_(&self, block_type: ResultType, state: &mut Self::State) -> Result<(), Self::Error> {
-        state.push_control(BlockKind::Backward, ResultType(None), block_type)?;
+        state.push_control(BlockKind::Loop, ResultType(None), block_type)?;
         // Set the loop's target to the current PC (loop start)
         state.set_control_target(state.pc())?;
         Ok(())
@@ -134,7 +134,7 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
     fn if_(&self, block_type: ResultType, state: &mut Self::State) -> Result<(), Self::Error> {
         let _ = state.pop_stack(ValType::I32)?;
         state.instr(IF)?;
-        state.push_control(BlockKind::ForwardIf, block_type, block_type)?;
+        state.push_control(BlockKind::If, block_type, block_type)?;
         // Emit a placeholder for the false-branch/else target that will be backpatched
         state.write_if_else_target()?;
         Ok(())
@@ -151,7 +151,7 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
         let (results, br_chain) = state.pop_control_and_patch_if()?;
 
         // Push a new control frame for the else block, inheriting the br chain
-        state.push_control(BlockKind::Forward, results, results)?;
+        state.push_control(BlockKind::Block, results, results)?;
         state.set_control_target(br_chain)?;
 
         Ok(())

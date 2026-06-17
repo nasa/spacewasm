@@ -216,7 +216,7 @@ fn main() {
     });
 
     // Initialize
-    let mut state = store.allocate(2048).unwrap_or_else(|e| {
+    let mut state = store.allocate(512).unwrap_or_else(|e| {
         eprintln!("Failed to allocate state: {:?}", e);
         process::exit(1);
     });
