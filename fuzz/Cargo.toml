@@ -1,0 +1,33 @@
+[package]
+name = "spacewasm_std-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+spacewasm = { path = "..", features = ["strict-assertions"] }
+spacewasm-fuzzing = { path = "../crates/fuzzing", features = [] }
+
+[[bin]]
+name = "validate"
+path = "fuzz_targets/validate.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "no_traps"
+path = "fuzz_targets/no_traps.rs"
+test = false
+doc = false
+bench = false
+
+[profile.release]
+debug = 1
+
+# Optional: Add this section if you want to disable sanitizers for specific targets
+# This requires setting up custom build profiles

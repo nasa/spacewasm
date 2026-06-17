@@ -59,3 +59,9 @@ dkms.conf
 # Added by cargo
 
 /target
+
+# Fuzz artifacts
+/fuzz/target
+/fuzz/corpus
+/fuzz/artifacts
+/fuzz/coverage

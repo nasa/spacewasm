@@ -1,0 +1,13 @@
+[package]
+name = "spacewasm-fuzzing"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+spacewasm = { path = "../..", features = ["strict-assertions"] }
+arbitrary = { version = "1", features = ["derive"] }
+log = "0.4"
+wasm-smith = "0.220.0"
+wasmprinter = "0.220.0"
+env_logger = "0.11"

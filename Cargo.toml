@@ -1,6 +1,7 @@
 [workspace]
 
 members = ["crates/*"]
+exclude = ["fuzz"]
 
 [workspace.package]
 version = "0.1.0"
@@ -38,7 +39,6 @@ opt-level = 3
 lto = true
 debug = "full"
 strip = false
-panic = "abort"
 codegen-units = 1
 
 [profile.bench]

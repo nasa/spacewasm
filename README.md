@@ -92,8 +92,38 @@ These constraints enable deterministic memory usage and efficient execution in r
 
 ## Testing
 
-> In development
+### Unit & Integration Tests
+
+```bash
+cargo test
+```
+
+The unit tests check for regressions on the `unsafe` container abstractions provided by SpaceWASM due to unique `alloc` usage.
+There are also simple unit tests that cover all WASM instructions
+without needing full WAST execution.
+
+The integration tests are spectests from the WASM 1.0 MVP suite
+which was curated in https://github.com/WasmEdge/wasmedge-spectest.
+These tests validate the integriy of the WASM interpreter against
+the specification.
+
+### Fuzzing
+
+SpaceWASM includes a comprehensive fuzzing infrastructure using libfuzzer and wasm-smith.
+
+```bash
+# Run fuzzer
+make fuzz
+
+# Analyze crashes with execution traces
+make trace CRASH=fuzz/artifacts/no_traps/crash-xxx
+```
 
 ## Proposals
 
-> In development
+Currently SpaceWASM implements exactly WebAssembly 1.0 which is:
+
+- WASM MVP
+- Mutable Globals
+
+Additional WASM extensions/proposals could be developed later.

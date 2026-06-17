@@ -208,13 +208,15 @@ fn main() {
         panic!()
     };
 
-    state.invoke(
-        WasmRef {
-            module: ModuleRef(0),
-            index: fi,
-        },
-        &[],
-    );
+    state
+        .invoke(
+            WasmRef {
+                module: ModuleRef(0),
+                index: fi,
+            },
+            &[],
+        )
+        .unwrap();
 
     let interpreter = spacewasm::Interpreter::default();
 

@@ -5,5 +5,5 @@ edition.workspace = true
 authors.workspace = true
 
 [dependencies]
-spacewasm = { path = "../.." }
+spacewasm = { path = "../..", features = ["strict-assertions"] }
 

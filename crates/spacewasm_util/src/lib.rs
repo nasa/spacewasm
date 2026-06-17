@@ -6,6 +6,8 @@ mod file;
 pub use file::*;
 mod debug;
 pub use debug::*;
+mod trace;
+pub use trace::*;
 
 pub struct RustSystemAllocator;
 unsafe impl Allocator for RustSystemAllocator {
