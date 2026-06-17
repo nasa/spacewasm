@@ -699,9 +699,24 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
         Ok(result)
     }
 
+    pub(crate) fn stack_size(&self) -> usize {
+        let mut size: usize = 0;
+        for i in self.value_stack.iter() {
+            size += match i {
+                OperandType::Unknown => break,
+                OperandType::Known(ValType::I32) => 1,
+                OperandType::Known(ValType::I64) => 2,
+                OperandType::Known(ValType::F32) => 1,
+                OperandType::Known(ValType::F64) => 2,
+            }
+        }
+
+        size
+    }
+
     pub(crate) fn push_stack(&mut self, ty: impl Into<OperandType>) -> Result<(), ValidationError> {
         self.value_stack.push(ty.into())?;
-        let l = self.value_stack.len();
+        let l = self.stack_size();
         if l > self.stack_highwater {
             self.stack_highwater = l;
         }

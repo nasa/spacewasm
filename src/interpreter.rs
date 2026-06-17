@@ -58,6 +58,14 @@ impl CallFrame {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InvokeError {
+    /// The number of parameters passed to the invocation does not match the definition
+    ParamLenMismatch,
+    /// A parameter value's type does not match the definition in the module
+    ParamTypeMismatch,
+}
+
 impl<'store> InterpreterState<'store> {
     fn call_impl_enter_module(&mut self, f_ref: WasmRef) -> Result<(), InterpreterBreak> {
         // If we are calling across module we need to swap out the current memory
@@ -118,31 +126,42 @@ impl<'store> InterpreterState<'store> {
     /// Invoke a function with some parameters.
     /// This function can only be used to kick off the interpreter.
     /// It cannot be invoked once the interpreter has started.
-    pub fn invoke(&mut self, f_ref: WasmRef, params: &[Value]) {
+    pub fn invoke(&mut self, f_ref: WasmRef, params: &[Value]) -> Result<(), InvokeError> {
         // Make sure we are looking at the sentinel program counter
         // This is only the case when nothing is running
         assert_eq!(self.pc, JumpTarget::SENTINEL);
         assert_eq!(self.sp, 0);
         assert_eq!(self.fp, 0);
 
-        for p in params {
-            // TODO(tumbar) Validate input parameters
-            match p {
-                Value::I32(i) => {
-                    self.stack.write_u32(self.sp, *i as u32);
+        let m = &self.store.modules()[f_ref.module.0 as usize];
+        let f = &m.functions[f_ref.index as usize];
+
+        let ty = &m.types[f.ty.0 as usize];
+
+        if ty.params.len() != params.len() {
+            return Err(InvokeError::ParamLenMismatch);
+        }
+
+        for (pi, pd) in params.iter().zip(&ty.params) {
+            match (*pi, *pd) {
+                (Value::I32(v), ValType::I32) => {
+                    self.stack.write_u32(self.sp, v as u32);
                     self.sp += 1;
                 }
-                Value::I64(i) => {
-                    self.stack.write_u64(self.sp, *i as u64);
+                (Value::I64(v), ValType::I64) => {
+                    self.stack.write_u64(self.sp, v as u64);
                     self.sp += 2;
                 }
-                Value::F32(z) => {
-                    self.stack.write_f32(self.sp, *z);
+                (Value::F32(v), ValType::F32) => {
+                    self.stack.write_f32(self.sp, v);
                     self.sp += 1;
                 }
-                Value::F64(z) => {
-                    self.stack.write_f64(self.sp, *z);
+                (Value::F64(v), ValType::F64) => {
+                    self.stack.write_f64(self.sp, v);
                     self.sp += 2;
+                }
+                _ => {
+                    return Err(InvokeError::ParamTypeMismatch);
                 }
             }
         }
@@ -155,6 +174,8 @@ impl<'store> InterpreterState<'store> {
         self.call_impl(0, f_ref.index).unwrap();
         self.jumped = false;
         self.result = None;
+
+        Ok(())
     }
 }
 

@@ -176,7 +176,7 @@ impl<'store> InterpreterState<'store> {
                             index: i,
                         },
                         &[],
-                    );
+                    ).unwrap();
                 }
                 Ref::Host { module, index } => {
                     // We don't need to run the interpreter for host functions
@@ -195,9 +195,11 @@ impl<'store> InterpreterState<'store> {
                     };
                 }
                 Ref::Extern { module, index } => {
-                    self.invoke(WasmRef { module, index }, &[]);
+                    self.invoke(WasmRef { module, index }, &[]).unwrap();
                 }
             }
+        } else {
+            return InitializeResult::Ok;
         }
 
         // Spin the interpreter

@@ -636,7 +636,7 @@ fn invoke_function(
     let (text, _final_page_offset) = ctx.code_builder.clone().finish().unwrap();
 
     ctx.with_state(|state| {
-        state.invoke(f_ref, &params);
+        state.invoke(f_ref, &params).unwrap();
 
         let interpreter = Interpreter::default();
 
