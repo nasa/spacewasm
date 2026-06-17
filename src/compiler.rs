@@ -110,7 +110,19 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
     }
 
     fn finish(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        self.return_(state)
+        // Pop the implicit function control frame and validate
+        // This validates that the function returns the correct type
+        state.pop_control()?;
+
+        // Emit a return instruction
+        let ty = state.func().return_ty;
+        if let Some(ty) = ty {
+            state.instr_imm_8(RETURN, ty.size() as u8 / 4)?;
+        } else {
+            state.instr(RETURN)?;
+        }
+
+        Ok(())
     }
 
     fn loop_(&self, block_type: ResultType, state: &mut Self::State) -> Result<(), Self::Error> {

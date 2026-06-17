@@ -398,7 +398,6 @@ pub struct TextBuilder<'a, const N: usize> {
     control_frames: StaticVec<ControlFrame, 64>,
     value_stack: StaticVec<OperandType, 512>,
     stack_highwater: usize,
-    function_unreachable: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -443,7 +442,7 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
         module: &'a Module,
         func: &'a Func,
     ) -> TextBuilder<'a, N> {
-        TextBuilder {
+        let mut builder = TextBuilder {
             code,
             store,
             module,
@@ -451,8 +450,14 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
             control_frames: Default::default(),
             value_stack: Default::default(),
             stack_highwater: 0,
-            function_unreachable: false,
-        }
+        };
+
+        // Push the implicit function control frame per the spec
+        // This represents the function's return point
+        let return_type = ResultType(func.return_ty);
+        let _ = builder.push_control(BlockKind::Forward, return_type, return_type);
+
+        builder
     }
 
     pub fn store(&self) -> &'a Store {
@@ -585,31 +590,20 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
     }
 
     pub(crate) fn mark_unreachable(&mut self) {
-        match self.control_frames.last_mut() {
-            None => {
-                self.value_stack.truncate(0);
-                self.function_unreachable = true;
-            }
-            Some(frame) => {
-                self.value_stack.truncate(frame.height as usize);
-                frame.unreachable = true;
-            }
+        // With the implicit function frame, there's always a frame
+        if let Some(frame) = self.control_frames.last_mut() {
+            self.value_stack.truncate(frame.height as usize);
+            frame.unreachable = true;
         }
     }
 
     fn is_unreachable(&self) -> bool {
-        match self.control_frames.last() {
-            None => self.function_unreachable,
-            Some(c) => c.unreachable,
-        }
+        // With the implicit function frame, there's always a frame
+        self.control_frames.last().map(|c| c.unreachable).unwrap_or(false)
     }
 
     fn control_frame_stack_len(&self) -> usize {
-        let height = match self.control_frames.last() {
-            None => 0,
-            Some(c) => c.height as usize,
-        };
-
+        let height = self.control_frames.last().map(|c| c.height as usize).unwrap_or(0);
         self.value_stack.len() - height
     }
 
@@ -633,20 +627,21 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
         &mut self,
         label: LabelIdx,
     ) -> Result<ResultType, ValidationError> {
-        if label.0 as usize > self.control_frames.len() {
+        if label.0 as usize >= self.control_frames.len() {
             return Err(ValidationError::InvalidLabelIndex);
         }
 
-        let result = if label.0 as usize == self.control_frames.len() {
-            // There is an implicit 'block' for the overall function
-            // Branching to this block acts like an early return
+        let idx = self.control_frames.len() - 1 - label.0 as usize;
+
+        // Check if we're branching to the function frame (index 0)
+        // In that case, generate an early return instead of a forward jump
+        let result = if idx == 0 {
             let lt = LabelTarget::early_return(ResultType(self.func.return_ty));
             self.code.push(lt.0 as u16)?;
             self.code.push((lt.0 >> 16) as u16)?;
 
             ResultType(self.func.return_ty)
         } else {
-            let idx = self.control_frames.len() - 1 - label.0 as usize;
             let pc = self.pc();
 
             let control_frame = &mut self.control_frames[idx];
