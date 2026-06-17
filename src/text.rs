@@ -198,7 +198,8 @@ impl JumpTarget {
 #[derive(Clone, Copy)]
 pub enum BlockKind {
     Backward, // Loops
-    Forward,  // Block, If, Else
+    Forward,  // Block, Else
+    ForwardIf,
 }
 
 /// A control flow frame tracking jump targets for blocks, loops, and if-else statements.
@@ -599,11 +600,18 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
 
     fn is_unreachable(&self) -> bool {
         // With the implicit function frame, there's always a frame
-        self.control_frames.last().map(|c| c.unreachable).unwrap_or(false)
+        self.control_frames
+            .last()
+            .map(|c| c.unreachable)
+            .unwrap_or(false)
     }
 
     fn control_frame_stack_len(&self) -> usize {
-        let height = self.control_frames.last().map(|c| c.height as usize).unwrap_or(0);
+        let height = self
+            .control_frames
+            .last()
+            .map(|c| c.height as usize)
+            .unwrap_or(0);
         self.value_stack.len() - height
     }
 
@@ -663,7 +671,7 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
                     self.code.push((lt.0 >> 16) as u16)?;
                     ResultType(None)
                 }
-                BlockKind::Forward => {
+                BlockKind::Forward | BlockKind::ForwardIf => {
                     // Forward jump targets use a linked-list of addresses to denote their back-patching
                     // We write the last head here and update the head to our address
                     let target = control_frame.target;
@@ -787,13 +795,25 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
         Ok(())
     }
 
+    /// Set the target (br chain head) of the current control frame.
+    /// Used when entering an else block to transfer the br chain from the if block.
+    pub(crate) fn set_control_target(&mut self, target: JumpTarget) -> Result<(), ValidationError> {
+        let frame = self
+            .control_frames
+            .last_mut()
+            .ok_or(ValidationError::InvalidEndBlock)?;
+        frame.target = target;
+        Ok(())
+    }
 
     /// Write a placeholder label target for an if's false branch (else or end).
     /// This is called immediately after pushing an if control frame.
     /// The placeholder becomes the TAIL of the linked list (any br instructions will be inserted before it).
     pub(crate) fn write_if_else_target(&mut self) -> Result<(), ValidationError> {
         // Get the result type from the control frame we just pushed
-        let out = self.control_frames.last()
+        let out = self
+            .control_frames
+            .last()
             .ok_or(ValidationError::InvalidEndBlock)?
             .out;
 
@@ -801,11 +821,7 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
         let patch_location = self.pc();
 
         // Write a sentinel placeholder that will be patched later
-        let placeholder = LabelTarget::new(
-            out,
-            0,
-            JumpOffset::sentinel()
-        );
+        let placeholder = LabelTarget::new(out, 0, JumpOffset::sentinel());
         self.code.push(placeholder.0 as u16)?;
         self.code.push((placeholder.0 >> 16) as u16)?;
 
@@ -818,8 +834,10 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
     /// Exit an if control block and patch its false-branch to point to the current location.
     /// This is called when entering an else block.
     /// Walks the linked list to find the tail (false-branch with sentinel), patches it,
-    /// and breaks it off from the chain. Returns the remaining chain for the else frame.
-    pub(crate) fn pop_control_and_patch_if(&mut self) -> Result<ResultType, ValidationError> {
+    /// and breaks it off from the chain. Returns (result_type, remaining_chain_head).
+    pub(crate) fn pop_control_and_patch_if(
+        &mut self,
+    ) -> Result<(ResultType, JumpTarget), ValidationError> {
         // Read validation data from the frame without popping it yet
         let (out, height) = {
             let Some(last) = self.control_frames.last() else {
@@ -842,6 +860,8 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
         // Walk the linked list to find and patch the tail (false-branch placeholder)
         let pc = self.pc();
         let mut prev = JumpTarget::SENTINEL;
+        let mut remaining_chain = JumpTarget::SENTINEL;
+
         self.code.backpatch(last.target, |code, address, label| {
             if label.is_sentinel() {
                 // Found the tail - this is the false-branch placeholder
@@ -854,14 +874,17 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
                     let old_label = LabelTarget(code.read_32(prev)?);
                     let new_tail = old_label.with_jump(JumpOffset::sentinel());
                     code.write_32(prev, new_tail.0)?;
+                    // The remaining chain starts at the original head
+                    remaining_chain = last.target;
                 }
+                // If prev is SENTINEL, there were no br instructions, only the false-branch
             } else {
                 prev = address;
             }
             Ok(())
         })?;
 
-        Ok(last.out)
+        Ok((last.out, remaining_chain))
     }
 
     /// Exit the current control block and back-patch any forward jump targets.
@@ -920,6 +943,20 @@ impl<'a, const N: usize> TextBuilder<'a, N> {
                     code.write_32(address, patched.0)?;
                     Ok(())
                 })?;
+            }
+            BlockKind::ForwardIf => {
+                // We are currently inside an if-statement without an else.
+                // Only if-statements without return values are valid here (or inside an unreachable state).
+                if last.out.0.is_none() || last.unreachable {
+                    let pc = self.pc();
+                    self.code.backpatch(last.target, |code, address, label| {
+                        let patched = label.with_jump(JumpOffset::new(address, pc)?);
+                        code.write_32(address, patched.0)?;
+                        Ok(())
+                    })?;
+                } else {
+                    Err(ValidationError::BlockResultTypeMismatch)?;
+                }
             }
         }
 

@@ -112,11 +112,10 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
     fn finish(&self, state: &mut Self::State) -> Result<(), Self::Error> {
         // Pop the implicit function control frame and validate
         // This validates that the function returns the correct type
-        state.pop_control()?;
+        let ty = state.pop_control()?;
 
         // Emit a return instruction
-        let ty = state.func().return_ty;
-        if let Some(ty) = ty {
+        if let Some(ty) = ty.0 {
             state.instr_imm_8(RETURN, ty.size() as u8 / 4)?;
         } else {
             state.instr(RETURN)?;
@@ -126,32 +125,34 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
     }
 
     fn loop_(&self, block_type: ResultType, state: &mut Self::State) -> Result<(), Self::Error> {
-        state.push_control(BlockKind::Backward, ResultType(None), block_type)
+        state.push_control(BlockKind::Backward, ResultType(None), block_type)?;
+        // Set the loop's target to the current PC (loop start)
+        state.set_control_target(state.pc())?;
+        Ok(())
     }
 
     fn if_(&self, block_type: ResultType, state: &mut Self::State) -> Result<(), Self::Error> {
         let _ = state.pop_stack(ValType::I32)?;
         state.instr(IF)?;
-        state.push_control(BlockKind::Forward, block_type, block_type)?;
+        state.push_control(BlockKind::ForwardIf, block_type, block_type)?;
         // Emit a placeholder for the false-branch/else target that will be backpatched
         state.write_if_else_target()?;
         Ok(())
     }
 
     fn else_(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        // Perform an unconditional branch to skip the else block
-        // This gets added to the head of the linked list (before any existing br instructions)
+        // Emit an unconditional branch to skip the else block
+        // This gets added to the if frame's target list (before we pop it)
         state.instr(BR)?;
         state.write_label_target(LabelIdx(0))?;
 
         // Pop the if control frame and patch its false-branch (tail of linked list) to point here
-        // The remaining chain (br instructions from the then block) stays intact
-        let results = state.pop_control_and_patch_if()?;
+        // Returns the remaining br chain (including the BR we just emitted)
+        let (results, br_chain) = state.pop_control_and_patch_if()?;
 
-        // Push a new control frame for the else block
-        // The br chain from the if's then block is now in the new frame (because write_label_target
-        // above added to it, and pop_control_and_patch_if kept the non-tail part)
+        // Push a new control frame for the else block, inheriting the br chain
         state.push_control(BlockKind::Forward, results, results)?;
+        state.set_control_target(br_chain)?;
 
         Ok(())
     }
