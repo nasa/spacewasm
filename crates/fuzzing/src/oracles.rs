@@ -367,6 +367,7 @@ pub fn no_traps(wasm: &[u8]) {
     // Try to invoke each exported function
     // These should never trap since the module was generated with disallow_traps
     for (wasm_ref, params) in exported_funcs {
+        state.reset();
         state.invoke(wasm_ref, &params).unwrap();
 
         // Run the interpreter with limited instructions

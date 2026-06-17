@@ -51,7 +51,7 @@ trace-debug:
 	fi
 	@echo "Converting seed to WASM and tracing execution (debug mode with ASAN)..."
 	@cargo run -p spacewasm-fuzzing --bin seed_to_wasm $(CRASH) --stdout 2>/dev/null | \
-		RUSTFLAGS="-Zsanitizer=address" cargo run -p spacewasm_util --bin spacewasm-trace -- --stdin --limit $(or $(LIMIT),50)
+		RUSTFLAGS="-Zsanitizer=address" cargo +nightly run -p spacewasm_util --bin spacewasm-trace -- --stdin --limit $(or $(LIMIT),50)
 
 # Convert fuzzer seed to WASM
 seed-to-wasm:

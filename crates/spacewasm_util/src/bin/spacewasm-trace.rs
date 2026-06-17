@@ -7,12 +7,12 @@
 //!   spacewasm-trace <file.wasm> [--limit N]
 //!   spacewasm-trace --stdin [--limit N]
 
-use spacewasm::InitializeResult;
 use spacewasm::{
     AllocError, Allocator, Box, CodeBuilder, CompilerOptions, ExportDesc, InnerVec, Interpreter,
     InterpreterBreak, InterpreterResult, InterpreterRunner, MemoryStatistics, Module, ModuleRef,
     ReaderError, Ref, Store, WasmMemoryAllocator, WasmRef, WasmStream,
 };
+use spacewasm::{InitializeResult, ValType, Value};
 use spacewasm_util::StateTracer;
 use std::env;
 use std::fs;
@@ -263,40 +263,72 @@ fn main() {
     }
 
     let module_idx = state.store.modules().len().saturating_sub(1);
-    let module = match state.store.modules().get(module_idx) {
-        Some(m) => m,
-        None => {
-            eprintln!("No module in store after initialization");
-            process::exit(1);
-        }
-    };
 
     // Find exported functions
-    let exported_funcs: std::vec::Vec<_> = module
-        .exports
-        .iter()
-        .filter_map(|export| {
-            if let ExportDesc::Func(func_idx) = export.desc {
-                module
-                    .get_func_ref(func_idx)
-                    .and_then(|func_ref| match func_ref {
-                        Ref::Module(index) => Some((
-                            export.name.clone(),
-                            WasmRef {
-                                module: ModuleRef(module_idx as u8),
-                                index,
-                            },
-                        )),
-                        Ref::Extern { module, index } => {
-                            Some((export.name.clone(), WasmRef { module, index }))
+    let exported_funcs: std::vec::Vec<(WasmRef, std::vec::Vec<Value>)> = {
+        let Some(module) = state.store.modules().get(module_idx) else {
+            return;
+        };
+
+        module
+            .exports
+            .iter()
+            .filter_map(|export| {
+                if let ExportDesc::Func(func_idx) = export.desc {
+                    // Get the function reference which handles import resolution
+                    let func_ref = module.get_func_ref(func_idx)?;
+
+                    // Look up the function type based on the resolved reference
+                    let func_type = match func_ref {
+                        Ref::Module(index) => {
+                            // Local function in this module
+                            let func = module.functions.get(index as usize)?;
+                            module.types.get(func.ty.0 as usize)?
                         }
-                        _ => None,
-                    })
-            } else {
-                None
-            }
-        })
-        .collect();
+                        Ref::Extern {
+                            module: mod_ref,
+                            index,
+                        } => {
+                            // Function from another WASM module
+                            let other_module = state.store.modules().get(mod_ref.0 as usize)?;
+                            let func = other_module.functions.get(index as usize)?;
+                            other_module.types.get(func.ty.0 as usize)?
+                        }
+                        Ref::Host { .. } => {
+                            // Host function - skip these for now since they have different handling
+                            return None;
+                        }
+                    };
+
+                    // Convert func_ref to WasmRef
+                    let wasm_ref = match func_ref {
+                        Ref::Module(index) => WasmRef {
+                            module: ModuleRef(module_idx as u8),
+                            index,
+                        },
+                        Ref::Extern { module, index } => WasmRef { module, index },
+                        _ => return None,
+                    };
+
+                    // Generate default parameters based on the function signature
+                    let params: std::vec::Vec<Value> = func_type
+                        .params
+                        .iter()
+                        .map(|val_type| match val_type {
+                            ValType::I32 => Value::I32(0),
+                            ValType::I64 => Value::I64(0),
+                            ValType::F32 => Value::F32(0.0),
+                            ValType::F64 => Value::F64(0.0),
+                        })
+                        .collect();
+
+                    Some((wasm_ref, params))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    };
 
     if exported_funcs.is_empty() {
         eprintln!("No exported functions found");
@@ -306,10 +338,9 @@ fn main() {
     eprintln!("Found {} exported function(s)", exported_funcs.len());
 
     // Execute each exported function
-    for (name, wasm_ref) in exported_funcs {
-        eprintln!("\n=== Executing: {} ===\n", name);
-
-        state.invoke(wasm_ref, &[]).unwrap();
+    for (wasm_ref, values) in exported_funcs {
+        state.reset();
+        state.invoke(wasm_ref, &values).unwrap();
 
         let interpreter = Interpreter::default();
         let tracer = StateTracer::new(&interpreter, limit);

@@ -123,6 +123,16 @@ impl<'store> InterpreterState<'store> {
         Ok(())
     }
 
+    pub fn reset(&mut self) {
+        self.pc = JumpTarget::SENTINEL;
+        self.sp = 0;
+        self.fp = 0;
+        self.jumped = false;
+        self.result = None;
+        self.clear_memory();
+        self.clear_table();
+    }
+
     /// Invoke a function with some parameters.
     /// This function can only be used to kick off the interpreter.
     /// It cannot be invoked once the interpreter has started.
