@@ -195,7 +195,11 @@ impl Memory {
     /// Grow the memory by n pages
     /// If the memory growth succeeds, return the old number of pages
     pub fn grow(&mut self, n: u32) -> Result<u32, MemoryError> {
-        if !self.limits.can_hold(self.size() + n) {
+        let Some(total_pages) = self.size().checked_add(n) else {
+            return Err(MemoryError::OutOfMemory);
+        };
+
+        if !self.limits.can_hold(total_pages) {
             return Err(MemoryError::OutOfMemory);
         }
 
