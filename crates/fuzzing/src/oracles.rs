@@ -132,47 +132,6 @@ mod fuzz_alloc {
     spacewasm::global_allocator!(FuzzAllocator, FuzzAllocator);
 }
 
-/// Oracle: Compile a WASM module.
-///
-/// This tests the decoder and compiler by attempting to compile the given
-/// WASM bytes. Panics if the module is valid but compilation fails.
-pub fn compile(wasm: &[u8]) {
-    log_wasm(wasm);
-
-    let mut store = match Store::new(256, []) {
-        Ok(s) => s,
-        Err(e) => {
-            log::debug!("store creation failed: {e:?}");
-            return;
-        }
-    };
-
-    let mut code_builder = CodeBuilder::<256>::default();
-    let mut stream = ByteStream::new(wasm);
-
-    // Attempt to compile the module
-    let result = Module::new::<256>(
-        "",
-        &mut stream,
-        &mut store,
-        &mut code_builder,
-        &FuzzAllocator,
-        CompilerOptions {
-            allow_memory_grow: true,
-        },
-    );
-
-    match result {
-        Ok(_) => {
-            log::debug!("compilation succeeded");
-        }
-        Err(e) => {
-            // This is expected for invalid modules
-            log::debug!("compilation failed (expected for invalid modules): {e:?}");
-        }
-    }
-}
-
 /// Oracle: Validate a WASM module.
 ///
 /// This tests the decoder by attempting to validate the given WASM bytes.
