@@ -153,6 +153,63 @@ impl<T: ?Sized> Rc<T> {
         self.inner().count() == 1
     }
 
+    /// Convert `Rc<T>` into `Rc<U>` using a coercion function (e.g., for trait objects)
+    ///
+    /// The coercion function should convert a reference `&T` to `&U`, typically for
+    /// trait object coercion like `|x| x as &dyn Trait`.
+    ///
+    /// # Safety
+    /// The caller must ensure that the coercion is valid and that the resulting
+    /// `RcInner<U>` has the same memory layout as `RcInner<T>`.
+    pub unsafe fn into_dyn<U: ?Sized, F>(self, coerce: F) -> Rc<U>
+    where
+        F: FnOnce(&T) -> &U,
+    {
+        // Represent a fat pointer as two usize values (data pointer and vtable/length)
+        #[repr(C)]
+        #[derive(Copy, Clone)]
+        struct FatPtr {
+            data: *const (),
+            meta: usize,
+        }
+
+        #[repr(C)]
+        union PtrCast<T: ?Sized> {
+            ptr: *const T,
+            fat: core::mem::ManuallyDrop<FatPtr>,
+        }
+
+        unsafe {
+            let inner_ptr = self.ptr.as_ptr();
+
+            // Get a reference to the value and coerce it to get the trait object
+            let value_ref: &T = &(*inner_ptr).value;
+            let trait_ref: &U = coerce(value_ref);
+
+            // Extract the metadata (vtable) from the trait object reference
+            let trait_value_fat = PtrCast {
+                ptr: trait_ref as *const U,
+            };
+            let vtable = trait_value_fat.fat.meta;
+
+            // Create a new fat pointer with the RcInner base address and the trait's vtable
+            let inner_fat = PtrCast::<RcInner<U>> {
+                fat: core::mem::ManuallyDrop::new(FatPtr {
+                    data: inner_ptr as *const (),
+                    meta: vtable,
+                }),
+            };
+
+            let trait_inner_ptr: *mut RcInner<U> = inner_fat.ptr as *mut RcInner<U>;
+
+            let trait_ptr = NonNull::new_unchecked(trait_inner_ptr);
+            let alloc = core::ptr::read(&self.alloc);
+            core::mem::forget(self); // Don't run Drop, we're transferring ownership
+
+            Rc::from_inner_in(trait_ptr, alloc)
+        }
+    }
+
     #[inline]
     pub fn get_mut(&mut self) -> Option<&mut T> {
         if Rc::is_unique(self) {
@@ -506,5 +563,36 @@ mod tests {
         assert_eq!(rc[500], 500);
         assert_eq!(rc[999], 999);
         assert_eq!(rc.inner().count(), 1);
+    }
+
+    #[test]
+    fn test_rc_into_dyn() {
+        trait MyTrait {
+            fn get_value(&self) -> i32;
+        }
+
+        struct MyStruct {
+            value: i32,
+        }
+
+        impl MyTrait for MyStruct {
+            fn get_value(&self) -> i32 {
+                self.value
+            }
+        }
+
+        let rc = Rc::new(MyStruct { value: 42 }).unwrap();
+        assert_eq!(rc.inner().count(), 1);
+        assert_eq!(rc.value, 42);
+
+        // Convert to trait object
+        let rc_dyn: Rc<dyn MyTrait> = unsafe { rc.into_dyn(|x| x as &dyn MyTrait) };
+        assert_eq!(rc_dyn.inner().count(), 1);
+        assert_eq!(rc_dyn.get_value(), 42);
+
+        // Clone the trait object Rc
+        let rc_dyn2 = rc_dyn.clone();
+        assert_eq!(rc_dyn.inner().count(), 2);
+        assert_eq!(rc_dyn2.get_value(), 42);
     }
 }

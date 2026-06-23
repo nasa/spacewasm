@@ -11,7 +11,6 @@
 use spacewasm::*;
 use std::alloc::Layout;
 use std::cell::RefCell;
-use std::marker::PhantomData;
 use std::ptr::NonNull;
 
 static ORACLE_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -171,12 +170,12 @@ pub fn validate(wasm: &[u8]) {
     let mut code_builder = CodeBuilder::<256>::default();
     let mut stream = ByteStream::new(wasm);
 
-    let allocator = std::boxed::Box::new(FuzzAllocator {
+    let allocator = spacewasm::Rc::new(FuzzAllocator {
         limit: 1024 * 1024 * 64, // 64MiB,
         allocated: RefCell::new(0),
-    });
-
-    let allocator = std::boxed::Box::leak::<'static>(allocator);
+    })
+    .unwrap()
+    .into_wasm_memory_allocator();
 
     // Attempt to decode and validate the module
     let result = Module::new::<256>(
@@ -184,7 +183,7 @@ pub fn validate(wasm: &[u8]) {
         &mut stream,
         &mut store,
         &mut code_builder,
-        allocator,
+        allocator.clone(),
         CompilerOptions {
             allow_memory_grow: true,
         },
@@ -224,19 +223,19 @@ pub fn no_traps(wasm: &[u8]) {
     let mut code_builder = CodeBuilder::<128>::default();
     let mut stream = ByteStream::new(wasm);
 
-    let allocator = std::boxed::Box::new(FuzzAllocator {
+    let allocator = Rc::new(FuzzAllocator {
         limit: 1024 * 1024 * 64, // 64MiB,
         allocated: RefCell::new(0),
-    });
-
-    let allocator = std::boxed::Box::leak::<'static>(allocator);
+    })
+    .unwrap()
+    .into_wasm_memory_allocator();
 
     let module = match Module::new::<128>(
         "",
         &mut stream,
         &mut store,
         &mut code_builder,
-        allocator,
+        allocator.clone(),
         CompilerOptions {
             allow_memory_grow: true,
         },

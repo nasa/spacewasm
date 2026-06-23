@@ -1,13 +1,12 @@
 use super::inspector::{Inspector, LimitedVec};
 use serde::{Deserialize, Serialize};
 use spacewasm::{
-    global_allocator, vec, AllocError, Allocator, CodeBuilder, CompilerOptions,
-    ConstantExprError, ExportDesc, GlobalValue, GlobalValueError, HostFunction, HostGlobal,
-    HostModule, InitializeResult, InnerVec, Interpreter,
-    InterpreterBreak, InterpreterResult, InterpreterRunner, InterpreterState, Limit, Memory,
-    MemoryError, MemoryStatistics, Module, ModuleRef, ParseError, ReaderError, Ref,
-    Stack, Store, TrapReason, ValType, ValidationError, Value,
-    WasmMemoryAllocator, WasmRef, WasmStream,
+    AllocError, Allocator, CodeBuilder, CompilerOptions, ConstantExprError, ExportDesc,
+    GlobalValue, GlobalValueError, HostFunction, HostGlobal, HostModule, InitializeResult,
+    InnerVec, Interpreter, InterpreterBreak, InterpreterResult, InterpreterRunner,
+    InterpreterState, Limit, Memory, MemoryError, MemoryStatistics, Module, ModuleRef, ParseError,
+    ReaderError, Ref, Stack, Store, TrapReason, ValType, ValidationError, Value,
+    WasmMemoryAllocator, WasmRef, WasmStream, global_allocator, vec,
 };
 use std::alloc::Layout;
 use std::cell::RefCell;
@@ -466,7 +465,13 @@ impl From<MemoryError> for ModuleLoadError {
 fn clone_memory(memory: &Memory) -> spacewasm::Rc<Memory> {
     // Deep clone memory contents
     let mem_type = memory.mem_type();
-    let mut new_memory = Memory::new(mem_type, &RustSystemAllocator).unwrap();
+    let mut new_memory = Memory::new(
+        mem_type,
+        spacewasm::Rc::new(RustSystemAllocator)
+            .unwrap()
+            .into_wasm_memory_allocator(),
+    )
+    .unwrap();
 
     // Grow the new memory to match the source memory size
     let current_size = memory.size();
@@ -551,7 +556,9 @@ fn load_module(
         &mut stream,
         &mut ctx.store,
         &mut ctx.code_builder,
-        &RustSystemAllocator,
+        spacewasm::Rc::new(RustSystemAllocator)
+            .unwrap()
+            .into_wasm_memory_allocator(),
         CompilerOptions {
             allow_memory_grow: true,
         },
@@ -920,7 +927,13 @@ fn test_host_module() -> HostModule {
         memory: vec![spacewasm::HostSymbol {
             name: "memory",
             value: spacewasm::Rc::new(
-                Memory::new(spacewasm::MemType::from(1, Some(2)), &RustSystemAllocator).unwrap(),
+                Memory::new(
+                    spacewasm::MemType::from(1, Some(2)),
+                    spacewasm::Rc::new(RustSystemAllocator)
+                        .unwrap()
+                        .into_wasm_memory_allocator(),
+                )
+                .unwrap(),
             )
             .unwrap(),
         }],
@@ -1014,19 +1027,17 @@ fn run_wast_command(
                 module,
                 field,
                 args,
-            } => {
-                match invoke_function(ctx, &module, &field, &args, log) {
-                    Err(InterpreterBreak::Trap(reason)) => {
-                        check_trap_reason(reason, &text);
-                    }
-                    Err(err) => {
-                        panic!("Expected trap '{text}', got error: {err:?}")
-                    }
-                    Ok(_) => {
-                        panic!("Expected trap '{text}', but execution succeeded")
-                    }
+            } => match invoke_function(ctx, &module, &field, &args, log) {
+                Err(InterpreterBreak::Trap(reason)) => {
+                    check_trap_reason(reason, &text);
                 }
-            }
+                Err(err) => {
+                    panic!("Expected trap '{text}', got error: {err:?}")
+                }
+                Ok(_) => {
+                    panic!("Expected trap '{text}', but execution succeeded")
+                }
+            },
             Action::Get { .. } => {
                 panic!("Get actions not implemented yet")
             }
@@ -1077,7 +1088,7 @@ fn run_wast_command(
                     Err(ModuleLoadError::DecodeError(err)) => {
                         check_decode_error(err.into(), text);
                         ctx.restore_store(saved_store);
-                    },
+                    }
                     Err(ModuleLoadError::AllocationError(err)) => {
                         ctx.restore_store(saved_store);
                         panic!("Expected error when decoding module '{err:?}'");

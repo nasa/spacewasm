@@ -68,7 +68,7 @@ impl Module {
         stream: &mut dyn WasmStream,
         store: &mut Store,
         code_builder: &mut CodeBuilder<N>,
-        allocator: &'static dyn WasmMemoryAllocator,
+        allocator: Rc<dyn WasmMemoryAllocator>,
         compiler_options: CompilerOptions,
     ) -> Result<Module, ParseError> {
         let mut wasm = Reader::new(stream);
@@ -94,7 +94,7 @@ impl Module {
         stream: &mut dyn WasmStream,
         store: &mut Store,
         code_builder: &mut CodeBuilder<N>,
-        allocator: &'static dyn WasmMemoryAllocator,
+        allocator: Rc<dyn WasmMemoryAllocator>,
         compiler_options: CompilerOptions,
     ) -> Result<(Module, [MemoryStatistics; SectionKind::N as usize]), ParseError> {
         let mut wasm = Reader::new(stream);
@@ -124,7 +124,7 @@ impl Module {
         store: &mut Store,
         code_builder: &mut CodeBuilder<N>,
         custom_handler: &mut dyn CustomSectionHandler,
-        allocator: &'static dyn WasmMemoryAllocator,
+        allocator: Rc<dyn WasmMemoryAllocator>,
         mut stats: Option<&mut [MemoryStatistics; SectionKind::N as usize]>,
         compiler_options: CompilerOptions,
     ) -> Result<Module, SectionDecodeError> {
@@ -204,7 +204,7 @@ impl Module {
                     section_ty,
                     custom_handler,
                     code_builder,
-                    allocator,
+                    allocator.clone(),
                     compiler_options,
                 )
                 .map_err(|e| e.with_section(section_ty))?;
@@ -240,7 +240,7 @@ impl Module {
         section_ty: SectionKind,
         custom_handler: &mut dyn CustomSectionHandler,
         code_builder: &mut CodeBuilder<PN>,
-        allocator: &'static dyn WasmMemoryAllocator,
+        allocator: Rc<dyn WasmMemoryAllocator>,
         compiler_options: CompilerOptions,
     ) -> Result<(), ValidationError> {
         use SectionKind::*;
@@ -665,7 +665,7 @@ impl MemorySection {
     pub fn read(
         wasm: &mut Reader,
         module: &Module,
-        allocator: &'static dyn WasmMemoryAllocator,
+        allocator: Rc<dyn WasmMemoryAllocator>,
     ) -> Result<Option<MemoryKind>, ValidationError> {
         let len = wasm.read_u32()?;
         if len > 1 {

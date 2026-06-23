@@ -1,4 +1,8 @@
-use spacewasm::{CodeBuilder, CompilerOptions, ExportDesc, HostFunction, HostModule, InitializeResult, InterpreterBreak, InterpreterResult, InterpreterRunner, ModuleRef, RawValue, Ref, Store, Value, WasmRef};
+use spacewasm::{
+    CodeBuilder, CompilerOptions, ExportDesc, HostFunction, HostModule, InitializeResult,
+    InterpreterBreak, InterpreterResult, InterpreterRunner, ModuleRef, RawValue, Ref, Store, Value,
+    WasmRef,
+};
 use spacewasm_util::{FileStream, RustSystemAllocator};
 use std::ops::ControlFlow;
 use std::time::Instant;
@@ -47,7 +51,9 @@ fn main() {
         &mut FileStream::new(file),
         &mut store,
         &mut code_builder,
-        &RustSystemAllocator,
+        spacewasm::Rc::new(RustSystemAllocator)
+            .unwrap()
+            .into_wasm_memory_allocator(),
         CompilerOptions::default(),
     )
     .expect("failed to parse wasm module");

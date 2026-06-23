@@ -51,8 +51,12 @@ mod tests {
             functions: crate::Vec::zero(),
             table: None,
             memory: Some(MemoryKind::Owned(
-                crate::Rc::new(Memory::new(MemType::from(1, None), &TestAllocator).unwrap())
-                    .unwrap(),
+                crate::Rc::new(Memory::new(
+                    MemType::from(1, None),
+                    crate::Rc::new(TestAllocator).unwrap().into_wasm_memory_allocator(),
+                )
+                .unwrap())
+                .unwrap(),
             )),
             globals: crate::Vec::zero(),
             start: None,

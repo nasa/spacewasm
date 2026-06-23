@@ -1,3 +1,4 @@
+use crate::Rc;
 use crate::{AllocError, MemType};
 use core::alloc::Layout;
 use core::fmt::{Debug, Formatter};
@@ -20,11 +21,20 @@ pub trait WasmMemoryAllocator {
     fn deallocate(&self, ptr: NonNull<u8>, layout: Layout);
 }
 
+impl<T: WasmMemoryAllocator> Rc<T> {
+    pub fn into_wasm_memory_allocator(self) -> Rc<dyn WasmMemoryAllocator>
+    where
+        T: WasmMemoryAllocator + 'static,
+    {
+        unsafe { self.into_dyn(|x| x as &dyn WasmMemoryAllocator) }
+    }
+}
+
 pub struct Memory {
     ptr: *mut u8,
     size: usize,
     limits: MemType,
-    allocator: Option<&'static dyn WasmMemoryAllocator>,
+    allocator: Option<Rc<dyn WasmMemoryAllocator>>,
 }
 
 impl Debug for Memory {
@@ -65,10 +75,7 @@ impl Memory {
         }
     }
 
-    pub fn new(
-        ty: MemType,
-        allocator: &'static dyn WasmMemoryAllocator,
-    ) -> Result<Memory, AllocError> {
+    pub fn new(ty: MemType, allocator: Rc<dyn WasmMemoryAllocator>) -> Result<Memory, AllocError> {
         let size = (ty.min() as usize) * Self::PAGE_SIZE;
         let ptr = allocator
             .allocate(Layout::from_size_align(size, 16).unwrap())?

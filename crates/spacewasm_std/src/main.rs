@@ -1,7 +1,7 @@
 use spacewasm::{
-    vec, Box, CodeBuilder, CompilerOptions, ExportDesc, HostFunction, HostFunctionBreak,
-    HostModule, InitializeResult, InterpreterBreak, InterpreterResult, InterpreterRunner,
-    ModuleRef, PageAllocator, Ref, SectionKind, ValType, Value, WasmRef,
+    Box, CodeBuilder, CompilerOptions, ExportDesc, HostFunction, HostFunctionBreak, HostModule,
+    InitializeResult, InterpreterBreak, InterpreterResult, InterpreterRunner, ModuleRef,
+    PageAllocator, Ref, SectionKind, ValType, Value, WasmRef, vec,
 };
 use spacewasm_util::{FileStream, RustSystemAllocator};
 use std::ops::ControlFlow;
@@ -128,7 +128,9 @@ fn main() {
         &mut file_stream,
         &mut store,
         &mut code_builder,
-        &RustSystemAllocator,
+        spacewasm::Rc::new(RustSystemAllocator)
+            .unwrap()
+            .into_wasm_memory_allocator(),
         CompilerOptions::default(),
     )
     .expect("failed to parse wasm module");
