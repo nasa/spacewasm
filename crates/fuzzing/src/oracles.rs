@@ -10,6 +10,8 @@
 
 use spacewasm::*;
 use std::alloc::Layout;
+use std::cell::RefCell;
+use std::marker::PhantomData;
 use std::ptr::NonNull;
 
 static ORACLE_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -81,10 +83,9 @@ impl WasmStream for ByteStream {
     }
 }
 
-/// System allocator for fuzzing.
-pub(crate) struct FuzzAllocator;
+pub(crate) struct SystemAllocator;
 
-unsafe impl Allocator for FuzzAllocator {
+unsafe impl Allocator for SystemAllocator {
     unsafe fn alloc(&self, layout: Layout) -> Result<*mut u8, AllocError> {
         unsafe { Ok(std::alloc::alloc(layout)) }
     }
@@ -101,9 +102,22 @@ unsafe impl Allocator for FuzzAllocator {
     }
 }
 
+pub(crate) struct FuzzAllocator {
+    allocated: RefCell<usize>,
+    limit: usize,
+}
+
 impl WasmMemoryAllocator for FuzzAllocator {
     fn allocate(&self, layout: Layout) -> Result<NonNull<u8>, AllocError> {
-        unsafe { Ok(NonNull::new(std::alloc::alloc(layout)).ok_or(AllocError::AllocationFailed)?) }
+        let new_size = *self.allocated.borrow() + layout.size();
+        if new_size <= self.limit {
+            *(self.allocated.borrow_mut()) = new_size;
+            unsafe {
+                Ok(NonNull::new(std::alloc::alloc(layout)).ok_or(AllocError::AllocationFailed)?)
+            }
+        } else {
+            Err(AllocError::OutOfMemory)
+        }
     }
 
     fn reallocate(
@@ -112,15 +126,22 @@ impl WasmMemoryAllocator for FuzzAllocator {
         old_layout: Layout,
         layout: Layout,
     ) -> Result<NonNull<u8>, AllocError> {
-        unsafe {
-            Ok(
-                NonNull::new(std::alloc::realloc(ptr.as_ptr(), old_layout, layout.size()))
-                    .ok_or(AllocError::AllocationFailed)?,
-            )
+        let new_size = *self.allocated.borrow() - old_layout.size() + layout.size();
+        if new_size <= self.limit {
+            *(self.allocated.borrow_mut()) = new_size;
+            unsafe {
+                Ok(
+                    NonNull::new(std::alloc::realloc(ptr.as_ptr(), old_layout, layout.size()))
+                        .ok_or(AllocError::AllocationFailed)?,
+                )
+            }
+        } else {
+            Err(AllocError::OutOfMemory)
         }
     }
 
     fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
+        *self.allocated.borrow_mut() -= layout.size();
         unsafe { std::alloc::dealloc(ptr.as_ptr(), layout) }
     }
 }
@@ -128,8 +149,8 @@ impl WasmMemoryAllocator for FuzzAllocator {
 // Set up the global allocator for fuzzing
 #[allow(missing_docs)]
 mod fuzz_alloc {
-    use super::FuzzAllocator;
-    spacewasm::global_allocator!(FuzzAllocator, FuzzAllocator);
+    use super::SystemAllocator;
+    spacewasm::global_allocator!(SystemAllocator, SystemAllocator);
 }
 
 /// Oracle: Validate a WASM module.
@@ -150,13 +171,20 @@ pub fn validate(wasm: &[u8]) {
     let mut code_builder = CodeBuilder::<256>::default();
     let mut stream = ByteStream::new(wasm);
 
+    let allocator = std::boxed::Box::new(FuzzAllocator {
+        limit: 1024 * 1024 * 64, // 64MiB,
+        allocated: RefCell::new(0),
+    });
+
+    let allocator = std::boxed::Box::leak::<'static>(allocator);
+
     // Attempt to decode and validate the module
     let result = Module::new::<256>(
         "",
         &mut stream,
         &mut store,
         &mut code_builder,
-        &FuzzAllocator,
+        allocator,
         CompilerOptions {
             allow_memory_grow: true,
         },
@@ -196,12 +224,19 @@ pub fn no_traps(wasm: &[u8]) {
     let mut code_builder = CodeBuilder::<128>::default();
     let mut stream = ByteStream::new(wasm);
 
+    let allocator = std::boxed::Box::new(FuzzAllocator {
+        limit: 1024 * 1024 * 64, // 64MiB,
+        allocated: RefCell::new(0),
+    });
+
+    let allocator = std::boxed::Box::leak::<'static>(allocator);
+
     let module = match Module::new::<128>(
         "",
         &mut stream,
         &mut store,
         &mut code_builder,
-        &FuzzAllocator,
+        allocator,
         CompilerOptions {
             allow_memory_grow: true,
         },
@@ -240,7 +275,7 @@ pub fn no_traps(wasm: &[u8]) {
         InitializeResult::OutOfFuel => {
             log::debug!("start routine out of fuel");
             return;
-        },
+        }
         InitializeResult::Trap(TrapReason::StackOverflow) => {
             // Wasm Smith cannot avoid this. Also this is not a bug so it's ok to drop this run
             log::debug!("module hit a stack overflow during initialization");
