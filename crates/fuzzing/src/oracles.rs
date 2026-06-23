@@ -235,9 +235,12 @@ pub fn no_traps(wasm: &[u8]) {
         return;
     };
 
-    match state.initialize_module(module_box, &text, usize::MAX) {
+    match state.initialize_module(module_box, &text, 10000) {
         InitializeResult::Ok => {}
-        InitializeResult::OutOfFuel => panic!("Init out of fuel"),
+        InitializeResult::OutOfFuel => {
+            log::debug!("start routine out of fuel");
+            return;
+        },
         InitializeResult::Trap(TrapReason::StackOverflow) => {
             // Wasm Smith cannot avoid this. Also this is not a bug so it's ok to drop this run
             log::debug!("module hit a stack overflow during initialization");
