@@ -200,7 +200,9 @@ fn main() {
         &mut stream,
         &mut store,
         &mut code_builder,
-        &SystemAllocator,
+        spacewasm::Rc::new(SystemAllocator)
+            .unwrap()
+            .into_wasm_memory_allocator(),
         CompilerOptions {
             allow_memory_grow: true,
         },
