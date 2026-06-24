@@ -98,7 +98,7 @@ impl Memory {
 impl Memory {
     #[inline]
     fn check_in_bounds(&self, addr: usize, size: usize) -> Result<(), MemoryError> {
-        if addr + size > self.size {
+        if size > self.size || addr > self.size - size {
             Err(MemoryError::OutOfBounds)
         } else {
             Ok(())
@@ -260,4 +260,106 @@ impl Drop for Memory {
             )
         }
     }
+}
+
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+    use crate::StaticAllocator;
+
+    #[kani::proof]
+    fn proof_store_load_correctness() {
+        let alloc = StaticAllocator::<256, 8>::new();
+        let size = 64;
+
+        unsafe {
+            let ptr = alloc.alloc(Layout::from_size_align(size, 16).unwrap()).unwrap();
+            let mem = Memory::from(ptr, size);
+
+            // Test all integer sizes with symbolic values and addresses
+            let addr: usize = kani::any();
+            kani::assume(addr <= size - 8);  // Reserve space for largest type (u64)
+
+            // Test u8 store/load
+            let val_u8: u8 = kani::any();
+            mem.store_u8(addr, val_u8).unwrap();
+            assert_eq!(mem.load_u8(addr).unwrap(), val_u8, "u8 round-trip failed");
+
+            // Test u16 store/load
+            let val_u16: u16 = kani::any();
+            mem.store_u16(addr, val_u16).unwrap();
+            assert_eq!(mem.load_u16(addr).unwrap(), val_u16, "u16 round-trip failed");
+
+            // Test u32 store/load
+            let val_u32: u32 = kani::any();
+            mem.store_u32(addr, val_u32).unwrap();
+            assert_eq!(mem.load_u32(addr).unwrap(), val_u32, "u32 round-trip failed");
+
+            // Test u64 store/load
+            let val_u64: u64 = kani::any();
+            mem.store_u64(addr, val_u64).unwrap();
+            assert_eq!(mem.load_u64(addr).unwrap(), val_u64, "u64 round-trip failed");
+
+            // Test out-of-bounds detection
+            assert!(mem.store_u32(size - 2, 0).is_err(), "Out-of-bounds store must fail");
+            assert!(mem.store_u32(size, 0).is_err(), "Store at boundary must fail");
+            assert!(mem.load_u32(size - 2).is_err(), "Out-of-bounds load must fail");
+            assert!(mem.load_u32(size).is_err(), "Load at boundary must fail");
+
+            // Test addresses that cause overflow in bounds check
+            let overflow_addr = usize::MAX - 1;
+            assert!(mem.store_u32(overflow_addr, 0).is_err(), "Overflow address must be rejected");
+            assert!(mem.load_u32(overflow_addr).is_err(), "Overflow address must be rejected");
+
+            // Verify safe addresses have lossless isize conversion
+            if addr <= isize::MAX as usize {
+                let offset = addr as isize;
+                assert!(offset >= 0, "Valid addr converts to non-negative offset");
+                assert!(offset as usize == addr, "isize conversion must be lossless");
+            }
+
+            // Prevent Drop from calling GlobalAllocator FFI
+            core::mem::forget(mem);
+            alloc.dealloc(ptr, Layout::from_size_align(size, 16).unwrap());
+        }
+    }
+
+    #[kani::proof]
+    fn proof_byte_slice_operations() {
+        let alloc = StaticAllocator::<128, 8>::new();
+        let size = 16;
+
+        let ptr = unsafe { alloc.alloc(Layout::from_size_align(size, 16).unwrap()).unwrap() };
+        let mem = Memory::from(ptr, size);
+
+        // Test zero initialization at one symbolic address
+        let zero_addr: usize = kani::any();
+        kani::assume(zero_addr < size);
+        assert_eq!(mem.load_u8(zero_addr).unwrap(), 0, "Memory must be zero-initialized");
+
+        // Test fixed-size byte slice (4 bytes) at symbolic address
+        let addr: usize = kani::any();
+        kani::assume(addr <= size - 4);
+
+        // Use symbolic 4-byte array
+        let data: [u8; 4] = kani::any();
+
+        // Store and load back
+        mem.store(addr, &data).unwrap();
+        let loaded = mem.load(addr, 4).unwrap();
+        assert_eq!(loaded, &data, "Byte slice round-trip failed");
+
+        // Test empty slice
+        mem.store(0, &[]).unwrap();
+        assert_eq!(mem.load(0, 0).unwrap().len(), 0, "Empty slice must work");
+
+        // Test out-of-bounds slice access
+        assert!(mem.store(size - 2, &[1, 2, 3, 4]).is_err(), "Out-of-bounds store must fail");
+        assert!(mem.load(size - 2, 4).is_err(), "Out-of-bounds load must fail");
+
+        // Prevent Drop from calling GlobalAllocator FFI
+        core::mem::forget(mem);
+        unsafe { alloc.dealloc(ptr, Layout::from_size_align(size, 16).unwrap()) };
+    }
+
 }

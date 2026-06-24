@@ -235,3 +235,196 @@ mod tests {
         drop(b);
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+    use crate::util::static_alloc::kani_proofs::FixedSizeAllocator;
+
+    /// Verify Box allocation, initialization, and dereference operations.
+    #[kani::proof]
+    fn proof_box_allocation_and_deref() {
+        let alloc = FixedSizeAllocator::new();
+        let value: u32 = kani::any();
+
+        let boxed = Box::new_in(alloc, value);
+        kani::assume(boxed.is_ok());
+
+        let boxed = boxed.unwrap();
+        assert_eq!(*boxed, value, "dereferenced value should match original");
+
+        let ptr = boxed.as_ptr();
+        assert!(!ptr.is_null(), "pointer should not be null for non-ZST");
+    }
+
+    /// Verify Box ZST (zero-sized type) handling.
+    #[kani::proof]
+    fn proof_box_zst_handling() {
+        let alloc = FixedSizeAllocator::new();
+
+        let boxed = Box::new_in(alloc, ());
+        assert!(boxed.is_ok(), "allocation should succeed for ZST");
+
+        let boxed = boxed.unwrap();
+
+        let ptr = boxed.as_ptr();
+        assert!(ptr.is_null(), "pointer should be null for ZST");
+
+        assert_eq!(*boxed, (), "ZST value should be unit");
+    }
+
+    /// Verify Box deref_mut operation.
+    #[kani::proof]
+    fn proof_box_deref_mut() {
+        let alloc = FixedSizeAllocator::new();
+        let value: u32 = kani::any();
+
+        let boxed = Box::new_in(alloc, value);
+        kani::assume(boxed.is_ok());
+
+        let mut boxed = boxed.unwrap();
+        let new_value: u32 = kani::any();
+        *boxed = new_value;
+
+        assert_eq!(*boxed, new_value, "mutated value should be stored correctly");
+    }
+
+    /// Verify Box drop safety.
+    #[kani::proof]
+    fn proof_box_drop_safety() {
+        let alloc = FixedSizeAllocator::new();
+        let value: u32 = kani::any();
+
+        {
+            let boxed = Box::new_in(alloc, value);
+            kani::assume(boxed.is_ok());
+
+            let boxed = boxed.unwrap();
+            assert_eq!(*boxed, value, "value should be accessible before drop");
+        }
+    }
+
+    /// Verify Box with layout-checking allocator.
+    #[kani::proof]
+    fn proof_box_layout_matching() {
+        /// Wrapper allocator that verifies layout consistency between alloc and dealloc
+        struct LayoutCheckingAllocator<'a> {
+            inner: &'a FixedSizeAllocator,
+        }
+
+        static mut ALLOC_PTR: *mut u8 = core::ptr::null_mut();
+        static mut ALLOC_SIZE: usize = 0;
+        static mut ALLOC_ALIGN: usize = 0;
+
+        unsafe impl<'a> Allocator for LayoutCheckingAllocator<'a> {
+            unsafe fn alloc(&self, layout: Layout) -> Result<*mut u8, AllocError> {
+                let ptr = unsafe { self.inner.alloc(layout)? };
+
+                unsafe {
+                    ALLOC_PTR = ptr;
+                    ALLOC_SIZE = layout.size();
+                    ALLOC_ALIGN = layout.align();
+                }
+
+                Ok(ptr)
+            }
+
+            unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+                let alloc_ptr = unsafe { core::ptr::read_volatile(&raw const ALLOC_PTR) };
+                let alloc_size = unsafe { core::ptr::read_volatile(&raw const ALLOC_SIZE) };
+                let alloc_align = unsafe { core::ptr::read_volatile(&raw const ALLOC_ALIGN) };
+
+                assert_eq!(ptr, alloc_ptr, "dealloc pointer must match alloc pointer");
+                assert_eq!(layout.size(), alloc_size, "dealloc layout size must match alloc layout size");
+                assert_eq!(layout.align(), alloc_align, "dealloc layout align must match alloc layout align");
+
+                unsafe { self.inner.dealloc(ptr, layout) }
+            }
+
+            fn memory_statistics(&self) -> crate::MemoryStatistics {
+                self.inner.memory_statistics()
+            }
+        }
+
+        let backing = FixedSizeAllocator::new();
+        let alloc = LayoutCheckingAllocator { inner: &backing };
+        let value: u32 = kani::any();
+
+        let boxed = Box::new_in(alloc, value);
+        kani::assume(boxed.is_ok());
+
+        let boxed = boxed.unwrap();
+        assert_eq!(*boxed, value, "value should match");
+
+        // Drop will call dealloc with layout - LayoutCheckingAllocator will verify it matches!
+    }
+
+    /// Verify Box leak operation.
+    #[kani::proof]
+    fn proof_box_leak() {
+        let alloc = FixedSizeAllocator::new();
+        let value: u32 = kani::any();
+
+        let boxed = Box::new_in(alloc, value);
+        assert!(boxed.is_ok(), "allocation should succeed");
+
+        let boxed = boxed.unwrap();
+        let leaked: &'static mut u32 = Box::leak(boxed);
+
+        assert_eq!(*leaked, value, "leaked reference should have correct value");
+
+        let new_value: u32 = kani::any();
+        *leaked = new_value;
+        assert_eq!(*leaked, new_value, "leaked reference should be mutable");
+    }
+
+    /// Verify Box equality operations.
+    #[kani::proof]
+    fn proof_box_equality() {
+        let alloc = FixedSizeAllocator::new();
+        let value1: u32 = kani::any();
+        let value2: u32 = kani::any();
+
+        let box1 = Box::new_in(&alloc, value1);
+        let box2 = Box::new_in(&alloc, value1);
+        let box3 = Box::new_in(&alloc, value2);
+
+        assert!(box1.is_ok() && box2.is_ok() && box3.is_ok(), "allocations should succeed");
+
+        let box1 = box1.unwrap();
+        let box2 = box2.unwrap();
+        let box3 = box3.unwrap();
+
+        if value1 == value2 {
+            assert_eq!(box1, box2, "boxes with equal values should be equal");
+            assert_eq!(box1, box3, "boxes with equal values should be equal");
+        } else {
+            assert_eq!(box1, box2, "boxes with same value should be equal");
+            assert_ne!(box1, box3, "boxes with different values should not be equal");
+        }
+    }
+
+    /// Verify Box ordering operations.
+    #[kani::proof]
+    fn proof_box_ordering() {
+        let alloc = FixedSizeAllocator::new();
+        let value1: u32 = kani::any();
+        let value2: u32 = kani::any();
+
+        let box1 = Box::new_in(&alloc, value1);
+        let box2 = Box::new_in(&alloc, value2);
+
+        assert!(box1.is_ok() && box2.is_ok(), "allocations should succeed");
+
+        let box1 = box1.unwrap();
+        let box2 = box2.unwrap();
+
+        if value1 < value2 {
+            assert!(box1 < box2, "box ordering should match value ordering");
+        } else if value1 > value2 {
+            assert!(box1 > box2, "box ordering should match value ordering");
+        } else {
+            assert_eq!(box1.cmp(&box2), core::cmp::Ordering::Equal, "equal values should compare as equal");
+        }
+    }
+}
