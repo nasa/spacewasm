@@ -7,7 +7,6 @@ impl LocalVariable {
     }
 }
 
-#[derive(Debug)]
 pub struct InterpreterState<'store> {
     /// Current program counter
     pub pc: JumpTarget,
