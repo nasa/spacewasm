@@ -5,6 +5,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 env:
   RUST_BACKTRACE: 1
@@ -258,16 +259,9 @@ jobs:
             if (baselineScore && !isNaN(baselineScore)) {
               const diff = currentScore - baselineScore;
               const percentChange = ((diff / baselineScore) * 100).toFixed(2);
-              const emoji = diff < -20.0 ? '⚠️' : '✅';
 
               comment += `**Baseline Score (main):** ${baselineScore.toFixed(3)}\n`;
-              comment += `**Difference:** ${emoji} ${diff >= 0 ? '+' : ''}${diff.toFixed(3)} (${percentChange}%)\n\n`;
-
-              if (diff < -20.0) {
-                comment += '⚠️ **Warning:** Benchmark score decreased by more than 20 points\n';
-              } else if (diff >= 20.0) {
-                comment += '**Improvement:** Benchmark score increased!\n';
-              }
+              comment += `**Difference:** ${diff >= 0 ? '+' : ''}${diff.toFixed(3)} (${percentChange}%)\n\n`;
             } else {
               comment += '\n_No baseline available for comparison_\n';
             }
@@ -392,10 +386,9 @@ jobs:
 
             if (baselineCoverage && !isNaN(baselineCoverage)) {
               const diff = currentCoverage - baselineCoverage;
-              const emoji = diff < -1.0 ? '⚠️' : '✅';
 
               comment += `**Baseline Coverage (main):** ${baselineCoverage.toFixed(2)}%\n`;
-              comment += `**Difference:** ${emoji} ${diff >= 0 ? '+' : ''}${diff.toFixed(2)}%\n\n`;
+              comment += `**Difference:** ${diff >= 0 ? '+' : ''}${diff.toFixed(2)}%\n\n`;
 
               if (diff < -1.0) {
                 comment += '**Warning:** Coverage decreased by more than 1%\n';
