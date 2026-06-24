@@ -53,15 +53,24 @@ jobs:
 
       - name: Install WABT (WebAssembly Binary Toolkit)
         run: |
+          WABT_VERSION=1.0.41
           if [ "$RUNNER_OS" == "macOS" ]; then
-            brew install wabt
+            if [ "$RUNNER_ARCH" == "ARM64" ]; then
+              WABT_PLATFORM="macos-arm64"
+            else
+              WABT_PLATFORM="macos-x64"
+            fi
           else
-            # Linux - install from GitHub releases
-            WABT_VERSION=1.0.41
-            wget https://github.com/WebAssembly/wabt/releases/download/${WABT_VERSION}/wabt-${WABT_VERSION}-ubuntu-20.04.tar.gz
-            tar -xzf wabt-${WABT_VERSION}-ubuntu-20.04.tar.gz
-            sudo cp wabt-${WABT_VERSION}/bin/* /usr/local/bin/
+            # Linux
+            if [ "$RUNNER_ARCH" == "ARM64" ]; then
+              WABT_PLATFORM="linux-arm64"
+            else
+              WABT_PLATFORM="linux-x64"
+            fi
           fi
+          wget https://github.com/WebAssembly/wabt/releases/download/${WABT_VERSION}/wabt-${WABT_VERSION}-${WABT_PLATFORM}.tar.gz
+          tar -xzf wabt-${WABT_VERSION}-${WABT_PLATFORM}.tar.gz
+          sudo cp wabt-${WABT_VERSION}/bin/* /usr/local/bin/
         shell: bash
 
       - name: Cache Cargo registry
@@ -116,13 +125,6 @@ jobs:
         with:
           components: rustfmt, clippy
 
-      - name: Install WABT (WebAssembly Binary Toolkit)
-        run: |
-          WABT_VERSION=1.0.41
-          wget https://github.com/WebAssembly/wabt/releases/download/${WABT_VERSION}/wabt-${WABT_VERSION}-ubuntu-20.04.tar.gz
-          tar -xzf wabt-${WABT_VERSION}-ubuntu-20.04.tar.gz
-          sudo cp wabt-${WABT_VERSION}/bin/* /usr/local/bin/
-
       - name: Check formatting
         run: cargo fmt --all -- --check
 
@@ -149,19 +151,6 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-
-      - name: Install WABT (WebAssembly Binary Toolkit)
-        run: |
-          if [ "$RUNNER_OS" == "macOS" ]; then
-            brew install wabt
-          else
-            # Linux - install from GitHub releases
-            WABT_VERSION=1.0.41
-            wget https://github.com/WebAssembly/wabt/releases/download/${WABT_VERSION}/wabt-${WABT_VERSION}-ubuntu-20.04.tar.gz
-            tar -xzf wabt-${WABT_VERSION}-ubuntu-20.04.tar.gz
-            sudo cp wabt-${WABT_VERSION}/bin/* /usr/local/bin/
-          fi
-        shell: bash
 
       - name: Build all targets
         run: cargo build --workspace --all-targets --verbose
