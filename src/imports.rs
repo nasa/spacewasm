@@ -26,22 +26,6 @@ pub enum Import {
     HostGlobal { module: HostModuleRef, index: u16 },
 }
 
-impl From<Import> for Ref {
-    fn from(value: Import) -> Self {
-        match value {
-            Import::Func { module, index }
-            | Import::Global { module, index }
-            | Import::Table { module, index }
-            | Import::Memory { module, index } => Ref::Extern { module, index },
-
-            Import::HostFunc { module, index }
-            | Import::HostGlobal { module, index }
-            | Import::HostTable { module, index }
-            | Import::HostMemory { module, index } => Ref::Host { module, index },
-        }
-    }
-}
-
 impl Store {
     fn link_function(
         &self,

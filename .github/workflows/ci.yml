@@ -345,8 +345,9 @@ jobs:
 
       - name: Generate coverage
         run: |
-          cargo llvm-cov --workspace --lcov --output-path lcov.info
-          cargo llvm-cov --workspace --json --output-path coverage.json
+          # Only measure coverage for the main spacewasm library (src/)
+          cargo llvm-cov --package spacewasm --lcov --output-path lcov.info
+          cargo llvm-cov --package spacewasm --json --output-path coverage.json
 
       - name: Extract coverage percentage
         id: coverage
@@ -364,7 +365,7 @@ jobs:
           if [ "${{ github.event_name }}" == "pull_request" ]; then
             git fetch origin main:main
             git checkout main
-            cargo llvm-cov --workspace --json --output-path baseline-coverage.json 2>&1 || true
+            cargo llvm-cov --package spacewasm --json --output-path baseline-coverage.json 2>&1 || true
             git checkout -
 
             if [ -f baseline-coverage.json ]; then
