@@ -303,7 +303,7 @@ impl<const N: usize> CodeBuilder<N> {
                 // We are at the start of the next page, we have not allocated it yet
                 // The address is still valid so we can manually convert it
                 (self.pages.len(), 0)
-            } else if self.pages.len() == 0 {
+            } else if self.pages.is_empty() {
                 // We haven't started writing instructions yet
                 (0, 0)
             } else {
@@ -329,7 +329,7 @@ impl<const N: usize> CodeBuilder<N> {
     ///
     /// Automatically allocates a new page if we've reached the end of the current one.
     fn push(&mut self, c: u16) -> Result<(), AllocError> {
-        if self.offset == 0 && self.pages.len() == 0 {
+        if self.offset == 0 && self.pages.is_empty() {
             // No pages have been allocated yet
             self.add_page()?;
         } else if self.offset >= 256 {

@@ -14,7 +14,7 @@ pub struct Vec<T: Sized, A: Allocator = GlobalAllocator> {
 }
 
 impl<T> Vec<T, GlobalAllocator> {
-    pub fn from_iter(iter: impl ExactSizeIterator<Item = T>) -> Self {
+    pub fn from_exact_iter(iter: impl ExactSizeIterator<Item = T>) -> Self {
         let mut o = Self::new(iter.len() as u32).unwrap();
         for i in iter {
             o.push(i);
@@ -224,6 +224,8 @@ impl<T: Sized, A: Allocator> Vec<T, A> {
         self[..].iter_mut()
     }
 
+    /// # Safety
+    /// The caller must ensure that all elements up to capacity have been initialized.
     pub unsafe fn assume_init(mut self) -> Self {
         self.inner.len = self.inner.capacity;
         self
@@ -412,7 +414,7 @@ mod tests {
         vec.push(2);
         vec.push(3);
 
-        let slice: &[i32] = &*vec;
+        let slice: &[i32] = &vec;
         assert_eq!(slice, &[1, 2, 3]);
     }
 

@@ -156,7 +156,12 @@ macro_rules! global_allocator {
 ///
 /// The implementation must guarentee Ok() results are valid pointers against the requested layout.
 pub unsafe trait Allocator {
+    /// # Safety
+    /// The caller must ensure that the layout has non-zero size.
     unsafe fn alloc(&self, layout: Layout) -> Result<*mut u8, AllocError>;
+
+    /// # Safety
+    /// The caller must ensure that `ptr` was allocated by this allocator with the given `layout`.
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout);
     fn memory_statistics(&self) -> MemoryStatistics;
 }

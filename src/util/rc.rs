@@ -219,6 +219,8 @@ impl<T: ?Sized> Rc<T> {
         }
     }
 
+    /// # Safety
+    /// The caller must ensure that no other references to the inner value exist.
     #[inline]
     pub unsafe fn get_mut_unchecked(&mut self) -> &mut T {
         // We are careful to *not* create a reference covering the "count" fields, as

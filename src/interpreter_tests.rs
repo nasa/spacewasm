@@ -1,4 +1,6 @@
 #[cfg(test)]
+#[allow(clippy::approx_constant)]
+#[allow(clippy::excessive_precision)]
 mod tests {
     use crate::{
         AllocError, BaseVisitor, InitializeResult, Interpreter, InterpreterState, IrVisitor,

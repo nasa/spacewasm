@@ -80,8 +80,8 @@ unsafe impl Allocator for SystemAllocator {
 impl WasmMemoryAllocator for SystemAllocator {
     fn allocate(&self, layout: std::alloc::Layout) -> Result<std::ptr::NonNull<u8>, AllocError> {
         unsafe {
-            Ok(std::ptr::NonNull::new(std::alloc::alloc(layout))
-                .ok_or(AllocError::AllocationFailed)?)
+            std::ptr::NonNull::new(std::alloc::alloc(layout))
+                .ok_or(AllocError::AllocationFailed)
         }
     }
 
@@ -92,14 +92,12 @@ impl WasmMemoryAllocator for SystemAllocator {
         layout: std::alloc::Layout,
     ) -> Result<std::ptr::NonNull<u8>, AllocError> {
         unsafe {
-            Ok(
-                std::ptr::NonNull::new(std::alloc::realloc(
-                    ptr.as_ptr(),
-                    old_layout,
-                    layout.size(),
-                ))
-                .ok_or(AllocError::AllocationFailed)?,
-            )
+            std::ptr::NonNull::new(std::alloc::realloc(
+                ptr.as_ptr(),
+                old_layout,
+                layout.size(),
+            ))
+            .ok_or(AllocError::AllocationFailed)
         }
     }
 

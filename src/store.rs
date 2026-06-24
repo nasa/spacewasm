@@ -184,7 +184,7 @@ impl<'store> InterpreterState<'store> {
                     // We can just invoke the function
                     return match self.store.host_modules[module.0 as usize].functions
                         [index as usize]
-                        .call(&self, &[])
+                        .call(self, &[])
                     {
                         HostFunctionResult::Continue(_) => InitializeResult::Ok,
                         HostFunctionResult::Break(HostFunctionBreak::Trap) => {

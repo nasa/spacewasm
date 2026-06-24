@@ -86,7 +86,7 @@ impl<'wasm> Reader<'wasm> {
         self.next = self
             .stream
             .read()
-            .map_err(|e| ValidationError::ReaderError(e))?
+            .map_err(ValidationError::ReaderError)?
             .map(|inner| inner.into());
         self.chunk_used = 0;
 
@@ -142,8 +142,8 @@ impl<'wasm> Reader<'wasm> {
     /// Read a constant number of bytes into an array
     pub fn strip_bytes<const N: usize>(&mut self) -> Result<[u8; N], ValidationError> {
         let mut result = [0u8; N];
-        for i in 0..N {
-            result[i] = self.read_u8()?;
+        for item in result.iter_mut().take(N) {
+            *item = self.read_u8()?;
         }
         Ok(result)
     }

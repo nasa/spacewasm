@@ -26,7 +26,7 @@ impl<A: Allocator> fmt::Display for String<A> {
 
 impl<A: Allocator> fmt::Debug for String<A> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.write_str(&self)
+        f.write_str(self)
     }
 }
 
@@ -56,10 +56,6 @@ macro_rules! impl_eq {
             fn eq(&self, other: &$rhs) -> bool {
                 PartialEq::eq(&self[..], &other[..])
             }
-            #[inline]
-            fn ne(&self, other: &$rhs) -> bool {
-                PartialEq::ne(&self[..], &other[..])
-            }
         }
 
         impl PartialEq<$lhs> for $rhs {
@@ -67,15 +63,11 @@ macro_rules! impl_eq {
             fn eq(&self, other: &$lhs) -> bool {
                 PartialEq::eq(&self[..], &other[..])
             }
-            #[inline]
-            fn ne(&self, other: &$lhs) -> bool {
-                PartialEq::ne(&self[..], &other[..])
-            }
         }
     };
 }
 
-// impl_eq! { String, str }
+impl_eq! { String, str }
 impl_eq! { String, &str }
 
 impl<A: Allocator> TryFrom<Vec<u8, A>> for String<A> {

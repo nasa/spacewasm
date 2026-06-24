@@ -18,48 +18,43 @@ pub struct ModuleConfig {
 impl ModuleConfig {
     /// Create a new module configuration with SpaceWASM constraints.
     pub fn new() -> Self {
-        let mut config = SmithConfig::default();
-
-        // SpaceWASM constraints
-        config.max_memories = 1;
-        config.max_tables = 1;
-        config.max_table_elements = 1000;
-        config.min_funcs = 0;
-        config.max_funcs = 50;
-        config.min_exports = 0;
-        config.max_exports = 10;
-
-        // Disable imports - SpaceWASM tests don't provide import environment
-        config.min_imports = 0;
-        config.max_imports = 0;
-
-        // Memory limits (SpaceWASM supports max 256 pages = 16MB)
-        // Note: These are configured via max_memory_pages in MemoryConfig
-        config.memory_max_size_required = false;
-        config.max_memory32_bytes = 65536 * 32;
-
-        // WASM 1.0 MVP compliance - disable all post-MVP features
-        config.allow_start_export = true;
-
-        // Post-MVP proposals - all disabled for MVP compliance
-        config.bulk_memory_enabled = false;
-        config.reference_types_enabled = false;
-        config.simd_enabled = false;
-        config.relaxed_simd_enabled = false;
-        config.exceptions_enabled = false;
-        config.memory64_enabled = false;
-        config.threads_enabled = false;
-        config.multi_value_enabled = false;
-        config.saturating_float_to_int_enabled = false;
-        config.sign_extension_ops_enabled = false;
-        config.tail_call_enabled = false;
-        config.extended_const_enabled = false;
-        config.wide_arithmetic_enabled = false;
-
-        // GC and advanced features
-        config.gc_enabled = false;
-        config.custom_page_sizes_enabled = false;
-        config.shared_everything_threads_enabled = false;
+        let config = SmithConfig {
+            // SpaceWASM constraints
+            max_memories: 1,
+            max_tables: 1,
+            max_table_elements: 1000,
+            min_funcs: 0,
+            max_funcs: 50,
+            min_exports: 0,
+            max_exports: 10,
+            // Disable imports - SpaceWASM tests don't provide import environment
+            min_imports: 0,
+            max_imports: 0,
+            // Memory limits (SpaceWASM supports max 256 pages = 16MB)
+            memory_max_size_required: false,
+            max_memory32_bytes: 65536 * 32,
+            // WASM 1.0 MVP compliance - disable all post-MVP features
+            allow_start_export: true,
+            // Post-MVP proposals - all disabled for MVP compliance
+            bulk_memory_enabled: false,
+            reference_types_enabled: false,
+            simd_enabled: false,
+            relaxed_simd_enabled: false,
+            exceptions_enabled: false,
+            memory64_enabled: false,
+            threads_enabled: false,
+            multi_value_enabled: false,
+            saturating_float_to_int_enabled: false,
+            sign_extension_ops_enabled: false,
+            tail_call_enabled: false,
+            extended_const_enabled: false,
+            wide_arithmetic_enabled: false,
+            // GC and advanced features
+            gc_enabled: false,
+            custom_page_sizes_enabled: false,
+            shared_everything_threads_enabled: false,
+            ..Default::default()
+        };
 
         Self { config }
     }

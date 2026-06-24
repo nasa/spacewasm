@@ -5,6 +5,8 @@ use core::fmt::{Debug, Formatter};
 
 pub struct GlobalValueError;
 
+pub type HostFunctionFn = Box<dyn Fn(&InterpreterState, &[Value]) -> HostFunctionResult>;
+
 pub trait GlobalValue {
     /// Write a value to this global variable.
     /// This will not be called if this value is not mutable.
@@ -66,7 +68,7 @@ impl HostValList {
         for c in s.chars() {
             match c {
                 'i' | 'I' | 'f' | 'd' => {}
-                _ => assert!(false, "invalid host value signature"),
+                _ => panic!("invalid host value signature"),
             }
         }
 
@@ -82,6 +84,10 @@ impl HostValList {
 
     pub fn len(&self) -> usize {
         self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
     }
 }
 
@@ -151,7 +157,7 @@ impl Iterator for HostValListIter {
 impl<T: Fn(&InterpreterState, &[Value]) -> HostFunctionResult> Box<T> {
     pub fn into_host_function_dyn(
         mut self,
-    ) -> Box<dyn Fn(&InterpreterState, &[Value]) -> HostFunctionResult>
+    ) -> HostFunctionFn
     where
         T: Fn(&InterpreterState, &[Value]) -> HostFunctionResult + 'static,
     {
@@ -166,7 +172,7 @@ pub struct HostFunction {
     name: &'static str,
     params: HostValList,
     returns: HostValList,
-    f: Box<dyn Fn(&InterpreterState, &[Value]) -> HostFunctionResult>,
+    f: HostFunctionFn,
     param_size: u16,
     return_size: u16,
 }

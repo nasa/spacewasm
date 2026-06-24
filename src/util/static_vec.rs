@@ -189,7 +189,7 @@ mod tests {
         vec.push(20).unwrap();
         vec.push(30).unwrap();
 
-        let slice: &[i32] = &*vec;
+        let slice: &[i32] = &vec;
         assert_eq!(slice.len(), 3);
     }
 
