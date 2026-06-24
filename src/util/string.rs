@@ -20,13 +20,13 @@ impl TryFrom<&[u8]> for String<GlobalAllocator> {
 
 impl<A: Allocator> fmt::Display for String<A> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.write_str(&self)
+        f.write_str(self)
     }
 }
 
 impl<A: Allocator> fmt::Debug for String<A> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.write_str(&self)
+        f.write_str(self)
     }
 }
 
@@ -56,20 +56,12 @@ macro_rules! impl_eq {
             fn eq(&self, other: &$rhs) -> bool {
                 PartialEq::eq(&self[..], &other[..])
             }
-            #[inline]
-            fn ne(&self, other: &$rhs) -> bool {
-                PartialEq::ne(&self[..], &other[..])
-            }
         }
 
         impl PartialEq<$lhs> for $rhs {
             #[inline]
             fn eq(&self, other: &$lhs) -> bool {
                 PartialEq::eq(&self[..], &other[..])
-            }
-            #[inline]
-            fn ne(&self, other: &$lhs) -> bool {
-                PartialEq::ne(&self[..], &other[..])
             }
         }
     };

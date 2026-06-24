@@ -85,7 +85,7 @@ impl<'a> BaseVisitor for ConstantCompiler<'a> {
     // Numeric instructions - const
     fn i32_const(&self, n: i32, state: &mut Self::State) -> Result<(), Self::Error> {
         let before = state.replace(Value::I32(n));
-        if let Some(_) = before {
+        if before.is_some() {
             Err(ConstantExprError::AlreadyHasValue)
         } else {
             Ok(())
@@ -93,7 +93,7 @@ impl<'a> BaseVisitor for ConstantCompiler<'a> {
     }
     fn i64_const(&self, n: i64, state: &mut Self::State) -> Result<(), Self::Error> {
         let before = state.replace(Value::I64(n));
-        if let Some(_) = before {
+        if before.is_some() {
             Err(ConstantExprError::AlreadyHasValue)
         } else {
             Ok(())
@@ -101,7 +101,7 @@ impl<'a> BaseVisitor for ConstantCompiler<'a> {
     }
     fn f32_const(&self, z: f32, state: &mut Self::State) -> Result<(), Self::Error> {
         let before = state.replace(Value::F32(z));
-        if let Some(_) = before {
+        if before.is_some() {
             Err(ConstantExprError::AlreadyHasValue)
         } else {
             Ok(())
@@ -109,7 +109,7 @@ impl<'a> BaseVisitor for ConstantCompiler<'a> {
     }
     fn f64_const(&self, z: f64, state: &mut Self::State) -> Result<(), Self::Error> {
         let before = state.replace(Value::F64(z));
-        if let Some(_) = before {
+        if before.is_some() {
             Err(ConstantExprError::AlreadyHasValue)
         } else {
             Ok(())
@@ -261,7 +261,7 @@ impl<'a> WasmVisitor for ConstantCompiler<'a> {
 
     // Exit the expression
     fn finish(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        if let Some(_) = state {
+        if state.is_some() {
             Ok(())
         } else {
             Err(ConstantExprError::NoValue)
@@ -326,7 +326,7 @@ impl<'a> WasmVisitor for ConstantCompiler<'a> {
         };
 
         let before = state.replace(v);
-        if let Some(_) = before {
+        if before.is_some() {
             Err(ConstantExprError::AlreadyHasValue)
         } else {
             Ok(())

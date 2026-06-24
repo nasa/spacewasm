@@ -9,6 +9,8 @@ persons.
 
 # SpaceWASM
 
+[![CI](https://github.com/nasa/spacewasm/actions/workflows/ci.yml/badge.svg)](https://github.com/nasa/spacewasm/actions/workflows/ci.yml)
+
 SpaceWASM is an implementation of the [WASM 1.0](https://webassembly.github.io/spec/versions/core/WebAssembly-1.0.pdf)
 specification meant to interpret WASM binary on-board spacecraft. This software comes with two major components:
 

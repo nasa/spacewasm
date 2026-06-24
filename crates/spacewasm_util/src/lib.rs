@@ -26,7 +26,7 @@ unsafe impl Allocator for RustSystemAllocator {
 
 impl WasmMemoryAllocator for RustSystemAllocator {
     fn allocate(&self, layout: Layout) -> Result<NonNull<u8>, AllocError> {
-        unsafe { Ok(NonNull::new(std::alloc::alloc(layout)).ok_or(AllocError::AllocationFailed)?) }
+        unsafe { NonNull::new(std::alloc::alloc(layout)).ok_or(AllocError::AllocationFailed) }
     }
 
     fn reallocate(
@@ -36,10 +36,8 @@ impl WasmMemoryAllocator for RustSystemAllocator {
         layout: Layout,
     ) -> Result<NonNull<u8>, AllocError> {
         unsafe {
-            Ok(
-                NonNull::new(std::alloc::realloc(ptr.as_ptr(), old_layout, layout.size()))
-                    .ok_or(AllocError::AllocationFailed)?,
-            )
+            NonNull::new(std::alloc::realloc(ptr.as_ptr(), old_layout, layout.size()))
+                .ok_or(AllocError::AllocationFailed)
         }
     }
 

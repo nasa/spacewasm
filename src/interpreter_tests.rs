@@ -1,4 +1,6 @@
 #[cfg(test)]
+#[allow(clippy::approx_constant)]
+#[allow(clippy::excessive_precision)]
 mod tests {
     use crate::{
         AllocError, BaseVisitor, InitializeResult, Interpreter, InterpreterState, IrVisitor,
@@ -51,11 +53,15 @@ mod tests {
             functions: crate::Vec::zero(),
             table: None,
             memory: Some(MemoryKind::Owned(
-                crate::Rc::new(Memory::new(
-                    MemType::from(1, None),
-                    crate::Rc::new(TestAllocator).unwrap().into_wasm_memory_allocator(),
+                crate::Rc::new(
+                    Memory::new(
+                        MemType::from(1, None),
+                        crate::Rc::new(TestAllocator)
+                            .unwrap()
+                            .into_wasm_memory_allocator(),
+                    )
+                    .unwrap(),
                 )
-                .unwrap())
                 .unwrap(),
             )),
             globals: crate::Vec::zero(),

@@ -1,5 +1,5 @@
-use crate::alloc::AllocError;
 use crate::ValidationError;
+use crate::alloc::AllocError;
 use core::mem::MaybeUninit;
 use core::ops::{Deref, DerefMut};
 
@@ -16,9 +16,7 @@ impl<T: Sized + Clone, const N: usize> Clone for StaticVec<T, N> {
         // Clone only the initialized elements
         for i in 0..(self.len as usize) {
             unsafe {
-                new_vec.data[i].write(
-                    self.data[i].assume_init_ref().clone()
-                );
+                new_vec.data[i].write(self.data[i].assume_init_ref().clone());
             }
         }
 
@@ -95,10 +93,7 @@ impl<T, const N: usize> Deref for StaticVec<T, N> {
     fn deref(&self) -> &[T] {
         unsafe {
             // SAFETY: elements [0..len) are initialized
-            core::slice::from_raw_parts(
-                self.data.as_ptr() as *const T,
-                self.len as usize
-            )
+            core::slice::from_raw_parts(self.data.as_ptr() as *const T, self.len as usize)
         }
     }
 }
@@ -107,10 +102,7 @@ impl<T, const N: usize> DerefMut for StaticVec<T, N> {
     fn deref_mut(&mut self) -> &mut [T] {
         unsafe {
             // SAFETY: elements [0..len) are initialized
-            core::slice::from_raw_parts_mut(
-                self.data.as_mut_ptr() as *mut T,
-                self.len as usize
-            )
+            core::slice::from_raw_parts_mut(self.data.as_mut_ptr() as *mut T, self.len as usize)
         }
     }
 }
@@ -197,7 +189,7 @@ mod tests {
         vec.push(20).unwrap();
         vec.push(30).unwrap();
 
-        let slice: &[i32] = &*vec;
+        let slice: &[i32] = &vec;
         assert_eq!(slice.len(), 3);
     }
 

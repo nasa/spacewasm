@@ -437,7 +437,7 @@ impl<'code> IrReader<'code> {
             F64_CONVERT_I64_S => instruction!(f64_convert_i64_s),
             F64_CONVERT_I64_U => instruction!(f64_convert_i64_u),
             F64_PROMOTE_F32 => instruction!(f64_promote_f32),
-            _ => Err(IrReaderError::InvalidOpcode(opcode)).unwrap(),
+            _ => panic!("{:?}", IrReaderError::InvalidOpcode(opcode)),
         }
 
         Ok(())

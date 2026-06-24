@@ -279,10 +279,7 @@ pub enum Ref {
     /// A symbol in an external host module
     Host { module: HostModuleRef, index: u16 },
     /// A symbol in another WASM module
-    Extern {
-        module: ModuleRef,
-        index: u16,
-    },
+    Extern { module: ModuleRef, index: u16 },
 }
 
 /// An abstraction over IR Bytecode.

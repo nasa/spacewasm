@@ -1,11 +1,16 @@
 use spacewasm::{
     CodeBuilder, CompilerOptions, ExportDesc, HostFunction, HostModule, InitializeResult,
-    InterpreterBreak, InterpreterResult, InterpreterRunner, ModuleRef, RawValue, Ref, Store, Value,
-    WasmRef,
+    InterpreterBreak, InterpreterResult, InterpreterRunner, ModuleRef, PageAllocator, RawValue,
+    Ref, Store, Value, WasmRef,
 };
 use spacewasm_util::{FileStream, RustSystemAllocator};
 use std::ops::ControlFlow;
 use std::time::Instant;
+
+spacewasm::global_allocator!(
+    PageAllocator<16>,
+    PageAllocator::new(&RustSystemAllocator {}, 8192)
+);
 
 fn main() {
     println!("\n=== CoreMark Benchmark ===");
