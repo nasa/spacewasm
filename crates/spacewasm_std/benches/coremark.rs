@@ -49,8 +49,18 @@ fn main() {
     let mut store = Store::new(2, [env]).unwrap();
     let mut code_builder = CodeBuilder::<256>::default();
 
-    let file = std::fs::File::open("benches/coremark-minimal.wasm")
-        .expect("failed to open coremark-minimal.wasm");
+    // Try multiple paths to find the wasm file
+    let wasm_paths = [
+        "benches/coremark-minimal.wasm",
+        "crates/spacewasm_std/benches/coremark-minimal.wasm",
+        concat!(env!("CARGO_MANIFEST_DIR"), "/benches/coremark-minimal.wasm"),
+    ];
+
+    let file = wasm_paths
+        .iter()
+        .find_map(|path| std::fs::File::open(path).ok())
+        .expect("failed to open coremark-minimal.wasm in any expected location");
+
     let module = spacewasm::Module::new::<256>(
         "coremark",
         &mut FileStream::new(file),
