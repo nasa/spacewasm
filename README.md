@@ -12,15 +12,22 @@ persons.
 SpaceWASM is an implementation of the [WASM 1.0](https://webassembly.github.io/spec/versions/core/WebAssembly-1.0.pdf)
 specification meant to interpret WASM binary on-board spacecraft. This software comes with two major components:
 
-1. Decoder:
+1. Decoder/Validator:
 
    Reads the WASM binary in [chunks](#streaming) and decodes it to an executable form. The decoder will use a fixed
    amount of memory and can be measured per-WASM binary using the `spacewasm-check` executable on the ground.
+
+   WebAssembly is validated during the decoding process and does not require another pass of the bytecode.
 
 2. Interpreter:
 
    A WASM interpreter that can operate on linear memory and interface with
    hooks from the [embedding](#embedding).
+
+SpaceWASM does not execute direct WebAssembly bytecode. Wasm bytecode is meant to be small and structured in a way to
+validate easily. These properties however make it slow to execute in-place. During the decoding process of Wasm
+instructions, SpaceWASM converts bytecode into another intermediate representation (IR) which includes properties better
+suited for interpretation. Read more about the IR in the [specification](src/SPEC.md).
 
 ## Embedding
 
@@ -52,7 +59,8 @@ portions of memory for certain purposes. Therefore, requiring the entire WASM bi
 memory is not feasible.
 
 SpaceWASM is highly optimized to reduce peak memory usage and not require deallocation after allocation required for
-streaming. To this end there are certain [constraints](#interpreter-limitations) imposed on the WebAssembly specification.
+streaming. To this end there are certain [constraints](#interpreter-limitations) imposed on the WebAssembly
+specification.
 
 SpaceWASM supports decoding and compiling WASM binary in a single pass via a streaming mechanism. Chunks of the WASM
 binary may be provided to the interpreter as they are read/requested from the filesystem. The stream must provide chunks
@@ -60,21 +68,25 @@ synchronously.
 
 ## Interpreter Limitations
 
-This WASM interpreter imposes additional constraints beyond the WebAssembly 1.0 specification to support resource-constrained spacecraft environments:
+This WASM interpreter imposes additional constraints beyond the WebAssembly 1.0 specification to support
+resource-constrained spacecraft environments:
 
 ### Module & Store Limits
+
 - **Modules in store**: Maximum 256 modules
 - **Host modules**: Maximum 256 host modules
 - **Function parameters**: Maximum 255 32-bit words
 - **Local variables**: Maximum 65,535 32-bit words total per function
 
 ### IR Code Pages
+
 - **Code pages**: Configurable via generic parameter `N`, typically set at module instantiation
 - **Page size**: 256 16-bit words (512 bytes)
 - **Maximum page address**: 24-bit (16,777,216 pages)
 - **Word offset in page**: 8-bit (0-255)
 
 ### Control Flow
+
 - **Nesting depth**: Maximum 64 control frames (blocks/loops/if-else)
 - **Value stack**: Maximum 512 values per function
 - **Label jumps**: 22-bit signed offset (±2,097,151 instructions)
@@ -82,13 +94,18 @@ This WASM interpreter imposes additional constraints beyond the WebAssembly 1.0 
 - **br_table cases**: Maximum 256 branch targets
 
 ### Instruction Encoding
+
 - **8-bit or 16-bit indexes**: 0-65,535
 - **8-bit or 32-bit immediates**: 0-254 inline, 255+ extended
 - **8-bit or 64-bit immediates**: 0-254 inline, 255+ extended
 
-These constraints enable deterministic memory usage and efficient execution in resource-constrained environments while maintaining compatibility with most standard WebAssembly modules.
+These constraints enable deterministic memory usage and efficient execution in resource-constrained environments while
+maintaining compatibility with most standard WebAssembly modules.
 
-## Execution
+## Benchmarking
+
+SpaceWASM is tested against the Coremark benchmark to trace performance regression. See [coremark](crates/spacewasm_std/benches)
+for more information.
 
 ## Testing
 
@@ -98,9 +115,8 @@ These constraints enable deterministic memory usage and efficient execution in r
 cargo test
 ```
 
-The unit tests check for regressions on the `unsafe` container abstractions provided by SpaceWASM due to unique `alloc` usage.
-There are also simple unit tests that cover all WASM instructions
-without needing full WAST execution.
+The unit tests check for regressions on the `unsafe` container abstractions provided by SpaceWASM due to unique `alloc`
+usage. There are also simple unit tests that cover all WASM instructions without needing full WAST execution.
 
 The integration tests are spectests from the WASM 1.0 MVP suite
 which was curated in https://github.com/WasmEdge/wasmedge-spectest.
@@ -109,7 +125,8 @@ the specification.
 
 ### Fuzzing
 
-SpaceWASM includes a comprehensive fuzzing infrastructure using libfuzzer and wasm-smith.
+SpaceWASM includes a comprehensive fuzzing infrastructure using libfuzzer
+and [wasm-smith](https://github.com/bytecodealliance/wasm-tools/tree/main/crates/wasm-smith).
 
 ```bash
 # Run fuzzer
