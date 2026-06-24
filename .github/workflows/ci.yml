@@ -1,0 +1,137 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  RUST_BACKTRACE: 1
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }}, ${{ matrix.profile }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macOS ARM64
+          - os: macos-arm64
+            runner: macos-14
+            profile: debug
+          - os: macos-arm64
+            runner: macos-14
+            profile: release
+
+          # Linux x86_64
+          - os: linux-x86
+            runner: ubuntu-latest
+            profile: debug
+          - os: linux-x86
+            runner: ubuntu-latest
+            profile: release
+
+          # Linux ARM64
+          - os: linux-arm64
+            runner: ubuntu-24.04-arm
+            profile: debug
+          - os: linux-arm64
+            runner: ubuntu-24.04-arm
+            profile: release
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry/index
+          key: ${{ runner.os }}-${{ runner.arch }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-cargo-registry-
+
+      - name: Cache Cargo git
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-${{ runner.arch }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-cargo-git-
+
+      - name: Cache build artifacts
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-${{ runner.arch }}-cargo-build-${{ matrix.profile }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-cargo-build-${{ matrix.profile }}-
+
+      - name: Run tests (debug)
+        if: matrix.profile == 'debug'
+        run: cargo test --workspace --verbose
+
+      - name: Run tests (release)
+        if: matrix.profile == 'release'
+        run: cargo test --workspace --release --verbose
+
+      - name: Run tests with strict-assertions (debug)
+        if: matrix.profile == 'debug'
+        run: cargo test --workspace --features strict-assertions --verbose
+
+      - name: Run tests with strict-assertions (release)
+        if: matrix.profile == 'release'
+        run: cargo test --workspace --release --features strict-assertions --verbose
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-arm64
+            runner: macos-14
+          - os: linux-x86
+            runner: ubuntu-latest
+          - os: linux-arm64
+            runner: ubuntu-24.04-arm
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build all targets
+        run: cargo build --workspace --all-targets --verbose
+
+      - name: Build release
+        run: cargo build --workspace --release --verbose
