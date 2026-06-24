@@ -148,6 +148,13 @@ macro_rules! global_allocator {
 /// Our allocator trait. This is very similar to [core::alloc::GlobalAlloc].
 /// We are not using that trait since it doesn't return Result<...> it just panics
 /// if an allocation fails. An adaptor is automatically implemented
+///
+/// # Safety
+///
+/// layout must have non-zero size. Attempting to allocate for a zero-sized layout will
+/// result in undefined behavior.
+///
+/// The implementation must guarentee Ok() results are valid pointers against the requested layout.
 pub unsafe trait Allocator {
     unsafe fn alloc(&self, layout: Layout) -> Result<*mut u8, AllocError>;
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout);
@@ -187,7 +194,7 @@ unsafe impl Allocator for GlobalAllocator {
     }
 
     fn memory_statistics(&self) -> MemoryStatistics {
-        unsafe { __spacewasm_memory_statistics().into() }
+        unsafe { __spacewasm_memory_statistics() }
     }
 }
 

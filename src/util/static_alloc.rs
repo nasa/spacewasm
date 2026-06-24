@@ -14,6 +14,12 @@ struct StackAllocatorInner<const SIZE: usize, const DEPTH: usize> {
     n_allocations: usize,
 }
 
+impl<const SIZE: usize, const DEPTH: usize> Default for StaticAllocator<SIZE, DEPTH> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<const SIZE: usize, const DEPTH: usize> StaticAllocator<SIZE, DEPTH> {
     pub const fn new() -> Self {
         StaticAllocator {
@@ -58,7 +64,7 @@ impl<const SIZE: usize, const DEPTH: usize> StackAllocatorInner<SIZE, DEPTH> {
         }
 
         let mut start_address = self.allocated;
-        if start_address % layout.align() > 0 {
+        if !start_address.is_multiple_of(layout.align()) {
             let alignment_offset = layout.align() - start_address % layout.align();
             start_address += alignment_offset;
         }

@@ -1,6 +1,6 @@
-use crate::Box;
 use crate::alloc::{AllocError, Allocator, GlobalAllocator};
 use crate::util::InnerVec;
+use crate::Box;
 use core::alloc::Layout;
 use core::ops::{Deref, DerefMut};
 
@@ -60,7 +60,7 @@ impl<T: Clone, A: Allocator + Clone> Clone for Vec<T, A> {
     fn clone(&self) -> Self {
         let mut n: Vec<T, A> = Vec::new_in(self.alloc.clone(), self.inner.capacity).unwrap();
 
-        if self.len() > 0 {
+        if !self.is_empty() {
             // SAFETY: We need to write to uninitialized memory without creating a reference to it.
             // Use ptr::write to initialize each element.
             unsafe {
@@ -164,6 +164,10 @@ impl<T: Sized, A: Allocator> Vec<T, A> {
         self.inner.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn capacity(&self) -> usize {
         self.inner.capacity()
     }
@@ -258,7 +262,7 @@ impl<T, A: Allocator> DerefMut for Vec<T, A> {
 impl<T: Sized, A: Allocator> Drop for Vec<T, A> {
     fn drop(&mut self) {
         if self.inner.capacity != 0 {
-            while let Some(_) = self.pop() {}
+            while self.pop().is_some() {}
             unsafe {
                 self.alloc.dealloc(
                     self.inner.ptr as *mut u8,

@@ -142,11 +142,16 @@ impl Module {
         // Make sure that the module name is not a duplicate in the store
         // Allow multiple modules with empty names since they can't be imported
         if !name.is_empty() {
-            if let Some(_) = store.modules().iter().find(|m| m.name == name) {
+            if store.modules().iter().find(|m| m.name == name).is_some() {
                 return Err(ValidationError::DuplicateModuleName.into());
             }
 
-            if let Some(_) = store.host_modules().iter().find(|m| m.name == name) {
+            if store
+                .host_modules()
+                .iter()
+                .find(|m| m.name == name)
+                .is_some()
+            {
                 return Err(ValidationError::DuplicateModuleName.into());
             }
         }

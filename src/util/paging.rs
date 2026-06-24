@@ -1,5 +1,5 @@
-use crate::MemoryStatistics;
 use crate::alloc::{AllocError, Allocator};
+use crate::MemoryStatistics;
 use core::alloc::Layout;
 use core::cell::UnsafeCell;
 
@@ -223,7 +223,7 @@ impl Page {
     fn alloc(&mut self, layout: Layout) -> Option<*mut u8> {
         // Find the next address that is aligned to this layout
         let mut start_address = (self.ptr as usize) + self.allocated;
-        if start_address % layout.align() > 0 {
+        if !start_address.is_multiple_of(layout.align()) {
             let alignment_offset = layout.align() - start_address % layout.align();
             self.wasted += alignment_offset;
             start_address += alignment_offset;
@@ -257,13 +257,13 @@ impl Page {
             assert!(self.n_allocations > 0);
 
             // Check is we can deallocate this pointer without marking this page with a dealloc flag
-            if let Some(cache) = self.cache.take() {
-                if cache.alloc_ptr == dealloc_ptr {
-                    self.n_allocations -= 1;
-                    self.allocated = cache.restore_ptr - page_ptr;
-                    self.wasted -= dealloc_ptr - cache.restore_ptr;
-                    return Some(self.n_allocations == 0);
-                }
+            if let Some(cache) = self.cache.take()
+                && cache.alloc_ptr == dealloc_ptr
+            {
+                self.n_allocations -= 1;
+                self.allocated = cache.restore_ptr - page_ptr;
+                self.wasted -= dealloc_ptr - cache.restore_ptr;
+                return Some(self.n_allocations == 0);
             };
 
             // FIXME(tumbar) We may want to track used regions of the pages

@@ -25,6 +25,10 @@ impl<T: Sized> InnerVec<T> {
         self.len as usize
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
     pub fn capacity(&self) -> usize {
         self.capacity as usize
     }
@@ -91,14 +95,14 @@ mod tests {
     #[test]
     fn test_deref_empty() {
         let vec: InnerVec<i32> = InnerVec::zero();
-        let slice: &[i32] = &*vec;
+        let slice: &[i32] = &vec;
         assert_eq!(slice.len(), 0);
     }
 
     #[test]
     fn test_deref_mut_empty() {
         let mut vec: InnerVec<i32> = InnerVec::zero();
-        let slice: &mut [i32] = &mut *vec;
+        let slice: &mut [i32] = &mut vec;
         assert_eq!(slice.len(), 0);
     }
 }
