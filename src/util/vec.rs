@@ -1,6 +1,6 @@
+use crate::Box;
 use crate::alloc::{AllocError, Allocator, GlobalAllocator};
 use crate::util::InnerVec;
-use crate::Box;
 use core::alloc::Layout;
 use core::ops::{Deref, DerefMut};
 

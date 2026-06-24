@@ -109,16 +109,24 @@ macro_rules! global_allocator {
         static mut GLOBAL_ALLOCATOR: *mut $ty = unsafe { &raw mut ALLOC_IMPL };
 
         #[unsafe(no_mangle)]
-        pub unsafe extern "C" fn __spacewasm_alloc(size: usize, align: usize, err: *mut u32) -> *mut u8 {
+        pub unsafe extern "C" fn __spacewasm_alloc(
+            size: usize,
+            align: usize,
+            err: *mut u32,
+        ) -> *mut u8 {
             let Ok(layout) = core::alloc::Layout::from_size_align(size, align) else {
-                unsafe { *err = $crate::AllocError::InvalidLayout.into(); }
+                unsafe {
+                    *err = $crate::AllocError::InvalidLayout.into();
+                }
                 return core::ptr::null_mut();
             };
 
-            match unsafe {  $crate::Allocator::alloc(&*GLOBAL_ALLOCATOR,layout) } {
+            match unsafe { $crate::Allocator::alloc(&*GLOBAL_ALLOCATOR, layout) } {
                 Ok(ptr) => ptr,
                 Err(alloc_err) => {
-                    unsafe { *err = alloc_err.into(); }
+                    unsafe {
+                        *err = alloc_err.into();
+                    }
                     core::ptr::null_mut()
                 }
             }

@@ -176,7 +176,8 @@ impl<'store> InterpreterState<'store> {
                             index: i,
                         },
                         &[],
-                    ).unwrap();
+                    )
+                    .unwrap();
                 }
                 Ref::Host { module, index } => {
                     // We don't need to run the interpreter for host functions

@@ -1,8 +1,9 @@
 /// WASM Reader
 /// This file implements some basic WASM reading capabilities such
 /// as LEB128 (variable width integer encoding).
-use crate::{Allocator, CircularBuffer, GlobalAllocator, StaticVec, ValidationError, Vec, Chunk, WasmStream};
-
+use crate::{
+    Allocator, Chunk, CircularBuffer, GlobalAllocator, StaticVec, ValidationError, Vec, WasmStream,
+};
 
 /// Wasm encodes integers according to the LEB128 format, which specifies that
 /// only 7 bits of every byte are used to store the integer's bits. The 8th bit
@@ -82,7 +83,9 @@ impl<'wasm> Reader<'wasm> {
         }
 
         // Fetch next chunk from stream
-        self.next = self.stream.read()
+        self.next = self
+            .stream
+            .read()
             .map_err(|e| ValidationError::ReaderError(e))?
             .map(|inner| inner.into());
         self.chunk_used = 0;
@@ -115,9 +118,7 @@ impl<'wasm> Reader<'wasm> {
         self.fill_buffer()?;
 
         // Try again
-        self.buffer.front()
-            .copied()
-            .ok_or(ValidationError::Eof)
+        self.buffer.front().copied().ok_or(ValidationError::Eof)
     }
 
     /// Tries to read one byte and fails if the end of file is reached.
