@@ -1,6 +1,5 @@
 use super::inspector::{Inspector, LimitedVec};
 use serde::{Deserialize, Serialize};
-use std::path::Path;
 use spacewasm::{
     AllocError, Allocator, CodeBuilder, CompilerOptions, ConstantExprError, ExportDesc,
     GlobalValue, GlobalValueError, HostFunction, HostGlobal, HostModule, InitializeResult,
@@ -13,6 +12,7 @@ use std::alloc::Layout;
 use std::cell::RefCell;
 use std::ops::ControlFlow;
 use std::panic::catch_unwind;
+use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command as ProcessCommand;
 use std::ptr::NonNull;
@@ -718,9 +718,7 @@ fn check_trap_reason(reason: TrapReason, text: &str) {
         (TrapReason::UninitializedTableElement, "uninitialized element") => {}
         (TrapReason::StackOverflow, "call stack exhausted") => {}
         err => {
-            panic!(
-                "Could not match expected trap text '{text}' with error {err:?}"
-            )
+            panic!("Could not match expected trap text '{text}' with error {err:?}")
         }
     }
 }
@@ -814,9 +812,7 @@ fn check_decode_error(err: ParseError, text: String) {
         (ValidationError::TableImportNotFound, "incompatible import type") => {}
         (ValidationError::MemoryImportTooLarge, "incompatible import type") => {}
         err => {
-            panic!(
-                "Could not match validation error text '{text}' with error {err:?}"
-            )
+            panic!("Could not match validation error text '{text}' with error {err:?}")
         }
     }
 }
@@ -825,9 +821,7 @@ fn check_initialization_error(result: InitializeResult, text: &str) {
     match (result, text) {
         (InitializeResult::Trap(TrapReason::Unreachable), "unreachable") => {}
         (result, text) => {
-            panic!(
-                "Could not match initialization error text '{text}' with result {result:?}"
-            )
+            panic!("Could not match initialization error text '{text}' with result {result:?}")
         }
     }
 }

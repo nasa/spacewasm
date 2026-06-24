@@ -155,9 +155,7 @@ impl Iterator for HostValListIter {
 }
 
 impl<T: Fn(&InterpreterState, &[Value]) -> HostFunctionResult> Box<T> {
-    pub fn into_host_function_dyn(
-        mut self,
-    ) -> HostFunctionFn
+    pub fn into_host_function_dyn(mut self) -> HostFunctionFn
     where
         T: Fn(&InterpreterState, &[Value]) -> HostFunctionResult + 'static,
     {
