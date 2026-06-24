@@ -7,7 +7,6 @@ impl LocalVariable {
     }
 }
 
-#[derive(Debug)]
 pub struct InterpreterState<'store> {
     /// Current program counter
     pub pc: JumpTarget,
@@ -53,7 +52,7 @@ impl CallFrame {
     }
 
     // SAFETY: We are converting to the serialized form. The sizes are checked at compile time.
-    pub fn to_bits(self) -> u32 {
+    pub fn into_bits(self) -> u32 {
         unsafe { core::mem::transmute(self) }
     }
 }
@@ -104,7 +103,7 @@ impl<'store> InterpreterState<'store> {
             parameter_size: f.parameter_size,
         };
 
-        self.stack.write_u32(self.sp, frame.to_bits());
+        self.stack.write_u32(self.sp, frame.into_bits());
         self.stack.write_u32(self.sp + 1, self.pc.0);
         self.fp = self.sp as u32;
 
@@ -218,7 +217,7 @@ impl<'store> Interpreter<'store> {
     /// # Arguments
     ///
     /// * `label_pc_offset`: Number of IR words between the current PC (instruction start)
-    ///                      and this label target.
+    ///   and this label target.
     /// * `addr`: Resolved label target to jump to
     /// * `state`: Current interpreter state
     ///

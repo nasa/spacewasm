@@ -1,0 +1,433 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  RUST_BACKTRACE: 1
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }}, ${{ matrix.profile }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macOS ARM64
+          - os: macos-arm64
+            runner: macos-14
+            profile: debug
+          - os: macos-arm64
+            runner: macos-14
+            profile: release
+
+          # Linux x86_64
+          - os: linux-x86
+            runner: ubuntu-latest
+            profile: debug
+          - os: linux-x86
+            runner: ubuntu-latest
+            profile: release
+
+          # Linux ARM64
+          - os: linux-arm64
+            runner: ubuntu-24.04-arm
+            profile: debug
+          - os: linux-arm64
+            runner: ubuntu-24.04-arm
+            profile: release
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Install WABT (WebAssembly Binary Toolkit)
+        run: |
+          WABT_VERSION=1.0.41
+          if [ "$RUNNER_OS" == "macOS" ]; then
+            if [ "$RUNNER_ARCH" == "ARM64" ]; then
+              WABT_PLATFORM="macos-arm64"
+            else
+              WABT_PLATFORM="macos-x64"
+            fi
+          else
+            # Linux
+            if [ "$RUNNER_ARCH" == "ARM64" ]; then
+              WABT_PLATFORM="linux-arm64"
+            else
+              WABT_PLATFORM="linux-x64"
+            fi
+          fi
+          wget https://github.com/WebAssembly/wabt/releases/download/${WABT_VERSION}/wabt-${WABT_VERSION}-${WABT_PLATFORM}.tar.gz
+          tar -xzf wabt-${WABT_VERSION}-${WABT_PLATFORM}.tar.gz
+          sudo cp wabt-${WABT_VERSION}/bin/* /usr/local/bin/
+        shell: bash
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry/index
+          key: ${{ runner.os }}-${{ runner.arch }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-cargo-registry-
+
+      - name: Cache Cargo git
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-${{ runner.arch }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-cargo-git-
+
+      - name: Cache build artifacts
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-${{ runner.arch }}-cargo-build-${{ matrix.profile }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-cargo-build-${{ matrix.profile }}-
+
+      - name: Run tests (debug)
+        if: matrix.profile == 'debug'
+        run: cargo test --workspace --verbose
+
+      - name: Run tests (release)
+        if: matrix.profile == 'release'
+        run: cargo test --workspace --release --verbose
+
+      - name: Run tests with strict-assertions (debug)
+        if: matrix.profile == 'debug'
+        run: cargo test --workspace --features strict-assertions --verbose
+
+      - name: Run tests with strict-assertions (release)
+        if: matrix.profile == 'release'
+        run: cargo test --workspace --release --features strict-assertions --verbose
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-arm64
+            runner: macos-14
+          - os: linux-x86
+            runner: ubuntu-latest
+          - os: linux-arm64
+            runner: ubuntu-24.04-arm
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build all targets
+        run: cargo build --workspace --all-targets --verbose
+
+      - name: Build release
+        run: cargo build --workspace --release --verbose
+
+  benchmark:
+    name: Benchmark
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install WABT (WebAssembly Binary Toolkit)
+        run: |
+          WABT_VERSION=1.0.41
+          WABT_PLATFORM="linux-x64"
+          wget https://github.com/WebAssembly/wabt/releases/download/${WABT_VERSION}/wabt-${WABT_VERSION}-${WABT_PLATFORM}.tar.gz
+          tar -xzf wabt-${WABT_VERSION}-${WABT_PLATFORM}.tar.gz
+          sudo cp wabt-${WABT_VERSION}/bin/* /usr/local/bin/
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry/index
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
+
+      - name: Cache Cargo git
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-git-
+
+      - name: Cache build artifacts
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-build-bench-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-build-bench-
+
+      - name: Run CoreMark benchmark
+        id: benchmark
+        run: |
+          # Build and run the benchmark from workspace root, capturing output
+          output=$(cargo bench -p spacewasm_std --bench coremark --no-fail-fast 2>&1)
+          echo "$output"
+
+          # Extract the CoreMark score from the output
+          score=$(echo "$output" | grep "CoreMark Score:" | awk '{print $3}')
+          if [ -z "$score" ]; then
+            echo "Failed to extract CoreMark score"
+            exit 1
+          fi
+
+          echo "score=$score" >> $GITHUB_OUTPUT
+          echo "Benchmark score: $score"
+
+      - name: Download baseline benchmark
+        id: baseline
+        continue-on-error: true
+        run: |
+          # Try to get baseline from main branch
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            git fetch origin main:main
+            git checkout main
+            baseline_output=$(cargo bench -p spacewasm_std --bench coremark --no-fail-fast 2>&1) || true
+            baseline_score=$(echo "$baseline_output" | grep "CoreMark Score:" | awk '{print $3}')
+            git checkout -
+
+            if [ -n "$baseline_score" ]; then
+              echo "baseline=$baseline_score" >> $GITHUB_OUTPUT
+              echo "Baseline score: $baseline_score"
+            else
+              echo "baseline=" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "baseline=" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Comment benchmark results on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const currentScore = parseFloat('${{ steps.benchmark.outputs.score }}');
+            const baselineScore = parseFloat('${{ steps.baseline.outputs.baseline }}');
+
+            let comment = '## CoreMark Benchmark Results\n\n';
+            comment += `**Current Score:** ${currentScore.toFixed(3)}\n`;
+
+            if (baselineScore && !isNaN(baselineScore)) {
+              const diff = currentScore - baselineScore;
+              const percentChange = ((diff / baselineScore) * 100).toFixed(2);
+
+              comment += `**Baseline Score (main):** ${baselineScore.toFixed(3)}\n`;
+              comment += `**Difference:** ${diff >= 0 ? '+' : ''}${diff.toFixed(3)} (${percentChange}%)\n\n`;
+            } else {
+              comment += '\n_No baseline available for comparison_\n';
+            }
+
+            // Find existing benchmark comment
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const botComment = comments.find(c =>
+              c.user.type === 'Bot' && c.body.includes('CoreMark Benchmark Results')
+            );
+
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: comment
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: comment
+              });
+            }
+
+  coverage:
+    name: Code Coverage
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+
+      - name: Install WABT (WebAssembly Binary Toolkit)
+        run: |
+          WABT_VERSION=1.0.41
+          WABT_PLATFORM="linux-x64"
+          wget https://github.com/WebAssembly/wabt/releases/download/${WABT_VERSION}/wabt-${WABT_VERSION}-${WABT_PLATFORM}.tar.gz
+          tar -xzf wabt-${WABT_VERSION}-${WABT_PLATFORM}.tar.gz
+          sudo cp wabt-${WABT_VERSION}/bin/* /usr/local/bin/
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry/index
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
+
+      - name: Cache Cargo git
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-git-
+
+      - name: Generate coverage
+        run: |
+          # Only measure coverage for the main spacewasm library (src/)
+          cargo llvm-cov --package spacewasm --lcov --output-path lcov.info
+          cargo llvm-cov --package spacewasm --json --output-path coverage.json
+
+      - name: Extract coverage percentage
+        id: coverage
+        run: |
+          # Extract coverage percentage from JSON output
+          coverage=$(jq -r '.data[0].totals.lines.percent' coverage.json)
+          echo "percentage=$coverage" >> $GITHUB_OUTPUT
+          echo "Current coverage: $coverage%"
+
+      - name: Download baseline coverage
+        id: baseline-coverage
+        continue-on-error: true
+        run: |
+          # Try to get baseline from main branch
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            git fetch origin main:main
+            git checkout main
+            cargo llvm-cov --package spacewasm --json --output-path baseline-coverage.json 2>&1 || true
+            git checkout -
+
+            if [ -f baseline-coverage.json ]; then
+              baseline=$(jq -r '.data[0].totals.lines.percent' baseline-coverage.json)
+              echo "baseline=$baseline" >> $GITHUB_OUTPUT
+              echo "Baseline coverage: $baseline%"
+            else
+              echo "baseline=" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "baseline=" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Comment coverage results on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const currentCoverage = parseFloat('${{ steps.coverage.outputs.percentage }}');
+            const baselineCoverage = parseFloat('${{ steps.baseline-coverage.outputs.baseline }}');
+
+            let comment = '## Code Coverage Report\n\n';
+            comment += `**Current Coverage:** ${currentCoverage.toFixed(2)}%\n`;
+
+            if (baselineCoverage && !isNaN(baselineCoverage)) {
+              const diff = currentCoverage - baselineCoverage;
+
+              comment += `**Baseline Coverage (main):** ${baselineCoverage.toFixed(2)}%\n`;
+              comment += `**Difference:** ${diff >= 0 ? '+' : ''}${diff.toFixed(2)}%\n\n`;
+
+              if (diff < -1.0) {
+                comment += '**Warning:** Coverage decreased by more than 1%\n';
+              } else if (diff >= 1.0) {
+                comment += '**Improvement:** Coverage increased!\n';
+              }
+            } else {
+              comment += '\n_No baseline available for comparison_\n';
+            }
+
+            // Find existing coverage comment
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const botComment = comments.find(c =>
+              c.user.type === 'Bot' && c.body.includes('Code Coverage Report')
+            );
+
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: comment
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: comment
+              });
+            }
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: lcov.info
+          fail_ci_if_error: false

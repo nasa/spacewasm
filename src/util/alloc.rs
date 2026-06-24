@@ -109,16 +109,24 @@ macro_rules! global_allocator {
         static mut GLOBAL_ALLOCATOR: *mut $ty = unsafe { &raw mut ALLOC_IMPL };
 
         #[unsafe(no_mangle)]
-        pub unsafe extern "C" fn __spacewasm_alloc(size: usize, align: usize, err: *mut u32) -> *mut u8 {
+        pub unsafe extern "C" fn __spacewasm_alloc(
+            size: usize,
+            align: usize,
+            err: *mut u32,
+        ) -> *mut u8 {
             let Ok(layout) = core::alloc::Layout::from_size_align(size, align) else {
-                unsafe { *err = $crate::AllocError::InvalidLayout.into(); }
+                unsafe {
+                    *err = $crate::AllocError::InvalidLayout.into();
+                }
                 return core::ptr::null_mut();
             };
 
-            match unsafe {  $crate::Allocator::alloc(&*GLOBAL_ALLOCATOR,layout) } {
+            match unsafe { $crate::Allocator::alloc(&*GLOBAL_ALLOCATOR, layout) } {
                 Ok(ptr) => ptr,
                 Err(alloc_err) => {
-                    unsafe { *err = alloc_err.into(); }
+                    unsafe {
+                        *err = alloc_err.into();
+                    }
                     core::ptr::null_mut()
                 }
             }
@@ -140,8 +148,20 @@ macro_rules! global_allocator {
 /// Our allocator trait. This is very similar to [core::alloc::GlobalAlloc].
 /// We are not using that trait since it doesn't return Result<...> it just panics
 /// if an allocation fails. An adaptor is automatically implemented
+///
+/// # Safety
+///
+/// layout must have non-zero size. Attempting to allocate for a zero-sized layout will
+/// result in undefined behavior.
+///
+/// The implementation must guarentee Ok() results are valid pointers against the requested layout.
 pub unsafe trait Allocator {
+    /// # Safety
+    /// The caller must ensure that the layout has non-zero size.
     unsafe fn alloc(&self, layout: Layout) -> Result<*mut u8, AllocError>;
+
+    /// # Safety
+    /// The caller must ensure that `ptr` was allocated by this allocator with the given `layout`.
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout);
     fn memory_statistics(&self) -> MemoryStatistics;
 }
@@ -179,7 +199,7 @@ unsafe impl Allocator for GlobalAllocator {
     }
 
     fn memory_statistics(&self) -> MemoryStatistics {
-        unsafe { __spacewasm_memory_statistics().into() }
+        unsafe { __spacewasm_memory_statistics() }
     }
 }
 

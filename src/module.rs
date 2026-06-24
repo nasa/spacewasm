@@ -85,7 +85,7 @@ impl Module {
         )
         .map_err(|err| ParseError {
             offset: wasm.offset() as u32,
-            err: err.into(),
+            err,
         })
     }
 
@@ -112,12 +112,13 @@ impl Module {
         )
         .map_err(|err| ParseError {
             offset: wasm.offset() as u32,
-            err: err.into(),
+            err,
         })?;
 
         Ok((m, stats))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn read<const N: usize>(
         name: &str,
         wasm: &mut Reader,
@@ -142,11 +143,16 @@ impl Module {
         // Make sure that the module name is not a duplicate in the store
         // Allow multiple modules with empty names since they can't be imported
         if !name.is_empty() {
-            if let Some(_) = store.modules().iter().find(|m| m.name == name) {
+            if store.modules().iter().find(|m| m.name == name).is_some() {
                 return Err(ValidationError::DuplicateModuleName.into());
             }
 
-            if let Some(_) = store.host_modules().iter().find(|m| m.name == name) {
+            if store
+                .host_modules()
+                .iter()
+                .find(|m| m.name == name)
+                .is_some()
+            {
                 return Err(ValidationError::DuplicateModuleName.into());
             }
         }
@@ -225,13 +231,14 @@ impl Module {
         }
 
         // If we have a function section we should also have a code section and vis versa
-        if !seen_code_section && module.functions.len() > 0 {
+        if !seen_code_section && !module.functions.is_empty() {
             return Err(ValidationError::InvalidCodeSectionFunctionCount.into());
         }
 
         Ok(module)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn read_section<const PN: usize>(
         &mut self,
         wasm: &mut Reader,
@@ -348,13 +355,13 @@ impl Module {
                     Ref::Module(index) => {
                         let f = &self.functions[index as usize];
                         let ty = &self.types[f.ty.0 as usize];
-                        if ty.params.len() != 0 || ty.returns.len() != 0 {
+                        if !ty.params.is_empty() || !ty.returns.is_empty() {
                             return Err(ValidationError::InvalidStartFunctionSignature);
                         }
                     }
                     Ref::Host { module, index } => {
                         let f = &store.host_modules()[module.0 as usize].functions[index as usize];
-                        if f.params().len() != 0 || f.returns().len() != 0 {
+                        if !f.params().is_empty() || !f.returns().is_empty() {
                             return Err(ValidationError::InvalidStartFunctionSignature);
                         }
                     }
@@ -362,7 +369,7 @@ impl Module {
                         let m = &store.modules()[module.0 as usize];
                         let f = &m.functions[index as usize];
                         let ty = &m.types[f.ty.0 as usize];
-                        if ty.params.len() != 0 || ty.returns.len() != 0 {
+                        if !ty.params.is_empty() || !ty.returns.is_empty() {
                             return Err(ValidationError::InvalidStartFunctionSignature);
                         }
                     }
@@ -613,10 +620,10 @@ impl Func {
 
         let return_ty = if ty.returns.len() > 1 {
             return Err(ValidationError::FunctionReturnsTooLarge);
-        } else if ty.returns.len() == 0 {
+        } else if ty.returns.is_empty() {
             None
         } else {
-            Some(ty.returns[0].clone())
+            Some(ty.returns[0])
         };
 
         if parameter_size > 0xFF {
@@ -673,7 +680,7 @@ impl MemorySection {
         } else if len == 0 {
             Ok(None)
         } else if module.memory.is_some() {
-            return Err(ValidationError::MultipleMemories);
+            Err(ValidationError::MultipleMemories)
         } else {
             // We are allocating memory for this module
             let ty = MemType::read(wasm)?;
@@ -818,7 +825,7 @@ impl ExportSection {
         for _ in 0..len {
             let e = Export::read(wasm, module)?;
             // Check for duplicate export name
-            if out.iter().find(|ei| &*ei.name == &*e.name).is_some() {
+            if out.iter().find(|ei| *ei.name == *e.name).is_some() {
                 return Err(ValidationError::DuplicateExportName);
             }
 

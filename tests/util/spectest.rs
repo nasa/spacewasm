@@ -12,10 +12,13 @@ use std::alloc::Layout;
 use std::cell::RefCell;
 use std::ops::ControlFlow;
 use std::panic::catch_unwind;
+use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command as ProcessCommand;
 use std::ptr::NonNull;
 use std::rc::Rc;
+
+type SubtestLogType = Arc<Mutex<Option<Rc<RefCell<LimitedVec<String>>>>>>;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -132,7 +135,7 @@ unsafe impl Allocator for RustSystemAllocator {
 
 impl WasmMemoryAllocator for RustSystemAllocator {
     fn allocate(&self, layout: Layout) -> Result<NonNull<u8>, AllocError> {
-        unsafe { Ok(NonNull::new(std::alloc::alloc(layout)).ok_or(AllocError::AllocationFailed)?) }
+        unsafe { NonNull::new(std::alloc::alloc(layout)).ok_or(AllocError::AllocationFailed) }
     }
 
     fn reallocate(
@@ -142,10 +145,8 @@ impl WasmMemoryAllocator for RustSystemAllocator {
         layout: Layout,
     ) -> Result<NonNull<u8>, AllocError> {
         unsafe {
-            Ok(
-                NonNull::new(std::alloc::realloc(ptr.as_ptr(), old_layout, layout.size()))
-                    .ok_or(AllocError::AllocationFailed)?,
-            )
+            NonNull::new(std::alloc::realloc(ptr.as_ptr(), old_layout, layout.size()))
+                .ok_or(AllocError::AllocationFailed)
         }
     }
 
@@ -251,7 +252,7 @@ impl TestContext {
     }
 
     fn current_module_index(&self) -> usize {
-        if self.store.modules().len() == 0 {
+        if self.store.modules().is_empty() {
             0
         } else {
             self.store.modules().len() - 1
@@ -444,6 +445,7 @@ fn compare_values(actual: Value, expected: &ValueSpec) {
 }
 
 #[derive(Debug)]
+#[allow(clippy::enum_variant_names)]
 enum ModuleLoadError {
     DecodeError(ParseError),
     AllocationError(MemoryError),
@@ -511,7 +513,7 @@ fn clone_module(module: &Module) -> Module {
             Some(TableKind::Owned((r, ty))) => {
                 // Deep clone table elements
                 Some(TableKind::Owned((
-                    spacewasm::Rc::new_slice(r.len(), |i| r[i].clone()).unwrap(),
+                    spacewasm::Rc::new_slice(r.len(), |i| r[i]).unwrap(),
                     *ty,
                 )))
             }
@@ -520,12 +522,12 @@ fn clone_module(module: &Module) -> Module {
             None => None,
             Some(MemoryKind::Import(r)) => Some(MemoryKind::Import(*r)),
             Some(MemoryKind::ImportHost(r)) => Some(MemoryKind::ImportHost(*r)),
-            Some(MemoryKind::Owned(r)) => Some(MemoryKind::Owned(clone_memory(&r))),
+            Some(MemoryKind::Owned(r)) => Some(MemoryKind::Owned(clone_memory(r))),
         },
         globals: module.globals.clone(),
         imports: module.imports.clone(),
         exports: module.exports.clone(),
-        start: module.start.clone(),
+        start: module.start,
     }
 }
 
@@ -542,7 +544,7 @@ fn load_module(
     // We can only remove the last module to maintain index-based references
     {
         let modules = ctx.store.modules();
-        if modules.len() > 0 && modules[modules.len() - 1].name.is_empty() {
+        if !modules.is_empty() && modules[modules.len() - 1].name.is_empty() {
             ctx.store.pop_module();
         }
     }
@@ -614,7 +616,7 @@ fn invoke_function(
         // Get the function reference
         let func_ref = module
             .get_func_ref(func_idx)
-            .expect(&format!("Function {} not found in exports", func_name));
+            .unwrap_or_else(|| panic!("Function {} not found in exports", func_name));
 
         let func_ref = match func_ref {
             Ref::Module(index) => WasmRef {
@@ -716,10 +718,7 @@ fn check_trap_reason(reason: TrapReason, text: &str) {
         (TrapReason::UninitializedTableElement, "uninitialized element") => {}
         (TrapReason::StackOverflow, "call stack exhausted") => {}
         err => {
-            assert!(
-                false,
-                "Could not match expected trap text '{text}' with error {err:?}"
-            )
+            panic!("Could not match expected trap text '{text}' with error {err:?}")
         }
     }
 }
@@ -813,10 +812,7 @@ fn check_decode_error(err: ParseError, text: String) {
         (ValidationError::TableImportNotFound, "incompatible import type") => {}
         (ValidationError::MemoryImportTooLarge, "incompatible import type") => {}
         err => {
-            assert!(
-                false,
-                "Could not match validation error text '{text}' with error {err:?}"
-            )
+            panic!("Could not match validation error text '{text}' with error {err:?}")
         }
     }
 }
@@ -825,10 +821,7 @@ fn check_initialization_error(result: InitializeResult, text: &str) {
     match (result, text) {
         (InitializeResult::Trap(TrapReason::Unreachable), "unreachable") => {}
         (result, text) => {
-            assert!(
-                false,
-                "Could not match initialization error text '{text}' with result {result:?}"
-            )
+            panic!("Could not match initialization error text '{text}' with result {result:?}")
         }
     }
 }
@@ -952,7 +945,7 @@ fn test_host_module() -> HostModule {
 
 fn run_wast_command(
     command: Command,
-    test_dir: &PathBuf,
+    test_dir: &Path,
     ctx: &mut TestContext,
     log: Rc<RefCell<LimitedVec<String>>>,
 ) {
@@ -1056,7 +1049,7 @@ fn run_wast_command(
                 let saved_store = ctx.save_store();
                 match load_module(ctx, None, &wasm_bytes) {
                     Err(ModuleLoadError::DecodeError(err)) => {
-                        check_decode_error(err.into(), text);
+                        check_decode_error(err, text);
                         ctx.restore_store(saved_store);
                     }
                     _ => {
@@ -1086,7 +1079,7 @@ fn run_wast_command(
                 let saved_store = ctx.save_store();
                 match load_module(ctx, None, &wasm_bytes) {
                     Err(ModuleLoadError::DecodeError(err)) => {
-                        check_decode_error(err.into(), text);
+                        check_decode_error(err, text);
                         ctx.restore_store(saved_store);
                     }
                     Err(ModuleLoadError::AllocationError(err)) => {
@@ -1151,7 +1144,7 @@ fn run_wast_test_file_inner(
     test_dir: PathBuf,
     test_name: &str,
     wast_line: Arc<Mutex<Option<u32>>>,
-    subtest_log: Arc<Mutex<Option<Rc<RefCell<LimitedVec<String>>>>>>,
+    subtest_log: SubtestLogType,
 ) {
     let json_path = test_dir.join(format!("{}.json", test_name));
 
@@ -1219,6 +1212,7 @@ pub fn run_wast_test_file(test_name: &str) {
     }
 
     let wast_line = Arc::new(Mutex::new(None));
+    #[allow(clippy::arc_with_non_send_sync)]
     let subtest_log = Arc::new(Mutex::new(None));
 
     match catch_unwind(|| {
@@ -1233,7 +1227,7 @@ pub fn run_wast_test_file(test_name: &str) {
         Err(err) => {
             if let Some(log) = &*subtest_log.lock().unwrap() {
                 let log_lines: Vec<String> = log.borrow().clone().into();
-                if log_lines.len() > 0 {
+                if !log_lines.is_empty() {
                     eprintln!("Subtest failed, dumping invoke log");
                     for line in log_lines.iter() {
                         eprintln!("{}", line);

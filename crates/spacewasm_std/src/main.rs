@@ -23,7 +23,7 @@ fn main() {
         globals: vec![],
         functions: vec![
             HostFunction::new("panic", "iii".into(), "".into(), |state, a| {
-                let Some(Value::I32(addr)) = a.get(0) else {
+                let Some(Value::I32(addr)) = a.first() else {
                     panic!("expected i32");
                 };
                 let Some(Value::I32(len)) = a.get(1) else {
@@ -40,15 +40,15 @@ fn main() {
                 ControlFlow::Break(HostFunctionBreak::Trap)
             }),
             HostFunction::new("rsleep", "I".into(), "".into(), |_, a| {
-                eprintln!("RSLEEP {:?}", a.get(0));
+                eprintln!("RSLEEP {:?}", a.first());
                 ControlFlow::Continue(None)
             }),
             HostFunction::new("command", "ii".into(), "i".into(), |_, a| {
-                eprintln!("COMMAND {:?} {:?}", a.get(0), a.get(1));
+                eprintln!("COMMAND {:?} {:?}", a.first(), a.get(1));
                 ControlFlow::Continue(Some(Value::I32(0)))
             }),
             HostFunction::new("message", "ii".into(), "".into(), |state, a| {
-                let Some(Value::I32(msg_ptr)) = a.get(0) else {
+                let Some(Value::I32(msg_ptr)) = a.first() else {
                     panic!("expected i32");
                 };
                 let Some(Value::I32(msg_len)) = a.get(1) else {
@@ -66,7 +66,7 @@ fn main() {
                 ControlFlow::Continue(None)
             }),
             HostFunction::new("telemetry", "iiiii".into(), "i".into(), |state, a| {
-                let Some(Value::I32(id)) = a.get(0) else {
+                let Some(Value::I32(id)) = a.first() else {
                     panic!("expected i32");
                 };
                 let Some(Value::I32(time_ptr)) = a.get(1) else {
@@ -110,7 +110,7 @@ fn main() {
             "I".into(),
             move |_, _| {
                 let elapse = start.elapsed();
-                let ms = elapse.as_secs() * 1000 + (elapse.subsec_nanos() as u64 / 1000_000);
+                let ms = elapse.as_secs() * 1000 + (elapse.subsec_nanos() as u64 / 1_000_000);
 
                 ControlFlow::Continue(Some(Value::I64(ms as i64)))
             },

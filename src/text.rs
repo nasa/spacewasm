@@ -1,30 +1,30 @@
+//! # SpaceWASM IR Encoding
+//!
+//! This module implements the compiled intermediate representation (IR) for SpaceWASM.
+//! The IR is organized into pages of 16-bit words to support streaming execution.
+//!
+//! ## Memory Layout
+//! - Code is stored in 256-word pages (512 bytes each)
+//! - Each instruction is 1-5 words depending on operand size
+//! - Pages are allocated dynamically as code is compiled
+//!
+//! ## Instruction Format
+//! All instructions use 16-bit words with the opcode in the upper 8 bits:
+//! ```text
+//! [opcode:8][operand:8]
+//! ```
+//!
+//! ## Operand Encoding
+//! - **No operand**: `[opcode:8][0x00:8]`
+//! - **8-bit or 16-bit index**: `[opcode:8][idx:8]` for 0-254, or `[opcode:8][0xFF]` `[idx:16]` for larger values
+//! - **8-bit inline**: `[opcode:8][value:8]` - for values 0-254
+//! - **32-bit extended**: `[opcode:8][0xFF]` `[lo:16]` `[hi:16]`
+//! - **64-bit extended**: `[opcode:8][0xFF]` `[w0:16]` `[w1:16]` `[w2:16]` `[w3:16]`
+//! - **Memory arg**: `[opcode:8][align:8]` `[offset_lo:16]` `[offset_hi:16]`
+//! - **Jump target**: 2 words encoding a 32-bit address
+
 use crate::*;
 use ::core::ops::AddAssign;
-
-/// # SpaceWASM IR Encoding
-///
-/// This module implements the compiled intermediate representation (IR) for SpaceWASM.
-/// The IR is organized into pages of 16-bit words to support streaming execution.
-///
-/// ## Memory Layout
-/// - Code is stored in 256-word pages (512 bytes each)
-/// - Each instruction is 1-5 words depending on operand size
-/// - Pages are allocated dynamically as code is compiled
-///
-/// ## Instruction Format
-/// All instructions use 16-bit words with the opcode in the upper 8 bits:
-/// ```text
-/// [opcode:8][operand:8]
-/// ```
-///
-/// ## Operand Encoding
-/// - **No operand**: `[opcode:8][0x00:8]`
-/// - **8-bit or 16-bit index**: `[opcode:8][idx:8]` for 0-254, or `[opcode:8][0xFF]` `[idx:16]` for larger values
-/// - **8-bit inline**: `[opcode:8][value:8]` - for values 0-254
-/// - **32-bit extended**: `[opcode:8][0xFF]` `[lo:16]` `[hi:16]`
-/// - **64-bit extended**: `[opcode:8][0xFF]` `[w0:16]` `[w1:16]` `[w2:16]` `[w3:16]`
-/// - **Memory arg**: `[opcode:8][align:8]` `[offset_lo:16]` `[offset_hi:16]`
-/// - **Jump target**: 2 words encoding a 32-bit address
 
 /// A page of compiled IR code containing 256 16-bit words (512 bytes).
 #[derive(Clone)]
@@ -303,7 +303,7 @@ impl<const N: usize> CodeBuilder<N> {
                 // We are at the start of the next page, we have not allocated it yet
                 // The address is still valid so we can manually convert it
                 (self.pages.len(), 0)
-            } else if self.pages.len() == 0 {
+            } else if self.pages.is_empty() {
                 // We haven't started writing instructions yet
                 (0, 0)
             } else {
@@ -329,7 +329,7 @@ impl<const N: usize> CodeBuilder<N> {
     ///
     /// Automatically allocates a new page if we've reached the end of the current one.
     fn push(&mut self, c: u16) -> Result<(), AllocError> {
-        if self.offset == 0 && self.pages.len() == 0 {
+        if self.offset == 0 && self.pages.is_empty() {
             // No pages have been allocated yet
             self.add_page()?;
         } else if self.offset >= 256 {

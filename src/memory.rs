@@ -108,7 +108,7 @@ impl Memory {
     pub fn store_u8(&self, addr: usize, i: u8) -> Result<(), MemoryError> {
         self.check_in_bounds(addr, 1)?;
         unsafe {
-            self.ptr.offset(addr as isize).write(i);
+            self.ptr.add(addr).write(i);
         }
         Ok(())
     }
@@ -116,10 +116,7 @@ impl Memory {
     pub fn store_u16(&self, addr: usize, i: u16) -> Result<(), MemoryError> {
         self.check_in_bounds(addr, 2)?;
         unsafe {
-            self.ptr
-                .offset(addr as isize)
-                .cast::<u16>()
-                .write_unaligned(i);
+            self.ptr.add(addr).cast::<u16>().write_unaligned(i);
         }
         Ok(())
     }
@@ -127,10 +124,7 @@ impl Memory {
     pub fn store_u32(&self, addr: usize, i: u32) -> Result<(), MemoryError> {
         self.check_in_bounds(addr, 4)?;
         unsafe {
-            self.ptr
-                .offset(addr as isize)
-                .cast::<u32>()
-                .write_unaligned(i);
+            self.ptr.add(addr).cast::<u32>().write_unaligned(i);
         }
         Ok(())
     }
@@ -138,10 +132,7 @@ impl Memory {
     pub fn store_u64(&self, addr: usize, i: u64) -> Result<(), MemoryError> {
         self.check_in_bounds(addr, 8)?;
         unsafe {
-            self.ptr
-                .offset(addr as isize)
-                .cast::<u64>()
-                .write_unaligned(i);
+            self.ptr.add(addr).cast::<u64>().write_unaligned(i);
         }
         Ok(())
     }
@@ -150,53 +141,34 @@ impl Memory {
         self.check_in_bounds(addr, data.len())?;
 
         unsafe {
-            data.as_ptr()
-                .copy_to(self.ptr.offset(addr as isize), data.len());
+            data.as_ptr().copy_to(self.ptr.add(addr), data.len());
         }
         Ok(())
     }
 
     pub fn load_u8(&self, addr: usize) -> Result<u8, MemoryError> {
         self.check_in_bounds(addr, 1)?;
-        unsafe { Ok(self.ptr.offset(addr as isize).read()) }
+        unsafe { Ok(self.ptr.add(addr).read()) }
     }
 
     pub fn load_u16(&self, addr: usize) -> Result<u16, MemoryError> {
         self.check_in_bounds(addr, 2)?;
-        unsafe {
-            Ok(self
-                .ptr
-                .offset(addr as isize)
-                .cast::<u16>()
-                .read_unaligned())
-        }
+        unsafe { Ok(self.ptr.add(addr).cast::<u16>().read_unaligned()) }
     }
 
     pub fn load_u32(&self, addr: usize) -> Result<u32, MemoryError> {
         self.check_in_bounds(addr, 4)?;
-        unsafe {
-            Ok(self
-                .ptr
-                .offset(addr as isize)
-                .cast::<u32>()
-                .read_unaligned())
-        }
+        unsafe { Ok(self.ptr.add(addr).cast::<u32>().read_unaligned()) }
     }
 
     pub fn load_u64(&self, addr: usize) -> Result<u64, MemoryError> {
         self.check_in_bounds(addr, 8)?;
-        unsafe {
-            Ok(self
-                .ptr
-                .offset(addr as isize)
-                .cast::<u64>()
-                .read_unaligned())
-        }
+        unsafe { Ok(self.ptr.add(addr).cast::<u64>().read_unaligned()) }
     }
 
     pub fn load(&self, addr: usize, len: usize) -> Result<&[u8], MemoryError> {
         self.check_in_bounds(addr, len)?;
-        Ok(unsafe { core::slice::from_raw_parts(self.ptr.offset(addr as isize), len) })
+        Ok(unsafe { core::slice::from_raw_parts(self.ptr.add(addr), len) })
     }
 
     /// Grow the memory by n pages
@@ -224,7 +196,7 @@ impl Memory {
                 .as_ptr();
 
             // Clear the new memory
-            let new_ptr = unsafe { self.ptr.offset(old_size as isize) };
+            let new_ptr = unsafe { self.ptr.add(old_size) };
             unsafe {
                 new_ptr.write_bytes(0, Self::PAGE_SIZE * n as usize);
             }

@@ -8,8 +8,8 @@
 //!   seed_to_wasm <seed-file> [output.wasm]
 //!   seed_to_wasm <seed-file> --stdout
 
-use spacewasm_fuzzing::generators::NoTrapsModule;
 use arbitrary::{Arbitrary, Unstructured};
+use spacewasm_fuzzing::generators::NoTrapsModule;
 use std::env;
 use std::fs;
 use std::io::{self, Write};
@@ -26,10 +26,16 @@ fn main() {
         eprintln!();
         eprintln!("Examples:");
         eprintln!("  # Write to file");
-        eprintln!("  {} fuzz/artifacts/no_traps/crash-xxx output.wasm", args[0]);
+        eprintln!(
+            "  {} fuzz/artifacts/no_traps/crash-xxx output.wasm",
+            args[0]
+        );
         eprintln!();
         eprintln!("  # Write to stdout");
-        eprintln!("  {} fuzz/artifacts/no_traps/crash-xxx --stdout | wasm2wat", args[0]);
+        eprintln!(
+            "  {} fuzz/artifacts/no_traps/crash-xxx --stdout | wasm2wat",
+            args[0]
+        );
         process::exit(1);
     }
 
@@ -75,7 +81,11 @@ fn main() {
             process::exit(1);
         });
 
-        eprintln!("Generated {} bytes: {} -> {}",
-            wasm_bytes.len(), seed_file, output_file);
+        eprintln!(
+            "Generated {} bytes: {} -> {}",
+            wasm_bytes.len(),
+            seed_file,
+            output_file
+        );
     }
 }

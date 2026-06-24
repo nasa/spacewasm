@@ -27,6 +27,10 @@ impl FileStream {
     pub fn len(&self) -> usize {
         self.n
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.n == 0
+    }
 }
 
 impl WasmStream for FileStream {
