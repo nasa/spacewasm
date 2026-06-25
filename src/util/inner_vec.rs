@@ -261,7 +261,7 @@ mod kani_proofs {
         let capacity: u32 = kani::any();
         kani::assume(capacity > 0 && capacity <= 3);
 
-        let mut vec = create_valid_inner_vec::<u32>(capacity, &alloc);
+        let mut vec = unsafe { create_valid_inner_vec::<u32>(capacity, &alloc) };
 
         // Test push at different positions
         let initial_len: u32 = kani::any();
@@ -292,40 +292,38 @@ mod kani_proofs {
         // Round-trip: push then pop should restore state
         assert_eq!(vec.len, initial_len, "push then pop restores original len");
 
-        dealloc_inner_vec(vec, &alloc);
+        unsafe { dealloc_inner_vec(vec, &alloc); }
     }
 
     /// Deref creates slice only over initialized region [0, len)
     #[kani::proof]
     #[kani::unwind(4)] // Limit loop unrolling
     fn verify_deref_only_initialized_region() {
-        unsafe {
-            let alloc = FixedSizeAllocator::new();
-            let capacity: u32 = kani::any();
-            kani::assume(capacity > 0 && capacity <= 3); // Reduced bound
+        let alloc = FixedSizeAllocator::new();
+        let capacity: u32 = kani::any();
+        kani::assume(capacity > 0 && capacity <= 3); // Reduced bound
 
-            let mut vec = create_valid_inner_vec::<u32>(capacity, &alloc);
+        let mut vec = unsafe { create_valid_inner_vec::<u32>(capacity, &alloc) };
 
-            let len: u32 = kani::any();
-            kani::assume(len <= capacity);
+        let len: u32 = kani::any();
+        kani::assume(len <= capacity);
 
-            // Initialize elements [0, len)
-            for i in 0..len {
-                vec.len = i;
-                vec.push(i);
-            }
-
-            // Deref creates slice of exactly len elements
-            let slice: &[u32] = &*vec;
-            assert_eq!(slice.len(), len as usize);
-
-            // Verify first element is accessible if len > 0
-            if len > 0 {
-                let _val = slice[0]; // Must not read uninitialized
-            }
-
-            dealloc_inner_vec(vec, &alloc);
+        // Initialize elements [0, len)
+        for i in 0..len {
+            vec.len = i;
+            vec.push(i);
         }
+
+        // Deref creates slice of exactly len elements
+        let slice: &[u32] = &*vec;
+        assert_eq!(slice.len(), len as usize);
+
+        // Verify first element is accessible if len > 0
+        if len > 0 {
+            let _val = slice[0]; // Must not read uninitialized
+        }
+
+        unsafe { dealloc_inner_vec(vec, &alloc); }
     }
 
     /// Each value dropped exactly once, iterator properly invalidates vec
