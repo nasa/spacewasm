@@ -286,7 +286,10 @@ mod kani_proofs {
         let new_value: u32 = kani::any();
         *boxed = new_value;
 
-        assert_eq!(*boxed, new_value, "mutated value should be stored correctly");
+        assert_eq!(
+            *boxed, new_value,
+            "mutated value should be stored correctly"
+        );
     }
 
     /// Verify Box drop safety.
@@ -335,8 +338,16 @@ mod kani_proofs {
                 let alloc_align = unsafe { core::ptr::read_volatile(&raw const ALLOC_ALIGN) };
 
                 assert_eq!(ptr, alloc_ptr, "dealloc pointer must match alloc pointer");
-                assert_eq!(layout.size(), alloc_size, "dealloc layout size must match alloc layout size");
-                assert_eq!(layout.align(), alloc_align, "dealloc layout align must match alloc layout align");
+                assert_eq!(
+                    layout.size(),
+                    alloc_size,
+                    "dealloc layout size must match alloc layout size"
+                );
+                assert_eq!(
+                    layout.align(),
+                    alloc_align,
+                    "dealloc layout align must match alloc layout align"
+                );
 
                 unsafe { self.inner.dealloc(ptr, layout) }
             }
@@ -389,7 +400,10 @@ mod kani_proofs {
         let box2 = Box::new_in(&alloc, value1);
         let box3 = Box::new_in(&alloc, value2);
 
-        assert!(box1.is_ok() && box2.is_ok() && box3.is_ok(), "allocations should succeed");
+        assert!(
+            box1.is_ok() && box2.is_ok() && box3.is_ok(),
+            "allocations should succeed"
+        );
 
         let box1 = box1.unwrap();
         let box2 = box2.unwrap();
@@ -400,7 +414,10 @@ mod kani_proofs {
             assert_eq!(box1, box3, "boxes with equal values should be equal");
         } else {
             assert_eq!(box1, box2, "boxes with same value should be equal");
-            assert_ne!(box1, box3, "boxes with different values should not be equal");
+            assert_ne!(
+                box1, box3,
+                "boxes with different values should not be equal"
+            );
         }
     }
 
@@ -424,7 +441,11 @@ mod kani_proofs {
         } else if value1 > value2 {
             assert!(box1 > box2, "box ordering should match value ordering");
         } else {
-            assert_eq!(box1.cmp(&box2), core::cmp::Ordering::Equal, "equal values should compare as equal");
+            assert_eq!(
+                box1.cmp(&box2),
+                core::cmp::Ordering::Equal,
+                "equal values should compare as equal"
+            );
         }
     }
 }

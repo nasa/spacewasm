@@ -55,7 +55,6 @@ unsafe impl<const SIZE: usize, const DEPTH: usize> Allocator for StaticAllocator
     }
 }
 
-
 impl<const SIZE: usize, const DEPTH: usize> StackAllocatorInner<SIZE, DEPTH> {
     fn alloc(&mut self, layout: Layout) -> Result<*mut u8, AllocError> {
         // This stack is manually aligned to 128, we don't support more than that since
@@ -204,7 +203,10 @@ pub mod kani_proofs {
             let offset1 = ptr1 as usize - base;
 
             // Counter incremented
-            assert!(inner1.n_allocations == 1, "Counter must increment after alloc");
+            assert!(
+                inner1.n_allocations == 1,
+                "Counter must increment after alloc"
+            );
 
             // Monotonicity
             assert!(
@@ -220,7 +222,10 @@ pub mod kani_proofs {
             let offset2 = ptr2 as usize - base;
 
             // Counter incremented again
-            assert!(inner2.n_allocations == 2, "Counter must increment after second alloc");
+            assert!(
+                inner2.n_allocations == 2,
+                "Counter must increment after second alloc"
+            );
 
             // Monotonicity
             assert!(
@@ -238,7 +243,10 @@ pub mod kani_proofs {
             let inner_test = &mut *alloc.inner.get();
             let wrong_order_result = inner_test.dealloc(ptr1, layout);
             assert!(
-                matches!(wrong_order_result, Err(AllocError::StackDeallocationInvariantViolation)),
+                matches!(
+                    wrong_order_result,
+                    Err(AllocError::StackDeallocationInvariantViolation)
+                ),
                 "Must reject out-of-order deallocation"
             );
             // Note: After failed dealloc, allocator state is corrupted (n_allocations decremented)
@@ -252,12 +260,18 @@ pub mod kani_proofs {
             alloc2.dealloc(ptr2b, layout);
             let inner3 = &*alloc2.inner.get();
             // Counter decremented
-            assert!(inner3.n_allocations == 1, "Counter must decrement after dealloc");
+            assert!(
+                inner3.n_allocations == 1,
+                "Counter must decrement after dealloc"
+            );
 
             alloc2.dealloc(ptr1b, layout);
             let inner4 = &*alloc2.inner.get();
             // Counter back to 0
-            assert!(inner4.n_allocations == 0, "Counter must be 0 after all deallocs");
+            assert!(
+                inner4.n_allocations == 0,
+                "Counter must be 0 after all deallocs"
+            );
         }
     }
 
@@ -340,10 +354,7 @@ pub mod kani_proofs {
                     let inner = &*alloc.inner.get();
                     let base_addr = &raw const inner.data[0] as usize;
                     assert!(ptr_addr >= base_addr, "Pointer must be >= base address");
-                    assert!(
-                        ptr_addr < base_addr + 1024,
-                        "Pointer must be within buffer"
-                    );
+                    assert!(ptr_addr < base_addr + 1024, "Pointer must be within buffer");
 
                     // Verify allocated pointer hasn't exceeded buffer
                     assert!(inner.allocated <= 1024, "Allocated must not exceed SIZE");
@@ -438,10 +449,7 @@ pub mod kani_proofs {
 
                     assert!(ptr_addr % align == 0, "Pointer must be aligned");
 
-                    assert!(
-                        inner.allocated <= 512,
-                        "Allocated must not overflow"
-                    );
+                    assert!(inner.allocated <= 512, "Allocated must not overflow");
                 }
                 Err(_) => {
                     // Allocation failure is acceptable

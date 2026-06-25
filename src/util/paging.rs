@@ -409,34 +409,56 @@ mod kani_proofs {
                     let padding = page.wasted - wasted_before;
                     assert!(padding < align, "Alignment padding must be < align");
                     assert_eq!(
-                        (start_before_align + padding) % align, 0,
+                        (start_before_align + padding) % align,
+                        0,
                         "Padding must result in aligned address"
                     );
                 }
 
                 // Wasted bytes must increase monotonically
-                assert!(page.wasted >= wasted_before, "Wasted bytes must be monotonic");
+                assert!(
+                    page.wasted >= wasted_before,
+                    "Wasted bytes must be monotonic"
+                );
 
                 // Pointer must be within page bounds
                 assert!(ptr_addr >= page_base, "Pointer must be >= page base");
-                assert!(ptr_addr < page_base + page_size, "Pointer must be within page");
+                assert!(
+                    ptr_addr < page_base + page_size,
+                    "Pointer must be within page"
+                );
 
                 // Allocated offset must be within bounds
-                assert!(page.allocated <= page_size, "Allocated offset must not exceed page size");
+                assert!(
+                    page.allocated <= page_size,
+                    "Allocated offset must not exceed page size"
+                );
 
                 // Allocated must increase monotonically
-                assert!(page.allocated >= allocated_before, "Allocated must increase");
+                assert!(
+                    page.allocated >= allocated_before,
+                    "Allocated must increase"
+                );
 
                 // Allocation counter incremented
                 assert_eq!(page.n_allocations, 1, "Allocation counter must increment");
 
                 // Cache must be set
-                assert!(page.cache.is_some(), "Cache must be populated after allocation");
+                assert!(
+                    page.cache.is_some(),
+                    "Cache must be populated after allocation"
+                );
 
                 // No overflow in pointer arithmetic
                 let offset = ptr_addr - page_base;
-                assert!(offset.checked_add(size).is_some(), "Offset + size must not overflow");
-                assert!(offset + size <= page_size, "Allocation must fit within page");
+                assert!(
+                    offset.checked_add(size).is_some(),
+                    "Offset + size must not overflow"
+                );
+                assert!(
+                    offset + size <= page_size,
+                    "Allocation must fit within page"
+                );
 
                 // Second allocation must not overlap
                 let layout2 = Layout::from_size_align(16, 8).unwrap();
@@ -446,7 +468,10 @@ mod kani_proofs {
 
                     // Second allocation must start after first ends
                     assert!(offset2 >= offset + size, "Allocations must not overlap");
-                    assert_eq!(page.n_allocations, 2, "Counter must be 2 after second alloc");
+                    assert_eq!(
+                        page.n_allocations, 2,
+                        "Counter must be 2 after second alloc"
+                    );
                 }
             }
             None => {
@@ -489,7 +514,11 @@ mod kani_proofs {
         // Test LIFO deallocation (cache hit)
         let should_drop = page.dealloc(ptr2, layout2);
 
-        assert_eq!(should_drop, Some(false), "Page should not be dropped with remaining allocations");
+        assert_eq!(
+            should_drop,
+            Some(false),
+            "Page should not be dropped with remaining allocations"
+        );
         assert_eq!(page.n_allocations, 1, "Counter must decrement");
 
         // Cache hit must restore allocated to exact previous value
@@ -504,13 +533,22 @@ mod kani_proofs {
             "Cache hit must restore wasted bytes"
         );
 
-        assert!(!page.has_deallocated, "Cache hit should not set has_deallocated flag");
+        assert!(
+            !page.has_deallocated,
+            "Cache hit should not set has_deallocated flag"
+        );
 
         // Test pointer ownership check - pointer outside page range
         let outside_ptr = (page_base - 16) as *mut u8;
         let result = page.dealloc(outside_ptr, layout1);
-        assert_eq!(result, None, "Dealloc of pointer outside page must return None");
-        assert_eq!(page.n_allocations, 1, "Counter must not change for outside pointer");
+        assert_eq!(
+            result, None,
+            "Dealloc of pointer outside page must return None"
+        );
+        assert_eq!(
+            page.n_allocations, 1,
+            "Counter must not change for outside pointer"
+        );
 
         // Test non-LIFO deallocation (cache miss)
         let ptr3 = page.alloc(Layout::from_size_align(8, 8).unwrap()).unwrap();
@@ -520,11 +558,18 @@ mod kani_proofs {
         let should_drop2 = page.dealloc(ptr1, layout1);
         assert_eq!(should_drop2, Some(false), "Page should not be dropped");
         assert_eq!(page.n_allocations, 1, "Counter must decrement");
-        assert!(page.has_deallocated, "Cache miss should set has_deallocated flag");
+        assert!(
+            page.has_deallocated,
+            "Cache miss should set has_deallocated flag"
+        );
 
         // Final deallocation should return true (drop page)
         let should_drop3 = page.dealloc(ptr3, Layout::from_size_align(8, 8).unwrap());
-        assert_eq!(should_drop3, Some(true), "Page should be dropped when n_allocations reaches 0");
+        assert_eq!(
+            should_drop3,
+            Some(true),
+            "Page should be dropped when n_allocations reaches 0"
+        );
         assert_eq!(page.n_allocations, 0, "Counter must be 0");
 
         // Cleanup
@@ -622,7 +667,10 @@ mod kani_proofs {
         let backing_alloc = StaticAllocator::<512, 8>::new();
 
         let initial_stats = backing_alloc.memory_statistics();
-        assert_eq!(initial_stats.total_bytes, 0, "Backing allocator must start empty");
+        assert_eq!(
+            initial_stats.total_bytes, 0,
+            "Backing allocator must start empty"
+        );
 
         {
             let page_alloc = PageAllocator::<3>::new(&backing_alloc, 128);

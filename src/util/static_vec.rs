@@ -176,9 +176,19 @@ mod kani_proofs {
 
         // Verify deref returns correct slice view
         let slice: &[u32] = &*vec;
-        assert_eq!(slice.len(), 2, "deref slice length should match vector length");
-        assert_eq!(slice[0], v1, "first element should match first pushed value");
-        assert_eq!(slice[1], v2, "second element should match second pushed value");
+        assert_eq!(
+            slice.len(),
+            2,
+            "deref slice length should match vector length"
+        );
+        assert_eq!(
+            slice[0], v1,
+            "first element should match first pushed value"
+        );
+        assert_eq!(
+            slice[1], v2,
+            "second element should match second pushed value"
+        );
 
         assert!(vec.push(v3).is_ok(), "third push should succeed");
         assert_eq!(vec.len(), 3, "length should be 3 after third push");
@@ -190,7 +200,11 @@ mod kani_proofs {
             matches!(result, Err(AllocError::OutOfMemory)),
             "push beyond capacity should return OutOfMemory"
         );
-        assert_eq!(vec.len(), 3, "length should remain at capacity after failed push");
+        assert_eq!(
+            vec.len(),
+            3,
+            "length should remain at capacity after failed push"
+        );
 
         // Pop values and verify LIFO ordering
         assert_eq!(vec.pop(), Some(v3), "should pop third value first");
@@ -200,7 +214,11 @@ mod kani_proofs {
         assert_eq!(vec.len(), 1, "length should be 1 after second pop");
 
         assert_eq!(vec.pop(), Some(v1), "should pop first value last");
-        assert_eq!(vec.len(), 0, "vector should be empty after popping all elements");
+        assert_eq!(
+            vec.len(),
+            0,
+            "vector should be empty after popping all elements"
+        );
 
         assert_eq!(vec.pop(), None, "popping empty vector should return None");
     }
@@ -222,9 +240,17 @@ mod kani_proofs {
         let mut iter = vec.into_iter();
 
         assert_eq!(iter.next(), Some(v1), "first next should yield first value");
-        assert_eq!(iter.next(), Some(v2), "second next should yield second value");
+        assert_eq!(
+            iter.next(),
+            Some(v2),
+            "second next should yield second value"
+        );
         assert_eq!(iter.next(), Some(v3), "third next should yield third value");
-        assert_eq!(iter.next(), None, "next on exhausted iterator should return None");
+        assert_eq!(
+            iter.next(),
+            None,
+            "next on exhausted iterator should return None"
+        );
     }
 
     /// Verify StaticVec IntoIterator drop handles partially consumed iterator.

@@ -110,9 +110,9 @@ mod tests {
 #[cfg(kani)]
 mod kani_proofs {
     use super::*;
-    use core::alloc::Layout;
-    use crate::util::static_alloc::kani_proofs::FixedSizeAllocator;
     use crate::util::alloc::Allocator;
+    use crate::util::static_alloc::kani_proofs::FixedSizeAllocator;
+    use core::alloc::Layout;
 
     // Helper to create a valid InnerVec with allocated memory
     unsafe fn create_valid_inner_vec<T>(capacity: u32, alloc: &FixedSizeAllocator) -> InnerVec<T> {
@@ -180,14 +180,14 @@ mod kani_proofs {
                     // Verify len as usize doesn't truncate
                     let len_usize = vec.len as usize;
                     assert!(len_usize == vec.len as usize);
-                },
+                }
                 1 if vec.len > 0 => {
                     let old_len = vec.len;
                     vec.pop();
 
                     // Verify no underflow on decrement
                     assert!(vec.len == old_len - 1, "len must decrement by 1");
-                },
+                }
                 _ => {}
             }
 
@@ -255,7 +255,7 @@ mod kani_proofs {
     /// push writes at index len, pop reads from initialized memory
     /// Tests push/pop round-trip correctness
     #[kani::proof]
-    #[kani::unwind(4)]  // Limit loop unrolling
+    #[kani::unwind(4)] // Limit loop unrolling
     fn verify_push_pop_operations() {
         unsafe {
             let alloc = FixedSizeAllocator::new();
@@ -299,12 +299,12 @@ mod kani_proofs {
 
     /// Deref creates slice only over initialized region [0, len)
     #[kani::proof]
-    #[kani::unwind(4)]  // Limit loop unrolling
+    #[kani::unwind(4)] // Limit loop unrolling
     fn verify_deref_only_initialized_region() {
         unsafe {
             let alloc = FixedSizeAllocator::new();
             let capacity: u32 = kani::any();
-            kani::assume(capacity > 0 && capacity <= 3);  // Reduced bound
+            kani::assume(capacity > 0 && capacity <= 3); // Reduced bound
 
             let mut vec = create_valid_inner_vec::<u32>(capacity, &alloc);
 
@@ -323,7 +323,7 @@ mod kani_proofs {
 
             // Verify first element is accessible if len > 0
             if len > 0 {
-                let _val = slice[0];  // Must not read uninitialized
+                let _val = slice[0]; // Must not read uninitialized
             }
 
             dealloc_inner_vec(vec, &alloc);
@@ -335,14 +335,20 @@ mod kani_proofs {
     #[kani::proof]
     fn verify_drop_semantics() {
         unsafe {
-            let mut drop_count: u32 = 0;  // Local counter
+            let mut drop_count: u32 = 0; // Local counter
 
             let alloc = FixedSizeAllocator::new();
             let mut vec = create_valid_inner_vec::<Droppable>(2, &alloc);
 
             // Push 2 droppable values (both share the same counter via raw pointer)
-            vec.push(Droppable { value: 100, drop_counter: &mut drop_count as *mut u32 });
-            vec.push(Droppable { value: 200, drop_counter: &mut drop_count as *mut u32 });
+            vec.push(Droppable {
+                value: 100,
+                drop_counter: &mut drop_count as *mut u32,
+            });
+            vec.push(Droppable {
+                value: 200,
+                drop_counter: &mut drop_count as *mut u32,
+            });
 
             let original_len = vec.len;
             assert_eq!(original_len, 2, "Should have 2 elements");

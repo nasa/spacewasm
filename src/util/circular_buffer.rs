@@ -667,9 +667,16 @@ mod kani_proofs {
                     assert!(buffer.start < N, "start index should stay within capacity");
                     assert!(buffer.size <= N, "size should never exceed capacity");
                     if old_size < N {
-                        assert_eq!(buffer.size, old_size + 1, "size should increase by 1 when pushing to non-full buffer");
+                        assert_eq!(
+                            buffer.size,
+                            old_size + 1,
+                            "size should increase by 1 when pushing to non-full buffer"
+                        );
                     } else {
-                        assert_eq!(buffer.size, N, "size should remain at capacity when buffer is full");
+                        assert_eq!(
+                            buffer.size, N,
+                            "size should remain at capacity when buffer is full"
+                        );
                     }
                 }
                 1 => {
@@ -679,11 +686,24 @@ mod kani_proofs {
                     assert!(buffer.start < N, "start index should stay within capacity");
                     assert!(buffer.size <= N, "size should never exceed capacity");
                     if old_size == 0 {
-                        assert!(result.is_none(), "pop_front should return None on empty buffer");
-                        assert_eq!(buffer.size, 0, "size should remain 0 when popping from empty buffer");
+                        assert!(
+                            result.is_none(),
+                            "pop_front should return None on empty buffer"
+                        );
+                        assert_eq!(
+                            buffer.size, 0,
+                            "size should remain 0 when popping from empty buffer"
+                        );
                     } else {
-                        assert!(result.is_some(), "pop_front should return Some on non-empty buffer");
-                        assert_eq!(buffer.size, old_size - 1, "size should decrease by 1 after pop_front");
+                        assert!(
+                            result.is_some(),
+                            "pop_front should return Some on non-empty buffer"
+                        );
+                        assert_eq!(
+                            buffer.size,
+                            old_size - 1,
+                            "size should decrease by 1 after pop_front"
+                        );
                     }
                 }
                 _ => {
@@ -693,11 +713,24 @@ mod kani_proofs {
                     assert!(buffer.start < N, "start index should stay within capacity");
                     assert!(buffer.size <= N, "size should never exceed capacity");
                     if old_size == 0 {
-                        assert!(result.is_none(), "pop_back should return None on empty buffer");
-                        assert_eq!(buffer.size, 0, "size should remain 0 when popping from empty buffer");
+                        assert!(
+                            result.is_none(),
+                            "pop_back should return None on empty buffer"
+                        );
+                        assert_eq!(
+                            buffer.size, 0,
+                            "size should remain 0 when popping from empty buffer"
+                        );
                     } else {
-                        assert!(result.is_some(), "pop_back should return Some on non-empty buffer");
-                        assert_eq!(buffer.size, old_size - 1, "size should decrease by 1 after pop_back");
+                        assert!(
+                            result.is_some(),
+                            "pop_back should return Some on non-empty buffer"
+                        );
+                        assert_eq!(
+                            buffer.size,
+                            old_size - 1,
+                            "size should decrease by 1 after pop_back"
+                        );
                     }
                 }
             }
@@ -732,8 +765,14 @@ mod kani_proofs {
             buffer.pop_front();
         }
 
-        assert!(buffer.start < N, "start index should stay within capacity after pops");
-        assert!(buffer.size <= N, "size should never exceed capacity after pops");
+        assert!(
+            buffer.start < N,
+            "start index should stay within capacity after pops"
+        );
+        assert!(
+            buffer.size <= N,
+            "size should never exceed capacity after pops"
+        );
 
         let additional_pushes: usize = kani::any();
         kani::assume(additional_pushes <= 3);
@@ -742,26 +781,56 @@ mod kani_proofs {
             buffer.push((initial_pushes + i) as u32 * 10);
         }
 
-        assert!(buffer.start < N, "start index should stay within capacity in wrapped state");
-        assert!(buffer.size <= N, "size should never exceed capacity in wrapped state");
+        assert!(
+            buffer.start < N,
+            "start index should stay within capacity in wrapped state"
+        );
+        assert!(
+            buffer.size <= N,
+            "size should never exceed capacity in wrapped state"
+        );
 
         if buffer.size > 0 {
             let front_ref = buffer.front();
-            assert!(front_ref.is_some(), "front should return Some on non-empty buffer");
+            assert!(
+                front_ref.is_some(),
+                "front should return Some on non-empty buffer"
+            );
 
             let back_ref = buffer.back();
-            assert!(back_ref.is_some(), "back should return Some on non-empty buffer");
+            assert!(
+                back_ref.is_some(),
+                "back should return Some on non-empty buffer"
+            );
 
             let front_mut = buffer.front_mut();
-            assert!(front_mut.is_some(), "front_mut should return Some on non-empty buffer");
+            assert!(
+                front_mut.is_some(),
+                "front_mut should return Some on non-empty buffer"
+            );
 
             let back_mut = buffer.back_mut();
-            assert!(back_mut.is_some(), "back_mut should return Some on non-empty buffer");
+            assert!(
+                back_mut.is_some(),
+                "back_mut should return Some on non-empty buffer"
+            );
         } else {
-            assert!(buffer.front().is_none(), "front should return None on empty buffer");
-            assert!(buffer.back().is_none(), "back should return None on empty buffer");
-            assert!(buffer.front_mut().is_none(), "front_mut should return None on empty buffer");
-            assert!(buffer.back_mut().is_none(), "back_mut should return None on empty buffer");
+            assert!(
+                buffer.front().is_none(),
+                "front should return None on empty buffer"
+            );
+            assert!(
+                buffer.back().is_none(),
+                "back should return None on empty buffer"
+            );
+            assert!(
+                buffer.front_mut().is_none(),
+                "front_mut should return None on empty buffer"
+            );
+            assert!(
+                buffer.back_mut().is_none(),
+                "back_mut should return None on empty buffer"
+            );
         }
 
         let index: usize = kani::any();
@@ -771,10 +840,19 @@ mod kani_proofs {
             assert!(val_ref.is_some(), "get should return Some for valid index");
 
             let val_mut = buffer.get_mut(index);
-            assert!(val_mut.is_some(), "get_mut should return Some for valid index");
+            assert!(
+                val_mut.is_some(),
+                "get_mut should return Some for valid index"
+            );
         } else {
-            assert!(buffer.get(index).is_none(), "get should return None for out-of-bounds index");
-            assert!(buffer.get_mut(index).is_none(), "get_mut should return None for out-of-bounds index");
+            assert!(
+                buffer.get(index).is_none(),
+                "get should return None for out-of-bounds index"
+            );
+            assert!(
+                buffer.get_mut(index).is_none(),
+                "get_mut should return None for out-of-bounds index"
+            );
         }
     }
 
@@ -820,17 +898,29 @@ mod kani_proofs {
         for _val in buffer.iter() {
             count += 1;
         }
-        assert_eq!(count, expected_count, "iterator should visit exactly size elements");
+        assert_eq!(
+            count, expected_count,
+            "iterator should visit exactly size elements"
+        );
 
         let mut count_mut = 0;
         for val in buffer.iter_mut() {
             *val += 1;
             count_mut += 1;
         }
-        assert_eq!(count_mut, expected_count, "mutable iterator should visit exactly size elements");
+        assert_eq!(
+            count_mut, expected_count,
+            "mutable iterator should visit exactly size elements"
+        );
 
-        assert!(buffer.start < N, "start index should stay within capacity after iteration");
-        assert!(buffer.size <= N, "size should never exceed capacity after iteration");
+        assert!(
+            buffer.start < N,
+            "start index should stay within capacity after iteration"
+        );
+        assert!(
+            buffer.size <= N,
+            "size should never exceed capacity after iteration"
+        );
     }
 
     /// Verify drop behavior is safe and correct.
@@ -867,8 +957,14 @@ mod kani_proofs {
                 buffer.push((initial_pushes + i) as u32);
             }
 
-            assert!(buffer.start < N, "start index should stay within capacity before drop");
-            assert!(buffer.size <= N, "size should never exceed capacity before drop");
+            assert!(
+                buffer.start < N,
+                "start index should stay within capacity before drop"
+            );
+            assert!(
+                buffer.size <= N,
+                "size should never exceed capacity before drop"
+            );
         }
 
         {
@@ -905,7 +1001,10 @@ mod kani_proofs {
         }
 
         assert_eq!(buffer.size, N, "buffer should be full after N pushes");
-        assert!(buffer.is_full(), "is_full should return true when buffer is full");
+        assert!(
+            buffer.is_full(),
+            "is_full should return true when buffer is full"
+        );
 
         let extra_pushes: usize = kani::any();
         kani::assume(extra_pushes <= 5);
@@ -918,16 +1017,25 @@ mod kani_proofs {
             assert!(buffer.start < N, "start index should stay within capacity");
 
             let expected_start = (old_start + 1) % N;
-            assert_eq!(buffer.start, expected_start, "start should wrap around correctly on overflow");
+            assert_eq!(
+                buffer.start, expected_start,
+                "start should wrap around correctly on overflow"
+            );
         }
 
         for i in 0..N {
             let result = buffer.pop_front();
-            assert!(result.is_some(), "pop_front should return Some when buffer has elements");
+            assert!(
+                result.is_some(),
+                "pop_front should return Some when buffer has elements"
+            );
             assert!(buffer.start < N, "start index should stay within capacity");
             assert_eq!(buffer.size, N - i - 1, "size should decrease correctly");
         }
 
-        assert!(buffer.is_empty(), "buffer should be empty after popping all elements");
+        assert!(
+            buffer.is_empty(),
+            "buffer should be empty after popping all elements"
+        );
     }
 }
