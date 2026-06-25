@@ -257,44 +257,42 @@ mod kani_proofs {
     #[kani::proof]
     #[kani::unwind(4)] // Limit loop unrolling
     fn verify_push_pop_operations() {
-        unsafe {
-            let alloc = FixedSizeAllocator::new();
-            let capacity: u32 = kani::any();
-            kani::assume(capacity > 0 && capacity <= 3);
+        let alloc = FixedSizeAllocator::new();
+        let capacity: u32 = kani::any();
+        kani::assume(capacity > 0 && capacity <= 3);
 
-            let mut vec = create_valid_inner_vec::<u32>(capacity, &alloc);
+        let mut vec = create_valid_inner_vec::<u32>(capacity, &alloc);
 
-            // Test push at different positions
-            let initial_len: u32 = kani::any();
-            kani::assume(initial_len < capacity);
-            vec.len = initial_len;
+        // Test push at different positions
+        let initial_len: u32 = kani::any();
+        kani::assume(initial_len < capacity);
+        vec.len = initial_len;
 
-            // Push a symbolic value
-            let value: u32 = kani::any();
-            let push_position = vec.len;
-            vec.push(value);
+        // Push a symbolic value
+        let value: u32 = kani::any();
+        let push_position = vec.len;
+        vec.push(value);
 
-            //  After push, len increased by 1
-            assert_eq!(vec.len, initial_len + 1, "push must increment len");
+        //  After push, len increased by 1
+        assert_eq!(vec.len, initial_len + 1, "push must increment len");
 
-            //  Value is at the old len position (correct offset)
-            let written_value = unsafe { core::ptr::read(vec.ptr.add(push_position as usize)) };
-            assert_eq!(written_value, value, "push must write at correct index");
+        //  Value is at the old len position (correct offset)
+        let written_value = unsafe { core::ptr::read(vec.ptr.add(push_position as usize)) };
+        assert_eq!(written_value, value, "push must write at correct index");
 
-            // Now test pop on the same vector
-            let old_len = vec.len;
-            let popped = vec.pop();
+        // Now test pop on the same vector
+        let old_len = vec.len;
+        let popped = vec.pop();
 
-            //  Pop returns Some(value) and decrements len
-            assert!(popped.is_some(), "pop on non-empty vec must return Some");
-            assert_eq!(popped.unwrap(), value, "pop must return the pushed value");
-            assert_eq!(vec.len, old_len - 1, "pop must decrement len");
+        //  Pop returns Some(value) and decrements len
+        assert!(popped.is_some(), "pop on non-empty vec must return Some");
+        assert_eq!(popped.unwrap(), value, "pop must return the pushed value");
+        assert_eq!(vec.len, old_len - 1, "pop must decrement len");
 
-            // Round-trip: push then pop should restore state
-            assert_eq!(vec.len, initial_len, "push then pop restores original len");
+        // Round-trip: push then pop should restore state
+        assert_eq!(vec.len, initial_len, "push then pop restores original len");
 
-            dealloc_inner_vec(vec, &alloc);
-        }
+        dealloc_inner_vec(vec, &alloc);
     }
 
     /// Deref creates slice only over initialized region [0, len)
