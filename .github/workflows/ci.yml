@@ -294,12 +294,13 @@ jobs:
             }
 
   model-checking:
+    name: Formal Verification
     runs-on: ubuntu-latest
     steps:
       - name: 'Run Kani on repo'
-        uses: model-checking/kani-github-action@v1
+        uses: model-checking/kani-github-action@v1.1
         with:
-          args: --sarif kani.sarif
+          args: --output-format sarif --output kani.sarif
 
       - name: 'Upload SARIF'
         uses: github/codeql-action/upload-sarif@v3
