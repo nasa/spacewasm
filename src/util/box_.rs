@@ -247,10 +247,7 @@ mod kani_proofs {
         let alloc = FixedSizeAllocator::new();
         let value: u32 = kani::any();
 
-        let boxed = Box::new_in(alloc, value);
-        kani::assume(boxed.is_ok());
-
-        let boxed = boxed.unwrap();
+        let boxed = Box::new_in(alloc, value).unwrap();
         assert_eq!(*boxed, value, "dereferenced value should match original");
 
         let ptr = boxed.as_ptr();
@@ -279,10 +276,7 @@ mod kani_proofs {
         let alloc = FixedSizeAllocator::new();
         let value: u32 = kani::any();
 
-        let boxed = Box::new_in(alloc, value);
-        kani::assume(boxed.is_ok());
-
-        let mut boxed = boxed.unwrap();
+        let mut boxed = Box::new_in(alloc, value).unwrap();
         let new_value: u32 = kani::any();
         *boxed = new_value;
 
@@ -299,10 +293,7 @@ mod kani_proofs {
         let value: u32 = kani::any();
 
         {
-            let boxed = Box::new_in(alloc, value);
-            kani::assume(boxed.is_ok());
-
-            let boxed = boxed.unwrap();
+            let boxed = Box::new_in(alloc, value).unwrap();
             assert_eq!(*boxed, value, "value should be accessible before drop");
         }
     }
