@@ -372,6 +372,110 @@ impl<T, A: Allocator> Drop for IntoIter<T, A> {
     }
 }
 
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+    use crate::alloc::{AllocError, Allocator};
+    use core::alloc::Layout;
+
+    /// Stub allocator for Kani verification
+    /// Tracks allocation layout to verify Drop passes correct parameters to dealloc
+    #[derive(Clone, Copy)]
+    struct KaniStubAllocator;
+
+    // Track allocated layout to verify dealloc receives matching parameters
+    static mut ALLOC_PTR: *mut u8 = core::ptr::null_mut();
+    static mut ALLOC_SIZE: usize = 0;
+    static mut ALLOC_ALIGN: usize = 0;
+
+    unsafe impl Allocator for KaniStubAllocator {
+        unsafe fn alloc(&self, layout: Layout) -> Result<*mut u8, AllocError> {
+            if layout.size() == 0 {
+                Ok(core::ptr::null_mut())
+            } else {
+                // Return a symbolic non-null pointer
+                let addr: usize = kani::any();
+                kani::assume(addr != 0); // Non-null
+                kani::assume(addr % layout.align() == 0); // Properly aligned
+                kani::assume(addr < usize::MAX - layout.size()); // No wraparound
+
+                let ptr = addr as *mut u8;
+
+                // Track allocation parameters for verification in dealloc
+                unsafe {
+                    ALLOC_PTR = ptr;
+                    ALLOC_SIZE = layout.size();
+                    ALLOC_ALIGN = layout.align();
+                }
+
+                Ok(ptr)
+            }
+        }
+
+        unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+            // Verify Drop passes the same layout that was allocated
+            let alloc_ptr = unsafe { core::ptr::read_volatile(&raw const ALLOC_PTR) };
+            let alloc_size = unsafe { core::ptr::read_volatile(&raw const ALLOC_SIZE) };
+            let alloc_align = unsafe { core::ptr::read_volatile(&raw const ALLOC_ALIGN) };
+
+            assert_eq!(
+                ptr, alloc_ptr,
+                "Dealloc pointer must match allocated pointer"
+            );
+            assert_eq!(
+                layout.size(),
+                alloc_size,
+                "Dealloc size must match allocated size"
+            );
+            assert_eq!(
+                layout.align(),
+                alloc_align,
+                "Dealloc align must match allocated align"
+            );
+        }
+
+        fn memory_statistics(&self) -> crate::MemoryStatistics {
+            crate::MemoryStatistics {
+                total_bytes: 0,
+                pad_bytes: 0,
+            }
+        }
+    }
+
+    #[kani::proof]
+    #[kani::unwind(3)]
+    fn proof_alloc_dealloc_safety() {
+        let capacity: u32 = kani::any();
+        kani::assume(capacity <= 2);
+
+        let vec: Vec<u32, _> = Vec::new_in(KaniStubAllocator, capacity).unwrap();
+
+        assert_eq!(vec.capacity(), capacity as usize);
+        assert_eq!(vec.len(), 0);
+
+        if capacity == 0 {
+            assert!(
+                vec.inner.ptr.is_null(),
+                "Zero-capacity vec must have null pointer"
+            );
+        } else {
+            assert!(
+                !vec.inner.ptr.is_null(),
+                "Non-zero capacity vec must have valid allocation"
+            );
+        }
+
+        let size = size_of::<u32>() * vec.capacity();
+        let align = align_of::<u32>();
+        assert!(
+            Layout::from_size_align(size, align).is_ok(),
+            "Layout calculation must not overflow (critical for Drop)"
+        );
+
+        // Vec drops here - dealloc will verify the layout size matches what was allocated
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
