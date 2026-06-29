@@ -244,7 +244,11 @@ mod kani_proofs {
         let alloc = StaticAllocator::<128, 8>::new();
         let size = 64;
 
-        let ptr = unsafe { alloc.alloc(Layout::from_size_align(size, 16).unwrap()).unwrap() };
+        let ptr = unsafe {
+            alloc
+                .alloc(Layout::from_size_align(size, 16).unwrap())
+                .unwrap()
+        };
         let mem = Memory {
             ptr,
             size,

@@ -292,7 +292,9 @@ mod kani_proofs {
         // Round-trip: push then pop should restore state
         assert_eq!(vec.len, initial_len, "push then pop restores original len");
 
-        unsafe { dealloc_inner_vec(vec, &alloc); }
+        unsafe {
+            dealloc_inner_vec(vec, &alloc);
+        }
     }
 
     /// Deref creates slice only over initialized region [0, len)
@@ -323,7 +325,9 @@ mod kani_proofs {
             let _val = slice[0]; // Must not read uninitialized
         }
 
-        unsafe { dealloc_inner_vec(vec, &alloc); }
+        unsafe {
+            dealloc_inner_vec(vec, &alloc);
+        }
     }
 
     /// Each value dropped exactly once, iterator properly invalidates vec
