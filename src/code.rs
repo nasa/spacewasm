@@ -417,10 +417,6 @@ impl<'wasm> Reader<'wasm> {
                 F32_REINTERPRET_I32 => instruction!(f32_reinterpret_i32),
                 F64_REINTERPRET_I64 => instruction!(f64_reinterpret_i64),
 
-                EXTENDED => {
-
-                }
-
                 op => Err(ValidationError::InvalidOpcode(op))?,
             }
         }
