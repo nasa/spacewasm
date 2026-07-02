@@ -1,6 +1,6 @@
 use spacewasm::{
-    CodeBuilder, CompilerOptions, ExportDesc, HostFunction, HostModule, InitializeResult,
-    InterpreterBreak, InterpreterResult, InterpreterRunner, ModuleRef, PageAllocator, RawValue,
+    CodeBuilder, CompilerOptions, ExportDesc, HostFunction, HostModule, InitializeResult
+    , InterpreterResult, InterpreterRunner, ModuleRef, PageAllocator, RawValue,
     Ref, Store, Value, WasmRef,
 };
 use spacewasm_util::{FileStream, RustSystemAllocator};
@@ -128,7 +128,7 @@ fn main() {
     // "Call f32 run() function. It should take 12..20 seconds to execute and return a CoreMark result."
     // "if res > 1: print(f'Result: {res:.3f}') else: print('Error')"
     match result {
-        InterpreterResult::Instruction(InterpreterBreak::Finished) => {
+        InterpreterResult::Finished => {
             // The run function returns f32, so interpret the bits as float
             let coremark_score = state.result.unwrap_or(RawValue::from_32(0)).read_f32();
 

@@ -375,17 +375,17 @@ pub fn no_traps(wasm: &[u8]) {
             InterpreterResult::OutOfFuel => {
                 log::debug!("ran out of fuel (instruction limit reached)");
             }
-            InterpreterResult::Instruction(InterpreterBreak::Finished) => {
+            InterpreterResult::Finished => {
                 log::debug!("execution completed without traps");
             }
-            InterpreterResult::Instruction(InterpreterBreak::Trap(TrapReason::StackOverflow)) => {
+            InterpreterResult::Trap(TrapReason::StackOverflow) => {
                 log::debug!("execution completed with stack overflow");
             }
-            InterpreterResult::Instruction(InterpreterBreak::Trap(reason)) => {
+            InterpreterResult::Trap(reason) => {
                 // A trap in a no_traps module is a bug!
                 panic!("unexpected trap in no_traps module: {reason:?}");
             }
-            InterpreterResult::Instruction(InterpreterBreak::Pause) => {
+            InterpreterResult::Pause => {
                 panic!("interpreter paused by host function")
             }
             InterpreterResult::ReaderError(e) => {
