@@ -11,6 +11,10 @@ spacewasm::global_allocator!(
     PageAllocator::new(&RustSystemAllocator {}, 8192)
 );
 
+const MAX_PAGES: usize = 8;
+const MAX_CONTROL_FRAMES: usize = 64;
+const MAX_STACK_DEPTH: usize = 256;
+
 fn main() {
     println!("\n=== CoreMark Benchmark ===");
     println!("Reference: https://github.com/wasm3/wasm-coremark\n");
@@ -46,7 +50,7 @@ fn main() {
     };
 
     let mut store = Store::new(2, [env]).unwrap();
-    let mut code_builder = CodeBuilder::<256>::default();
+    let mut code_builder = CodeBuilder::<MAX_PAGES>::default();
 
     // Try multiple paths to find the wasm file
     let wasm_paths = [
@@ -60,7 +64,7 @@ fn main() {
         .find_map(|path| std::fs::File::open(path).ok())
         .expect("failed to open coremark-minimal.wasm in any expected location");
 
-    let module = spacewasm::Module::new::<256>(
+    let module = spacewasm::Module::new::<MAX_PAGES, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
         "coremark",
         &mut FileStream::new(file),
         &mut store,

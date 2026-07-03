@@ -19,9 +19,13 @@ impl Expr {
         Ok(value.unwrap())
     }
 
-    pub fn read<const N: usize>(
+    pub fn read<
+        const MAX_PAGES: usize,
+        const MAX_CONTROL_FRAMES: usize,
+        const MAX_STACK_DEPTH: usize,
+    >(
         wasm: &mut Reader,
-        builder: &mut CodeBuilder<N>,
+        builder: &mut CodeBuilder<MAX_PAGES>,
         store: &Store,
         module: &Module,
         ctx: &Func,
@@ -29,7 +33,10 @@ impl Expr {
     ) -> Result<(Self, u16), ValidationError> {
         let e = Expr(builder.pc());
         let tb = &mut TextBuilder::new(builder, store, module, ctx);
-        wasm.read_code(&Compiler::<'_, N>::new(compiler_options), tb)?;
+        wasm.read_code(
+            &Compiler::<'_, MAX_PAGES, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>::new(compiler_options),
+            tb,
+        )?;
 
         Ok((e, tb.stack_usage() as u16))
     }
@@ -68,11 +75,15 @@ pub struct Func {
 }
 
 impl Module {
-    pub fn read_function_code<const N: usize>(
+    pub fn read_function_code<
+        const MAX_PAGES: usize,
+        const MAX_CONTROL_FRAMES: usize,
+        const MAX_STACK_DEPTH: usize,
+    >(
         &mut self,
         wasm: &mut Reader,
         store: &Store,
-        builder: &mut CodeBuilder<N>,
+        builder: &mut CodeBuilder<MAX_PAGES>,
         i: usize,
         compiler_options: CompilerOptions,
     ) -> Result<(), ValidationError> {
@@ -105,7 +116,14 @@ impl Module {
         }
 
         f.local_size = size_in_words as u16;
-        (f.expr, f.stack_usage) = Expr::read(wasm, builder, store, self, &f, compiler_options)?;
+        (f.expr, f.stack_usage) = Expr::read::<MAX_PAGES, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
+            wasm,
+            builder,
+            store,
+            self,
+            &f,
+            compiler_options,
+        )?;
 
         let _ = core::mem::replace(&mut self.functions[i], f);
 
