@@ -1,12 +1,12 @@
 use super::inspector::{Inspector, LimitedVec};
 use serde::{Deserialize, Serialize};
 use spacewasm::{
-    global_allocator, vec, AllocError, Allocator, CodeBuilder, CompilerOptions,
-    ConstantExprError, ExportDesc, GlobalValue, GlobalValueError, HostFunction, HostGlobal, HostModule,
-    InnerVec, Interpreter, InterpreterResult, InterpreterRunner, InterpreterState, Limit,
-    Memory, MemoryError, MemoryStatistics, Module, ModuleRef, ParseError, ReaderError, Ref, Stack,
-    Store, TrapReason, ValType, ValidationError, Value, WasmMemoryAllocator, WasmRef,
-    WasmStream,
+    AllocError, Allocator, CodeBuilder, CompilerOptions, ConstantExprError, ExportDesc,
+    GlobalValue, GlobalValueError, HostFunction, HostGlobal, HostModule, InnerVec, Interpreter,
+    InterpreterResult, InterpreterRunner, InterpreterState, Limit, Memory, MemoryError,
+    MemoryStatistics, Module, ModuleRef, ParseError, ReaderError, Ref, Stack, Store, TrapReason,
+    ValType, ValidationError, Value, WasmMemoryAllocator, WasmRef, WasmStream, global_allocator,
+    vec,
 };
 use std::alloc::Layout;
 use std::cell::RefCell;

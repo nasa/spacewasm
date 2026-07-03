@@ -1,7 +1,7 @@
 use spacewasm::{
-    vec, Box, CodeBuilder, CompilerOptions, ExportDesc, HostFunction, HostFunctionBreak,
-    HostModule, InterpreterResult, InterpreterRunner, ModuleRef, PageAllocator, Ref, SectionKind,
-    ValType, Value, WasmRef,
+    Box, CodeBuilder, CompilerOptions, ExportDesc, HostFunction, HostFunctionBreak, HostModule,
+    InterpreterResult, InterpreterRunner, ModuleRef, PageAllocator, Ref, SectionKind, ValType,
+    Value, WasmRef, vec,
 };
 use spacewasm_util::{FileStream, RustSystemAllocator};
 use std::ops::ControlFlow;
