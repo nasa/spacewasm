@@ -9,8 +9,8 @@
 
 use spacewasm::{
     AllocError, Allocator, Box, CodeBuilder, CompilerOptions, ExportDesc, InnerVec, Interpreter,
-    InterpreterBreak, InterpreterResult, InterpreterRunner, MemoryStatistics, Module, ModuleRef,
-    ReaderError, Ref, Store, WasmMemoryAllocator, WasmRef, WasmStream,
+    InterpreterResult, InterpreterRunner, MemoryStatistics, Module, ModuleRef, ReaderError, Ref,
+    Store, WasmMemoryAllocator, WasmRef, WasmStream,
 };
 use spacewasm::{InitializeResult, ValType, Value};
 use spacewasm_util::StateTracer;
@@ -21,12 +21,12 @@ use std::process;
 
 /// Simple byte stream that reads from a buffer.
 struct ByteStream {
-    buffer: std::vec::Vec<u8>,
+    buffer: Vec<u8>,
     consumed: bool,
 }
 
 impl ByteStream {
-    fn new(data: std::vec::Vec<u8>) -> Self {
+    fn new(data: Vec<u8>) -> Self {
         Self {
             buffer: data,
             consumed: false,
@@ -353,14 +353,14 @@ fn main() {
             Ok(InterpreterResult::OutOfFuel) => {
                 eprintln!("\nResult: Out of fuel (instruction limit reached)");
             }
-            Ok(InterpreterResult::Instruction(InterpreterBreak::Finished)) => {
+            Ok(InterpreterResult::Finished) => {
                 eprintln!("\nResult: Completed successfully");
             }
-            Ok(InterpreterResult::Instruction(InterpreterBreak::Trap(reason))) => {
+            Ok(InterpreterResult::Trap(reason)) => {
                 eprintln!("\nResult: Trapped - {:?}", reason);
                 process::exit(1);
             }
-            Ok(InterpreterResult::Instruction(InterpreterBreak::Pause)) => {
+            Ok(InterpreterResult::Pause) => {
                 eprintln!("\nResult: Paused");
             }
             Ok(InterpreterResult::ReaderError(e)) => {

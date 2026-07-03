@@ -3,10 +3,10 @@ use serde::{Deserialize, Serialize};
 use spacewasm::{
     AllocError, Allocator, CodeBuilder, CompilerOptions, ConstantExprError, ExportDesc,
     GlobalValue, GlobalValueError, HostFunction, HostGlobal, HostModule, InitializeResult,
-    InnerVec, Interpreter, InterpreterBreak, InterpreterResult, InterpreterRunner,
-    InterpreterState, Limit, Memory, MemoryError, MemoryStatistics, Module, ModuleRef, ParseError,
-    ReaderError, Ref, Stack, Store, TrapReason, ValType, ValidationError, Value,
-    WasmMemoryAllocator, WasmRef, WasmStream, global_allocator, vec,
+    InnerVec, Interpreter, InterpreterResult, InterpreterRunner, InterpreterState, Limit, Memory,
+    MemoryError, MemoryStatistics, Module, ModuleRef, ParseError, ReaderError, Ref, Stack, Store,
+    TrapReason, ValType, ValidationError, Value, WasmMemoryAllocator, WasmRef, WasmStream,
+    global_allocator, vec,
 };
 use std::alloc::Layout;
 use std::cell::RefCell;
@@ -584,7 +584,7 @@ fn invoke_function(
     func_name: &str,
     args: &[ValueSpec],
     test_log: Rc<RefCell<LimitedVec<String>>>,
-) -> Result<Option<Value>, InterpreterBreak> {
+) -> Result<Option<Value>, InterpreterResult> {
     // Resolve module index by name lookup
     let module_index = if let Some(name) = module_name {
         ctx.find_module_by_name(name)
@@ -664,7 +664,7 @@ fn invoke_function(
 
         // Check the result
         match result {
-            InterpreterResult::Instruction(InterpreterBreak::Finished) => {
+            InterpreterResult::Finished => {
                 if return_types.is_empty() {
                     Ok(None)
                 } else if return_types.len() == 1 {
@@ -673,9 +673,9 @@ fn invoke_function(
                     panic!("Multi-value returns not supported");
                 }
             }
-            InterpreterResult::Instruction(err) => Err(err),
             InterpreterResult::ReaderError(err) => panic!("Reader error: {err:?}"),
             InterpreterResult::OutOfFuel => panic!("Infinite loop detected"),
+            err => Err(err),
         }
     })
 }
@@ -1021,7 +1021,7 @@ fn run_wast_command(
                 field,
                 args,
             } => match invoke_function(ctx, &module, &field, &args, log) {
-                Err(InterpreterBreak::Trap(reason)) => {
+                Err(InterpreterResult::Trap(reason)) => {
                     check_trap_reason(reason, &text);
                 }
                 Err(err) => {
@@ -1099,7 +1099,7 @@ fn run_wast_command(
                 field,
                 args,
             } => match invoke_function(ctx, &module, &field, &args, log) {
-                Err(InterpreterBreak::Trap(reason)) => check_trap_reason(reason, &text),
+                Err(InterpreterResult::Trap(reason)) => check_trap_reason(reason, &text),
                 Err(err) => {
                     panic!("Expected exhaustion '{text}', got error: {err:?}")
                 }

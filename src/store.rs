@@ -206,11 +206,9 @@ impl<'store> InterpreterState<'store> {
         // Spin the interpreter
         match interpreter.run(code, self, n_instructions) {
             InterpreterResult::OutOfFuel => InitializeResult::OutOfFuel,
-            InterpreterResult::Instruction(i) => match i {
-                InterpreterBreak::Finished => InitializeResult::Ok,
-                InterpreterBreak::Trap(t) => InitializeResult::Trap(t),
-                InterpreterBreak::Pause => InitializeResult::Pause,
-            },
+            InterpreterResult::Finished => InitializeResult::Ok,
+            InterpreterResult::Trap(t) => InitializeResult::Trap(t),
+            InterpreterResult::Pause => InitializeResult::Pause,
             InterpreterResult::ReaderError(r) => InitializeResult::ReaderError(r),
         }
     }

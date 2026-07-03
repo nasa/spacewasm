@@ -196,12 +196,60 @@ impl<'store> Default for Interpreter<'store> {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrapReason {
+    /// Triggered by unreachable instruction
+    Unreachable,
+    /// A host function has noted an unrecoverable failure
+    Host,
+    /// Integer or floating point division by zero
+    DivideByZero,
+    /// An indirect call tried to map to a table function out of range
+    InvalidTableIndex,
+    /// The function type in an indirect call does not match the function pointer's type
+    InvalidTableFunctionType,
+    /// An indirect call tried to map to a table function out of range
+    UninitializedTableElement,
+    /// An imported global could not be read
+    GlobalGetFailed,
+    /// An imported global could not be set
+    GlobalSetFailed,
+    /// A memory operation is out of bounds
+    OutOfMemory,
+    /// memory.grow failed because a host function has taken ownership of a memory
+    MemoryRefNotUnique,
+    /// A memory operation is out of bounds
+    MemoryOutOfBounds,
+    /// Ran out of stack space
+    StackOverflow,
+    /// Attempting to convert Inf to integer
+    UnrepresentableResult,
+    /// Signed division causes integer overflow
+    IntegerOverflow,
+    /// Attempting to convert NaN to integer
+    BadConversionToInteger,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InterpreterBreak {
+    /// The program has completed
+    Finished,
+    /// The program has been aborted
+    Trap(TrapReason),
+    /// An instruction or host function has requested the interpreter to pause
+    Pause,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InterpreterResult {
+    /// The program has completed
+    Finished,
+    /// The program has been aborted
+    Trap(TrapReason),
+    /// An instruction or host function has requested the interpreter to pause
+    Pause,
     /// No more fuel (ran to instruction bound)
     OutOfFuel,
-    /// An instruction requested a pause or failed
-    Instruction(InterpreterBreak),
     /// Failed to read an instruction from memory
     ReaderError(IrReaderError),
 }
@@ -292,7 +340,7 @@ impl<'store, T: IrVisitor<State = InterpreterState<'store>, Error = InterpreterB
 
             // If PC is SENTINEL, we're not executing anything
             if pc == JumpTarget::SENTINEL {
-                return InterpreterResult::Instruction(InterpreterBreak::Finished);
+                return InterpreterResult::Finished;
             }
 
             let i_res = reader.visit_instruction(state, &mut pc, self);
@@ -313,58 +361,15 @@ impl<'store, T: IrVisitor<State = InterpreterState<'store>, Error = InterpreterB
                     state.pc = JumpTarget::SENTINEL;
                     state.fp = 0;
                     state.jumped = false;
-                    return InterpreterResult::Instruction(InterpreterBreak::Trap(trap_reason));
+                    return InterpreterResult::Trap(trap_reason);
                 }
-                Err(e) => return InterpreterResult::Instruction(e),
+                Err(InterpreterBreak::Pause) => return InterpreterResult::Pause,
+                Err(InterpreterBreak::Finished) => return InterpreterResult::Finished,
             }
         }
 
         InterpreterResult::OutOfFuel
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TrapReason {
-    /// Triggered by unreachable instruction
-    Unreachable,
-    /// A host function has noted an unrecoverable failure
-    Host,
-    /// Integer or floating point division by zero
-    DivideByZero,
-    /// An indirect call tried to map to a table function out of range
-    InvalidTableIndex,
-    /// The function type in an indirect call does not match the function pointer's type
-    InvalidTableFunctionType,
-    /// An indirect call tried to map to a table function out of range
-    UninitializedTableElement,
-    /// An imported global could not be read
-    GlobalGetFailed,
-    /// An imported global could not be set
-    GlobalSetFailed,
-    /// A memory operation is out of bounds
-    OutOfMemory,
-    /// memory.grow failed because a host function has taken ownership of a memory
-    MemoryRefNotUnique,
-    /// A memory operation is out of bounds
-    MemoryOutOfBounds,
-    /// Ran out of stack space
-    StackOverflow,
-    /// Attempting to convert Inf to integer
-    UnrepresentableResult,
-    /// Signed division causes integer overflow
-    IntegerOverflow,
-    /// Attempting to convert NaN to integer
-    BadConversionToInteger,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InterpreterBreak {
-    /// The program has completed
-    Finished,
-    /// The program has been aborted
-    Trap(TrapReason),
-    /// An instruction or host function has requested the interpreter to pause
-    Pause,
 }
 
 impl From<MemoryError> for InterpreterBreak {

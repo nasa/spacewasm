@@ -1,7 +1,7 @@
 use spacewasm::{
     Box, CodeBuilder, CompilerOptions, ExportDesc, HostFunction, HostFunctionBreak, HostModule,
-    InitializeResult, InterpreterBreak, InterpreterResult, InterpreterRunner, ModuleRef,
-    PageAllocator, Ref, SectionKind, ValType, Value, WasmRef, vec,
+    InitializeResult, InterpreterResult, InterpreterRunner, ModuleRef, PageAllocator, Ref,
+    SectionKind, ValType, Value, WasmRef, vec,
 };
 use spacewasm_util::{FileStream, RustSystemAllocator};
 use std::ops::ControlFlow;
@@ -232,7 +232,7 @@ fn main() {
         result = interpreter.run(&text, &mut state, usize::MAX)
     }
 
-    let InterpreterResult::Instruction(InterpreterBreak::Finished) = result else {
+    let InterpreterResult::Finished = result else {
         panic!("interpreter failed: {:?}", result)
     };
 
