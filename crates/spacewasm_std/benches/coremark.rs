@@ -11,7 +11,7 @@ spacewasm::global_allocator!(
     PageAllocator::new(&RustSystemAllocator {}, 8192)
 );
 
-const MAX_PAGES: usize = 8;
+const MAX_PAGES: usize = 32;
 const MAX_CONTROL_FRAMES: usize = 64;
 const MAX_STACK_DEPTH: usize = 256;
 
@@ -39,8 +39,6 @@ fn main() {
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()
                     .as_millis() as i64;
-
-                eprintln!("CLOCK_MS {}", ms);
 
                 ControlFlow::Continue(Some(Value::I64(ms)))
             },
