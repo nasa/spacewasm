@@ -83,15 +83,15 @@ resource-constrained spacecraft environments:
 
 ### IR Code Pages
 
-- **Code pages**: Configurable via generic parameter `N`, typically set at module instantiation
+- **Code pages**: Configurable via generic parameter `MAX_PAGES`, typically set at module instantiation
 - **Page size**: 256 16-bit words (512 bytes)
 - **Maximum page address**: 24-bit (16,777,216 pages)
 - **Word offset in page**: 8-bit (0-255)
 
 ### Control Flow
 
-- **Nesting depth**: Maximum 64 control frames (blocks/loops/if-else)
-- **Value stack**: Maximum 512 values per function
+- **Nesting depth**: Configurable via generic parameter `MAX_CONTROL_FRAMES` (blocks/loops/if-else)
+- **Value stack**: Configurable via generic parameter `MAX_STACK_DEPTH`, values per function
 - **Label jumps**: 22-bit signed offset (±2,097,151 instructions)
 - **Stack truncation depth**: Maximum 255 32-bit words per label jump
 - **br_table cases**: Maximum 256 branch targets
@@ -99,15 +99,16 @@ resource-constrained spacecraft environments:
 ### Instruction Encoding
 
 - **8-bit or 16-bit indexes**: 0-65,535
-- **8-bit or 32-bit immediates**: 0-254 inline, 255+ extended
-- **8-bit or 64-bit immediates**: 0-254 inline, 255+ extended
+- **8-bit or 32-bit immediate**: 0-254 inline, 255+ extended
+- **8-bit or 64-bit immediate**: 0-254 inline, 255+ extended
 
 These constraints enable deterministic memory usage and efficient execution in resource-constrained environments while
 maintaining compatibility with most standard WebAssembly modules.
 
 ## Benchmarking
 
-SpaceWASM is tested against the Coremark benchmark to trace performance regression. See [coremark](crates/spacewasm_std/benches)
+SpaceWASM is tested against the Coremark benchmark to trace performance regression.
+See [coremark](crates/spacewasm_std/benches)
 for more information.
 
 ## Testing
