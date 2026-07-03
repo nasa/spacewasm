@@ -1,12 +1,12 @@
 use super::inspector::{Inspector, LimitedVec};
 use serde::{Deserialize, Serialize};
 use spacewasm::{
-    AllocError, Allocator, CodeBuilder, CompilerOptions, ConstantExprError, ExportDesc,
-    GlobalValue, GlobalValueError, HostFunction, HostGlobal, HostModule, InitializeResult,
-    InnerVec, Interpreter, InterpreterResult, InterpreterRunner, InterpreterState, Limit, Memory,
-    MemoryError, MemoryStatistics, Module, ModuleRef, ParseError, ReaderError, Ref, Stack, Store,
-    TrapReason, ValType, ValidationError, Value, WasmMemoryAllocator, WasmRef, WasmStream,
-    global_allocator, vec,
+    global_allocator, vec, AllocError, Allocator, CodeBuilder, CompilerOptions,
+    ConstantExprError, ExportDesc, GlobalValue, GlobalValueError, HostFunction, HostGlobal, HostModule,
+    InnerVec, Interpreter, InterpreterResult, InterpreterRunner, InterpreterState, Limit,
+    Memory, MemoryError, MemoryStatistics, Module, ModuleRef, ParseError, ReaderError, Ref, Stack,
+    Store, TrapReason, ValType, ValidationError, Value, WasmMemoryAllocator, WasmRef,
+    WasmStream,
 };
 use std::alloc::Layout;
 use std::cell::RefCell;
@@ -449,7 +449,7 @@ fn compare_values(actual: Value, expected: &ValueSpec) {
 enum ModuleLoadError {
     DecodeError(ParseError),
     AllocationError(MemoryError),
-    InitializeError(InitializeResult),
+    InitializeError(InterpreterResult),
 }
 
 impl From<ParseError> for ModuleLoadError {
@@ -572,7 +572,7 @@ fn load_module(
     // Initialize the module
     ctx.with_state(|state| {
         match state.initialize_module(spacewasm::Box::new(module).unwrap(), &text, usize::MAX) {
-            InitializeResult::Ok => Ok(()),
+            InterpreterResult::Finished => Ok(()),
             result => Err(ModuleLoadError::InitializeError(result)),
         }
     })
@@ -817,9 +817,9 @@ fn check_decode_error(err: ParseError, text: String) {
     }
 }
 
-fn check_initialization_error(result: InitializeResult, text: &str) {
+fn check_initialization_error(result: InterpreterResult, text: &str) {
     match (result, text) {
-        (InitializeResult::Trap(TrapReason::Unreachable), "unreachable") => {}
+        (InterpreterResult::Trap(TrapReason::Unreachable), "unreachable") => {}
         (result, text) => {
             panic!("Could not match initialization error text '{text}' with result {result:?}")
         }

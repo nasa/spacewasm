@@ -12,7 +12,7 @@ use spacewasm::{
     InterpreterResult, InterpreterRunner, MemoryStatistics, Module, ModuleRef, ReaderError, Ref,
     Store, WasmMemoryAllocator, WasmRef, WasmStream,
 };
-use spacewasm::{InitializeResult, ValType, Value};
+use spacewasm::{ValType, Value};
 use spacewasm_util::StateTracer;
 use std::env;
 use std::fs;
@@ -238,20 +238,20 @@ fn main() {
     };
 
     match init_result {
-        InitializeResult::Ok => {}
-        InitializeResult::OutOfFuel => {
+        InterpreterResult::Finished => {}
+        InterpreterResult::OutOfFuel => {
             eprintln!("Module initialization ran out of fuel (instruction limit)");
             process::exit(1);
         }
-        InitializeResult::Trap(trap_reason) => {
+        InterpreterResult::Trap(trap_reason) => {
             eprintln!("Trap during initialization: {trap_reason:?}");
             process::exit(1);
         }
-        InitializeResult::ReaderError(ir_reader_error) => {
+        InterpreterResult::ReaderError(ir_reader_error) => {
             eprintln!("Reader error during initialization: {ir_reader_error:?}");
             process::exit(1);
         }
-        InitializeResult::Pause => {
+        InterpreterResult::Pause => {
             eprintln!("Module initialization paused");
             process::exit(1);
         }

@@ -140,15 +140,6 @@ impl Store {
     }
 }
 
-#[derive(Debug)]
-pub enum InitializeResult {
-    Ok,
-    OutOfFuel,
-    Trap(TrapReason),
-    ReaderError(IrReaderError),
-    Pause,
-}
-
 impl<'store> InterpreterState<'store> {
     pub fn clear_memory(&mut self) {
         self.memory = self.store.zero_memory.clone();
@@ -163,7 +154,7 @@ impl<'store> InterpreterState<'store> {
         module: Box<Module>,
         code: &[Box<TextPage>],
         n_instructions: usize,
-    ) -> InitializeResult {
+    ) -> InterpreterResult {
         let interpreter = Interpreter::default();
         self.store.modules.push(module);
 
@@ -186,12 +177,12 @@ impl<'store> InterpreterState<'store> {
                         [index as usize]
                         .call(self, &[])
                     {
-                        HostFunctionResult::Continue(_) => InitializeResult::Ok,
+                        HostFunctionResult::Continue(_) => InterpreterResult::Finished,
                         HostFunctionResult::Break(HostFunctionBreak::Trap) => {
-                            InitializeResult::Trap(TrapReason::Host)
+                            InterpreterResult::Trap(TrapReason::Host)
                         }
                         HostFunctionResult::Break(HostFunctionBreak::Pause) => {
-                            InitializeResult::Pause
+                            InterpreterResult::Pause
                         }
                     };
                 }
@@ -200,16 +191,10 @@ impl<'store> InterpreterState<'store> {
                 }
             }
         } else {
-            return InitializeResult::Ok;
+            return InterpreterResult::Finished;
         }
 
         // Spin the interpreter
-        match interpreter.run(code, self, n_instructions) {
-            InterpreterResult::OutOfFuel => InitializeResult::OutOfFuel,
-            InterpreterResult::Finished => InitializeResult::Ok,
-            InterpreterResult::Trap(t) => InitializeResult::Trap(t),
-            InterpreterResult::Pause => InitializeResult::Pause,
-            InterpreterResult::ReaderError(r) => InitializeResult::ReaderError(r),
-        }
+        interpreter.run(code, self, n_instructions)
     }
 }

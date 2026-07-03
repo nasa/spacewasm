@@ -1,7 +1,6 @@
 use spacewasm::{
-    CodeBuilder, CompilerOptions, ExportDesc, HostFunction, HostModule, InitializeResult,
-    InterpreterResult, InterpreterRunner, ModuleRef, PageAllocator, RawValue, Ref, Store, Value,
-    WasmRef,
+    CodeBuilder, CompilerOptions, ExportDesc, HostFunction, HostModule, InterpreterResult,
+    InterpreterRunner, ModuleRef, PageAllocator, RawValue, Ref, Store, Value, WasmRef,
 };
 use spacewasm_util::{FileStream, RustSystemAllocator};
 use std::ops::ControlFlow;
@@ -77,11 +76,11 @@ fn main() {
 
     let mut state = store.allocate(1024).unwrap();
     match state.initialize_module(spacewasm::Box::new(module).unwrap(), &text, usize::MAX) {
-        InitializeResult::Ok => {}
-        InitializeResult::OutOfFuel => panic!("insufficient fuel for initialization"),
-        InitializeResult::Trap(t) => panic!("trap during initialization {t:?}"),
-        InitializeResult::ReaderError(e) => panic!("ir reader error {e:?}"),
-        InitializeResult::Pause => panic!("pause during init"),
+        InterpreterResult::Finished => {}
+        InterpreterResult::OutOfFuel => panic!("insufficient fuel for initialization"),
+        InterpreterResult::Trap(t) => panic!("trap during initialization {t:?}"),
+        InterpreterResult::ReaderError(e) => panic!("ir reader error {e:?}"),
+        InterpreterResult::Pause => panic!("pause during init"),
     }
 
     let module = state.store.modules().last().unwrap();

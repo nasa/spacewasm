@@ -3,7 +3,7 @@
 #[allow(clippy::excessive_precision)]
 mod tests {
     use crate::{
-        AllocError, BaseVisitor, InitializeResult, Interpreter, InterpreterState, IrVisitor,
+        AllocError, BaseVisitor, Interpreter, InterpreterResult, InterpreterState, IrVisitor,
         MemArg, MemType, Memory, MemoryKind, Module, ModuleRef, Store, ValType,
     };
 
@@ -72,11 +72,11 @@ mod tests {
 
         let mut state = store.allocate(1024).unwrap();
         match state.initialize_module(crate::Box::new(module).unwrap(), &[], usize::MAX) {
-            InitializeResult::Ok => {}
-            InitializeResult::OutOfFuel => panic!("insufficient fuel for initialization"),
-            InitializeResult::Trap(t) => panic!("trap during initialization {t:?}"),
-            InitializeResult::ReaderError(e) => panic!("ir reader error {e:?}"),
-            InitializeResult::Pause => panic!("pause during init"),
+            InterpreterResult::Finished => {}
+            InterpreterResult::OutOfFuel => panic!("insufficient fuel for initialization"),
+            InterpreterResult::Trap(t) => panic!("trap during initialization {t:?}"),
+            InterpreterResult::ReaderError(e) => panic!("ir reader error {e:?}"),
+            InterpreterResult::Pause => panic!("pause during init"),
         }
 
         state.memory = state.store.get_memory(ModuleRef(0)).clone();
