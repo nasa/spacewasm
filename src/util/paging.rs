@@ -1,5 +1,5 @@
-use crate::alloc::{AllocError, Allocator};
 use crate::MemoryStatistics;
+use crate::alloc::{AllocError, Allocator};
 use core::alloc::Layout;
 use core::cell::UnsafeCell;
 

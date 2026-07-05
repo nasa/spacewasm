@@ -630,7 +630,11 @@ mod kani_proofs {
         // Drop rc3 - count decrements
         drop(rc3);
         assert_eq!(rc1.inner().count(), 2, "Count must be 2 after dropping rc3");
-        assert_eq!(rc2.inner().count(), 2, "Both remaining Rcs must see count 2");
+        assert_eq!(
+            rc2.inner().count(),
+            2,
+            "Both remaining Rcs must see count 2"
+        );
 
         // Drop rc2 - count decrements to 1
         drop(rc2);
@@ -803,7 +807,11 @@ mod kani_proofs {
             assert_eq!(unsafe { DROP_COUNT }, 0, "Still no drops");
 
             drop(rc2);
-            assert_eq!(unsafe { DROP_COUNT }, 0, "Still no drops after dropping rc2");
+            assert_eq!(
+                unsafe { DROP_COUNT },
+                0,
+                "Still no drops after dropping rc2"
+            );
             // rc drops here - should drop all elements
         }
 

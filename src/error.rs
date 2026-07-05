@@ -1,7 +1,7 @@
-use crate::alloc::AllocError;
-use crate::constant::ConstantExprError;
 use crate::MemoryError;
 use crate::SectionKind;
+use crate::alloc::AllocError;
+use crate::constant::ConstantExprError;
 
 #[derive(Debug, Clone)]
 pub struct ParseError {
