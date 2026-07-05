@@ -207,64 +207,44 @@ unsafe impl Allocator for GlobalAllocator {
 pub mod kani_support {
     use super::*;
     use core::cell::UnsafeCell;
+    extern crate std;
 
-    /// FixedSizeAllocator: Non-generic allocator wrapper for use in Kani proofs.
-    /// This avoids the need for concrete implementations of every size combination.
-    /// Uses a fixed-size buffer internally, which is large enough for most tests.
-    #[repr(align(128))]
-    pub struct FixedSizeAllocator<const SIZE: usize = 4096> {
-        inner: UnsafeCell<FixedSizeAllocatorInner<SIZE>>,
-    }
+    /// Stub allocator for Kani proofs
+    #[derive(Clone, Copy)]
+    pub struct KaniStubAllocator;
 
-    struct FixedSizeAllocatorInner<const SIZE: usize> {
-        data: [u8; SIZE],
-        allocated: usize,
-    }
+    // Track allocation statistics
+    static mut TOTAL_ALLOCATED: i32 = 0;
 
-    impl<const SIZE: usize> FixedSizeAllocator<SIZE> {
-        pub const fn new() -> Self {
-            Self {
-                inner: UnsafeCell::new(FixedSizeAllocatorInner {
-                    data: [0; SIZE],
-                    allocated: 0,
-                }),
-            }
-        }
-    }
-
-    unsafe impl<const SIZE: usize> Allocator for FixedSizeAllocator<SIZE> {
+    unsafe impl Allocator for KaniStubAllocator {
         unsafe fn alloc(&self, layout: Layout) -> Result<*mut u8, AllocError> {
-            unsafe {
-                let inner = &mut *self.inner.get();
-
-                if layout.align() > 128 {
-                    return Err(AllocError::AllocationFailed);
+            if layout.size() == 0 {
+                Ok(core::ptr::null_mut())
+            } else {
+                let ptr = unsafe { std::alloc::alloc(layout) };
+                if !ptr.is_null() {
+                    unsafe {
+                        TOTAL_ALLOCATED += layout.size() as i32;
+                    }
                 }
-
-                let mut start_address = inner.allocated;
-                if !start_address.is_multiple_of(layout.align()) {
-                    let alignment_offset = layout.align() - start_address % layout.align();
-                    start_address += alignment_offset;
-                }
-
-                let final_address = start_address + layout.size();
-                if final_address <= SIZE {
-                    inner.allocated = final_address;
-                    Ok(&raw mut inner.data[start_address])
-                } else {
-                    Err(AllocError::OutOfMemory)
-                }
+                Ok(ptr)
             }
         }
 
-        unsafe fn dealloc(&self, _ptr: *mut u8, _layout: Layout) {
-            // Simple bump allocator - no deallocation tracking
+        unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+            if ptr.is_null() {
+                return;
+            }
+
+            unsafe {
+                std::alloc::dealloc(ptr, layout);
+                TOTAL_ALLOCATED -= layout.size() as i32;
+            }
         }
 
         fn memory_statistics(&self) -> MemoryStatistics {
-            let inner = unsafe { &*self.inner.get() };
             MemoryStatistics {
-                total_bytes: inner.allocated as i32,
+                total_bytes: unsafe { TOTAL_ALLOCATED },
                 pad_bytes: 0,
             }
         }

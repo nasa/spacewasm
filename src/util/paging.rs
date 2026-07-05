@@ -92,7 +92,7 @@ unsafe impl<'a, const MAX_PAGES: usize> Allocator for PageAllocator<'a, MAX_PAGE
 impl<'a, const MAX_PAGES: usize> PageAllocatorInner<'a, MAX_PAGES> {
     unsafe fn alloc(&mut self, layout: Layout) -> Result<*mut u8, AllocError> {
         if layout.size() == 0 {
-            panic!("invalid layout")
+            return Err(AllocError::AllocationFailed);
         }
 
         // Go through each page one-by-one and try to allocate
@@ -281,20 +281,7 @@ mod tests {
     use super::*;
     extern crate std;
 
-    struct RustSystemAllocator;
-    unsafe impl Allocator for RustSystemAllocator {
-        unsafe fn alloc(&self, layout: std::alloc::Layout) -> Result<*mut u8, crate::AllocError> {
-            unsafe { Ok(std::alloc::alloc(layout)) }
-        }
-
-        unsafe fn dealloc(&self, ptr: *mut u8, layout: std::alloc::Layout) {
-            unsafe { std::alloc::dealloc(ptr, layout) }
-        }
-
-        fn memory_statistics(&self) -> crate::MemoryStatistics {
-            panic!("The page allocator should be tracking its own memory statistics.")
-        }
-    }
+    use crate::alloc::kani_support::KaniStubAllocator;
 
     #[test]
     fn test_page_allocator_basic() {
@@ -373,25 +360,12 @@ mod kani_proofs {
     use super::*;
     extern crate std;
 
-    struct RustSystemAllocator;
-    unsafe impl Allocator for RustSystemAllocator {
-        unsafe fn alloc(&self, layout: std::alloc::Layout) -> Result<*mut u8, crate::AllocError> {
-            unsafe { Ok(std::alloc::alloc(layout)) }
-        }
-
-        unsafe fn dealloc(&self, ptr: *mut u8, layout: std::alloc::Layout) {
-            unsafe { std::alloc::dealloc(ptr, layout) }
-        }
-
-        fn memory_statistics(&self) -> crate::MemoryStatistics {
-            panic!("The page allocator should be tracking its own memory statistics.")
-        }
-    }
+    use crate::alloc::kani_support::KaniStubAllocator;
 
     /// Verify Page::alloc pointer arithmetic safety and allocation correctness
     #[kani::proof]
     fn proof_page_allocation_safety() {
-        let backing_alloc = RustSystemAllocator;
+        let backing_alloc = KaniStubAllocator;
 
         // Allocate a page from backing allocator
         let page_size = 256;
@@ -506,7 +480,7 @@ mod kani_proofs {
     /// Verify Page::dealloc correctness and cache mechanism
     #[kani::proof]
     fn proof_page_deallocation_safety() {
-        let backing_alloc = RustSystemAllocator;
+        let backing_alloc = KaniStubAllocator;
 
         let page_size = 256;
         let page_layout = Layout::from_size_align(page_size, 128).unwrap();
@@ -598,7 +572,7 @@ mod kani_proofs {
     /// Verify PageAllocator orchestration with multiple pages
     #[kani::proof]
     fn proof_page_allocator_correctness() {
-        let backing_alloc = RustSystemAllocator;
+        let backing_alloc = KaniStubAllocator;
         let page_alloc = PageAllocator::<3>::new(&backing_alloc, 128);
 
         // Test zero-size allocation must fail
@@ -682,7 +656,7 @@ mod kani_proofs {
     /// Verify Drop frees all pages in correct order
     #[kani::proof]
     fn proof_drop_safety() {
-        let backing_alloc = RustSystemAllocator;
+        let backing_alloc = KaniStubAllocator;
 
         let initial_stats = backing_alloc.memory_statistics();
         assert_eq!(
