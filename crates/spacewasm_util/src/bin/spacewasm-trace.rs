@@ -19,6 +19,10 @@ use std::fs;
 use std::io::{self, Read};
 use std::process;
 
+const MAX_PAGES: usize = 128;
+const MAX_CONTROL_FRAMES: usize = 128;
+const MAX_STACK_DEPTH: usize = 256;
+
 /// Simple byte stream that reads from a buffer.
 struct ByteStream {
     buffer: Vec<u8>,
@@ -102,7 +106,7 @@ impl WasmMemoryAllocator for SystemAllocator {
 }
 
 fn main() {
-    let args: std::vec::Vec<String> = env::args().collect();
+    let args: Vec<String> = env::args().collect();
 
     // Parse arguments
     let mut input_file: Option<String> = None;
@@ -162,8 +166,8 @@ fn main() {
     }
 
     // Read WASM bytes
-    let wasm_bytes: std::vec::Vec<u8> = if use_stdin {
-        let mut buffer = std::vec::Vec::new();
+    let wasm_bytes: Vec<u8> = if use_stdin {
+        let mut buffer = Vec::new();
         io::stdin().read_to_end(&mut buffer).unwrap_or_else(|e| {
             eprintln!("Failed to read from stdin: {}", e);
             process::exit(1);
@@ -185,10 +189,10 @@ fn main() {
         process::exit(1);
     });
 
-    let mut code_builder = CodeBuilder::<128>::default();
+    let mut code_builder = CodeBuilder::<MAX_PAGES>::default();
     let mut stream = ByteStream::new(wasm_bytes);
 
-    let module = Module::new::<128>(
+    let module = Module::new::<MAX_PAGES, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
         "",
         &mut stream,
         &mut store,
@@ -258,7 +262,7 @@ fn main() {
     let module_idx = state.store.modules().len().saturating_sub(1);
 
     // Find exported functions
-    let exported_funcs: std::vec::Vec<(WasmRef, std::vec::Vec<Value>)> = {
+    let exported_funcs: Vec<(WasmRef, Vec<Value>)> = {
         let Some(module) = state.store.modules().get(module_idx) else {
             return;
         };
@@ -304,7 +308,7 @@ fn main() {
                     };
 
                     // Generate default parameters based on the function signature
-                    let params: std::vec::Vec<Value> = func_type
+                    let params: Vec<Value> = func_type
                         .params
                         .iter()
                         .map(|val_type| match val_type {

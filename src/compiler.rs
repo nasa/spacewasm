@@ -7,13 +7,22 @@ pub struct CompilerOptions {
     pub allow_memory_grow: bool,
 }
 
-pub struct Compiler<'a, const N: usize> {
+pub struct Compiler<
+    'a,
+    const MAX_PAGES: usize,
+    const MAX_CONTROL_FRAMES: usize,
+    const MAX_STACK_DEPTH: usize,
+> {
     _marker: PhantomData<&'a ()>,
     options: CompilerOptions,
 }
 
-impl<'a, const N: usize> Compiler<'a, N> {
-    pub fn new(options: CompilerOptions) -> Compiler<'a, N> {
+impl<'a, const MAX_PAGES: usize, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize>
+    Compiler<'a, MAX_PAGES, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>
+{
+    pub fn new(
+        options: CompilerOptions,
+    ) -> Compiler<'a, MAX_PAGES, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH> {
         Compiler {
             _marker: Default::default(),
             options,
@@ -73,7 +82,9 @@ macro_rules! instruction {
     };
 }
 
-impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
+impl<'a, const MAX_PAGES: usize, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize>
+    WasmVisitor for Compiler<'a, MAX_PAGES, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>
+{
     fn drop(&self, state: &mut Self::State) -> Result<(), Self::Error> {
         let ty = state.pop_stack_t()?;
         state.instr_imm_8(
@@ -386,9 +397,11 @@ impl<'a, const N: usize> WasmVisitor for Compiler<'a, N> {
     }
 }
 
-impl<'a, const N: usize> BaseVisitor for Compiler<'a, N> {
+impl<'a, const MAX_PAGES: usize, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize>
+    BaseVisitor for Compiler<'a, MAX_PAGES, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>
+{
     type Error = ValidationError;
-    type State = TextBuilder<'a, N>;
+    type State = TextBuilder<'a, MAX_PAGES, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>;
 
     fn unreachable(&self, state: &mut Self::State) -> Result<(), Self::Error> {
         state.instr_imm_8(UNREACHABLE, 0)?;

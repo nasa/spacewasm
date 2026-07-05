@@ -152,6 +152,10 @@ mod fuzz_alloc {
     spacewasm::global_allocator!(SystemAllocator, SystemAllocator);
 }
 
+const MAX_PAGES: usize = 128;
+const MAX_CONTROL_FRAMES: usize = 128;
+const MAX_STACK_DEPTH: usize = 256;
+
 /// Oracle: Validate a WASM module.
 ///
 /// This tests the decoder by attempting to validate the given WASM bytes.
@@ -167,7 +171,7 @@ pub fn validate(wasm: &[u8]) {
         }
     };
 
-    let mut code_builder = CodeBuilder::<256>::default();
+    let mut code_builder = CodeBuilder::<MAX_PAGES>::default();
     let mut stream = ByteStream::new(wasm);
 
     let allocator = spacewasm::Rc::new(FuzzAllocator {
@@ -178,7 +182,7 @@ pub fn validate(wasm: &[u8]) {
     .into_wasm_memory_allocator();
 
     // Attempt to decode and validate the module
-    let result = Module::new::<256>(
+    let result = Module::new::<MAX_PAGES, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
         "",
         &mut stream,
         &mut store,
@@ -220,7 +224,7 @@ pub fn no_traps(wasm: &[u8]) {
     };
 
     // Compile module with reduced code pages
-    let mut code_builder = CodeBuilder::<128>::default();
+    let mut code_builder = CodeBuilder::<MAX_PAGES>::default();
     let mut stream = ByteStream::new(wasm);
 
     let allocator = Rc::new(FuzzAllocator {
@@ -230,7 +234,7 @@ pub fn no_traps(wasm: &[u8]) {
     .unwrap()
     .into_wasm_memory_allocator();
 
-    let module = match Module::new::<128>(
+    let module = match Module::new::<MAX_PAGES, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
         "",
         &mut stream,
         &mut store,

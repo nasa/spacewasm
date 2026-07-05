@@ -231,19 +231,26 @@ pub struct GlobalVariable {
 /// Manages allocation of pages and writing 16-bit words to the current position.
 /// The `N` generic parameter limits the maximum number of pages that can be allocated.
 #[derive(Clone)]
-pub struct CodeBuilder<const N: usize> {
-    pages: StaticVec<Box<TextPage>, N>,
+pub struct CodeBuilder<const MAX_PAGES: usize> {
+    pages: StaticVec<Box<TextPage>, MAX_PAGES>,
     offset: usize,
 }
 
-impl<const N: usize> Default for CodeBuilder<N> {
+impl<const MAX_PAGES: usize> Default for CodeBuilder<MAX_PAGES> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<const N: usize> CodeBuilder<N> {
-    pub fn new() -> CodeBuilder<N> {
+impl<const MAX_PAGES: usize> CodeBuilder<MAX_PAGES> {
+    pub fn new() -> CodeBuilder<MAX_PAGES> {
+        const {
+            assert!(
+                MAX_PAGES < (1 << 24),
+                "SpaceWASM supports up to 24-bit code pages"
+            );
+        }
+
         CodeBuilder {
             pages: Default::default(),
             offset: 0,
@@ -392,13 +399,18 @@ impl<const N: usize> CodeBuilder<N> {
 /// - Managing a stack of control frames for nested blocks
 ///
 /// The `N` generic parameter limits the maximum number of code pages.
-pub struct TextBuilder<'a, const N: usize> {
-    code: &'a mut CodeBuilder<N>,
+pub struct TextBuilder<
+    'a,
+    const MAX_PAGES: usize,
+    const MAX_CONTROL_FRAMES: usize,
+    const MAX_STACK_DEPTH: usize,
+> {
+    code: &'a mut CodeBuilder<MAX_PAGES>,
     store: &'a Store,
     module: &'a Module,
     func: &'a Func,
-    control_frames: StaticVec<ControlFrame, 64>,
-    value_stack: StaticVec<OperandType, 512>,
+    control_frames: StaticVec<ControlFrame, MAX_CONTROL_FRAMES>,
+    value_stack: StaticVec<OperandType, MAX_STACK_DEPTH>,
     stack_highwater: usize,
 }
 
@@ -437,13 +449,15 @@ impl From<OperandType> for u8 {
     }
 }
 
-impl<'a, const N: usize> TextBuilder<'a, N> {
+impl<'a, const MAX_PAGES: usize, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize>
+    TextBuilder<'a, MAX_PAGES, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>
+{
     pub fn new(
-        code: &'a mut CodeBuilder<N>,
+        code: &'a mut CodeBuilder<MAX_PAGES>,
         store: &'a Store,
         module: &'a Module,
         func: &'a Func,
-    ) -> TextBuilder<'a, N> {
+    ) -> Self {
         let mut builder = TextBuilder {
             code,
             store,
