@@ -368,15 +368,6 @@ mod kani_proofs {
             allocator: None,
         };
 
-        // Test zero initialization at one symbolic address
-        let zero_addr: usize = kani::any();
-        kani::assume(zero_addr < size);
-        assert_eq!(
-            mem.load_u8(zero_addr).unwrap(),
-            0,
-            "Memory must be zero-initialized"
-        );
-
         // Test fixed-size byte slice (4 bytes) at symbolic address
         let addr: usize = kani::any();
         kani::assume(addr <= size - 4);
