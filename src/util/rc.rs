@@ -757,7 +757,7 @@ mod kani_proofs {
     /// Verify Rc::new_slice with empty slice (edge case)
     #[kani::proof]
     fn proof_rc_new_slice_empty() {
-        let rc: Rc<[u32]> = Rc::new_slice(0, |_| 42u32);
+        let rc = Rc::new_slice(0, |_| 42u32);
         kani::assume(rc.is_ok());
         let rc = rc.unwrap();
 

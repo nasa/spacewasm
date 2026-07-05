@@ -156,7 +156,7 @@ mod kani_proofs {
     #[kani::proof]
     fn verify_len_invariants() {
         unsafe {
-            let alloc = FixedSizeAllocator::new();
+            let alloc = FixedSizeAllocator::<4096>::new();
             let capacity: u32 = kani::any();
             kani::assume(capacity > 0 && capacity <= 10);
 
@@ -206,7 +206,7 @@ mod kani_proofs {
     #[kani::proof]
     fn verify_pointer_arithmetic_in_bounds() {
         unsafe {
-            let alloc = FixedSizeAllocator::new();
+            let alloc = FixedSizeAllocator::<4096>::new();
             let capacity: u32 = kani::any();
             kani::assume(capacity > 0 && capacity <= 10);
 
@@ -337,7 +337,7 @@ mod kani_proofs {
         unsafe {
             let mut drop_count: u32 = 0; // Local counter
 
-            let alloc = FixedSizeAllocator::new();
+            let alloc = FixedSizeAllocator::<4096>::new();
             let mut vec = create_valid_inner_vec::<Droppable>(2, &alloc);
 
             // Push 2 droppable values (both share the same counter via raw pointer)
