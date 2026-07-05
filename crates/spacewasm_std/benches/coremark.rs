@@ -75,7 +75,7 @@ fn main() {
     let (text, _final_page_offset) = code_builder.finish().unwrap();
 
     let mut state = store.allocate(1024).unwrap();
-    match state.initialize_module(spacewasm::Box::new(module).unwrap(), &text, usize::MAX) {
+    match state.initialize_module(module, &text, usize::MAX) {
         InterpreterResult::Finished => {}
         InterpreterResult::OutOfFuel => panic!("insufficient fuel for initialization"),
         InterpreterResult::Trap(t) => panic!("trap during initialization {t:?}"),

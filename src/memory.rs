@@ -47,12 +47,17 @@ impl Debug for Memory {
 pub enum MemoryError {
     OutOfBounds,
     OutOfMemory,
-    AllocError(AllocError),
+    AllocationFailed,
+    PageTooSmall,
 }
 
 impl From<AllocError> for MemoryError {
     fn from(e: AllocError) -> MemoryError {
-        MemoryError::AllocError(e)
+        match e {
+            AllocError::AllocationFailed => MemoryError::AllocationFailed,
+            AllocError::OutOfMemory => MemoryError::OutOfMemory,
+            AllocError::PageTooSmall => MemoryError::PageTooSmall,
+        }
     }
 }
 
@@ -237,11 +242,27 @@ impl Drop for Memory {
 #[cfg(kani)]
 mod kani_proofs {
     use super::*;
-    use crate::{Allocator, StaticAllocator};
+    use crate::Allocator;
+    extern crate std;
+
+    struct RustSystemAllocator;
+    unsafe impl Allocator for RustSystemAllocator {
+        unsafe fn alloc(&self, layout: std::alloc::Layout) -> Result<*mut u8, crate::AllocError> {
+            unsafe { Ok(std::alloc::alloc(layout)) }
+        }
+
+        unsafe fn dealloc(&self, ptr: *mut u8, layout: std::alloc::Layout) {
+            unsafe { std::alloc::dealloc(ptr, layout) }
+        }
+
+        fn memory_statistics(&self) -> crate::MemoryStatistics {
+            panic!("The page allocator should be tracking its own memory statistics.")
+        }
+    }
 
     #[kani::proof]
     fn proof_store_load_correctness() {
-        let alloc = StaticAllocator::<128, 8>::new();
+        let alloc = RustSystemAllocator;
         let size = 64;
 
         let ptr = unsafe {
@@ -332,7 +353,7 @@ mod kani_proofs {
 
     #[kani::proof]
     fn proof_byte_slice_operations() {
-        let alloc = StaticAllocator::<128, 8>::new();
+        let alloc = RustSystemAllocator;
         let size = 16;
 
         let ptr = unsafe {

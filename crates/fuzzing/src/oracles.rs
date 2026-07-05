@@ -59,7 +59,7 @@ impl ByteStream {
 }
 
 impl WasmStream for ByteStream {
-    fn read(&mut self) -> Result<Option<InnerVec<u8>>, ReaderError> {
+    fn read(&mut self) -> Result<Option<InnerVec<u8>>, u8> {
         if self.consumed {
             return Ok(None);
         }
@@ -264,12 +264,7 @@ pub fn no_traps(wasm: &[u8]) {
         }
     };
 
-    let Ok(module_box) = Box::new(module) else {
-        log::debug!("module box creation failed");
-        return;
-    };
-
-    match state.initialize_module(module_box, &text, 10000) {
+    match state.initialize_module(module, &text, 10000) {
         InterpreterResult::Finished => {}
         InterpreterResult::OutOfFuel => {
             log::debug!("start routine out of fuel");

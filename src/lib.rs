@@ -87,12 +87,7 @@ mod tests {
         align: usize,
         err: *mut u32,
     ) -> *mut u8 {
-        let Ok(layout) = Layout::from_size_align(size, align) else {
-            unsafe {
-                *err = AllocError::InvalidLayout.into();
-            }
-            return core::ptr::null_mut();
-        };
+        let layout = Layout::from_size_align(size, align).unwrap();
 
         match unsafe { (*GLOBAL_ALLOCATOR).alloc(layout) } {
             Ok(ptr) => ptr,

@@ -4,16 +4,16 @@ use crate::*;
 /// imports/exports are referenced through the store.
 #[derive(Debug)]
 pub struct Store {
-    modules: Vec<Box<Module>>,
+    modules: Vec<Module>,
     host_modules: Vec<HostModule>,
     zero_memory: Rc<Memory>,
     zero_table: Rc<[TableElement]>,
 }
 
 impl Store {
-    pub fn new<const N: usize>(
+    pub fn new<const HOST_MODULE_N: usize>(
         max_modules: usize,
-        host_modules: [HostModule; N],
+        host_modules: [HostModule; HOST_MODULE_N],
     ) -> Result<Self, AllocError> {
         assert!(max_modules <= 256);
         Ok(Store {
@@ -25,12 +25,12 @@ impl Store {
     }
 
     #[inline(always)]
-    pub fn modules(&self) -> &[Box<Module>] {
+    pub fn modules(&self) -> &[Module] {
         &self.modules
     }
 
     #[inline(always)]
-    pub fn modules_mut(&mut self) -> &mut [Box<Module>] {
+    pub fn modules_mut(&mut self) -> &mut [Module] {
         &mut self.modules
     }
 
@@ -47,14 +47,14 @@ impl Store {
     /// Remove the last module from the store if it exists
     /// Returns the removed module, or None if the store is empty
     #[inline(always)]
-    pub fn pop_module(&mut self) -> Option<Box<Module>> {
+    pub fn pop_module(&mut self) -> Option<Module> {
         self.modules.pop()
     }
 
     /// Push a module onto the store
     /// Panics if the store is at capacity
     #[inline(always)]
-    pub fn push_module(&mut self, module: Box<Module>) {
+    pub fn push_module(&mut self, module: Module) {
         self.modules.push(module);
     }
 
@@ -151,7 +151,7 @@ impl<'store> InterpreterState<'store> {
 
     pub fn initialize_module(
         &mut self,
-        module: Box<Module>,
+        module: Module,
         code: &[Box<TextPage>],
         n_instructions: usize,
     ) -> InterpreterResult {

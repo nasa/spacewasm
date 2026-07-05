@@ -1,7 +1,7 @@
-use crate::SectionKind;
 use crate::alloc::AllocError;
 use crate::constant::ConstantExprError;
-use crate::{MemoryError, ReaderError};
+use crate::MemoryError;
+use crate::SectionKind;
 
 #[derive(Debug, Clone)]
 pub struct ParseError {
@@ -119,7 +119,7 @@ pub enum ValidationError {
     InvalidConstantExpr(ConstantExprError),
     AllocError(AllocError),
     MemoryError(MemoryError),
-    ReaderError(ReaderError),
+    ReaderError(u8),
 }
 
 impl From<AllocError> for ValidationError {

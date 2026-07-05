@@ -1,6 +1,6 @@
-use crate::Box;
 use crate::alloc::{AllocError, Allocator, GlobalAllocator};
 use crate::util::InnerVec;
+use crate::Box;
 use core::alloc::Layout;
 use core::ops::{Deref, DerefMut};
 
@@ -130,7 +130,7 @@ impl<T: Sized, A: Allocator> Vec<T, A> {
         }
 
         let ptr = if capacity > 0 {
-            unsafe { alloc.alloc(Layout::array::<T>(capacity as usize)?)? }
+            unsafe { alloc.alloc(Layout::array::<T>(capacity as usize).unwrap())? }
         } else {
             core::ptr::null_mut()
         };

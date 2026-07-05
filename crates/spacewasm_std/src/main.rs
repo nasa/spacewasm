@@ -1,5 +1,5 @@
 use spacewasm::{
-    Box, CodeBuilder, CompilerOptions, ExportDesc, HostFunction, HostFunctionBreak, HostModule,
+    CodeBuilder, CompilerOptions, ExportDesc, HostFunction, HostFunctionBreak, HostModule,
     InterpreterResult, InterpreterRunner, ModuleRef, PageAllocator, Ref, SectionKind, ValType,
     Value, WasmRef, vec,
 };
@@ -119,7 +119,7 @@ fn main() {
         table: spacewasm::Vec::zero(),
     };
 
-    let mut store = spacewasm::Store::new(3, [fprime_core, env]).unwrap();
+    let mut store = spacewasm::Store::new(1, [fprime_core, env]).unwrap();
 
     let file = std::fs::File::open(path).expect("failed to open file");
     let mut file_stream = FileStream::new(file);
@@ -138,7 +138,7 @@ fn main() {
     let (text, final_page_offset) = code_builder.finish().unwrap();
 
     let mut state = store.allocate(1024).unwrap();
-    match state.initialize_module(Box::new(module).unwrap(), &text, usize::MAX) {
+    match state.initialize_module(module, &text, usize::MAX) {
         InterpreterResult::Finished => {}
         InterpreterResult::OutOfFuel => panic!("insufficient fuel for initialization"),
         InterpreterResult::Trap(t) => panic!("trap during initialization {t:?}"),

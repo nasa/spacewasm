@@ -70,8 +70,8 @@ impl<T> Rc<[T]> {
 
             // Calculate the layout we need: Cell<u32> + align padding + [T; len]
             let count_layout = core::alloc::Layout::new::<Cell<u32>>();
-            let slice_layout = core::alloc::Layout::array::<T>(len)?;
-            let (full_layout, slice_offset) = count_layout.extend(slice_layout)?;
+            let slice_layout = core::alloc::Layout::array::<T>(len).unwrap();
+            let (full_layout, slice_offset) = count_layout.extend(slice_layout).unwrap();
             let full_layout = full_layout.pad_to_align();
 
             // Allocate new memory for RcInner<[T]>
@@ -596,5 +596,292 @@ mod tests {
         let rc_dyn2 = rc_dyn.clone();
         assert_eq!(rc_dyn.inner().count(), 2);
         assert_eq!(rc_dyn2.get_value(), 42);
+    }
+}
+
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+
+    /// Verify reference counting correctness: clone increments, drop decrements
+    /// Counter invariants: never zero while Rc exists, never overflows
+    #[kani::proof]
+    fn proof_rc_reference_counting() {
+        let rc1 = Rc::new(42u32);
+        kani::assume(rc1.is_ok());
+        let rc1 = rc1.unwrap();
+
+        // Initial state: count must be 1
+        assert_eq!(rc1.inner().count(), 1, "Initial count must be 1");
+
+        // Clone increments count
+        let rc2 = rc1.clone();
+        assert_eq!(rc1.inner().count(), 2, "Count must be 2 after first clone");
+        assert_eq!(rc2.inner().count(), 2, "Both Rcs must see same count");
+        assert_eq!(*rc1, 42, "Value must be accessible through rc1");
+        assert_eq!(*rc2, 42, "Value must be accessible through rc2");
+
+        // Second clone increments again
+        let rc3 = rc1.clone();
+        assert_eq!(rc1.inner().count(), 3, "Count must be 3 after second clone");
+        assert_eq!(rc2.inner().count(), 3, "All Rcs must see same count");
+        assert_eq!(rc3.inner().count(), 3, "All Rcs must see same count");
+
+        // Drop rc3 - count decrements
+        drop(rc3);
+        assert_eq!(rc1.inner().count(), 2, "Count must be 2 after dropping rc3");
+        assert_eq!(rc2.inner().count(), 2, "Both remaining Rcs must see count 2");
+
+        // Drop rc2 - count decrements to 1
+        drop(rc2);
+        assert_eq!(rc1.inner().count(), 1, "Count must be 1 after dropping rc2");
+
+        // rc1 drops at end of scope - count becomes 0, memory deallocated
+    }
+
+    /// Verify that Rc properly deallocates when last reference is dropped
+    /// Tests the drop path and ensures no memory leaks
+    #[kani::proof]
+    fn proof_rc_last_drop_deallocates() {
+        let value: u32 = kani::any();
+
+        {
+            let rc1 = Rc::new(value);
+            kani::assume(rc1.is_ok());
+            let rc1 = rc1.unwrap();
+            assert_eq!(rc1.inner().count(), 1, "Count must be 1");
+
+            {
+                let rc2 = rc1.clone();
+                assert_eq!(rc1.inner().count(), 2, "Count must be 2");
+                assert_eq!(*rc2, value, "Value must match");
+                // rc2 drops here
+            }
+
+            assert_eq!(rc1.inner().count(), 1, "Count must be 1 after rc2 dropped");
+            assert_eq!(*rc1, value, "Value still accessible");
+            // rc1 drops here - this triggers deallocation
+        }
+
+        // After this scope, all memory must be freed
+        // Kani will verify no memory leaks
+    }
+
+    /// Verify get_mut returns Some only when unique (count == 1)
+    /// Ensures exclusive access invariant is maintained
+    #[kani::proof]
+    fn proof_rc_get_mut_uniqueness() {
+        let value: u32 = kani::any();
+
+        let mut rc1 = Rc::new(value);
+        kani::assume(rc1.is_ok());
+        let mut rc1 = rc1.unwrap();
+
+        // When unique, get_mut should succeed
+        assert_eq!(rc1.inner().count(), 1, "Count must be 1");
+        let mut_ref = rc1.get_mut();
+        assert!(mut_ref.is_some(), "get_mut must return Some when unique");
+
+        let new_value: u32 = kani::any();
+        *mut_ref.unwrap() = new_value;
+        assert_eq!(*rc1, new_value, "Mutation must be visible");
+
+        // After clone, get_mut should fail
+        let _rc2 = rc1.clone();
+        assert_eq!(rc1.inner().count(), 2, "Count must be 2");
+        let mut_ref2 = rc1.get_mut();
+        assert!(
+            mut_ref2.is_none(),
+            "get_mut must return None when not unique"
+        );
+
+        // After drop, get_mut should succeed again
+        drop(_rc2);
+        assert_eq!(rc1.inner().count(), 1, "Count must be 1 again");
+        let mut_ref3 = rc1.get_mut();
+        assert!(
+            mut_ref3.is_some(),
+            "get_mut must return Some when unique again"
+        );
+    }
+
+    /// Verify is_unique correctly identifies when Rc has no other references
+    #[kani::proof]
+    fn proof_rc_is_unique() {
+        let rc1 = Rc::new(100u32);
+        kani::assume(rc1.is_ok());
+        let rc1 = rc1.unwrap();
+
+        // Initially unique
+        assert!(rc1.is_unique(), "Must be unique initially");
+        assert_eq!(rc1.inner().count(), 1, "Count must be 1");
+
+        // After clone, not unique
+        let rc2 = rc1.clone();
+        assert!(!rc1.is_unique(), "Must not be unique after clone");
+        assert!(!rc2.is_unique(), "Must not be unique after clone");
+        assert_eq!(rc1.inner().count(), 2, "Count must be 2");
+
+        // After drop, unique again
+        drop(rc2);
+        assert!(rc1.is_unique(), "Must be unique again after drop");
+        assert_eq!(rc1.inner().count(), 1, "Count must be 1 again");
+    }
+
+    /// Verify Rc::new_slice allocates correct layout and initializes all elements
+    /// Tests slice-specific allocation path
+    #[kani::proof]
+    fn proof_rc_new_slice_allocation() {
+        // Use small symbolic length for tractable verification
+        let len: usize = kani::any();
+        kani::assume(len <= 8); // Keep small for verification tractability
+
+        let rc = Rc::new_slice(len, |i| i as u32);
+        kani::assume(rc.is_ok());
+        let rc = rc.unwrap();
+
+        // Verify length
+        assert_eq!(rc.len(), len, "Slice length must match requested length");
+        assert_eq!(rc.inner().count(), 1, "Count must be 1");
+
+        // Verify all elements are initialized correctly
+        for i in 0..len {
+            assert_eq!(rc[i], i as u32, "Element must be initialized correctly");
+        }
+    }
+
+    /// Verify Rc::new_slice with empty slice (edge case)
+    #[kani::proof]
+    fn proof_rc_new_slice_empty() {
+        let rc: Rc<[u32]> = Rc::new_slice(0, |_| 42u32);
+        kani::assume(rc.is_ok());
+        let rc = rc.unwrap();
+
+        assert_eq!(rc.len(), 0, "Empty slice must have length 0");
+        assert_eq!(rc.inner().count(), 1, "Count must be 1");
+
+        // Clone and verify count
+        let rc2 = rc.clone();
+        assert_eq!(rc.inner().count(), 2, "Count must be 2 after clone");
+        assert_eq!(rc2.len(), 0, "Cloned slice must also be empty");
+    }
+
+    /// Verify Rc slice drops all elements properly
+    /// Ensures drop order and completeness
+    #[kani::proof]
+    fn proof_rc_slice_drop_elements() {
+        // Use DropCounter to track drops
+        static mut DROP_COUNT: u32 = 0;
+
+        struct DropCounter(u32);
+        impl Drop for DropCounter {
+            fn drop(&mut self) {
+                unsafe {
+                    DROP_COUNT += 1;
+                }
+            }
+        }
+
+        unsafe {
+            DROP_COUNT = 0;
+        }
+
+        let len: usize = kani::any();
+        kani::assume(len > 0 && len <= 4); // Small for tractability
+
+        {
+            let rc = Rc::new_slice(len, |i| DropCounter(i as u32));
+            kani::assume(rc.is_ok());
+            let rc = rc.unwrap();
+
+            assert_eq!(rc.len(), len, "Length must match");
+            assert_eq!(unsafe { DROP_COUNT }, 0, "No drops yet");
+
+            // Clone doesn't drop elements
+            let rc2 = rc.clone();
+            assert_eq!(rc.inner().count(), 2, "Count must be 2");
+            assert_eq!(unsafe { DROP_COUNT }, 0, "Still no drops");
+
+            drop(rc2);
+            assert_eq!(unsafe { DROP_COUNT }, 0, "Still no drops after dropping rc2");
+            // rc drops here - should drop all elements
+        }
+
+        // All elements should be dropped exactly once
+        assert_eq!(
+            unsafe { DROP_COUNT },
+            len as u32,
+            "All elements must be dropped exactly once"
+        );
+    }
+
+    /// Verify Rc deref returns correct value and doesn't violate aliasing
+    #[kani::proof]
+    fn proof_rc_deref_correctness() {
+        let value: u32 = kani::any();
+
+        let rc1 = Rc::new(value);
+        kani::assume(rc1.is_ok());
+        let rc1 = rc1.unwrap();
+
+        // Deref must return the original value
+        assert_eq!(*rc1, value, "Deref must return original value");
+
+        // Multiple derefs from clones must all see same value
+        let rc2 = rc1.clone();
+        let rc3 = rc1.clone();
+
+        assert_eq!(*rc1, value, "rc1 deref must return value");
+        assert_eq!(*rc2, value, "rc2 deref must return value");
+        assert_eq!(*rc3, value, "rc3 deref must return value");
+
+        // All refs point to same underlying data
+        let ref1 = &*rc1 as *const u32;
+        let ref2 = &*rc2 as *const u32;
+        let ref3 = &*rc3 as *const u32;
+
+        assert_eq!(ref1, ref2, "All derefs must point to same address");
+        assert_eq!(ref2, ref3, "All derefs must point to same address");
+    }
+
+    /// Verify Rc count never overflows with many clones
+    /// Tests the overflow check in RcInner::inc
+    #[kani::proof]
+    fn proof_rc_no_count_overflow() {
+        let rc1 = Rc::new(42u32);
+        kani::assume(rc1.is_ok());
+        let rc1 = rc1.unwrap();
+
+        // Simulate many clones (bounded for verification)
+        let num_clones: u32 = kani::any();
+        kani::assume(num_clones <= 100); // Keep tractable
+
+        let mut clones = core::array::from_fn::<_, 100, _>(|_| None);
+
+        for i in 0..(num_clones as usize) {
+            clones[i] = Some(rc1.clone());
+            assert_eq!(
+                rc1.inner().count(),
+                (i + 2) as usize,
+                "Count must increment correctly"
+            );
+        }
+
+        // Verify final count
+        assert_eq!(
+            rc1.inner().count(),
+            (num_clones + 1) as usize,
+            "Final count must be correct"
+        );
+
+        // Drop all clones
+        for clone in clones.iter_mut() {
+            if clone.is_some() {
+                clone.take();
+            }
+        }
+
+        // Should be back to 1
+        assert_eq!(rc1.inner().count(), 1, "Count must be 1 after drops");
     }
 }

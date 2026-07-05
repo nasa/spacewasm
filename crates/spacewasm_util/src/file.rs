@@ -1,4 +1,4 @@
-use spacewasm::{InnerVec, ReaderError, WasmStream};
+use spacewasm::{InnerVec, WasmStream};
 use std::collections::{HashMap, VecDeque};
 use std::io::Read;
 
@@ -34,12 +34,12 @@ impl FileStream {
 }
 
 impl WasmStream for FileStream {
-    fn read(&mut self) -> Result<Option<InnerVec<u8>>, ReaderError> {
+    fn read(&mut self) -> Result<Option<InnerVec<u8>>, u8> {
         let mut buf = self.ready.pop_front().expect("no more buffers");
 
         let n = self.file.read(&mut buf).map_err(|err| {
             eprintln!("Failed to read file: {}", err);
-            ReaderError
+            err.raw_os_error().unwrap_or(0) as u8
         })?;
 
         if n == 0 {

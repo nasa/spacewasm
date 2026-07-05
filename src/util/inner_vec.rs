@@ -110,8 +110,8 @@ mod tests {
 #[cfg(kani)]
 mod kani_proofs {
     use super::*;
-    use crate::util::alloc::Allocator;
-    use crate::util::static_alloc::kani_proofs::FixedSizeAllocator;
+    use crate::alloc::kani_support::FixedSizeAllocator;
+    use crate::alloc::Allocator;
     use core::alloc::Layout;
 
     // Helper to create a valid InnerVec with allocated memory

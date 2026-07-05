@@ -5,6 +5,7 @@ use crate::{
     Allocator, Chunk, CircularBuffer, GlobalAllocator, StaticVec, ValidationError, Vec, WasmStream,
 };
 
+
 /// Wasm encodes integers according to the LEB128 format, which specifies that
 /// only 7 bits of every byte are used to store the integer's bits. The 8th bit
 /// is always used as a bitflag for whether the next byte shall also be read as

@@ -4,9 +4,8 @@ use spacewasm::{
     AllocError, Allocator, CodeBuilder, CompilerOptions, ConstantExprError, ExportDesc,
     GlobalValue, GlobalValueError, HostFunction, HostGlobal, HostModule, InnerVec, Interpreter,
     InterpreterResult, InterpreterRunner, InterpreterState, Limit, Memory, MemoryError,
-    MemoryStatistics, Module, ModuleRef, ParseError, ReaderError, Ref, Stack, Store, TrapReason,
-    ValType, ValidationError, Value, WasmMemoryAllocator, WasmRef, WasmStream, global_allocator,
-    vec,
+    MemoryStatistics, Module, ModuleRef, ParseError, Ref, Stack, Store, TrapReason, ValType,
+    ValidationError, Value, WasmMemoryAllocator, WasmRef, WasmStream, global_allocator, vec,
 };
 use std::alloc::Layout;
 use std::cell::RefCell;
@@ -196,7 +195,7 @@ impl GlobalValue for StaticGlobal {
 }
 
 impl WasmStream for ByteStream {
-    fn read(&mut self) -> Result<Option<InnerVec<u8>>, ReaderError> {
+    fn read(&mut self) -> Result<Option<InnerVec<u8>>, u8> {
         if self.consumed {
             return Ok(None);
         }
@@ -276,7 +275,7 @@ impl TestContext {
         // Clone all modules into the new store
         for module in self.store.modules().iter() {
             let cloned_module = clone_module(module);
-            cloned.push_module(spacewasm::Box::new(cloned_module).unwrap());
+            cloned.push_module(cloned_module);
         }
 
         cloned
@@ -570,12 +569,12 @@ fn load_module(
     let (text, _final_page_offset) = ctx.code_builder.clone().finish().unwrap();
 
     // Initialize the module
-    ctx.with_state(|state| {
-        match state.initialize_module(spacewasm::Box::new(module).unwrap(), &text, usize::MAX) {
+    ctx.with_state(
+        |state| match state.initialize_module(module, &text, usize::MAX) {
             InterpreterResult::Finished => Ok(()),
             result => Err(ModuleLoadError::InitializeError(result)),
-        }
-    })
+        },
+    )
 }
 
 fn invoke_function(
@@ -842,7 +841,7 @@ impl TempDir {
         Ok(TempDir { path })
     }
 
-    fn path(&self) -> &std::path::Path {
+    fn path(&self) -> &Path {
         &self.path
     }
 }
