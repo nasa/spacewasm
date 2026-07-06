@@ -173,13 +173,6 @@ impl<T: ?Sized, A: Allocator + Clone> Clone for Rc<T, A> {
     }
 }
 
-impl<T: ?Sized> Rc<T> {
-    #[inline]
-    unsafe fn from_inner(ptr: NonNull<RcInner<T>>) -> Self {
-        unsafe { Self::from_inner_in(ptr, GlobalAllocator) }
-    }
-}
-
 impl<T: ?Sized, A: Allocator> Rc<T, A> {
     #[inline]
     fn is_unique(&self) -> bool {
