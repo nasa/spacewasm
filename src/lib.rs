@@ -85,8 +85,8 @@ impl core::ops::AddAssign for MemoryStatistics {
 
 #[cfg(any(test, kani))]
 pub mod test_support {
-    use crate::alloc::{AllocError, Allocator};
     use crate::MemoryStatistics;
+    use crate::alloc::{AllocError, Allocator};
     extern crate std;
     use std::alloc::Layout;
 
@@ -134,9 +134,9 @@ pub mod test_support {
 
 #[cfg(test)]
 mod tests {
-    use crate::test_support::RustSystemAllocator;
     use crate::MemoryStatistics;
     use crate::alloc::Allocator;
+    use crate::test_support::RustSystemAllocator;
     use core::alloc::Layout;
 
     static mut ALLOC_IMPL: RustSystemAllocator = RustSystemAllocator;
