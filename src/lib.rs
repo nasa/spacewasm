@@ -92,6 +92,7 @@ pub mod test_support {
 
     /// System allocator for tests
     /// Wraps std::alloc and tracks allocation statistics
+    #[derive(Clone, Copy)]
     pub struct RustSystemAllocator;
 
     // Track allocation statistics
