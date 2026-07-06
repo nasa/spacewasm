@@ -293,7 +293,10 @@ impl<T: ?Sized> RcInner<T> {
         // We want to abort on overflow instead of dropping the value.
         // Checking for overflow after the store instead of before
         // allows for slightly better code generation.
-        assert_ne!(count, 0);
+        // `strong` is widened to usize, but the backing field is u32, so the
+        // wraparound-to-zero we're detecting only happens in the `as u32`
+        // truncation above - check the truncated value, not `strong` itself.
+        assert_ne!(strong as u32, 0);
     }
 
     #[inline]
@@ -763,10 +766,11 @@ mod kani_proofs {
     /// Verify Rc::new_slice allocates correct layout and initializes all elements
     /// Tests slice-specific allocation path
     #[kani::proof]
+    #[kani::unwind(5)] // Limit loop unrolling (len <= 4)
     fn proof_rc_new_slice_allocation() {
         // Use small symbolic length for tractable verification
         let len: usize = kani::any();
-        kani::assume(len <= 8); // Keep small for verification tractability
+        kani::assume(len <= 4); // Keep small for verification tractability
 
         let rc = Rc::new_slice_in(RustSystemAllocator, len, |i| i as u32);
         kani::assume(rc.is_ok());
@@ -801,6 +805,7 @@ mod kani_proofs {
     /// Verify Rc slice drops all elements properly
     /// Ensures drop order and completeness
     #[kani::proof]
+    #[kani::unwind(5)] // Limit loop unrolling (len <= 4)
     fn proof_rc_slice_drop_elements() {
         // Use DropCounter to track drops
         static mut DROP_COUNT: u32 = 0;
@@ -880,44 +885,49 @@ mod kani_proofs {
         assert_eq!(ref2, ref3, "All derefs must point to same address");
     }
 
-    /// Verify Rc count never overflows with many clones
-    /// Tests the overflow check in RcInner::inc
+    /// Verify count increments correctly right up to the edge of overflow.
+    /// Directly seeds the private count field near `u32::MAX` instead of
+    /// looping from 1, since reaching that boundary by cloning one at a
+    /// time is infeasible to unwind (it would take billions of iterations).
     #[kani::proof]
-    fn proof_rc_no_count_overflow() {
+    fn proof_rc_count_increment_near_max() {
         let rc1 = Rc::new_in(RustSystemAllocator, 42u32);
         kani::assume(rc1.is_ok());
         let rc1 = rc1.unwrap();
 
-        // Simulate many clones (bounded for verification)
-        let num_clones: u32 = kani::any();
-        kani::assume(num_clones <= 100); // Keep tractable
+        let count: u32 = kani::any();
+        kani::assume(count >= u32::MAX - 2 && count < u32::MAX);
+        rc1.inner().count.set(count);
 
-        let mut clones = core::array::from_fn::<_, 100, _>(|_| None);
-
-        for i in 0..(num_clones as usize) {
-            clones[i] = Some(rc1.clone());
-            assert_eq!(
-                rc1.inner().count(),
-                (i + 2) as usize,
-                "Count must increment correctly"
-            );
-        }
-
-        // Verify final count
+        let rc2 = rc1.clone();
         assert_eq!(
             rc1.inner().count(),
-            (num_clones + 1) as usize,
-            "Final count must be correct"
+            (count + 1) as usize,
+            "Count must increment correctly up to the boundary"
         );
 
-        // Drop all clones
-        for clone in clones.iter_mut() {
-            if clone.is_some() {
-                clone.take();
-            }
-        }
+        // Prevent Drop from decrementing a count it never incremented for real
+        core::mem::forget(rc1);
+        core::mem::forget(rc2);
+    }
 
-        // Should be back to 1
-        assert_eq!(rc1.inner().count(), 1, "Count must be 1 after drops");
+    /// Verify that incrementing the count past `u32::MAX` aborts instead of
+    /// silently wrapping to 0 (which would cause a premature deallocation
+    /// while other `Rc`s are still alive).
+    #[kani::proof]
+    #[kani::should_panic]
+    fn proof_rc_count_overflow_aborts() {
+        let rc1 = Rc::new_in(RustSystemAllocator, 42u32);
+        kani::assume(rc1.is_ok());
+        let rc1 = rc1.unwrap();
+
+        rc1.inner().count.set(u32::MAX);
+        let rc2 = rc1.clone();
+
+        // The clone above is expected to abort before reaching here. If CBMC
+        // continues past the failed assertion anyway, prevent Drop from
+        // running on the corrupted (wrapped-to-0) count.
+        core::mem::forget(rc1);
+        core::mem::forget(rc2);
     }
 }
