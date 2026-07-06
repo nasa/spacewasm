@@ -281,7 +281,7 @@ mod tests {
     use super::*;
     extern crate std;
 
-    use crate::alloc::kani_support::KaniStubAllocator;
+    use crate::test_support::RustSystemAllocator;
 
     #[test]
     fn test_page_allocator_basic() {
@@ -360,12 +360,12 @@ mod kani_proofs {
     use super::*;
     extern crate std;
 
-    use crate::alloc::kani_support::KaniStubAllocator;
+    use crate::test_support::RustSystemAllocator;
 
     /// Verify Page::alloc pointer arithmetic safety and allocation correctness
     #[kani::proof]
     fn proof_page_allocation_safety() {
-        let backing_alloc = KaniStubAllocator;
+        let backing_alloc = RustSystemAllocator;
 
         // Allocate a page from backing allocator
         let page_size = 256;
@@ -480,7 +480,7 @@ mod kani_proofs {
     /// Verify Page::dealloc correctness and cache mechanism
     #[kani::proof]
     fn proof_page_deallocation_safety() {
-        let backing_alloc = KaniStubAllocator;
+        let backing_alloc = RustSystemAllocator;
 
         let page_size = 256;
         let page_layout = Layout::from_size_align(page_size, 128).unwrap();
@@ -572,16 +572,13 @@ mod kani_proofs {
     /// Verify PageAllocator orchestration with multiple pages
     #[kani::proof]
     fn proof_page_allocator_correctness() {
-        let backing_alloc = KaniStubAllocator;
+        let backing_alloc = RustSystemAllocator;
         let page_alloc = PageAllocator::<3>::new(&backing_alloc, 128);
 
         // Test zero-size allocation must fail
         let zero_layout = Layout::from_size_align(0, 1).unwrap();
         let result_zero = unsafe { page_alloc.alloc(zero_layout) };
-        assert!(
-            result_zero.is_err(),
-            "Zero-size allocation must fail"
-        );
+        assert!(result_zero.is_err(), "Zero-size allocation must fail");
 
         // Test allocation too large for page size must fail
         let huge_layout = Layout::from_size_align(200, 8).unwrap();
@@ -656,7 +653,7 @@ mod kani_proofs {
     /// Verify Drop frees all pages in correct order
     #[kani::proof]
     fn proof_drop_safety() {
-        let backing_alloc = KaniStubAllocator;
+        let backing_alloc = RustSystemAllocator;
 
         let initial_stats = backing_alloc.memory_statistics();
         assert_eq!(

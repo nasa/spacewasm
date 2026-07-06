@@ -28,31 +28,7 @@ impl From<AllocError> for u32 {
     }
 }
 
-#[derive(Debug, Default, Clone)]
-#[repr(C)]
-pub struct MemoryStatistics {
-    pub total_bytes: i32,
-    pub pad_bytes: i32,
-}
-
-/// Computes the delta between two different statistic samples
-impl core::ops::Sub for MemoryStatistics {
-    type Output = MemoryStatistics;
-
-    fn sub(self, rhs: Self) -> Self::Output {
-        MemoryStatistics {
-            total_bytes: self.total_bytes - rhs.total_bytes,
-            pad_bytes: self.pad_bytes - rhs.pad_bytes,
-        }
-    }
-}
-
-impl core::ops::AddAssign for MemoryStatistics {
-    fn add_assign(&mut self, rhs: Self) {
-        self.total_bytes += rhs.total_bytes;
-        self.pad_bytes += rhs.pad_bytes;
-    }
-}
+use crate::MemoryStatistics;
 
 unsafe extern "C" {
     /// Allocate a pointer on the heap (or wherever) given a size and alignment.
@@ -200,54 +176,6 @@ unsafe impl Allocator for GlobalAllocator {
 
     fn memory_statistics(&self) -> MemoryStatistics {
         unsafe { __spacewasm_memory_statistics() }
-    }
-}
-
-#[cfg(kani)]
-pub mod kani_support {
-    use super::*;
-    use core::cell::UnsafeCell;
-    extern crate std;
-
-    /// Stub allocator for Kani proofs
-    #[derive(Clone, Copy)]
-    pub struct KaniStubAllocator;
-
-    // Track allocation statistics
-    static mut TOTAL_ALLOCATED: i32 = 0;
-
-    unsafe impl Allocator for KaniStubAllocator {
-        unsafe fn alloc(&self, layout: Layout) -> Result<*mut u8, AllocError> {
-            if layout.size() == 0 {
-                Ok(core::ptr::null_mut())
-            } else {
-                let ptr = unsafe { std::alloc::alloc(layout) };
-                if !ptr.is_null() {
-                    unsafe {
-                        TOTAL_ALLOCATED += layout.size() as i32;
-                    }
-                }
-                Ok(ptr)
-            }
-        }
-
-        unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-            if ptr.is_null() {
-                return;
-            }
-
-            unsafe {
-                std::alloc::dealloc(ptr, layout);
-                TOTAL_ALLOCATED -= layout.size() as i32;
-            }
-        }
-
-        fn memory_statistics(&self) -> MemoryStatistics {
-            MemoryStatistics {
-                total_bytes: unsafe { TOTAL_ALLOCATED },
-                pad_bytes: 0,
-            }
-        }
     }
 }
 

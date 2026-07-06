@@ -375,7 +375,7 @@ impl<T, A: Allocator> Drop for IntoIter<T, A> {
 #[cfg(kani)]
 mod kani_proofs {
     use super::*;
-    use crate::alloc::kani_support::KaniStubAllocator;
+    use crate::test_support::RustSystemAllocator;
 
     #[kani::proof]
     #[kani::unwind(3)]
@@ -383,7 +383,7 @@ mod kani_proofs {
         let capacity: u32 = kani::any();
         kani::assume(capacity <= 2);
 
-        let vec: Vec<u32, _> = Vec::new_in(KaniStubAllocator, capacity).unwrap();
+        let vec: Vec<u32, _> = Vec::new_in(RustSystemAllocator, capacity).unwrap();
 
         assert_eq!(vec.capacity(), capacity as usize);
         assert_eq!(vec.len(), 0);
