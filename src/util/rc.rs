@@ -160,7 +160,7 @@ impl<T: ?Sized, A: Allocator + Clone> Clone for Rc<T, A> {
     /// ```
     /// use std::rc::Rc;
     ///
-    /// let five = Rc::new_in(RustSystemAllocator,5);
+    /// let five = Rc::new(5);
     ///
     /// let _ = Rc::clone(&five);
     /// ```
