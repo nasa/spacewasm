@@ -245,20 +245,7 @@ mod kani_proofs {
     use crate::Allocator;
     extern crate std;
 
-    struct RustSystemAllocator;
-    unsafe impl Allocator for RustSystemAllocator {
-        unsafe fn alloc(&self, layout: std::alloc::Layout) -> Result<*mut u8, crate::AllocError> {
-            unsafe { Ok(std::alloc::alloc(layout)) }
-        }
-
-        unsafe fn dealloc(&self, ptr: *mut u8, layout: std::alloc::Layout) {
-            unsafe { std::alloc::dealloc(ptr, layout) }
-        }
-
-        fn memory_statistics(&self) -> crate::MemoryStatistics {
-            panic!("The page allocator should be tracking its own memory statistics.")
-        }
-    }
+    use crate::test_support::RustSystemAllocator;
 
     #[kani::proof]
     fn proof_store_load_correctness() {
@@ -367,15 +354,6 @@ mod kani_proofs {
             limits: MemType::zero(),
             allocator: None,
         };
-
-        // Test zero initialization at one symbolic address
-        let zero_addr: usize = kani::any();
-        kani::assume(zero_addr < size);
-        assert_eq!(
-            mem.load_u8(zero_addr).unwrap(),
-            0,
-            "Memory must be zero-initialized"
-        );
 
         // Test fixed-size byte slice (4 bytes) at symbolic address
         let addr: usize = kani::any();

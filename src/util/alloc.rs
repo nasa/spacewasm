@@ -28,31 +28,7 @@ impl From<AllocError> for u32 {
     }
 }
 
-#[derive(Debug, Default, Clone)]
-#[repr(C)]
-pub struct MemoryStatistics {
-    pub total_bytes: i32,
-    pub pad_bytes: i32,
-}
-
-/// Computes the delta between two different statistic samples
-impl core::ops::Sub for MemoryStatistics {
-    type Output = MemoryStatistics;
-
-    fn sub(self, rhs: Self) -> Self::Output {
-        MemoryStatistics {
-            total_bytes: self.total_bytes - rhs.total_bytes,
-            pad_bytes: self.pad_bytes - rhs.pad_bytes,
-        }
-    }
-}
-
-impl core::ops::AddAssign for MemoryStatistics {
-    fn add_assign(&mut self, rhs: Self) {
-        self.total_bytes += rhs.total_bytes;
-        self.pad_bytes += rhs.pad_bytes;
-    }
-}
+use crate::MemoryStatistics;
 
 unsafe extern "C" {
     /// Allocate a pointer on the heap (or wherever) given a size and alignment.
@@ -200,74 +176,6 @@ unsafe impl Allocator for GlobalAllocator {
 
     fn memory_statistics(&self) -> MemoryStatistics {
         unsafe { __spacewasm_memory_statistics() }
-    }
-}
-
-#[cfg(kani)]
-pub mod kani_support {
-    use super::*;
-    use core::cell::UnsafeCell;
-
-    /// FixedSizeAllocator: Non-generic allocator wrapper for use in Kani proofs.
-    /// This avoids the need for concrete implementations of every size combination.
-    /// Uses a fixed-size buffer internally, which is large enough for most tests.
-    #[repr(align(128))]
-    pub struct FixedSizeAllocator<const SIZE: usize = 4096> {
-        inner: UnsafeCell<FixedSizeAllocatorInner<SIZE>>,
-    }
-
-    struct FixedSizeAllocatorInner<const SIZE: usize> {
-        data: [u8; SIZE],
-        allocated: usize,
-    }
-
-    impl<const SIZE: usize> FixedSizeAllocator<SIZE> {
-        pub const fn new() -> Self {
-            Self {
-                inner: UnsafeCell::new(FixedSizeAllocatorInner {
-                    data: [0; SIZE],
-                    allocated: 0,
-                }),
-            }
-        }
-    }
-
-    unsafe impl<const SIZE: usize> Allocator for FixedSizeAllocator<SIZE> {
-        unsafe fn alloc(&self, layout: Layout) -> Result<*mut u8, AllocError> {
-            unsafe {
-                let inner = &mut *self.inner.get();
-
-                if layout.align() > 128 {
-                    return Err(AllocError::AllocationFailed);
-                }
-
-                let mut start_address = inner.allocated;
-                if !start_address.is_multiple_of(layout.align()) {
-                    let alignment_offset = layout.align() - start_address % layout.align();
-                    start_address += alignment_offset;
-                }
-
-                let final_address = start_address + layout.size();
-                if final_address <= SIZE {
-                    inner.allocated = final_address;
-                    Ok(&raw mut inner.data[start_address])
-                } else {
-                    Err(AllocError::OutOfMemory)
-                }
-            }
-        }
-
-        unsafe fn dealloc(&self, _ptr: *mut u8, _layout: Layout) {
-            // Simple bump allocator - no deallocation tracking
-        }
-
-        fn memory_statistics(&self) -> MemoryStatistics {
-            let inner = unsafe { &*self.inner.get() };
-            MemoryStatistics {
-                total_bytes: inner.allocated as i32,
-                pad_bytes: 0,
-            }
-        }
     }
 }
 
