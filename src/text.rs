@@ -284,7 +284,7 @@ impl<const MAX_PAGES: usize> CodeBuilder<MAX_PAGES> {
             next = address + lt.jump();
 
             n += 1;
-            if n > 200 {
+            if n > 0xFFFF {
                 return Err(ValidationError::PossibleBackpatchCycle);
             }
         }
