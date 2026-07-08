@@ -1,0 +1,13 @@
+[package]
+name = "spacewasi"
+
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+
+[dependencies]
+spacewasm = { path = "../.." }
+spacewasm_util = { path = "../spacewasm_util" }
+futures = "0.3"
+wasi-common = { version = "28.0.1", default-features = false, features = ["sync"] }
+wiggle = "28.0.1"
