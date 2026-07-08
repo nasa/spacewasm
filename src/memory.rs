@@ -3,6 +3,7 @@ use crate::{AllocError, MemType};
 use core::alloc::Layout;
 use core::fmt::{Debug, Formatter};
 use core::ptr::NonNull;
+use core::slice;
 
 /// An allocator for allocating WASM pages
 pub trait WasmMemoryAllocator {
@@ -224,6 +225,10 @@ impl Memory {
 
     pub fn is_zero(&self) -> bool {
         self.ptr.is_null()
+    }
+
+    pub fn get_slice(&self) -> &[u8] {
+        unsafe { slice::from_raw_parts(self.ptr, self.size) }
     }
 }
 
