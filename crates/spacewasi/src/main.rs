@@ -1,7 +1,6 @@
 use spacewasm::{
-    CodeBuilder, CompilerOptions, ExportDesc,
-    InterpreterResult, InterpreterRunner, ModuleRef, PageAllocator, Ref,
-    WasmRef,
+    CodeBuilder, CompilerOptions, ExportDesc, InterpreterResult, InterpreterRunner, ModuleRef,
+    PageAllocator, Ref, WasmRef,
 };
 
 mod wasi_preview1;
@@ -59,7 +58,7 @@ fn main() {
     let args = Args::parse();
 
     let mut wasi_ctx_builder: WasiCtxBuilder = WasiCtxBuilder::new();
-    
+
     // set argv
     let _ = wasi_ctx_builder.arg(&args.argv0.unwrap_or(args.file.clone()));
     let _ = wasi_ctx_builder.args(&args.args);
@@ -78,7 +77,7 @@ fn main() {
     }
 
     wasi_ctx_builder.inherit_stdio();
-    
+
     for dir in args.dir {
         let mut host_dir = dir.clone();
         let mut guest_dir = dir.clone();
@@ -90,7 +89,6 @@ fn main() {
         }
         // println!("{host_dir} mapped to {guest_dir}");
 
-
         match Dir::open_ambient_dir(&host_dir, ambient_authority()) {
             Ok(opened_dir) => {
                 let _ = wasi_ctx_builder.preopened_dir(opened_dir, guest_dir);
@@ -100,7 +98,7 @@ fn main() {
             }
         }
     }
-    
+
     if args.cwd_is_root.unwrap_or(false) {
         match Dir::open_ambient_dir(".", ambient_authority()) {
             Ok(opened_dir) => {
@@ -114,7 +112,6 @@ fn main() {
 
     let preview1_module = make_wasi_preview1_module(wasi_ctx_builder.build());
 
-
     let mut code_builder = CodeBuilder::<MAX_PAGES>::default();
     let mut store = spacewasm::Store::new(1, [preview1_module]).unwrap();
 
@@ -122,16 +119,18 @@ fn main() {
     let mut file_stream = FileStream::new(file);
 
     let module = spacewasm::Module::new::<MAX_PAGES, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
-            "main",
-            &mut file_stream,
-            &mut store,
-            &mut code_builder,
-            spacewasm::Rc::new(RustSystemAllocator)
-                .unwrap()
-                .into_wasm_memory_allocator(),
-            CompilerOptions {allow_memory_grow: true},
-        )
-        .expect("failed to parse wasm module");
+        "main",
+        &mut file_stream,
+        &mut store,
+        &mut code_builder,
+        spacewasm::Rc::new(RustSystemAllocator)
+            .unwrap()
+            .into_wasm_memory_allocator(),
+        CompilerOptions {
+            allow_memory_grow: true,
+        },
+    )
+    .expect("failed to parse wasm module");
 
     let (text, _) = code_builder.finish().unwrap();
 
@@ -148,13 +147,25 @@ fn main() {
 
     let fi = {
         let f = module.exports.iter().find(|f| &f.name == "_start").unwrap();
-        let ExportDesc::Func(fi) = f.desc else {panic!()};
+        let ExportDesc::Func(fi) = f.desc else {
+            panic!()
+        };
         fi
     };
 
-    let Ref::Module(fi) = module.get_func_ref(fi).unwrap() else {panic!("error: the provided wasm module does not correctly export a _start function")};
+    let Ref::Module(fi) = module.get_func_ref(fi).unwrap() else {
+        panic!("error: the provided wasm module does not correctly export a _start function")
+    };
 
-    state.invoke(WasmRef {module: ModuleRef(0),index: fi,},&[]).unwrap();
+    state
+        .invoke(
+            WasmRef {
+                module: ModuleRef(0),
+                index: fi,
+            },
+            &[],
+        )
+        .unwrap();
 
     let interpreter = spacewasm::Interpreter::default();
 
