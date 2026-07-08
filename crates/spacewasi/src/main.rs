@@ -18,9 +18,9 @@ spacewasm::global_allocator!(
     PageAllocator::new(&RustSystemAllocator {}, 1024 * 1024 * 32)
 );
 
-const MAX_PAGES: usize = 1024 * 32;
-const MAX_CONTROL_FRAMES: usize = 512;
-const MAX_STACK_DEPTH: usize = 256;
+const MAX_PAGES: usize = 1024 * 64;
+const MAX_CONTROL_FRAMES: usize = 1024 * 4;
+const MAX_STACK_DEPTH: usize = 1024;
 const STACK_SIZE: usize = 1024 * 1024;
 
 /// Execute WASI-compatible WASM modules with spacewasm
@@ -88,7 +88,7 @@ fn main() {
             host_dir = split.next().unwrap_or("").to_owned();
             guest_dir = split.next().unwrap_or("").to_owned();
         }
-        println!("{host_dir} mapped to {guest_dir}");
+        // println!("{host_dir} mapped to {guest_dir}");
 
 
         match Dir::open_ambient_dir(&host_dir, ambient_authority()) {
