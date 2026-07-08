@@ -211,7 +211,7 @@ impl<'wasm> Reader<'wasm> {
                 BR_TABLE => {
                     // FIXME(tumbar) Is it possible to use an iterator and not require up-front allocation?
                     let lut = self
-                        .read_vec_stack::<256, LabelIdx>(LabelIdx::read)
+                        .read_vec_stack::<24700, LabelIdx>(LabelIdx::read)
                         .map_err(|e| match e {
                             ValidationError::VecTooLong => ValidationError::BrTableHasTooManyCases,
                             e => e,
