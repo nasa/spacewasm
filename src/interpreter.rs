@@ -1340,7 +1340,7 @@ impl<'store> IrVisitor for Interpreter<'store> {
             self.br_impl(
                 JumpOffset::offset(op_offset + 2 + (2 * v as i32)),
                 label,
-                state
+                state,
             )?;
         } else {
             // The default case, constant offset
