@@ -21,17 +21,18 @@ spacewasm::global_allocator!(
 const MAX_PAGES: usize = 1024 * 32;
 const MAX_CONTROL_FRAMES: usize = 512;
 const MAX_STACK_DEPTH: usize = 256;
+const STACK_SIZE: usize = 1024 * 1024;
 
 /// Execute WASI-compatible WASM modules with spacewasm
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args {
     /// Mount the current working directory as the root directory (/) in WASM
-    #[arg(short, long, value_name = "CWD_IS_ROOT", action = clap::ArgAction::SetTrue)]
+    #[arg(long, value_name = "CWD_IS_ROOT", action = clap::ArgAction::SetTrue)]
     cwd_is_root: Option<bool>,
 
     /// Override argv[0] value
-    #[arg(short, long, value_name = "ARGV0")]
+    #[arg(long, value_name = "ARGV0")]
     argv0: Option<String>,
 
     /// Mount directories
@@ -41,6 +42,10 @@ struct Args {
     /// Set environment variables
     #[arg(short, long, value_name = "KEY[=VALUE]")]
     env: Vec<String>,
+
+    /// Inherit all environment variables
+    #[arg(long, value_name = "INHERIT_ENV", action = clap::ArgAction::SetTrue)]
+    inherit_env: Option<bool>,
 
     /// Module filepath
     file: String,
@@ -60,9 +65,12 @@ fn main() {
     let _ = wasi_ctx_builder.args(&args.args);
 
     // set env
+    if args.inherit_env.unwrap_or(false) {
+        let _ = wasi_ctx_builder.inherit_env();
+    }
     for env in args.env {
         if env.contains("=") {
-            let mut split = env.splitn(1, "=");
+            let mut split = env.splitn(2, "=");
             let _ = wasi_ctx_builder.env(split.next().unwrap_or(""), split.next().unwrap_or(""));
         } else {
             let _ = wasi_ctx_builder.env(&env, &std::env::var(&env).unwrap_or("".to_owned()));
@@ -76,10 +84,12 @@ fn main() {
         let mut guest_dir = dir.clone();
 
         if dir.contains("::") {
-            let mut split = dir.splitn(1, "::");
+            let mut split = dir.splitn(2, "::");
             host_dir = split.next().unwrap_or("").to_owned();
             guest_dir = split.next().unwrap_or("").to_owned();
         }
+        println!("{host_dir} mapped to {guest_dir}");
+
 
         match Dir::open_ambient_dir(&host_dir, ambient_authority()) {
             Ok(opened_dir) => {
@@ -94,7 +104,7 @@ fn main() {
     if args.cwd_is_root.unwrap_or(false) {
         match Dir::open_ambient_dir(".", ambient_authority()) {
             Ok(opened_dir) => {
-                let _ = wasi_ctx_builder.preopened_dir(opened_dir, "");
+                let _ = wasi_ctx_builder.preopened_dir(opened_dir, "/");
             }
             Err(error) => {
                 panic!("error mounting cwd as root: {error}")
@@ -125,7 +135,7 @@ fn main() {
 
     let (text, _) = code_builder.finish().unwrap();
 
-    let mut state = store.allocate(1024).unwrap();
+    let mut state = store.allocate(STACK_SIZE).unwrap();
     match state.initialize_module(module, &text, usize::MAX) {
         InterpreterResult::Finished => {}
         InterpreterResult::OutOfFuel => panic!("insufficient fuel for initialization"),
@@ -142,7 +152,7 @@ fn main() {
         fi
     };
 
-    let Ref::Module(fi) = module.get_func_ref(fi).unwrap() else {panic!()};
+    let Ref::Module(fi) = module.get_func_ref(fi).unwrap() else {panic!("error: the provided wasm module does not correctly export a _start function")};
 
     state.invoke(WasmRef {module: ModuleRef(0),index: fi,},&[]).unwrap();
 
