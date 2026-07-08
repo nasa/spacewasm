@@ -158,10 +158,14 @@ fn main() {
 
     let interpreter = spacewasm::Interpreter::default();
 
+    // let _ = crossterm::terminal::enable_raw_mode();
+
     let mut result = InterpreterResult::OutOfFuel;
     while result == InterpreterResult::OutOfFuel {
         result = interpreter.run(&text, &mut state, usize::MAX)
     }
+
+    // let _ = crossterm::terminal::disable_raw_mode();
 
     let InterpreterResult::Finished = result else {
         panic!("interpreter failed: {:?}", result)

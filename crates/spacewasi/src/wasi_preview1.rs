@@ -233,6 +233,25 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
                 ControlFlow::Continue(Some(Value::I32(code as i32)))
             }}),
 
+            HostFunction::new("fd_fdstat_set_rights", "iII".into(), "i".into(), {
+                let wasi_ctx_fd_fdstat_set_rights = Rc::clone(&wasi_ctx_two);
+                move |state, args|{
+                let Some(Value::I32(a0)) = args.get(0) else {panic!("expected i32");};
+                let Some(Value::I64(a1)) = args.get(1) else {panic!("expected i64");};
+                let Some(Value::I64(a2)) = args.get(2) else {panic!("expected i64");};
+
+                eprintln!("fd_fdstat_set_rights({a0}, {a1}, {a2})");
+
+                let code = block_on(wasi_snapshot_preview1::fd_fdstat_set_rights(
+                    &mut *wasi_ctx_fd_fdstat_set_rights.borrow_mut(),
+                    &mut GuestMemory::Shared(unsafe {core::mem::transmute(state.memory.get_slice())}),
+                    *a0, *a1, *a2
+                )).unwrap();
+
+
+                ControlFlow::Continue(Some(Value::I32(code as i32)))
+            }}),
+
             HostFunction::new("fd_filestat_get", "ii".into(), "i".into(), {
                 let wasi_ctx_fd_filestat_get = Rc::clone(&wasi_ctx_two);
                 move |state, args|{
@@ -730,9 +749,7 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
                     *a0
                 )) {
                     Ok(_) => {
-
-                eprintln!("proc_exit({a0})");
-
+                        // eprintln!("proc_exit({a0})");
                     },
                     Err(_) => {
 
@@ -743,16 +760,17 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
                 std::process::exit(*a0);
             }}),
 
-            HostFunction::new("sched_yield", "".into(), "i".into(), {
-                let wasi_ctx_sched_yield = Rc::clone(&wasi_ctx_two);
-                move |state, _|{
+            HostFunction::new("proc_raise", "i".into(), "i".into(), {
+                let wasi_ctx_proc_raise = Rc::clone(&wasi_ctx_two);
+                move |state, args|{
+                let Some(Value::I32(a0)) = args.get(0) else {panic!("expected i32");};
 
-                // eprintln!("sched_yield())");
+                // eprintln!("proc_raise({a0}))");
 
-                let code = block_on(wasi_snapshot_preview1::sched_yield(
-                    &mut *wasi_ctx_sched_yield.borrow_mut(),
+                let code = block_on(wasi_snapshot_preview1::proc_raise(
+                    &mut *wasi_ctx_proc_raise.borrow_mut(),
                     &mut GuestMemory::Shared(unsafe {core::mem::transmute(state.memory.get_slice())}),
-                    
+                    *a0
                 )).unwrap();
 
 
@@ -775,6 +793,22 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
 
                 // eprintln!("\t\t{:?}", state.memory.get_slice().get((*a0 as usize)..((*a0 as usize) + (*a1 as usize))));
                 // eprintln!("\t-->{code}");
+
+                ControlFlow::Continue(Some(Value::I32(code as i32)))
+            }}),
+
+            HostFunction::new("sched_yield", "".into(), "i".into(), {
+                let wasi_ctx_sched_yield = Rc::clone(&wasi_ctx_two);
+                move |state, _|{
+
+                // eprintln!("sched_yield())");
+
+                let code = block_on(wasi_snapshot_preview1::sched_yield(
+                    &mut *wasi_ctx_sched_yield.borrow_mut(),
+                    &mut GuestMemory::Shared(unsafe {core::mem::transmute(state.memory.get_slice())}),
+                    
+                )).unwrap();
+
 
                 ControlFlow::Continue(Some(Value::I32(code as i32)))
             }}),
