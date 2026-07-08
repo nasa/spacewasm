@@ -110,12 +110,12 @@ mod tests {
 #[cfg(kani)]
 mod kani_proofs {
     use super::*;
-    use crate::util::alloc::Allocator;
-    use crate::util::static_alloc::kani_proofs::FixedSizeAllocator;
+    use crate::alloc::Allocator;
+    use crate::test_support::RustSystemAllocator;
     use core::alloc::Layout;
 
     // Helper to create a valid InnerVec with allocated memory
-    unsafe fn create_valid_inner_vec<T>(capacity: u32, alloc: &FixedSizeAllocator) -> InnerVec<T> {
+    unsafe fn create_valid_inner_vec<T>(capacity: u32, alloc: &RustSystemAllocator) -> InnerVec<T> {
         if capacity == 0 {
             return InnerVec::zero();
         }
@@ -131,7 +131,7 @@ mod kani_proofs {
     }
 
     // Helper to deallocate an InnerVec
-    unsafe fn dealloc_inner_vec<T>(vec: InnerVec<T>, alloc: &FixedSizeAllocator) {
+    unsafe fn dealloc_inner_vec<T>(vec: InnerVec<T>, alloc: &RustSystemAllocator) {
         if vec.capacity > 0 && !vec.ptr.is_null() {
             let layout = Layout::array::<T>(vec.capacity as usize).unwrap();
             unsafe { alloc.dealloc(vec.ptr as *mut u8, layout) };
@@ -156,7 +156,7 @@ mod kani_proofs {
     #[kani::proof]
     fn verify_len_invariants() {
         unsafe {
-            let alloc = FixedSizeAllocator::new();
+            let alloc = RustSystemAllocator;
             let capacity: u32 = kani::any();
             kani::assume(capacity > 0 && capacity <= 10);
 
@@ -206,7 +206,7 @@ mod kani_proofs {
     #[kani::proof]
     fn verify_pointer_arithmetic_in_bounds() {
         unsafe {
-            let alloc = FixedSizeAllocator::new();
+            let alloc = RustSystemAllocator;
             let capacity: u32 = kani::any();
             kani::assume(capacity > 0 && capacity <= 10);
 
@@ -257,7 +257,7 @@ mod kani_proofs {
     #[kani::proof]
     #[kani::unwind(4)] // Limit loop unrolling
     fn verify_push_pop_operations() {
-        let alloc = FixedSizeAllocator::new();
+        let alloc = RustSystemAllocator;
         let capacity: u32 = kani::any();
         kani::assume(capacity > 0 && capacity <= 3);
 
@@ -301,7 +301,7 @@ mod kani_proofs {
     #[kani::proof]
     #[kani::unwind(4)] // Limit loop unrolling
     fn verify_deref_only_initialized_region() {
-        let alloc = FixedSizeAllocator::new();
+        let alloc = RustSystemAllocator;
         let capacity: u32 = kani::any();
         kani::assume(capacity > 0 && capacity <= 3); // Reduced bound
 
@@ -337,7 +337,7 @@ mod kani_proofs {
         unsafe {
             let mut drop_count: u32 = 0; // Local counter
 
-            let alloc = FixedSizeAllocator::new();
+            let alloc = RustSystemAllocator;
             let mut vec = create_valid_inner_vec::<Droppable>(2, &alloc);
 
             // Push 2 droppable values (both share the same counter via raw pointer)

@@ -71,7 +71,7 @@ mod tests {
         };
 
         let mut state = store.allocate(1024).unwrap();
-        match state.initialize_module(crate::Box::new(module).unwrap(), &[], usize::MAX) {
+        match state.initialize_module(module, &[], usize::MAX) {
             InterpreterResult::Finished => {}
             InterpreterResult::OutOfFuel => panic!("insufficient fuel for initialization"),
             InterpreterResult::Trap(t) => panic!("trap during initialization {t:?}"),
