@@ -2,10 +2,6 @@ use core::ops::Deref;
 
 use crate::util::InnerVec;
 
-// FIXME(tumbar) Do we need context driven errors here or is there another
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ReaderError;
-
 pub struct Chunk(InnerVec<u8>);
 
 impl From<InnerVec<u8>> for Chunk {
@@ -37,7 +33,8 @@ impl Deref for Chunk {
 pub trait WasmStream {
     /// Read the next chunk of data from the data 'feeder'
     /// Returns Ok(None) when we are finished reading
-    fn read(&mut self) -> Result<Option<InnerVec<u8>>, ReaderError>;
+    /// Returns Err(code) to indicate an error code while reading this chunk
+    fn read(&mut self) -> Result<Option<InnerVec<u8>>, u8>;
 
     /// Returns a buffer back to the stream so that the memory may be reused.
     fn return_(&mut self, chunk: InnerVec<u8>);

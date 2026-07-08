@@ -8,9 +8,9 @@
 //!   spacewasm-trace --stdin [--limit N]
 
 use spacewasm::{
-    AllocError, Allocator, Box, CodeBuilder, CompilerOptions, ExportDesc, InnerVec, Interpreter,
-    InterpreterResult, InterpreterRunner, MemoryStatistics, Module, ModuleRef, ReaderError, Ref,
-    Store, WasmMemoryAllocator, WasmRef, WasmStream,
+    AllocError, Allocator, CodeBuilder, CompilerOptions, ExportDesc, InnerVec, Interpreter,
+    InterpreterResult, InterpreterRunner, MemoryStatistics, Module, ModuleRef, Ref, Store,
+    WasmMemoryAllocator, WasmRef, WasmStream,
 };
 use spacewasm::{ValType, Value};
 use spacewasm_util::StateTracer;
@@ -39,7 +39,7 @@ impl ByteStream {
 }
 
 impl WasmStream for ByteStream {
-    fn read(&mut self) -> Result<Option<InnerVec<u8>>, ReaderError> {
+    fn read(&mut self) -> Result<Option<InnerVec<u8>>, u8> {
         if self.consumed {
             return Ok(None);
         }
@@ -220,12 +220,10 @@ fn main() {
         process::exit(1);
     });
 
-    let module_box = Box::new(module).unwrap();
-
     // Initialize with instruction limit to prevent infinite loops in start functions
     // Catch panics (e.g., from strict-assertions) during initialization
     let init_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        state.initialize_module(module_box, &text, 10000)
+        state.initialize_module(module, &text, 10000)
     }));
 
     let init_result = match init_result {

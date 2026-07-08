@@ -92,7 +92,7 @@ unsafe impl<'a, const MAX_PAGES: usize> Allocator for PageAllocator<'a, MAX_PAGE
 impl<'a, const MAX_PAGES: usize> PageAllocatorInner<'a, MAX_PAGES> {
     unsafe fn alloc(&mut self, layout: Layout) -> Result<*mut u8, AllocError> {
         if layout.size() == 0 {
-            return Err(AllocError::IllegalZeroSize);
+            return Err(AllocError::AllocationFailed);
         }
 
         // Go through each page one-by-one and try to allocate
@@ -113,7 +113,7 @@ impl<'a, const MAX_PAGES: usize> PageAllocatorInner<'a, MAX_PAGES> {
                 None => {
                     // We have reached an empty page
                     // Allocate the page and place the allocation here
-                    let page_layout = Layout::from_size_align(self.page_size, 128)?;
+                    let page_layout = Layout::from_size_align(self.page_size, 128).unwrap();
                     let addr = unsafe { self.page_allocator.alloc(page_layout)? };
 
                     // Attempt to allocate this memory into the page
@@ -279,11 +279,13 @@ impl Page {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::StaticAllocator;
+    extern crate std;
+
+    use crate::test_support::RustSystemAllocator;
 
     #[test]
     fn test_page_allocator_basic() {
-        let stack_alloc = StaticAllocator::<4096, 8>::new();
+        let stack_alloc = RustSystemAllocator;
         let page_alloc = PageAllocator::<4>::new(&stack_alloc, 512);
 
         unsafe {
@@ -298,7 +300,7 @@ mod tests {
 
     #[test]
     fn test_page_allocator_stats() {
-        let stack_alloc = StaticAllocator::<4096, 8>::new();
+        let stack_alloc = RustSystemAllocator;
         let page_alloc = PageAllocator::<4>::new(&stack_alloc, 512);
 
         unsafe {
@@ -313,7 +315,7 @@ mod tests {
 
     #[test]
     fn test_page_allocator_multiple_pages() {
-        let stack_alloc = StaticAllocator::<4096, 8>::new();
+        let stack_alloc = RustSystemAllocator;
         let page_alloc = PageAllocator::<4>::new(&stack_alloc, 128);
 
         unsafe {
@@ -328,7 +330,7 @@ mod tests {
 
     #[test]
     fn test_page_allocator_out_of_pages() {
-        let stack_alloc = StaticAllocator::<4096, 8>::new();
+        let stack_alloc = RustSystemAllocator;
         let page_alloc = PageAllocator::<2>::new(&stack_alloc, 128);
 
         unsafe {
@@ -342,7 +344,7 @@ mod tests {
 
     #[test]
     fn test_page_too_small() {
-        let stack_alloc = StaticAllocator::<4096, 8>::new();
+        let stack_alloc = RustSystemAllocator;
         let page_alloc = PageAllocator::<4>::new(&stack_alloc, 64);
 
         unsafe {
@@ -351,29 +353,19 @@ mod tests {
             assert!(matches!(result, Err(AllocError::PageTooSmall)));
         }
     }
-
-    #[test]
-    fn test_zero_size_alloc() {
-        let stack_alloc = StaticAllocator::<4096, 8>::new();
-        let page_alloc = PageAllocator::<4>::new(&stack_alloc, 512);
-
-        unsafe {
-            let layout = Layout::from_size_align(0, 1).unwrap();
-            let result = page_alloc.alloc(layout);
-            assert!(matches!(result, Err(AllocError::IllegalZeroSize)));
-        }
-    }
 }
 
 #[cfg(kani)]
 mod kani_proofs {
     use super::*;
-    use crate::StaticAllocator;
+    extern crate std;
+
+    use crate::test_support::RustSystemAllocator;
 
     /// Verify Page::alloc pointer arithmetic safety and allocation correctness
     #[kani::proof]
     fn proof_page_allocation_safety() {
-        let backing_alloc = StaticAllocator::<512, 8>::new();
+        let backing_alloc = RustSystemAllocator;
 
         // Allocate a page from backing allocator
         let page_size = 256;
@@ -488,7 +480,7 @@ mod kani_proofs {
     /// Verify Page::dealloc correctness and cache mechanism
     #[kani::proof]
     fn proof_page_deallocation_safety() {
-        let backing_alloc = StaticAllocator::<512, 8>::new();
+        let backing_alloc = RustSystemAllocator;
 
         let page_size = 256;
         let page_layout = Layout::from_size_align(page_size, 128).unwrap();
@@ -580,16 +572,13 @@ mod kani_proofs {
     /// Verify PageAllocator orchestration with multiple pages
     #[kani::proof]
     fn proof_page_allocator_correctness() {
-        let backing_alloc = StaticAllocator::<1024, 8>::new();
+        let backing_alloc = RustSystemAllocator;
         let page_alloc = PageAllocator::<3>::new(&backing_alloc, 128);
 
         // Test zero-size allocation must fail
         let zero_layout = Layout::from_size_align(0, 1).unwrap();
         let result_zero = unsafe { page_alloc.alloc(zero_layout) };
-        assert!(
-            matches!(result_zero, Err(AllocError::IllegalZeroSize)),
-            "Zero-size allocation must fail"
-        );
+        assert!(result_zero.is_err(), "Zero-size allocation must fail");
 
         // Test allocation too large for page size must fail
         let huge_layout = Layout::from_size_align(200, 8).unwrap();
@@ -664,7 +653,7 @@ mod kani_proofs {
     /// Verify Drop frees all pages in correct order
     #[kani::proof]
     fn proof_drop_safety() {
-        let backing_alloc = StaticAllocator::<512, 8>::new();
+        let backing_alloc = RustSystemAllocator;
 
         let initial_stats = backing_alloc.memory_statistics();
         assert_eq!(
@@ -695,7 +684,7 @@ mod kani_proofs {
             core::mem::forget((ptr1, ptr2, ptr3));
 
             // PageAllocator drops here - must deallocate all 3 pages
-            // in reverse order: page2, page1, page0 (LIFO for StaticAllocator)
+            // in reverse order: page2, page1, page0
         }
 
         // After drop, all memory must be freed

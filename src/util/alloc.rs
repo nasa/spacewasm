@@ -1,50 +1,23 @@
-use core::alloc::{Layout, LayoutError};
+use core::{alloc::Layout, marker::PhantomData};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AllocError {
-    /// Not enough pages could be allocated to accommodate this allocation
-    OutOfMemory,
-
-    /// Zero sized allocations are undefined and disallowed
-    IllegalZeroSize,
-
-    /// Page was too small to fit this allocation
-    PageTooSmall,
-
-    /// A LayoutError occurred
-    InvalidLayout,
-
     /// A generic allocation failure
     AllocationFailed,
 
-    /// Stack-based heap allocations only support up 128-bit alignment
-    InvalidAlignment,
+    /// Not enough pages could be allocated to accommodate this allocation
+    OutOfMemory,
 
-    /// Stack-based heap allocation surpassed the supported nested allocation count
-    StackAllocationTooDeep,
-
-    /// Stack-based heap requires allocation and deallocation to occur in reverse order.
-    /// This rule is checked during deallocation. If it is not held, this error will be thrown.
-    /// This error is also raised when attempting to free a stack address when there are no more
-    /// allocations held by the StackAllocator
-    StackDeallocationInvariantViolation,
-
-    /// The allocator returned an unknown error code
-    Unknown,
+    /// Page was too small to fit this allocation
+    PageTooSmall,
 }
 
 impl From<u32> for AllocError {
     fn from(value: u32) -> Self {
         match value {
-            0 => AllocError::OutOfMemory,
-            1 => AllocError::IllegalZeroSize,
+            1 => AllocError::OutOfMemory,
             2 => AllocError::PageTooSmall,
-            3 => AllocError::InvalidLayout,
-            4 => AllocError::AllocationFailed,
-            5 => AllocError::InvalidAlignment,
-            6 => AllocError::StackAllocationTooDeep,
-            7 => AllocError::StackDeallocationInvariantViolation,
-            _ => AllocError::Unknown,
+            _ => AllocError::AllocationFailed,
         }
     }
 }
@@ -55,37 +28,7 @@ impl From<AllocError> for u32 {
     }
 }
 
-impl From<LayoutError> for AllocError {
-    fn from(_value: LayoutError) -> Self {
-        AllocError::InvalidLayout
-    }
-}
-
-#[derive(Debug, Default, Clone)]
-#[repr(C)]
-pub struct MemoryStatistics {
-    pub total_bytes: i32,
-    pub pad_bytes: i32,
-}
-
-/// Computes the delta between two different statistic samples
-impl core::ops::Sub for MemoryStatistics {
-    type Output = MemoryStatistics;
-
-    fn sub(self, rhs: Self) -> Self::Output {
-        MemoryStatistics {
-            total_bytes: self.total_bytes - rhs.total_bytes,
-            pad_bytes: self.pad_bytes - rhs.pad_bytes,
-        }
-    }
-}
-
-impl core::ops::AddAssign for MemoryStatistics {
-    fn add_assign(&mut self, rhs: Self) {
-        self.total_bytes += rhs.total_bytes;
-        self.pad_bytes += rhs.pad_bytes;
-    }
-}
+use crate::MemoryStatistics;
 
 unsafe extern "C" {
     /// Allocate a pointer on the heap (or wherever) given a size and alignment.
@@ -114,13 +57,7 @@ macro_rules! global_allocator {
             align: usize,
             err: *mut u32,
         ) -> *mut u8 {
-            let Ok(layout) = core::alloc::Layout::from_size_align(size, align) else {
-                unsafe {
-                    *err = $crate::AllocError::InvalidLayout.into();
-                }
-                return core::ptr::null_mut();
-            };
-
+            let layout = core::alloc::Layout::from_size_align(size, align).unwrap();
             match unsafe { $crate::Allocator::alloc(&*GLOBAL_ALLOCATOR, layout) } {
                 Ok(ptr) => ptr,
                 Err(alloc_err) => {
@@ -180,6 +117,45 @@ unsafe impl<T: Allocator> Allocator for &T {
     }
 }
 
+pub struct StaticAllocator<'a, const N: usize> {
+    data: *mut u8,
+    _phantom: PhantomData<&'a [u8; N]>,
+}
+
+impl<'a, const N: usize> StaticAllocator<'a, N> {
+    pub fn new(data: &'a mut [u8; N]) -> Self {
+        StaticAllocator {
+            data: data.as_mut_ptr(),
+            _phantom: PhantomData,
+        }
+    }
+
+    pub fn new_from_ptr(data: *mut u8) -> Self {
+        StaticAllocator {
+            data,
+            _phantom: PhantomData,
+        }
+    }
+}
+
+unsafe impl<'a, const N: usize> Allocator for StaticAllocator<'a, N> {
+    unsafe fn alloc(&self, layout: Layout) -> Result<*mut u8, AllocError> {
+        assert_eq!(layout.size(), N);
+        Ok(self.data)
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, _: Layout) {
+        assert_eq!(ptr, self.data)
+    }
+
+    fn memory_statistics(&self) -> MemoryStatistics {
+        MemoryStatistics {
+            total_bytes: 0,
+            pad_bytes: 0,
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 pub struct GlobalAllocator;
 unsafe impl Allocator for GlobalAllocator {
@@ -235,12 +211,5 @@ mod tests {
         s1 += s2;
         assert_eq!(s1.total_bytes, 150);
         assert_eq!(s1.pad_bytes, 25);
-    }
-
-    #[test]
-    fn test_alloc_error_from_layout_error() {
-        let layout_err = Layout::from_size_align(usize::MAX, 1).unwrap_err();
-        let alloc_err: AllocError = layout_err.into();
-        assert!(matches!(alloc_err, AllocError::InvalidLayout));
     }
 }

@@ -377,7 +377,7 @@ impl From<MemoryError> for InterpreterBreak {
         match e {
             MemoryError::OutOfBounds => InterpreterBreak::Trap(TrapReason::MemoryOutOfBounds),
             MemoryError::OutOfMemory => InterpreterBreak::Trap(TrapReason::OutOfMemory),
-            MemoryError::AllocError(_) => unreachable!(),
+            _ => unreachable!(),
         }
     }
 }

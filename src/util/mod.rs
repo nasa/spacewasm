@@ -10,9 +10,6 @@ pub use circular_buffer::*;
 mod paging;
 pub use paging::*;
 
-mod static_alloc;
-pub use static_alloc::*;
-
 mod inner_vec;
 pub use inner_vec::*;
 

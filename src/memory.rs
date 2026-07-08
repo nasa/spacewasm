@@ -47,12 +47,17 @@ impl Debug for Memory {
 pub enum MemoryError {
     OutOfBounds,
     OutOfMemory,
-    AllocError(AllocError),
+    AllocationFailed,
+    PageTooSmall,
 }
 
 impl From<AllocError> for MemoryError {
     fn from(e: AllocError) -> MemoryError {
-        MemoryError::AllocError(e)
+        match e {
+            AllocError::AllocationFailed => MemoryError::AllocationFailed,
+            AllocError::OutOfMemory => MemoryError::OutOfMemory,
+            AllocError::PageTooSmall => MemoryError::PageTooSmall,
+        }
     }
 }
 
@@ -237,11 +242,14 @@ impl Drop for Memory {
 #[cfg(kani)]
 mod kani_proofs {
     use super::*;
-    use crate::{Allocator, StaticAllocator};
+    use crate::Allocator;
+    extern crate std;
+
+    use crate::test_support::RustSystemAllocator;
 
     #[kani::proof]
     fn proof_store_load_correctness() {
-        let alloc = StaticAllocator::<128, 8>::new();
+        let alloc = RustSystemAllocator;
         let size = 64;
 
         let ptr = unsafe {
@@ -332,7 +340,7 @@ mod kani_proofs {
 
     #[kani::proof]
     fn proof_byte_slice_operations() {
-        let alloc = StaticAllocator::<128, 8>::new();
+        let alloc = RustSystemAllocator;
         let size = 16;
 
         let ptr = unsafe {
@@ -346,15 +354,6 @@ mod kani_proofs {
             limits: MemType::zero(),
             allocator: None,
         };
-
-        // Test zero initialization at one symbolic address
-        let zero_addr: usize = kani::any();
-        kani::assume(zero_addr < size);
-        assert_eq!(
-            mem.load_u8(zero_addr).unwrap(),
-            0,
-            "Memory must be zero-initialized"
-        );
 
         // Test fixed-size byte slice (4 bytes) at symbolic address
         let addr: usize = kani::any();

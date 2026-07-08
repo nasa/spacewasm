@@ -57,26 +57,88 @@ pub use stack::*;
 mod ir_reader;
 pub use ir_reader::*;
 
-#[cfg(test)]
-mod tests {
-    use crate::{AllocError, Allocator, MemoryStatistics};
+#[derive(Debug, Default, Clone)]
+#[repr(C)]
+pub struct MemoryStatistics {
+    pub total_bytes: i32,
+    pub pad_bytes: i32,
+}
+
+/// Computes the delta between two different statistic samples
+impl core::ops::Sub for MemoryStatistics {
+    type Output = MemoryStatistics;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        MemoryStatistics {
+            total_bytes: self.total_bytes - rhs.total_bytes,
+            pad_bytes: self.pad_bytes - rhs.pad_bytes,
+        }
+    }
+}
+
+impl core::ops::AddAssign for MemoryStatistics {
+    fn add_assign(&mut self, rhs: Self) {
+        self.total_bytes += rhs.total_bytes;
+        self.pad_bytes += rhs.pad_bytes;
+    }
+}
+
+#[cfg(any(test, kani))]
+pub mod test_support {
+    use crate::MemoryStatistics;
+    use crate::alloc::{AllocError, Allocator};
     extern crate std;
     use std::alloc::Layout;
 
-    struct RustSystemAllocator;
+    /// System allocator for tests
+    /// Wraps std::alloc and tracks allocation statistics
+    #[derive(Clone, Copy)]
+    pub struct RustSystemAllocator;
+
+    // Track allocation statistics
+    static mut TOTAL_ALLOCATED: i32 = 0;
+
     unsafe impl Allocator for RustSystemAllocator {
         unsafe fn alloc(&self, layout: Layout) -> Result<*mut u8, AllocError> {
-            unsafe { Ok(std::alloc::alloc(layout)) }
+            if layout.size() == 0 {
+                Ok(core::ptr::null_mut())
+            } else {
+                let ptr = unsafe { std::alloc::alloc(layout) };
+                if !ptr.is_null() {
+                    unsafe {
+                        TOTAL_ALLOCATED += layout.size() as i32;
+                    }
+                }
+                Ok(ptr)
+            }
         }
 
         unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-            unsafe { std::alloc::dealloc(ptr, layout) }
+            if ptr.is_null() {
+                return;
+            }
+
+            unsafe {
+                std::alloc::dealloc(ptr, layout);
+                TOTAL_ALLOCATED -= layout.size() as i32;
+            }
         }
 
         fn memory_statistics(&self) -> MemoryStatistics {
-            panic!("The page allocator should be tracking its own memory statistics.")
+            MemoryStatistics {
+                total_bytes: unsafe { TOTAL_ALLOCATED },
+                pad_bytes: 0,
+            }
         }
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::MemoryStatistics;
+    use crate::alloc::Allocator;
+    use crate::test_support::RustSystemAllocator;
+    use core::alloc::Layout;
 
     static mut ALLOC_IMPL: RustSystemAllocator = RustSystemAllocator;
     #[allow(unused_unsafe)]
@@ -87,12 +149,7 @@ mod tests {
         align: usize,
         err: *mut u32,
     ) -> *mut u8 {
-        let Ok(layout) = Layout::from_size_align(size, align) else {
-            unsafe {
-                *err = AllocError::InvalidLayout.into();
-            }
-            return core::ptr::null_mut();
-        };
+        let layout = Layout::from_size_align(size, align).unwrap();
 
         match unsafe { (*GLOBAL_ALLOCATOR).alloc(layout) } {
             Ok(ptr) => ptr,
