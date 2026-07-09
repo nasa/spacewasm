@@ -151,9 +151,9 @@ impl MemArg {
 }
 
 impl<'wasm> Reader<'wasm> {
-    /// This function will decode WASM instructions and pass them to
+    /// This function will decode Wasm instructions and pass them to
     /// the visitor to handle. This is the primary entrypoint for reading
-    /// WASM encoded code.
+    /// Wasm encoded code.
     pub fn read_code<S, E, V>(&mut self, visitor: &V, state: &mut S) -> Result<(), ValidationError>
     where
         V: WasmVisitor<State = S, Error = E>,

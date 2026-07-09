@@ -593,7 +593,7 @@ impl<'a, const MAX_PAGES: usize, const MAX_CONTROL_FRAMES: usize, const MAX_STAC
             .ok_or(ValidationError::GlobalIdxOutOfRange)?;
 
         match reference {
-            // This index is one of the WASM defined globals
+            // This index is one of the Wasm defined globals
             Ref::Module(idx) => {
                 let g = self
                     .module

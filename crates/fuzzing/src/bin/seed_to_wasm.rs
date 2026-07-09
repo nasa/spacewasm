@@ -1,7 +1,7 @@
-//! Convert fuzzer seed artifacts to WASM binaries.
+//! Convert fuzzer seed artifacts to Wasm binaries.
 //!
 //! Fuzzer artifacts are arbitrary byte streams that get passed through
-//! wasm-smith to generate valid WASM. This tool converts seeds to WASM
+//! wasm-smith to generate valid Wasm. This tool converts seeds to Wasm
 //! for analysis with other tools (disassemblers, trace utilities, etc.).
 //!
 //! Usage:
@@ -22,7 +22,7 @@ fn main() {
         eprintln!("Usage: {} <seed-file> [output.wasm]", args[0]);
         eprintln!("       {} <seed-file> --stdout", args[0]);
         eprintln!();
-        eprintln!("Convert fuzzer seed artifacts to WASM binaries.");
+        eprintln!("Convert fuzzer seed artifacts to Wasm binaries.");
         eprintln!();
         eprintln!("Examples:");
         eprintln!("  # Write to file");
@@ -45,12 +45,12 @@ fn main() {
         process::exit(1);
     });
 
-    // Generate WASM from seed
+    // Generate Wasm from seed
     let mut unstructured = Unstructured::new(&seed_bytes);
     let module = match NoTrapsModule::arbitrary(&mut unstructured) {
         Ok(m) => m,
         Err(e) => {
-            eprintln!("Failed to generate WASM from seed: {:?}", e);
+            eprintln!("Failed to generate Wasm from seed: {:?}", e);
             eprintln!("The seed may be too small or corrupted.");
             process::exit(1);
         }

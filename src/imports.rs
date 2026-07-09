@@ -7,7 +7,7 @@ pub struct HostRef {
     pub index: u16,
 }
 
-/// A reference to a WASM symbol in the store
+/// A reference to a Wasm symbol in the store
 #[derive(Debug, Clone, Copy)]
 pub struct WasmRef {
     pub module: ModuleRef,
@@ -241,7 +241,7 @@ impl Store {
                     if e.name == name {
                         // Make sure this is a memory
                         return if let ExportDesc::Table(table_i) = e.desc {
-                            // WASM 1.0 MVP only supports a single table
+                            // Wasm 1.0 MVP only supports a single table
                             if table_i.0 > 0 {
                                 return Err(ValidationError::InvalidTableIndex);
                             }
@@ -322,7 +322,7 @@ impl Store {
                     if e.name == name {
                         // Make sure this is a memory
                         return if let ExportDesc::Mem(mem_i) = e.desc {
-                            // WASM 1.0 MVP only supports a single memory
+                            // Wasm 1.0 MVP only supports a single memory
                             if mem_i.0 > 0 {
                                 return Err(ValidationError::InvalidMemIndex);
                             }
@@ -402,7 +402,7 @@ impl Import {
         // Look up this import given its name/module
         match desc {
             ImportDesc::Func(ty_idx) => {
-                // Look up the function type from the WASM module
+                // Look up the function type from the Wasm module
                 let ty = module
                     .types
                     .get(ty_idx.0 as usize)

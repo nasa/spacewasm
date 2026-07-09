@@ -58,7 +58,7 @@ impl Store {
         self.modules.push(module);
     }
 
-    /// Finish linking WASM modules and generate the next stage of store
+    /// Finish linking Wasm modules and generate the next stage of store
     pub fn allocate(&mut self, stack_size: usize) -> Result<InterpreterState<'_>, MemoryError> {
         Ok(InterpreterState {
             pc: JumpTarget::SENTINEL,

@@ -16,7 +16,7 @@ macro_rules! visit_fn {
     };
 }
 
-/// An abstraction over WASM IR and internal IR.
+/// An abstraction over Wasm IR and internal IR.
 /// This trait can be used to index, compile and execute either form of IR
 /// with the same common implementation. The decoding and traversal code will
 /// call into this visitor and is IR specific. This trait is purely for operating
@@ -209,8 +209,8 @@ pub trait BaseVisitor {
     visit_fn!(f64_promote_f32);
 }
 
-/// An abstraction over WASM Bytecode.
-/// Used to implement validation and compilation of WASM bytecode.
+/// An abstraction over Wasm Bytecode.
+/// Used to implement validation and compilation of Wasm bytecode.
 pub trait WasmVisitor: BaseVisitor {
     // Parametric instructions
     visit_fn!(drop);
@@ -273,14 +273,14 @@ impl HostModuleRef {
     }
 }
 
-/// A reference to a symbol in the WASM store relative to an implicit 'self' module
+/// A reference to a symbol in the Wasm store relative to an implicit 'self' module
 #[derive(Debug, Clone, Copy)]
 pub enum Ref {
-    /// A symbol in the current WASM module
+    /// A symbol in the current Wasm module
     Module(u16),
     /// A symbol in an external host module
     Host { module: HostModuleRef, index: u16 },
-    /// A symbol in another WASM module
+    /// A symbol in another Wasm module
     Extern { module: ModuleRef, index: u16 },
 }
 
