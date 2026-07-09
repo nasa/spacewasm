@@ -57,7 +57,7 @@ jobs:
           version: "10.0"
 
       - name: Install WASI SDK
-        uses: bytecodealliance/setup-wasi-sdk-action
+        uses: bytecodealliance/setup-wasi-sdk-action@b2de090b44eb70013ee96b393727d473b35e1728
 
       - name: Install WABT (WebAssembly Binary Toolkit)
         run: |
