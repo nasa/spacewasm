@@ -1043,7 +1043,7 @@ fn run_wast_command(
             text,
             ..
         } => {
-            // Skip text format tests as we only handle binary WASM
+            // Skip text format tests as we only handle binary Wasm
             if module_type != "text" {
                 let wasm_path = test_dir.join(&filename);
                 let wasm_bytes = std::fs::read(&wasm_path).unwrap();
@@ -1199,7 +1199,7 @@ pub fn run_wast_test_file(test_name: &str) {
         .to_string_lossy()
         .to_string();
 
-    // Run wast2json to generate WASM modules and JSON descriptor
+    // Run wast2json to generate Wasm modules and JSON descriptor
     let output = ProcessCommand::new("wast2json")
         .arg(&source_wast_path)
         .arg("-o")

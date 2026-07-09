@@ -1,6 +1,6 @@
-//! Execution tracer for WASM modules.
+//! Execution tracer for Wasm modules.
 //!
-//! Runs a WASM module and prints execution traces showing pc/sp/fp state
+//! Runs a Wasm module and prints execution traces showing pc/sp/fp state
 //! for each instruction.
 //!
 //! Usage:
@@ -147,10 +147,10 @@ fn main() {
         eprintln!("Usage: {} <file.wasm> [--limit N]", args[0]);
         eprintln!("       {} --stdin [--limit N]", args[0]);
         eprintln!();
-        eprintln!("Trace WASM module execution, printing pc/sp/fp for each instruction.");
+        eprintln!("Trace Wasm module execution, printing pc/sp/fp for each instruction.");
         eprintln!();
         eprintln!("Options:");
-        eprintln!("  --stdin       Read WASM from stdin instead of a file");
+        eprintln!("  --stdin       Read Wasm from stdin instead of a file");
         eprintln!("  --limit N     Show last N instructions (default: 200)");
         eprintln!();
         eprintln!("Examples:");
@@ -165,7 +165,7 @@ fn main() {
         process::exit(1);
     }
 
-    // Read WASM bytes
+    // Read Wasm bytes
     let wasm_bytes: Vec<u8> = if use_stdin {
         let mut buffer = Vec::new();
         io::stdin().read_to_end(&mut buffer).unwrap_or_else(|e| {
@@ -286,7 +286,7 @@ fn main() {
                             module: mod_ref,
                             index,
                         } => {
-                            // Function from another WASM module
+                            // Function from another Wasm module
                             let other_module = state.store.modules().get(mod_ref.0 as usize)?;
                             let func = other_module.functions.get(index as usize)?;
                             other_module.types.get(func.ty.0 as usize)?

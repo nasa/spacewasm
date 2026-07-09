@@ -2,7 +2,7 @@
 
 # Default target
 help:
-	@echo "SpaceWASM Fuzzing Targets"
+	@echo "SpaceWasm Fuzzing Targets"
 	@echo ""
 	@echo "Fuzzing:"
 	@echo "  make fuzz                          Run the no_traps fuzzer"
@@ -11,9 +11,9 @@ help:
 	@echo "Crash Analysis:"
 	@echo "  make trace CRASH=<file>            Convert seed + trace (release)"
 	@echo "  make trace-debug CRASH=<file>      Convert seed + trace (debug with ASAN)"
-	@echo "  make seed-to-wasm CRASH=<file>     Convert fuzzer seed to WASM"
-	@echo "  make trace-wasm WASM=<file>        Trace WASM file (release)"
-	@echo "  make trace-wasm-debug WASM=<file>  Trace WASM file (debug with ASAN)"
+	@echo "  make seed-to-wasm CRASH=<file>     Convert fuzzer seed to Wasm"
+	@echo "  make trace-wasm WASM=<file>        Trace Wasm file (release)"
+	@echo "  make trace-wasm-debug WASM=<file>  Trace Wasm file (debug with ASAN)"
 	@echo ""
 	@echo "Examples:"
 	@echo "  make trace CRASH=fuzz/artifacts/no_traps/crash-abc123"
@@ -31,29 +31,29 @@ fuzz:
 fuzz-validate:
 	cargo +nightly fuzz run validate
 
-# Convert seed to WASM and trace execution (release mode)
+# Convert seed to Wasm and trace execution (release mode)
 trace:
 	@if [ -z "$(CRASH)" ]; then \
 		echo "Error: CRASH variable required"; \
 		echo "Usage: make trace CRASH=fuzz/artifacts/no_traps/crash-xxx"; \
 		exit 1; \
 	fi
-	@echo "Converting seed to WASM and tracing execution (release mode)..."
+	@echo "Converting seed to Wasm and tracing execution (release mode)..."
 	@cargo run --release -p spacewasm-fuzzing --bin seed_to_wasm $(CRASH) --stdout 2>/dev/null | \
 		cargo run --release -p spacewasm_util --bin spacewasm-trace -- --stdin --limit $(or $(LIMIT),50)
 
-# Convert seed to WASM and trace execution (debug mode with ASAN)
+# Convert seed to Wasm and trace execution (debug mode with ASAN)
 trace-debug:
 	@if [ -z "$(CRASH)" ]; then \
 		echo "Error: CRASH variable required"; \
 		echo "Usage: make trace-debug CRASH=fuzz/artifacts/no_traps/crash-xxx"; \
 		exit 1; \
 	fi
-	@echo "Converting seed to WASM and tracing execution (debug mode with ASAN)..."
+	@echo "Converting seed to Wasm and tracing execution (debug mode with ASAN)..."
 	@cargo run -p spacewasm-fuzzing --bin seed_to_wasm $(CRASH) --stdout 2>/dev/null | \
 		RUSTFLAGS="-Zsanitizer=address" cargo +nightly run -p spacewasm_util --bin spacewasm-trace -- --stdin --limit $(or $(LIMIT),50)
 
-# Convert fuzzer seed to WASM
+# Convert fuzzer seed to Wasm
 seed-to-wasm:
 	@if [ -z "$(CRASH)" ]; then \
 		echo "Error: CRASH variable required"; \
@@ -66,7 +66,7 @@ seed-to-wasm:
 		cargo run --release -p spacewasm-fuzzing --bin seed_to_wasm -- $(CRASH) $(CRASH).wasm; \
 	fi
 
-# Trace WASM file execution (release mode)
+# Trace Wasm file execution (release mode)
 trace-wasm:
 	@if [ -z "$(WASM)" ]; then \
 		echo "Error: WASM variable required"; \
@@ -75,7 +75,7 @@ trace-wasm:
 	fi
 	cargo run --release -p spacewasm_util --bin spacewasm-trace -- $(WASM) --limit $(or $(LIMIT),200)
 
-# Trace WASM file execution (debug mode with ASAN)
+# Trace Wasm file execution (debug mode with ASAN)
 trace-wasm-debug:
 	@if [ -z "$(WASM)" ]; then \
 		echo "Error: WASM variable required"; \

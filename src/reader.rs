@@ -1,5 +1,5 @@
-/// WASM Reader
-/// This file implements some basic WASM reading capabilities such
+/// Wasm Reader
+/// This file implements some basic Wasm reading capabilities such
 /// as LEB128 (variable width integer encoding).
 use crate::{
     Allocator, Chunk, CircularBuffer, GlobalAllocator, StaticVec, ValidationError, Vec, WasmStream,
@@ -14,8 +14,8 @@ const CONTINUATION_BIT: u8 = 0b10000000;
 
 const INTEGER_BIT_FLAG: u8 = !CONTINUATION_BIT;
 
-/// A struct for managing and reading WASM bytecode
-/// Its purpose is to abstract parsing basic WASM values from the bytecode
+/// A struct for managing and reading Wasm bytecode
+/// Its purpose is to abstract parsing basic Wasm values from the bytecode
 /// and managing the chunks from a stream as they are read.
 ///
 /// This reader cannot backtrack. The code that calls into the reader must
@@ -29,12 +29,12 @@ pub struct Reader<'wasm> {
     /// We use this to feed the buffer
     next: Option<Chunk>,
 
-    /// A fixed size circular buffer meant to hold as much WASM data as it can.
-    /// WASM chunks may be of variable length, we may need to span multiple which is
+    /// A fixed size circular buffer meant to hold as much Wasm data as it can.
+    /// Wasm chunks may be of variable length, we may need to span multiple which is
     /// Data will be copied into this circular buffer and the processing will be done here.
     buffer: CircularBuffer<u8, 64>,
 
-    /// A counter keeping track of the total number of bytes we've processed in the WASM binary
+    /// A counter keeping track of the total number of bytes we've processed in the Wasm binary
     /// This is useful for generating error messages with an absolute location in the binary.
     full_offset: usize,
 }
@@ -150,7 +150,7 @@ impl<'wasm> Reader<'wasm> {
 
     /// Parses a variable-length `u32` as specified by [LEB128](https://en.wikipedia.org/wiki/LEB128#Unsigned_LEB128).
     /// Note: If `Err`, the [Reader] object is no longer guaranteed to be in a valid state
-    /// This implementation is heavily based off of DLR's WASM interpreter:
+    /// This implementation is heavily based off of DLR's Wasm interpreter:
     /// <https://github.com/DLR-FT/wasm-interpreter>
     pub fn read_u32(&mut self) -> Result<u32, ValidationError> {
         /// Because up to 5 bytes (each storing 7 bits) may be used to store 32 bits,
@@ -202,7 +202,7 @@ impl<'wasm> Reader<'wasm> {
         Ok(u64::from_le_bytes(bytes))
     }
 
-    /// This implementation is heavily based off of DLR's WASM interpreter:
+    /// This implementation is heavily based off of DLR's Wasm interpreter:
     /// <https://github.com/DLR-FT/wasm-interpreter>
     pub fn read_i32(&mut self) -> Result<i32, ValidationError> {
         /// Because up to 5 bytes (each storing 7 bits) may be used to store 32 bits,

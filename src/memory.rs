@@ -5,7 +5,7 @@ use core::fmt::{Debug, Formatter};
 use core::ptr::NonNull;
 use core::slice;
 
-/// An allocator for allocating WASM pages
+/// An allocator for allocating Wasm pages
 pub trait WasmMemoryAllocator {
     /// Allocate a new memory region for linear memory
     fn allocate(&self, layout: Layout) -> Result<NonNull<u8>, AllocError>;

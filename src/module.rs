@@ -38,7 +38,7 @@ pub struct Module {
 }
 
 pub trait CustomSectionHandler {
-    /// Called when we reach a custom section of the WASM binary.
+    /// Called when we reach a custom section of the Wasm binary.
     /// This reader must read _exactly_ [size] bytes out from the reader.
     /// If the reader does not follow this rule, a validation error will be triggered.
     fn custom_section(
@@ -497,7 +497,7 @@ impl Module {
     }
 }
 
-/// All WASM sections ordered by the order expected in the file
+/// All Wasm sections ordered by the order expected in the file
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub enum SectionKind {
     Custom,
