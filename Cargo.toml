@@ -9,7 +9,7 @@ edition = "2024"
 authors = ["Andrei Tumbar"]
 license = "Apache-2.0"
 repository = "https://github.com/nasa/spacewasm"
-rust-version = "1.85"
+rust-version = "1.87"
 
 [package]
 name = "spacewasm"
