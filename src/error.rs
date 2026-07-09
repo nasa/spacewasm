@@ -112,7 +112,6 @@ pub enum ValidationError {
     FunctionReturnsTooLarge,
     TooManyLocals,
     InvalidConstInstruction,
-    BrTableHasTooManyCases,
     GlobalTypeMismatch,
     AlignmentLargerThanType,
     InvalidStartFunctionSignature,

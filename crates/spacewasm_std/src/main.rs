@@ -191,7 +191,7 @@ fn main() {
     for i in &module.exports {
         match &i.desc {
             ExportDesc::Func(fi) => {
-                eprintln!("Function: {} {:?}", &i.name, fi);
+                eprintln!("Function: {} {:?}", i.name, fi);
             }
             ExportDesc::Table(_) => {}
             ExportDesc::Mem(_) => {}

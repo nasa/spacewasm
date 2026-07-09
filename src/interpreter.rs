@@ -1330,21 +1330,17 @@ impl<'store> IrVisitor for Interpreter<'store> {
         let v = state.stack.read_u32(state.sp);
         let label = cases(v);
 
-        // If the count is greater than 255, an extra word was read. We need to
-        // offset the jump by an additional word if this is the case.
+        // If the count is greater than 255, the br_table was encoded as a 16-bit extended immediate.
+        // We need to offset the jump by an additional word if this is the case.
         let op_offset = if n >= 0xFF { 2 } else { 1 };
 
         if v < n {
             // A standard case, compute the offset from the current PC
-            // Instruction opcode offset  + default case (2 words) + previous cases (each 2 words)
-            self.br_impl(
-                JumpOffset::offset(op_offset + 2 + (2 * v as i32)),
-                label,
-                state,
-            )?;
+            // Instruction opcode offset + previous cases (each 2 words)
+            self.br_impl(JumpOffset::offset(op_offset + (2 * v as i32)), label, state)?;
         } else {
-            // The default case, constant offset
-            self.br_impl(JumpOffset::offset(op_offset), label, state)?;
+            // The default case, all cases together
+            self.br_impl(JumpOffset::offset(op_offset + (2 * n as i32)), label, state)?;
         }
 
         Ok(())

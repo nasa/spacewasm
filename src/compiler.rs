@@ -185,22 +185,25 @@ impl<'a, const MAX_PAGES: usize, const MAX_CONTROL_FRAMES: usize, const MAX_STAC
         Ok(())
     }
 
-    fn br_table(
+    fn br_table_start(&self, len: u32, state: &mut Self::State) -> Result<(), Self::Error> {
+        let _ = state.pop_stack(ValType::I32)?;
+        state.instr_imm_8_or_16(BR_TABLE, len)?;
+        Ok(())
+    }
+
+    fn br_table_branch(&self, br: LabelIdx, state: &mut Self::State) -> Result<(), Self::Error> {
+        let case_return = state.write_label_target(br)?;
+        state.check_br_table_result(case_return)?;
+        Ok(())
+    }
+
+    fn br_table_finish(
         &self,
-        lut: &[LabelIdx],
         default_: LabelIdx,
         state: &mut Self::State,
     ) -> Result<(), Self::Error> {
-        let _ = state.pop_stack(ValType::I32)?;
-        state.instr_imm_8_or_16(BR_TABLE, lut.len() as u32)?;
         let def_result = state.write_label_target(default_)?;
-        for l in lut {
-            let case_return = state.write_label_target(*l)?;
-            if def_result != case_return {
-                return Err(ValidationError::BlockResultTypeMismatch);
-            }
-        }
-
+        state.check_and_clear_br_table_result(def_result)?;
         state.pop_result_type(def_result)?;
         state.mark_unreachable();
         Ok(())
