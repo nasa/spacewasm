@@ -323,7 +323,7 @@ dependencies = [
 
 [[package]]
 name = "spacewasm"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "libm",
  "serde",
@@ -345,7 +345,7 @@ dependencies = [
 
 [[package]]
 name = "spacewasm_std"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "spacewasm",
  "spacewasm_util",
@@ -353,7 +353,7 @@ dependencies = [
 
 [[package]]
 name = "spacewasm_util"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "spacewasm",
 ]

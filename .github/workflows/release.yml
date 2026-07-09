@@ -1,0 +1,65 @@
+name: Release
+
+# Publishes `spacewasm` to crates.io when a version tag is pushed.
+#
+# The version in Cargo.toml is a placeholder (0.0.0). This workflow reads the
+# real version from the git tag and injects it before publishing; the change is
+# never committed back.
+#
+# Release ritual:
+#   Just tag a commit and push:  git tag v0.2.0 && git push origin v0.2.0
+#   (or create a GitHub Release with tag v0.2.0). No manual version bump needed.
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+*"
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    name: Publish to crates.io
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Inject version from tag
+        run: |
+          tag_version="${GITHUB_REF_NAME#v}"
+          echo "Releasing version: $tag_version"
+          # Replace the 0.0.0 placeholder under [workspace.package] with the tag version.
+          sed -i 's/^version = "0\.0\.0"$/version = "'"$tag_version"'"/' Cargo.toml
+          # Fail if the placeholder was not found / not replaced.
+          crate_version=$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "spacewasm") | .version')
+          if [ "$crate_version" != "$tag_version" ]; then
+            echo "::error::Failed to inject version. Expected $tag_version but Cargo.toml resolves to $crate_version. Is the 0.0.0 placeholder still present?"
+            exit 1
+          fi
+
+      - name: Install WABT (WebAssembly Binary Toolkit)
+        run: |
+          WABT_VERSION=1.0.41
+          WABT_PLATFORM="linux-x64"
+          wget https://github.com/WebAssembly/wabt/releases/download/${WABT_VERSION}/wabt-${WABT_VERSION}-${WABT_PLATFORM}.tar.gz
+          tar -xzf wabt-${WABT_VERSION}-${WABT_PLATFORM}.tar.gz
+          sudo cp wabt-${WABT_VERSION}/bin/* /usr/local/bin/
+
+      - name: Run tests
+        run: cargo test --workspace --verbose
+
+      - name: Publish spacewasm to crates.io
+        # --allow-dirty: the injected version is an uncommitted working-tree change.
+        run: cargo publish -p spacewasm --allow-dirty
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
