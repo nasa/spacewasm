@@ -1,16 +1,16 @@
-# SpaceWASM IR Specification
+# SpaceWasm IR Specification
 
 This document describes the application binary interface (ABI) of the
-SpaceWASM intermediate format (IR). IR is the format that can be directly
+SpaceWasm intermediate format (IR). IR is the format that can be directly
 interpreted or compiled by a JIT and executed. IR differs from WASM bytecode
 as it strips away the structure of the instructions and resolves references
 and indexes.
 
 ## Overview
 
-The SpaceWASM IR uses fixed-width encodings to allow for fast execution and
-aligned storage and retrieval. SpaceWASM IR uses 16-bit words to encode instructions.
-Instructions may use 1-3 words depending on their operands. For this reason, SpaceWASM
+The SpaceWasm IR uses fixed-width encodings to allow for fast execution and
+aligned storage and retrieval. SpaceWasm IR uses 16-bit words to encode instructions.
+Instructions may use 1-3 words depending on their operands. For this reason, SpaceWasm
 instructions typically take more memory than their raw WASM counterparts.
 
 ## Instructions

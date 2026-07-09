@@ -2,7 +2,7 @@
 
 # Default target
 help:
-	@echo "SpaceWASM Fuzzing Targets"
+	@echo "SpaceWasm Fuzzing Targets"
 	@echo ""
 	@echo "Fuzzing:"
 	@echo "  make fuzz                          Run the no_traps fuzzer"

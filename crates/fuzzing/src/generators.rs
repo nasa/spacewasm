@@ -7,19 +7,19 @@
 use arbitrary::{Arbitrary, Result, Unstructured};
 use wasm_smith::Config as SmithConfig;
 
-/// Configuration for generating WebAssembly modules for SpaceWASM.
+/// Configuration for generating WebAssembly modules for SpaceWasm.
 ///
-/// This wraps wasm-smith's Config with SpaceWASM-specific constraints.
+/// This wraps wasm-smith's Config with SpaceWasm-specific constraints.
 #[derive(Debug, Clone)]
 pub struct ModuleConfig {
     config: SmithConfig,
 }
 
 impl ModuleConfig {
-    /// Create a new module configuration with SpaceWASM constraints.
+    /// Create a new module configuration with SpaceWasm constraints.
     pub fn new() -> Self {
         let config = SmithConfig {
-            // SpaceWASM constraints
+            // SpaceWasm constraints
             max_memories: 1,
             max_tables: 1,
             max_table_elements: 1000,
@@ -27,10 +27,10 @@ impl ModuleConfig {
             max_funcs: 50,
             min_exports: 0,
             max_exports: 10,
-            // Disable imports - SpaceWASM tests don't provide import environment
+            // Disable imports - SpaceWasm tests don't provide import environment
             min_imports: 0,
             max_imports: 0,
-            // Memory limits (SpaceWASM supports max 256 pages = 16MB)
+            // Memory limits (SpaceWasm supports max 256 pages = 16MB)
             memory_max_size_required: false,
             max_memory32_bytes: 65536 * 32,
             // WASM 1.0 MVP compliance - disable all post-MVP features

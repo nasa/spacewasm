@@ -1,6 +1,6 @@
-//! Fuzzing infrastructure for SpaceWASM.
+//! Fuzzing infrastructure for SpaceWasm.
 //!
-//! This crate provides test case generators and oracles for fuzzing SpaceWASM.
+//! This crate provides test case generators and oracles for fuzzing SpaceWasm.
 //! It is independent from the fuzzing engine (libfuzzer, AFL, etc.) and can be
 //! reused across different fuzzing frameworks.
 

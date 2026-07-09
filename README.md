@@ -1,9 +1,9 @@
-# SpaceWASM
+# SpaceWasm
 
 [![CI](https://github.com/nasa/spacewasm/actions/workflows/ci.yml/badge.svg)](https://github.com/nasa/spacewasm/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/nasa/spacewasm/branch/main/graph/badge.svg)](https://codecov.io/gh/nasa/spacewasm)
 
-SpaceWASM is an implementation of the [WASM 1.0](https://webassembly.github.io/spec/versions/core/WebAssembly-1.0.pdf)
+SpaceWasm is an implementation of the [WASM 1.0](https://webassembly.github.io/spec/versions/core/WebAssembly-1.0.pdf)
 specification meant to interpret WASM binary on-board spacecraft. This software comes with two major components:
 
 1. Decoder/Validator:
@@ -18,9 +18,9 @@ specification meant to interpret WASM binary on-board spacecraft. This software 
    A WASM interpreter that can operate on linear memory and interface with
    hooks from the [embedding](#embedding).
 
-SpaceWASM does not execute direct WebAssembly bytecode. Wasm bytecode is meant to be small and structured in a way to
+SpaceWasm does not execute direct WebAssembly bytecode. Wasm bytecode is meant to be small and structured in a way to
 validate easily. These properties however make it slow to execute in-place. During the decoding process of Wasm
-instructions, SpaceWASM converts bytecode into another intermediate representation (IR) which includes properties better
+instructions, SpaceWasm converts bytecode into another intermediate representation (IR) which includes properties better
 suited for interpretation. Read more about the IR in the [specification](src/SPEC.md).
 
 ## Embedding
@@ -31,7 +31,7 @@ time both for the WASM module and the embedder.
 
 ## Dynamic Allocation
 
-SpaceWASM has a unique dynamic memory allocation model. All of its design choices stem requirements levied by common
+SpaceWasm has a unique dynamic memory allocation model. All of its design choices stem requirements levied by common
 flight-software standards. Dynamic allocation follows the following rules:
 
 1. All allocations occur over a discrete number of fixed size blocks called _pages_.
@@ -41,7 +41,7 @@ flight-software standards. Dynamic allocation follows the following rules:
 5. Any allocation failures must _not_ result in panic.
 
 The standard Rust [allocation](https://doc.rust-lang.org/alloc/) does not meet these constraints even with custom
-allocators. To that end, SpaceWASM provides its own data structures that guarantee these properties. You will find these
+allocators. To that end, SpaceWasm provides its own data structures that guarantee these properties. You will find these
 data-structures contain the only usage of `unsafe` Rust semantics.
 
 ## Streaming
@@ -52,11 +52,11 @@ same regions of memory may be reused for different purposes. Flight software on 
 portions of memory for certain purposes. Therefore, requiring the entire WASM binary to fit into a single chunk of
 memory is not feasible.
 
-SpaceWASM is highly optimized to reduce peak memory usage and not require deallocation after allocation required for
+SpaceWasm is highly optimized to reduce peak memory usage and not require deallocation after allocation required for
 streaming. To this end there are certain [constraints](#interpreter-limitations) imposed on the WebAssembly
 specification.
 
-SpaceWASM supports decoding and compiling WASM binary in a single pass via a streaming mechanism. Chunks of the WASM
+SpaceWasm supports decoding and compiling WASM binary in a single pass via a streaming mechanism. Chunks of the WASM
 binary may be provided to the interpreter as they are read/requested from the filesystem. The stream must provide chunks
 synchronously.
 
@@ -97,7 +97,7 @@ maintaining compatibility with most standard WebAssembly modules.
 
 ## Benchmarking
 
-SpaceWASM is tested against the Coremark benchmark to trace performance regression.
+SpaceWasm is tested against the Coremark benchmark to trace performance regression.
 See [coremark](crates/spacewasm_std/benches)
 for more information.
 
@@ -109,7 +109,7 @@ for more information.
 cargo test
 ```
 
-The unit tests check for regressions on the `unsafe` container abstractions provided by SpaceWASM due to unique `alloc`
+The unit tests check for regressions on the `unsafe` container abstractions provided by SpaceWasm due to unique `alloc`
 usage. There are also simple unit tests that cover all WASM instructions without needing full WAST execution.
 
 The integration tests are spectests from the WASM 1.0 MVP suite
@@ -119,7 +119,7 @@ the specification.
 
 ### Fuzzing
 
-SpaceWASM includes a comprehensive fuzzing infrastructure using libfuzzer
+SpaceWasm includes a comprehensive fuzzing infrastructure using libfuzzer
 and [wasm-smith](https://github.com/bytecodealliance/wasm-tools/tree/main/crates/wasm-smith).
 
 ```bash
@@ -132,7 +132,7 @@ make trace CRASH=fuzz/artifacts/no_traps/crash-xxx
 
 ## Proposals
 
-Currently SpaceWASM implements exactly WebAssembly 1.0 which is:
+Currently SpaceWasm implements exactly WebAssembly 1.0 which is:
 
 - WASM MVP
 - Mutable Globals
