@@ -7,8 +7,10 @@ then
 fi
 
 if [ "$#" -ne 2 ]; then
-    echo "usage: $0 input.wasm output.wasm"
-    exit 1
+    if [ "$#" -ne 1 ]; then
+        echo "usage: $0 input.wasm [output.wasm]"
+        exit 1
+    fi
 fi
 
 wasm-opt \
@@ -19,6 +21,6 @@ wasm-opt \
     --disable-multivalue \
     --disable-simd \
     $1 \
-    -o $2
+    -o ${2:-$1}
 
 exit $?
