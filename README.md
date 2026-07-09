@@ -85,7 +85,6 @@ resource-constrained spacecraft environments:
 - **Value stack**: Configurable via generic parameter `MAX_STACK_DEPTH`, values per function
 - **Label jumps**: 22-bit signed offset (±2,097,151 instructions)
 - **Stack truncation depth**: Maximum 255 32-bit words per label jump
-- **br_table cases**: Maximum 256 branch targets
 
 ### Instruction Encoding
 

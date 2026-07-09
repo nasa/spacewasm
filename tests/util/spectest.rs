@@ -762,7 +762,6 @@ fn check_decode_error(err: ParseError, text: String) {
         (ValidationError::FunctionResultTypeMismatch, "type mismatch") => {}
         (ValidationError::FunctionIdxOutOfRange, "unknown function") => {}
         (ValidationError::FunctionReturnsTooLarge, "invalid result arity") => {}
-        (ValidationError::BrTableHasTooManyCases, "br.table has too many cases") => {}
         (ValidationError::TableNotDefined, "unknown table") => {}
         (ValidationError::InvalidTableIndex, "malformed value type") => {}
         (ValidationError::InvalidLabelIndex, "unexpected end of section or function") => {}

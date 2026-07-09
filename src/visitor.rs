@@ -224,7 +224,9 @@ pub trait WasmVisitor: BaseVisitor {
     visit_fn!(else_);
     visit_fn!(br, l: LabelIdx);
     visit_fn!(br_if, l: LabelIdx);
-    visit_fn!(br_table, lut: &[LabelIdx], default_: LabelIdx);
+    visit_fn!(br_table_start, len: u32);
+    visit_fn!(br_table_branch, br: LabelIdx);
+    visit_fn!(br_table_finish, default_: LabelIdx);
 
     visit_fn!(return_);
     visit_fn!(call, x: FuncIdx);
