@@ -3,6 +3,7 @@ name = "spacewasm_util"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
+publish = false
 
 [dependencies]
 spacewasm = { path = "../..", features = ["strict-assertions"] }
