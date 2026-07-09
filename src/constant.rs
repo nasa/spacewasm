@@ -275,7 +275,9 @@ impl<'a> WasmVisitor for ConstantCompiler<'a> {
     invalid_constant_fn!(else_);
     invalid_constant_fn!(br, l: LabelIdx);
     invalid_constant_fn!(br_if, l: LabelIdx);
-    invalid_constant_fn!(br_table, lut: &[LabelIdx], default_: LabelIdx);
+    invalid_constant_fn!(br_table_start, len: u32);
+    invalid_constant_fn!(br_table_branch, br: LabelIdx);
+    invalid_constant_fn!(br_table_finish, default_: LabelIdx);
 
     invalid_constant_fn!(return_);
     invalid_constant_fn!(call, x: FuncIdx);
