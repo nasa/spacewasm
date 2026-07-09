@@ -16,7 +16,7 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
             HostFunction::new("args_get", "ii".into(), "i".into(), {
                 let wasi_ctx_args_get = Rc::clone(&wasi_ctx_two);
                 move |state, args| {
-                    let Some(Value::I32(a0)) = args.get(0) else {
+                    let Some(Value::I32(a0)) = args.first() else {
                         panic!("expected i32");
                     };
                     let Some(Value::I32(a1)) = args.get(1) else {
@@ -45,7 +45,7 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
             HostFunction::new("args_sizes_get", "ii".into(), "i".into(), {
                 let wasi_ctx_args_sizes_get = Rc::clone(&wasi_ctx_two);
                 move |state, args| {
-                    let Some(Value::I32(a0)) = args.get(0) else {
+                    let Some(Value::I32(a0)) = args.first() else {
                         panic!("expected i32");
                     };
                     let Some(Value::I32(a1)) = args.get(1) else {
@@ -72,7 +72,7 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
             HostFunction::new("environ_get", "ii".into(), "i".into(), {
                 let wasi_ctx_environ_get = Rc::clone(&wasi_ctx_two);
                 move |state, args| {
-                    let Some(Value::I32(a0)) = args.get(0) else {
+                    let Some(Value::I32(a0)) = args.first() else {
                         panic!("expected i32");
                     };
                     let Some(Value::I32(a1)) = args.get(1) else {
@@ -99,7 +99,7 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
             HostFunction::new("environ_sizes_get", "ii".into(), "i".into(), {
                 let wasi_ctx_environ_sizes_get = Rc::clone(&wasi_ctx_two);
                 move |state, args| {
-                    let Some(Value::I32(a0)) = args.get(0) else {
+                    let Some(Value::I32(a0)) = args.first() else {
                         panic!("expected i32");
                     };
                     let Some(Value::I32(a1)) = args.get(1) else {
@@ -126,7 +126,7 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
             HostFunction::new("clock_res_get", "ii".into(), "i".into(), {
                 let wasi_ctx_clock_res_get = Rc::clone(&wasi_ctx_two);
                 move |state, args| {
-                    let Some(Value::I32(a0)) = args.get(0) else {
+                    let Some(Value::I32(a0)) = args.first() else {
                         panic!("expected i32");
                     };
                     let Some(Value::I32(a1)) = args.get(1) else {
@@ -153,7 +153,7 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
             HostFunction::new("clock_time_get", "iIi".into(), "i".into(), {
                 let wasi_ctx_clock_time_get = Rc::clone(&wasi_ctx_two);
                 move |state, args| {
-                    let Some(Value::I32(a0)) = args.get(0) else {
+                    let Some(Value::I32(a0)) = args.first() else {
                         panic!("expected i32");
                     };
                     let Some(Value::I64(a1)) = args.get(1) else {
@@ -184,7 +184,7 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
             HostFunction::new("fd_advise", "iIIi".into(), "i".into(), {
                 let wasi_ctx_fd_advise = Rc::clone(&wasi_ctx_two);
                 move |state, args| {
-                    let Some(Value::I32(a0)) = args.get(0) else {
+                    let Some(Value::I32(a0)) = args.first() else {
                         panic!("expected i32");
                     };
                     let Some(Value::I64(a1)) = args.get(1) else {
@@ -219,7 +219,7 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
             HostFunction::new("fd_allocate", "iII".into(), "i".into(), {
                 let wasi_ctx_fd_allocate = Rc::clone(&wasi_ctx_two);
                 move |state, args| {
-                    let Some(Value::I32(a0)) = args.get(0) else {
+                    let Some(Value::I32(a0)) = args.first() else {
                         panic!("expected i32");
                     };
                     let Some(Value::I64(a1)) = args.get(1) else {
@@ -250,7 +250,7 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
             HostFunction::new("fd_close", "i".into(), "i".into(), {
                 let wasi_ctx_fd_close = Rc::clone(&wasi_ctx_two);
                 move |state, args| {
-                    let Some(Value::I32(a0)) = args.get(0) else {
+                    let Some(Value::I32(a0)) = args.first() else {
                         panic!("expected i32");
                     };
 
@@ -273,7 +273,7 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
             HostFunction::new("fd_datasync", "i".into(), "i".into(), {
                 let wasi_ctx_fd_datasync = Rc::clone(&wasi_ctx_two);
                 move |state, args| {
-                    let Some(Value::I32(a0)) = args.get(0) else {
+                    let Some(Value::I32(a0)) = args.first() else {
                         panic!("expected i32");
                     };
 
@@ -296,7 +296,7 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
             HostFunction::new("fd_fdstat_get", "ii".into(), "i".into(), {
                 let wasi_ctx_fd_fdstat_get = Rc::clone(&wasi_ctx_two);
                 move |state, args| {
-                    let Some(Value::I32(a0)) = args.get(0) else {
+                    let Some(Value::I32(a0)) = args.first() else {
                         panic!("expected i32");
                     };
                     let Some(Value::I32(a1)) = args.get(1) else {
@@ -323,7 +323,7 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
             HostFunction::new("fd_fdstat_set_flags", "ii".into(), "i".into(), {
                 let wasi_ctx_fd_fdstat_set_flags = Rc::clone(&wasi_ctx_two);
                 move |state, args| {
-                    let Some(Value::I32(a0)) = args.get(0) else {
+                    let Some(Value::I32(a0)) = args.first() else {
                         panic!("expected i32");
                     };
                     let Some(Value::I32(a1)) = args.get(1) else {
@@ -350,7 +350,7 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
             HostFunction::new("fd_fdstat_set_rights", "iII".into(), "i".into(), {
                 let wasi_ctx_fd_fdstat_set_rights = Rc::clone(&wasi_ctx_two);
                 move |state, args| {
-                    let Some(Value::I32(a0)) = args.get(0) else {
+                    let Some(Value::I32(a0)) = args.first() else {
                         panic!("expected i32");
                     };
                     let Some(Value::I64(a1)) = args.get(1) else {
@@ -381,7 +381,7 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
             HostFunction::new("fd_filestat_get", "ii".into(), "i".into(), {
                 let wasi_ctx_fd_filestat_get = Rc::clone(&wasi_ctx_two);
                 move |state, args| {
-                    let Some(Value::I32(a0)) = args.get(0) else {
+                    let Some(Value::I32(a0)) = args.first() else {
                         panic!("expected i32");
                     };
                     let Some(Value::I32(a1)) = args.get(1) else {
@@ -408,7 +408,7 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
             HostFunction::new("fd_filestat_set_size", "iI".into(), "i".into(), {
                 let wasi_ctx_fd_filestat_set_size = Rc::clone(&wasi_ctx_two);
                 move |state, args| {
-                    let Some(Value::I32(a0)) = args.get(0) else {
+                    let Some(Value::I32(a0)) = args.first() else {
                         panic!("expected i32");
                     };
                     let Some(Value::I64(a1)) = args.get(1) else {
@@ -435,7 +435,7 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
             HostFunction::new("fd_filestat_set_times", "iIIi".into(), "i".into(), {
                 let wasi_ctx_fd_filestat_set_times = Rc::clone(&wasi_ctx_two);
                 move |state, args| {
-                    let Some(Value::I32(a0)) = args.get(0) else {
+                    let Some(Value::I32(a0)) = args.first() else {
                         panic!("expected i32");
                     };
                     let Some(Value::I64(a1)) = args.get(1) else {
@@ -470,7 +470,7 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
             HostFunction::new("fd_pread", "iiiIi".into(), "i".into(), {
                 let wasi_ctx_fd_pread = Rc::clone(&wasi_ctx_two);
                 move |state, args| {
-                    let Some(Value::I32(a0)) = args.get(0) else {
+                    let Some(Value::I32(a0)) = args.first() else {
                         panic!("expected i32");
                     };
                     let Some(Value::I32(a1)) = args.get(1) else {
@@ -509,7 +509,7 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
             HostFunction::new("fd_prestat_get", "ii".into(), "i".into(), {
                 let wasi_ctx_fd_prestat_get = Rc::clone(&wasi_ctx_two);
                 move |state, args| {
-                    let Some(Value::I32(a0)) = args.get(0) else {
+                    let Some(Value::I32(a0)) = args.first() else {
                         panic!("expected i32");
                     };
                     let Some(Value::I32(a1)) = args.get(1) else {
@@ -537,7 +537,7 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
             HostFunction::new("fd_prestat_dir_name", "iii".into(), "i".into(), {
                 let wasi_ctx_fd_prestat_dir_name = Rc::clone(&wasi_ctx_two);
                 move |state, args| {
-                    let Some(Value::I32(a0)) = args.get(0) else {
+                    let Some(Value::I32(a0)) = args.first() else {
                         panic!("expected i32");
                     };
                     let Some(Value::I32(a1)) = args.get(1) else {
@@ -570,7 +570,7 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
             HostFunction::new("fd_pwrite", "iiiIi".into(), "i".into(), {
                 let wasi_ctx_fd_pwrite = Rc::clone(&wasi_ctx_two);
                 move |state, args| {
-                    let Some(Value::I32(a0)) = args.get(0) else {
+                    let Some(Value::I32(a0)) = args.first() else {
                         panic!("expected i32");
                     };
                     let Some(Value::I32(a1)) = args.get(1) else {
@@ -609,7 +609,7 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
             HostFunction::new("fd_read", "iiii".into(), "i".into(), {
                 let wasi_ctx_fd_read = Rc::clone(&wasi_ctx_two);
                 move |state, args| {
-                    let Some(Value::I32(a0)) = args.get(0) else {
+                    let Some(Value::I32(a0)) = args.first() else {
                         panic!("expected i32");
                     };
                     let Some(Value::I32(a1)) = args.get(1) else {
@@ -644,7 +644,7 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
             HostFunction::new("fd_readdir", "iiiIi".into(), "i".into(), {
                 let wasi_ctx_fd_readdir = Rc::clone(&wasi_ctx_two);
                 move |state, args| {
-                    let Some(Value::I32(a0)) = args.get(0) else {
+                    let Some(Value::I32(a0)) = args.first() else {
                         panic!("expected i32");
                     };
                     let Some(Value::I32(a1)) = args.get(1) else {
@@ -683,7 +683,7 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
             HostFunction::new("fd_seek", "iIii".into(), "i".into(), {
                 let wasi_ctx_fd_seek = Rc::clone(&wasi_ctx_two);
                 move |state, args| {
-                    let Some(Value::I32(a0)) = args.get(0) else {
+                    let Some(Value::I32(a0)) = args.first() else {
                         panic!("expected i32");
                     };
                     let Some(Value::I64(a1)) = args.get(1) else {
@@ -718,7 +718,7 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
             HostFunction::new("fd_sync", "i".into(), "i".into(), {
                 let wasi_ctx_fd_sync = Rc::clone(&wasi_ctx_two);
                 move |state, args| {
-                    let Some(Value::I32(a0)) = args.get(0) else {
+                    let Some(Value::I32(a0)) = args.first() else {
                         panic!("expected i32");
                     };
 
@@ -741,7 +741,7 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
             HostFunction::new("fd_tell", "ii".into(), "i".into(), {
                 let wasi_ctx_fd_tell = Rc::clone(&wasi_ctx_two);
                 move |state, args| {
-                    let Some(Value::I32(a0)) = args.get(0) else {
+                    let Some(Value::I32(a0)) = args.first() else {
                         panic!("expected i32");
                     };
                     let Some(Value::I32(a1)) = args.get(1) else {
@@ -768,7 +768,7 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
             HostFunction::new("fd_write", "iiii".into(), "i".into(), {
                 let wasi_ctx_fd_write = Rc::clone(&wasi_ctx_two);
                 move |state, args| {
-                    let Some(Value::I32(a0)) = args.get(0) else {
+                    let Some(Value::I32(a0)) = args.first() else {
                         panic!("expected i32");
                     };
                     let Some(Value::I32(a1)) = args.get(1) else {
@@ -803,7 +803,7 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
             HostFunction::new("path_create_directory", "iii".into(), "i".into(), {
                 let wasi_ctx_path_create_directory = Rc::clone(&wasi_ctx_two);
                 move |state, args| {
-                    let Some(Value::I32(a0)) = args.get(0) else {
+                    let Some(Value::I32(a0)) = args.first() else {
                         panic!("expected i32");
                     };
                     let Some(Value::I32(a1)) = args.get(1) else {
@@ -834,7 +834,7 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
             HostFunction::new("path_filestat_get", "iiiii".into(), "i".into(), {
                 let wasi_ctx_path_filestat_get = Rc::clone(&wasi_ctx_two);
                 move |state, args| {
-                    let Some(Value::I32(a0)) = args.get(0) else {
+                    let Some(Value::I32(a0)) = args.first() else {
                         panic!("expected i32");
                     };
                     let Some(Value::I32(a1)) = args.get(1) else {
@@ -873,7 +873,7 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
             HostFunction::new("path_filestat_set_times", "iiiiIIi".into(), "i".into(), {
                 let wasi_ctx_path_filestat_set_times = Rc::clone(&wasi_ctx_two);
                 move |state, args| {
-                    let Some(Value::I32(a0)) = args.get(0) else {
+                    let Some(Value::I32(a0)) = args.first() else {
                         panic!("expected i32");
                     };
                     let Some(Value::I32(a1)) = args.get(1) else {
@@ -920,7 +920,7 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
             HostFunction::new("path_link", "iiiiiii".into(), "i".into(), {
                 let wasi_ctx_path_link = Rc::clone(&wasi_ctx_two);
                 move |state, args| {
-                    let Some(Value::I32(a0)) = args.get(0) else {
+                    let Some(Value::I32(a0)) = args.first() else {
                         panic!("expected i32");
                     };
                     let Some(Value::I32(a1)) = args.get(1) else {
@@ -967,7 +967,7 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
             HostFunction::new("path_open", "iiiiiIIii".into(), "i".into(), {
                 let wasi_ctx_path_open = Rc::clone(&wasi_ctx_two);
                 move |state, args| {
-                    let Some(Value::I32(a0)) = args.get(0) else {
+                    let Some(Value::I32(a0)) = args.first() else {
                         panic!("expected i32");
                     };
                     let Some(Value::I32(a1)) = args.get(1) else {
@@ -1022,7 +1022,7 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
             HostFunction::new("path_readlink", "iiiiii".into(), "i".into(), {
                 let wasi_ctx_path_readlink = Rc::clone(&wasi_ctx_two);
                 move |state, args| {
-                    let Some(Value::I32(a0)) = args.get(0) else {
+                    let Some(Value::I32(a0)) = args.first() else {
                         panic!("expected i32");
                     };
                     let Some(Value::I32(a1)) = args.get(1) else {
@@ -1065,7 +1065,7 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
             HostFunction::new("path_remove_directory", "iii".into(), "i".into(), {
                 let wasi_ctx_path_remove_directory = Rc::clone(&wasi_ctx_two);
                 move |state, args| {
-                    let Some(Value::I32(a0)) = args.get(0) else {
+                    let Some(Value::I32(a0)) = args.first() else {
                         panic!("expected i32");
                     };
                     let Some(Value::I32(a1)) = args.get(1) else {
@@ -1096,7 +1096,7 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
             HostFunction::new("path_rename", "iiiiii".into(), "i".into(), {
                 let wasi_ctx_path_rename = Rc::clone(&wasi_ctx_two);
                 move |state, args| {
-                    let Some(Value::I32(a0)) = args.get(0) else {
+                    let Some(Value::I32(a0)) = args.first() else {
                         panic!("expected i32");
                     };
                     let Some(Value::I32(a1)) = args.get(1) else {
@@ -1139,7 +1139,7 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
             HostFunction::new("path_symlink", "iiiii".into(), "i".into(), {
                 let wasi_ctx_path_symlink = Rc::clone(&wasi_ctx_two);
                 move |state, args| {
-                    let Some(Value::I32(a0)) = args.get(0) else {
+                    let Some(Value::I32(a0)) = args.first() else {
                         panic!("expected i32");
                     };
                     let Some(Value::I32(a1)) = args.get(1) else {
@@ -1178,7 +1178,7 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
             HostFunction::new("path_unlink_file", "iii".into(), "i".into(), {
                 let wasi_ctx_path_unlink_file = Rc::clone(&wasi_ctx_two);
                 move |state, args| {
-                    let Some(Value::I32(a0)) = args.get(0) else {
+                    let Some(Value::I32(a0)) = args.first() else {
                         panic!("expected i32");
                     };
                     let Some(Value::I32(a1)) = args.get(1) else {
@@ -1209,7 +1209,7 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
             HostFunction::new("poll_oneoff", "iiii".into(), "i".into(), {
                 let wasi_ctx_poll_oneoff = Rc::clone(&wasi_ctx_two);
                 move |state, args| {
-                    let Some(Value::I32(a0)) = args.get(0) else {
+                    let Some(Value::I32(a0)) = args.first() else {
                         panic!("expected i32");
                     };
                     let Some(Value::I32(a1)) = args.get(1) else {
@@ -1244,7 +1244,7 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
             HostFunction::new("proc_exit", "i".into(), "".into(), {
                 let wasi_ctx_proc_exit = Rc::clone(&wasi_ctx_two);
                 move |state, args| {
-                    let Some(Value::I32(a0)) = args.get(0) else {
+                    let Some(Value::I32(a0)) = args.first() else {
                         panic!("expected i32");
                     };
 
@@ -1269,7 +1269,7 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
             HostFunction::new("proc_raise", "i".into(), "i".into(), {
                 let wasi_ctx_proc_raise = Rc::clone(&wasi_ctx_two);
                 move |state, args| {
-                    let Some(Value::I32(a0)) = args.get(0) else {
+                    let Some(Value::I32(a0)) = args.first() else {
                         panic!("expected i32");
                     };
 
@@ -1292,7 +1292,7 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
             HostFunction::new("random_get", "ii".into(), "i".into(), {
                 let wasi_ctx_random_get = Rc::clone(&wasi_ctx_two);
                 move |state, args| {
-                    let Some(Value::I32(a0)) = args.get(0) else {
+                    let Some(Value::I32(a0)) = args.first() else {
                         panic!("expected i32");
                     };
                     let Some(Value::I32(a1)) = args.get(1) else {
@@ -1340,7 +1340,7 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
             HostFunction::new("sock_accept", "iii".into(), "i".into(), {
                 let wasi_ctx_sock_accept = Rc::clone(&wasi_ctx_two);
                 move |state, args| {
-                    let Some(Value::I32(a0)) = args.get(0) else {
+                    let Some(Value::I32(a0)) = args.first() else {
                         panic!("expected i32");
                     };
                     let Some(Value::I32(a1)) = args.get(1) else {
@@ -1371,7 +1371,7 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
             HostFunction::new("sock_recv", "iiiiii".into(), "i".into(), {
                 let wasi_ctx_sock_recv = Rc::clone(&wasi_ctx_two);
                 move |state, args| {
-                    let Some(Value::I32(a0)) = args.get(0) else {
+                    let Some(Value::I32(a0)) = args.first() else {
                         panic!("expected i32");
                     };
                     let Some(Value::I32(a1)) = args.get(1) else {
@@ -1414,7 +1414,7 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
             HostFunction::new("sock_send", "iiiii".into(), "i".into(), {
                 let wasi_ctx_sock_send = Rc::clone(&wasi_ctx_two);
                 move |state, args| {
-                    let Some(Value::I32(a0)) = args.get(0) else {
+                    let Some(Value::I32(a0)) = args.first() else {
                         panic!("expected i32");
                     };
                     let Some(Value::I32(a1)) = args.get(1) else {
@@ -1453,7 +1453,7 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
             HostFunction::new("sock_shutdown", "ii".into(), "i".into(), {
                 let wasi_ctx_sock_shutdown = Rc::clone(&wasi_ctx_two);
                 move |state, args| {
-                    let Some(Value::I32(a0)) = args.get(0) else {
+                    let Some(Value::I32(a0)) = args.first() else {
                         panic!("expected i32");
                     };
                     let Some(Value::I32(a1)) = args.get(1) else {
