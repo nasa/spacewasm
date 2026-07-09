@@ -91,7 +91,8 @@ fn main() {
                 let _ = wasi_ctx_builder.preopened_dir(opened_dir, guest_dir);
             }
             Err(error) => {
-                panic!("cannot open host directory {host_dir}: {error}")
+                eprintln!("cannot open host directory {host_dir}: {error}");
+                std::process::exit(1);
             }
         }
     }
@@ -102,7 +103,8 @@ fn main() {
                 let _ = wasi_ctx_builder.preopened_dir(opened_dir, "/");
             }
             Err(error) => {
-                panic!("error mounting cwd as root: {error}")
+                eprintln!("error mounting cwd as root: {error}");
+                std::process::exit(1);
             }
         }
     }
@@ -118,7 +120,7 @@ fn main() {
     };
     let mut file_stream = FileStream::new(file);
 
-    let module = spacewasm::Module::new::<MAX_PAGES, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
+    let Ok(module) = spacewasm::Module::new::<MAX_PAGES, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
         "main",
         &mut file_stream,
         &mut store,
@@ -129,18 +131,32 @@ fn main() {
         CompilerOptions {
             allow_memory_grow: true,
         },
-    )
-    .expect("failed to parse wasm module");
+    ) else {
+        eprintln!("failed to parse WASM module");
+        std::process::exit(1);
+    };
 
     let (text, _) = code_builder.finish().unwrap();
 
     let mut state = store.allocate(STACK_SIZE).unwrap();
     match state.initialize_module(module, &text, usize::MAX) {
         InterpreterResult::Finished => {}
-        InterpreterResult::OutOfFuel => panic!("insufficient fuel for initialization"),
-        InterpreterResult::Trap(t) => panic!("trap during initialization {t:?}"),
-        InterpreterResult::ReaderError(e) => panic!("ir reader error {e:?}"),
-        InterpreterResult::Pause => panic!("pause during init"),
+        InterpreterResult::OutOfFuel => {
+            eprintln!("insufficient fuel for initialization");
+            std::process::exit(1);
+        }
+        InterpreterResult::Trap(t) => {
+            eprintln!("trap during initialization {t:?}");
+            std::process::exit(1);
+        }
+        InterpreterResult::ReaderError(e) => {
+            eprintln!("ir reader error {e:?}");
+            std::process::exit(1);
+        }
+        InterpreterResult::Pause => {
+            eprintln!("pause during init");
+            std::process::exit(1);
+        }
     }
 
     let module: &spacewasm::Module = state.store.modules().last().unwrap();
@@ -148,13 +164,17 @@ fn main() {
     let fi = {
         let f = module.exports.iter().find(|f| &f.name == "_start").unwrap();
         let ExportDesc::Func(fi) = f.desc else {
-            panic!()
+            eprintln!(
+                "error: the provided wasm module does not correctly export a _start function"
+            );
+            std::process::exit(1);
         };
         fi
     };
 
     let Ref::Module(fi) = module.get_func_ref(fi).unwrap() else {
-        panic!("error: the provided wasm module does not correctly export a _start function")
+        eprintln!("error: the provided wasm module does not correctly export a _start function");
+        std::process::exit(1);
     };
 
     state
@@ -179,6 +199,7 @@ fn main() {
     // let _ = crossterm::terminal::disable_raw_mode();
 
     let InterpreterResult::Finished = result else {
-        panic!("interpreter failed: {:?}", result)
+        eprintln!("interpreter failed: {:?}", result);
+        std::process::exit(1);
     };
 }

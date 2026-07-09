@@ -28,7 +28,9 @@ fn fake_file() -> Result<(), Box<dyn std::error::Error>> {
     let mut cmd = cargo_bin_cmd!("spacewasi");
 
     cmd.arg("this_file_is_not_real");
-    cmd.assert().failure().stderr(predicate::str::contains("error: wasm module path does not exist"));
+    cmd.assert().failure().stderr(predicate::str::contains(
+        "error: wasm module path does not exist",
+    ));
 
     Ok(())
 }
@@ -71,7 +73,11 @@ fn argv0() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut cmd = cargo_bin_cmd!("spacewasi");
 
-    cmd.arg("--argv0").arg("arg0").arg(&path).arg("arg1").arg("arg2");
+    cmd.arg("--argv0")
+        .arg("arg0")
+        .arg(&path)
+        .arg("arg1")
+        .arg("arg2");
     let assertion = cmd.assert();
 
     let _ = fs::remove_file(&path);
