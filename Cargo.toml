@@ -4,9 +4,6 @@ members = ["crates/*"]
 exclude = ["fuzz"]
 
 [workspace.package]
-# Placeholder. The real version is injected from the git tag by the release
-# workflow (.github/workflows/release.yml) at publish time; it is never
-# committed. Local/dev builds always report 0.0.0.
 version = "0.0.0"
 edition = "2024"
 authors = ["Andrei Tumbar"]

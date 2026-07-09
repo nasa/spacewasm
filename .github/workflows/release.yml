@@ -1,14 +1,4 @@
 name: Release
-
-# Publishes `spacewasm` to crates.io when a version tag is pushed.
-#
-# The version in Cargo.toml is a placeholder (0.0.0). This workflow reads the
-# real version from the git tag and injects it before publishing; the change is
-# never committed back.
-#
-# Release ritual:
-#   Just tag a commit and push:  git tag v0.2.0 && git push origin v0.2.0
-#   (or create a GitHub Release with tag v0.2.0). No manual version bump needed.
 on:
   push:
     tags:
