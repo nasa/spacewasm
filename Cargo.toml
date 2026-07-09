@@ -7,12 +7,22 @@ exclude = ["fuzz"]
 version = "0.1.0"
 edition = "2024"
 authors = ["Andrei Tumbar"]
+license = "Apache-2.0"
+repository = "https://github.com/nasa/spacewasm"
+rust-version = "1.85"
 
 [package]
 name = "spacewasm"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "A no_std WebAssembly 1.0 decoder, validator, and interpreter for on-board spacecraft use"
+readme = "README.md"
+keywords = ["wasm", "webassembly", "interpreter", "no_std", "embedded"]
+categories = ["wasm", "no-std", "embedded"]
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }

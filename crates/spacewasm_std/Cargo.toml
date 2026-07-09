@@ -4,6 +4,7 @@ name = "spacewasm_std"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
+publish = false
 
 [dependencies]
 spacewasm = { path = "../.." }

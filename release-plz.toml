@@ -1,0 +1,11 @@
+[workspace]
+# Only the root `spacewasm` crate is released to crates.io. The support crates
+# (spacewasm_std, spacewasm_util, spacewasm-fuzzing) are marked `publish = false`
+# in their manifests, so release-plz skips them automatically.
+changelog_update = true
+git_release_enable = true
+git_tag_enable = true
+
+[[package]]
+name = "spacewasm"
+publish = true
