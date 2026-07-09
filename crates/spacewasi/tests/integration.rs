@@ -98,7 +98,9 @@ fn file_system() -> Result<(), Box<dyn std::error::Error>> {
 
     let _ = fs::remove_file(&path);
 
-    assertion.success().stdout("spacewasm is cool!\n".to_string());
+    assertion
+        .success()
+        .stdout("spacewasm is cool!\n".to_string());
 
     Ok(())
 }
