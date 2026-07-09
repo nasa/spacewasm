@@ -2,25 +2,22 @@ use spacewasm::{
     CodeBuilder, CompilerOptions, ExportDesc, InterpreterResult, InterpreterRunner, ModuleRef,
     PageAllocator, Ref, WasmRef,
 };
-
 mod wasi_preview1;
-
+use crate::wasi_preview1::make_wasi_preview1_module;
+use clap::error::ErrorKind;
+use clap::{CommandFactory, Parser};
 use spacewasm_util::{FileStream, RustSystemAllocator};
 use wasi_common::sync::{Dir, WasiCtxBuilder, ambient_authority};
 
-use crate::wasi_preview1::make_wasi_preview1_module;
-
-use clap::Parser;
-
 spacewasm::global_allocator!(
-    PageAllocator<512>,
-    PageAllocator::new(&RustSystemAllocator {}, 1024 * 1024 * 32)
+    PageAllocator<0x200>,
+    PageAllocator::new(&RustSystemAllocator {}, 0x2_000_000)
 );
 
-const MAX_PAGES: usize = 1024 * 64;
-const MAX_CONTROL_FRAMES: usize = 1024 * 4;
-const MAX_STACK_DEPTH: usize = 1024;
-const STACK_SIZE: usize = 1024 * 1024;
+const MAX_PAGES: usize = 0x10_000;
+const MAX_CONTROL_FRAMES: usize = 0x1_000;
+const MAX_STACK_DEPTH: usize = 0x400;
+const STACK_SIZE: usize = 0x100_000;
 
 /// Execute WASI-compatible WASM modules with spacewasm
 #[derive(Parser, Debug)]
@@ -56,6 +53,7 @@ struct Args {
 
 fn main() {
     let args = Args::parse();
+    let mut cmd = Args::command();
 
     let mut wasi_ctx_builder: WasiCtxBuilder = WasiCtxBuilder::new();
 
@@ -87,7 +85,6 @@ fn main() {
             host_dir = split.next().unwrap_or("").to_owned();
             guest_dir = split.next().unwrap_or("").to_owned();
         }
-        // println!("{host_dir} mapped to {guest_dir}");
 
         match Dir::open_ambient_dir(&host_dir, ambient_authority()) {
             Ok(opened_dir) => {
@@ -115,7 +112,10 @@ fn main() {
     let mut code_builder = CodeBuilder::<MAX_PAGES>::default();
     let mut store = spacewasm::Store::new(1, [preview1_module]).unwrap();
 
-    let file = std::fs::File::open(args.file).expect("failed to open file");
+    let Ok(file) = std::fs::File::open(args.file) else {
+        cmd.error(ErrorKind::InvalidValue, "wasm module path does not exist")
+            .exit();
+    };
     let mut file_stream = FileStream::new(file);
 
     let module = spacewasm::Module::new::<MAX_PAGES, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
