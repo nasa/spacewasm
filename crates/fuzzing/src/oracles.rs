@@ -15,7 +15,7 @@ use std::ptr::NonNull;
 
 static ORACLE_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
-/// Log a WASM module to the filesystem for debugging.
+/// Log a Wasm module to the filesystem for debugging.
 ///
 /// This is only enabled when `RUST_LOG=debug` is set.
 pub fn log_wasm(wasm: &[u8]) {
@@ -156,10 +156,10 @@ const MAX_PAGES: usize = 128;
 const MAX_CONTROL_FRAMES: usize = 128;
 const MAX_STACK_DEPTH: usize = 256;
 
-/// Oracle: Validate a WASM module.
+/// Oracle: Validate a Wasm module.
 ///
-/// This tests the decoder by attempting to validate the given WASM bytes.
-/// It checks that the module is structurally valid according to WASM spec.
+/// This tests the decoder by attempting to validate the given Wasm bytes.
+/// It checks that the module is structurally valid according to Wasm spec.
 pub fn validate(wasm: &[u8]) {
     log_wasm(wasm);
 
@@ -318,7 +318,7 @@ pub fn no_traps(wasm: &[u8]) {
                             module: mod_ref,
                             index,
                         } => {
-                            // Function from another WASM module
+                            // Function from another Wasm module
                             let other_module = state.store.modules().get(mod_ref.0 as usize)?;
                             let func = other_module.functions.get(index as usize)?;
                             other_module.types.get(func.ty.0 as usize)?

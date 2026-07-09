@@ -1,6 +1,6 @@
-//! # SpaceWASM IR Encoding
+//! # SpaceWasm IR Encoding
 //!
-//! This module implements the compiled intermediate representation (IR) for SpaceWASM.
+//! This module implements the compiled intermediate representation (IR) for SpaceWasm.
 //! The IR is organized into pages of 16-bit words to support streaming execution.
 //!
 //! ## Memory Layout
@@ -247,7 +247,7 @@ impl<const MAX_PAGES: usize> CodeBuilder<MAX_PAGES> {
         const {
             assert!(
                 MAX_PAGES < (1 << 24),
-                "SpaceWASM supports up to 24-bit code pages"
+                "SpaceWasm supports up to 24-bit code pages"
             );
         }
 
@@ -593,7 +593,7 @@ impl<'a, const MAX_PAGES: usize, const MAX_CONTROL_FRAMES: usize, const MAX_STAC
             .ok_or(ValidationError::GlobalIdxOutOfRange)?;
 
         match reference {
-            // This index is one of the WASM defined globals
+            // This index is one of the Wasm defined globals
             Ref::Module(idx) => {
                 let g = self
                     .module

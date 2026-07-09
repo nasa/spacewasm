@@ -1,11 +1,11 @@
-//! Methods to read WASM Types from a [Reader] object.
+//! Methods to read Wasm Types from a [Reader] object.
 //!
 //! See: <https://webassembly.github.io/spec/core/binary/types.html>
 
 use crate::util::String;
 use crate::{Reader, ValidationError, Vec};
 
-/// A pointer and length into a UTF-8 string on the original WASM
+/// A pointer and length into a UTF-8 string on the original Wasm
 pub struct Name;
 
 impl Name {
@@ -295,7 +295,7 @@ impl MemType {
                 return false;
             }
         } else if n_pages > 65536 {
-            // WASM only has 4Gib of pages
+            // Wasm only has 4Gib of pages
             return false;
         }
 
