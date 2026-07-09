@@ -6,7 +6,7 @@ use std::{fs, process::Command as ProcessCommand};
 fn compile_c_to_wasm(source: &str) -> String {
     let output = source.replace(".c", ".wasm");
     let _ = ProcessCommand::new("clang")
-        .arg(&source)
+        .arg(source)
         .arg("--target=wasm32-wasip1")
         .arg("-mcpu=mvp")
         .arg("-o")
@@ -82,7 +82,7 @@ fn argv0() -> Result<(), Box<dyn std::error::Error>> {
 
     let _ = fs::remove_file(&path);
 
-    assertion.success().stdout(format!("arg0\n"));
+    assertion.success().stdout("arg0\n".to_string());
 
     Ok(())
 }
@@ -98,7 +98,7 @@ fn file_system() -> Result<(), Box<dyn std::error::Error>> {
 
     let _ = fs::remove_file(&path);
 
-    assertion.success().stdout(format!("spacewasm is cool!\n"));
+    assertion.success().stdout("spacewasm is cool!\n".to_string());
 
     Ok(())
 }
@@ -114,7 +114,7 @@ fn env() -> Result<(), Box<dyn std::error::Error>> {
 
     let _ = fs::remove_file(&path);
 
-    assertion.success().stdout(format!("testvalue\n"));
+    assertion.success().stdout("testvalue\n".to_string());
 
     Ok(())
 }

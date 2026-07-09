@@ -1248,7 +1248,7 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
                         panic!("expected i32");
                     };
 
-                    match block_on(wasi_snapshot_preview1::proc_exit(
+                    let _ = block_on(wasi_snapshot_preview1::proc_exit(
                         &mut *wasi_ctx_proc_exit.borrow_mut(),
                         &mut GuestMemory::Shared(unsafe {
                             core::mem::transmute::<&[u8], &[std::cell::UnsafeCell<u8>]>(
@@ -1256,12 +1256,7 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
                             )
                         }),
                         *a0,
-                    )) {
-                        Ok(_) => {
-                            // eprintln!("proc_exit({a0})");
-                        }
-                        Err(_) => {}
-                    }
+                    ));
 
                     std::process::exit(*a0);
                 }

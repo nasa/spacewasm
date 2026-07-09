@@ -51,6 +51,14 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      - name: Install LLVM and Clang
+        uses: KyleMayes/install-llvm-action@v2
+        with:
+          version: "10.0"
+
+      - name: Install WASI SDK
+        uses: bytecodealliance/setup-wasi-sdk-action@v1
+
       - name: Install WABT (WebAssembly Binary Toolkit)
         run: |
           WABT_VERSION=1.0.41
