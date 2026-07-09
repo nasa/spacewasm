@@ -12,13 +12,13 @@ help:
 	@echo "  make trace CRASH=<file>            Convert seed + trace (release)"
 	@echo "  make trace-debug CRASH=<file>      Convert seed + trace (debug with ASAN)"
 	@echo "  make seed-to-wasm CRASH=<file>     Convert fuzzer seed to Wasm"
-	@echo "  make trace-wasm Wasm=<file>        Trace Wasm file (release)"
-	@echo "  make trace-wasm-debug Wasm=<file>  Trace Wasm file (debug with ASAN)"
+	@echo "  make trace-wasm WASM=<file>        Trace Wasm file (release)"
+	@echo "  make trace-wasm-debug WASM=<file>  Trace Wasm file (debug with ASAN)"
 	@echo ""
 	@echo "Examples:"
 	@echo "  make trace CRASH=fuzz/artifacts/no_traps/crash-abc123"
 	@echo "  make trace-debug CRASH=crash-abc123 LIMIT=100"
-	@echo "  make trace-wasm Wasm=output.wasm LIMIT=50"
+	@echo "  make trace-wasm WASM=output.wasm LIMIT=50"
 	@echo ""
 	@echo "Utilities:"
 	@echo "  make install-tools                 Install binaries to ~/.cargo/bin"
@@ -68,21 +68,21 @@ seed-to-wasm:
 
 # Trace Wasm file execution (release mode)
 trace-wasm:
-	@if [ -z "$(Wasm)" ]; then \
-		echo "Error: Wasm variable required"; \
-		echo "Usage: make trace-wasm Wasm=file.wasm [LIMIT=50]"; \
+	@if [ -z "$(WASM)" ]; then \
+		echo "Error: WASM variable required"; \
+		echo "Usage: make trace-wasm WASM=file.wasm [LIMIT=50]"; \
 		exit 1; \
 	fi
-	cargo run --release -p spacewasm_util --bin spacewasm-trace -- $(Wasm) --limit $(or $(LIMIT),200)
+	cargo run --release -p spacewasm_util --bin spacewasm-trace -- $(WASM) --limit $(or $(LIMIT),200)
 
 # Trace Wasm file execution (debug mode with ASAN)
 trace-wasm-debug:
-	@if [ -z "$(Wasm)" ]; then \
-		echo "Error: Wasm variable required"; \
-		echo "Usage: make trace-wasm-debug Wasm=file.wasm [LIMIT=50]"; \
+	@if [ -z "$(WASM)" ]; then \
+		echo "Error: WASM variable required"; \
+		echo "Usage: make trace-wasm-debug WASM=file.wasm [LIMIT=50]"; \
 		exit 1; \
 	fi
-	RUSTFLAGS="-Zsanitizer=address" cargo run -p spacewasm_util --bin spacewasm-trace -- $(Wasm) --limit $(or $(LIMIT),200)
+	RUSTFLAGS="-Zsanitizer=address" cargo run -p spacewasm_util --bin spacewasm-trace -- $(WASM) --limit $(or $(LIMIT),200)
 
 # Clean fuzzer artifacts
 clean-artifacts:
