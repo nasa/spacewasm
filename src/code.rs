@@ -209,16 +209,14 @@ impl<'wasm> Reader<'wasm> {
                 BR => instruction!(br, LabelIdx),
                 BR_IF => instruction!(br_if, LabelIdx),
                 BR_TABLE => {
-                    // FIXME(tumbar) Is it possible to use an iterator and not require up-front allocation?
-                    let lut = self
-                        .read_vec_stack::<24700, LabelIdx>(LabelIdx::read)
-                        .map_err(|e| match e {
-                            ValidationError::VecTooLong => ValidationError::BrTableHasTooManyCases,
-                            e => e,
-                        })?;
-
+                    let len = self.read_u32()?;
+                    visitor.br_table_start(len, state)?;
+                    for _ in 0..len {
+                        let br = LabelIdx::read(self)?;
+                        visitor.br_table_branch(br, state)?
+                    }
                     let default_ = LabelIdx::read(self)?;
-                    visitor.br_table(&lut, default_, state)?;
+                    visitor.br_table_finish(default_, state)?;
                 }
                 RETURN => instruction!(return_),
                 CALL => instruction!(call, FuncIdx),

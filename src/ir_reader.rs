@@ -139,8 +139,6 @@ impl<'code> IrReader<'code> {
                     imm as u32
                 };
 
-                let default_ = self.read_u32(pc).unwrap();
-
                 visitor.br_table(
                     n,
                     |case_| {
@@ -160,6 +158,9 @@ impl<'code> IrReader<'code> {
                                 }
                             }
 
+                            // Dump the default case
+                            self.read_u32(pc).unwrap();
+
                             lt.into()
                         } else {
                             // Dump all the cases and return the default
@@ -167,7 +168,8 @@ impl<'code> IrReader<'code> {
                                 self.read_u32(pc).unwrap();
                             }
 
-                            default_.into()
+                            let lt = self.read_u32(pc).unwrap();
+                            lt.into()
                         }
                     },
                     state,

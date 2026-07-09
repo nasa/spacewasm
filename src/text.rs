@@ -412,6 +412,7 @@ pub struct TextBuilder<
     control_frames: StaticVec<ControlFrame, MAX_CONTROL_FRAMES>,
     value_stack: StaticVec<OperandType, MAX_STACK_DEPTH>,
     stack_highwater: usize,
+    br_table_result: Option<ResultType>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -466,6 +467,7 @@ impl<'a, const MAX_PAGES: usize, const MAX_CONTROL_FRAMES: usize, const MAX_STAC
             control_frames: Default::default(),
             value_stack: Default::default(),
             stack_highwater: 0,
+            br_table_result: None,
         };
 
         // Push the implicit function control frame per the spec
@@ -490,6 +492,35 @@ impl<'a, const MAX_PAGES: usize, const MAX_CONTROL_FRAMES: usize, const MAX_STAC
 
     pub fn stack_usage(&self) -> usize {
         self.stack_highwater
+    }
+
+    pub fn check_br_table_result(&mut self, r: ResultType) -> Result<(), ValidationError> {
+        if let Some(other) = self.br_table_result {
+            if other != r {
+                Err(ValidationError::BlockResultTypeMismatch)
+            } else {
+                Ok(())
+            }
+        } else {
+            self.br_table_result = Some(r);
+            Ok(())
+        }
+    }
+
+    pub fn check_and_clear_br_table_result(
+        &mut self,
+        def_result: ResultType,
+    ) -> Result<(), ValidationError> {
+        if let Some(other) = self.br_table_result {
+            if other != def_result {
+                Err(ValidationError::BlockResultTypeMismatch)
+            } else {
+                self.br_table_result = None;
+                Ok(())
+            }
+        } else {
+            Ok(())
+        }
     }
 
     /// Compute the offset in 32-bit words of a local variable given its index
