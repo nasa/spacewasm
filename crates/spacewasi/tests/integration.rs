@@ -5,16 +5,15 @@ use std::{fs, process::Command as ProcessCommand};
 
 fn compile_c_to_wasm(source: &str) -> String {
     let output = source.replace(".c", ".wasm");
-    let _ = ProcessCommand::new("emcc")
+    let _ = ProcessCommand::new("clang")
         .arg(&source)
-        .arg("-O3")
+        .arg("--target=wasm32-wasip1")
         .arg("-mcpu=mvp")
-        .arg("-mno-sign-ext")
-        .arg("-mno-bulk-memory")
         .arg("-o")
         .arg(&output)
         .output()
         .unwrap_or_else(|e| panic!("Failed to run emcc: {e}"));
+
     let _ = ProcessCommand::new("scripts/wasm2mvp.sh")
         .arg(&output)
         .arg(&output)
@@ -83,7 +82,7 @@ fn argv0() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn fs() -> Result<(), Box<dyn std::error::Error>> {
+fn file_system() -> Result<(), Box<dyn std::error::Error>> {
     let path = compile_c_to_wasm("tests/wasm/fs.c");
 
     let mut cmd = cargo_bin_cmd!("spacewasi");
@@ -91,9 +90,41 @@ fn fs() -> Result<(), Box<dyn std::error::Error>> {
     cmd.arg("--dir").arg("tests/wasm/::/").arg(&path);
     let assertion = cmd.assert();
 
-    // let _ = fs::remove_file(&path);
+    let _ = fs::remove_file(&path);
 
-    assertion.success().stdout(format!("spacewasm is cool\n"));
+    assertion.success().stdout(format!("spacewasm is cool!\n"));
+
+    Ok(())
+}
+
+#[test]
+fn env() -> Result<(), Box<dyn std::error::Error>> {
+    let path = compile_c_to_wasm("tests/wasm/env.c");
+
+    let mut cmd = cargo_bin_cmd!("spacewasi");
+
+    cmd.arg("--env").arg("TESTKEY=testvalue").arg(&path);
+    let assertion = cmd.assert();
+
+    let _ = fs::remove_file(&path);
+
+    assertion.success().stdout(format!("testvalue\n"));
+
+    Ok(())
+}
+
+#[test]
+fn return_code() -> Result<(), Box<dyn std::error::Error>> {
+    let path = compile_c_to_wasm("tests/wasm/rc.c");
+
+    let mut cmd = cargo_bin_cmd!("spacewasi");
+
+    cmd.arg(&path);
+    let assertion = cmd.assert();
+
+    let _ = fs::remove_file(&path);
+
+    assertion.failure().code(87);
 
     Ok(())
 }
