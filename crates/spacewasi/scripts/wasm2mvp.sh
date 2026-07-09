@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
 
+if ! command -v wasm-opt --version >/dev/null 2>&1
+then
+    echo "please install wasm-opt to use this command"
+    exit 1
+fi
+
 if [ "$#" -ne 2 ]; then
     echo "usage: $0 input.wasm output.wasm"
     exit 1
@@ -10,8 +16,6 @@ wasm-opt \
     --signext-lowering \
     --disable-bulk-memory \
     --llvm-nontrapping-fptoint-lowering \
-    --mvp-features \
-    --disable-sign-ext \
     --disable-multivalue \
     --disable-simd \
     $1 \
