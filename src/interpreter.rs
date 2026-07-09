@@ -1518,7 +1518,7 @@ impl<'store> IrVisitor for Interpreter<'store> {
                     return Err(InterpreterBreak::Trap(TrapReason::InvalidTableFunctionType));
                 }
 
-                self.call_host(*module, i as u16, state)
+                self.call_host(*module, *index, state)
             }
             Some(TableElement::Uninitialized) => Err(InterpreterBreak::Trap(
                 TrapReason::UninitializedTableElement,
