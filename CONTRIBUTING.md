@@ -15,7 +15,8 @@ labeled with [good first issue](https://github.com/nasa/spacewasm/issues?q=is%3A
 
 We generally will heavily gate the development of major features and Wasm
 proposals. If you would like to contribute a larger feature such as a post-MVP
-WebAssembly, please create a new issue labeled with [WebAssembly Proposal](https://github.com/nasa/spacewasm/issues?q=is%3Aissue%20state%3Aopen%20label%3A%22WebAssembly%20Proposal%22).
+WebAssembly proposal, please create a new issue labeled with
+[WebAssembly Proposal](https://github.com/nasa/spacewasm/issues?q=is%3Aissue%20state%3Aopen%20label%3A%22WebAssembly%20Proposal%22).
 We will work with you to determine if the work is feasible to merge
 from external contributors.
 
