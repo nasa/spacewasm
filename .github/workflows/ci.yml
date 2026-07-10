@@ -113,6 +113,50 @@ jobs:
         if: matrix.profile == 'release'
         run: cargo test --workspace --release --features strict-assertions --verbose
 
+  test-32bit:
+    name: Test (i686-unknown-linux-gnu, ${{ matrix.profile }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        profile:
+          - debug
+          - release
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install 32-bit system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-multilib
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: i686-unknown-linux-gnu
+
+      - name: Install WABT (WebAssembly Binary Toolkit)
+        run: |
+          WABT_VERSION=1.0.41
+          wget https://github.com/WebAssembly/wabt/releases/download/${WABT_VERSION}/wabt-${WABT_VERSION}-linux-x64.tar.gz
+          tar -xzf wabt-${WABT_VERSION}-linux-x64.tar.gz
+          sudo cp wabt-${WABT_VERSION}/bin/* /usr/local/bin/
+        shell: bash
+
+      # Only the interpreter library is deployed to the 32-bit target, so the
+      # host-only workspace tooling is not built here. Running the suite on a
+      # 32-bit `usize` guards pointer-width regressions (e.g. memory
+      # effective-address overflow) that the 64-bit test matrix cannot observe.
+      - name: Run tests (debug)
+        if: matrix.profile == 'debug'
+        run: cargo test -p spacewasm --target i686-unknown-linux-gnu --verbose
+
+      - name: Run tests (release)
+        if: matrix.profile == 'release'
+        run: cargo test -p spacewasm --release --target i686-unknown-linux-gnu --verbose
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
