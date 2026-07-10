@@ -11,7 +11,7 @@ will be added to the pre-release versions v0.x.x.
 
 ## Reporting a Vulnerability
 
-For general bugs, please submit a [Bug Report]()
+For general bugs, please submit a [Bug Report](https://github.com/nasa/spacewasm/issues).
 
 To report a vulnerability for SpaceWasm, please use the [vulnerability report form](https://github.com/nasa/spacewasm/security/advisories/new).
 
