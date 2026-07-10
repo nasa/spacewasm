@@ -72,7 +72,7 @@ impl<T: Sized, A: Allocator> Box<T, A> {
     pub fn new_in(alloc: A, value: T) -> Result<Box<T, A>, AllocError> {
         if size_of::<T>() == 0 {
             Ok(Box {
-                ptr: ptr::null_mut(),
+                ptr: core::ptr::NonNull::<T>::dangling().as_ptr(),
                 alloc,
             })
         } else {
