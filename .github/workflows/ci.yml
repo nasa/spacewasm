@@ -206,7 +206,6 @@ jobs:
     name: Benchmark
     runs-on: ubuntu-latest
     permissions:
-      pull-requests: write
       contents: read
     steps:
       - name: Checkout code
@@ -288,53 +287,23 @@ jobs:
             echo "baseline=" >> $GITHUB_OUTPUT
           fi
 
-      - name: Comment benchmark results on PR
+      - name: Save benchmark results
         if: github.event_name == 'pull_request'
-        uses: actions/github-script@v7
+        run: |
+          cat > benchmark-results.json <<EOF
+          {
+            "prNumber": "${{ github.event.pull_request.number }}",
+            "currentScore": "${{ steps.benchmark.outputs.score }}",
+            "baselineScore": "${{ steps.baseline.outputs.baseline }}"
+          }
+          EOF
+
+      - name: Upload benchmark results
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
         with:
-          script: |
-            const currentScore = parseFloat('${{ steps.benchmark.outputs.score }}');
-            const baselineScore = parseFloat('${{ steps.baseline.outputs.baseline }}');
-
-            let comment = '## CoreMark Benchmark Results\n\n';
-            comment += `**Current Score:** ${currentScore.toFixed(3)}\n`;
-
-            if (baselineScore && !isNaN(baselineScore)) {
-              const diff = currentScore - baselineScore;
-              const percentChange = ((diff / baselineScore) * 100).toFixed(2);
-
-              comment += `**Baseline Score (main):** ${baselineScore.toFixed(3)}\n`;
-              comment += `**Difference:** ${diff >= 0 ? '+' : ''}${diff.toFixed(3)} (${percentChange}%)\n\n`;
-            } else {
-              comment += '\n_No baseline available for comparison_\n';
-            }
-
-            // Find existing benchmark comment
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-            });
-
-            const botComment = comments.find(c =>
-              c.user.type === 'Bot' && c.body.includes('CoreMark Benchmark Results')
-            );
-
-            if (botComment) {
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: botComment.id,
-                body: comment
-              });
-            } else {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-                body: comment
-              });
-            }
+          name: benchmark-results
+          path: benchmark-results.json
 
   model-checking:
     name: Formal Verification
@@ -356,7 +325,6 @@ jobs:
     name: Code Coverage
     runs-on: ubuntu-latest
     permissions:
-      pull-requests: write
       contents: read
     steps:
       - name: Checkout code
@@ -432,58 +400,23 @@ jobs:
             echo "baseline=" >> $GITHUB_OUTPUT
           fi
 
-      - name: Comment coverage results on PR
+      - name: Save coverage results
         if: github.event_name == 'pull_request'
-        uses: actions/github-script@v7
+        run: |
+          cat > coverage-results.json <<EOF
+          {
+            "prNumber": "${{ github.event.pull_request.number }}",
+            "currentCoverage": "${{ steps.coverage.outputs.percentage }}",
+            "baselineCoverage": "${{ steps.baseline-coverage.outputs.baseline }}"
+          }
+          EOF
+
+      - name: Upload coverage results
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
         with:
-          script: |
-            const currentCoverage = parseFloat('${{ steps.coverage.outputs.percentage }}');
-            const baselineCoverage = parseFloat('${{ steps.baseline-coverage.outputs.baseline }}');
-
-            let comment = '## Code Coverage Report\n\n';
-            comment += `**Current Coverage:** ${currentCoverage.toFixed(2)}%\n`;
-
-            if (baselineCoverage && !isNaN(baselineCoverage)) {
-              const diff = currentCoverage - baselineCoverage;
-
-              comment += `**Baseline Coverage (main):** ${baselineCoverage.toFixed(2)}%\n`;
-              comment += `**Difference:** ${diff >= 0 ? '+' : ''}${diff.toFixed(2)}%\n\n`;
-
-              if (diff < -1.0) {
-                comment += '**Warning:** Coverage decreased by more than 1%\n';
-              } else if (diff >= 1.0) {
-                comment += '**Improvement:** Coverage increased!\n';
-              }
-            } else {
-              comment += '\n_No baseline available for comparison_\n';
-            }
-
-            // Find existing coverage comment
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-            });
-
-            const botComment = comments.find(c =>
-              c.user.type === 'Bot' && c.body.includes('Code Coverage Report')
-            );
-
-            if (botComment) {
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: botComment.id,
-                body: comment
-              });
-            } else {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-                body: comment
-              });
-            }
+          name: coverage-results
+          path: coverage-results.json
 
       - name: Upload coverage to Codecov
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
