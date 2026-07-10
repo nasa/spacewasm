@@ -27,6 +27,8 @@ suited for interpretation. Read more about the IR in the [specification](src/SPE
 
 The requirements of SpaceWasm are levied from similar work produced by [DLR](https://github.com/DLR-FT/wasm-interpreter).
 
+See [requirements](./REQUIREMENTS.md).
+
 ## Embedding
 
 Embedding the interpreter refers to instantiating it and providing implementations for the functions that are imported
