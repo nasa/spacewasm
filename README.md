@@ -76,10 +76,30 @@ synchronously.
 This Wasm interpreter imposes additional constraints beyond the WebAssembly 1.0 specification to support
 resource-constrained spacecraft environments.
 
-See our [IR SPEC](./src/SPEC.md) for more details about the limitations.
+See our [IR SPEC](./src/SPEC.md) for the full list of limitations.
 
 These constraints enable deterministic memory usage and efficient execution in resource-constrained environments while
 maintaining compatibility with most standard WebAssembly modules.
+
+### Limits for Wasm Module Producers
+
+Because SpaceWasm compiles bytecode into a fixed-width IR that is typically larger than the original bytecode, the
+practical ceiling on raw module size is bounded by the IR code-page limit above (~8 GiB of IR). This is far larger than
+any module expected on flight hardware; the binding constraint in practice is the peak memory configured for the
+[streaming](#streaming) decoder, which is measured per-module on the ground with `spacewasm-check`.
+
+> [!NOTE]
+> `spacewasm-check` has not been developed yet. A similar tool can be found in `spacewasm-std`.
+
+Here are a couple of limitations that may be relavent to developers of Wasm modules.
+
+| Limit               | Value                 | Notes                                                                                                                                                                                                                                                                 |
+| ------------------- | --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Wasm page size      | 64 KiB (65,536 bytes) | The standard WebAssembly [linear memory page](https://webassembly.github.io/spec/core/exec/runtime.html#page-size) size. The [custom-page-sizes proposal](https://github.com/WebAssembly/custom-page-sizes) is planned but not yet supported, so this value is fixed. |
+| Linear memory pages | 65,536 pages (4 GiB)  | Per the Wasm 1.0 spec. A module declaring more (or a `max` above this) is rejected. Note that the embedding will definitely limit this but it is dependent on how the interpreter is deployed.                                                                        |
+| IR Code             | 8GiB                  | Compiled IR, not raw bytecode. This limit is across all modules in the store. The IR / Bytecode ratio is printed in `spacewasm-std` as the "compilation ratio". It is difficult to estimate this upfront because it varies on the types of instructions used.         |
+| Function parameters | 255 32-bit words      | Per function.                                                                                                                                                                                                                                                         |
+| Local variables     | 65,535 32-bit words   | Per function.                                                                                                                                                                                                                                                         |
 
 ## Similar Projects
 
@@ -124,14 +144,23 @@ make fuzz
 make trace CRASH=fuzz/artifacts/no_traps/crash-xxx
 ```
 
-## Proposals
+## Feature Support Matrix
 
-Currently SpaceWasm implements exactly WebAssembly 1.0 which is:
+SpaceWasm currently implements exactly WebAssembly 1.0 (the MVP plus the mutable-globals proposal that was folded into
+it). SpaceWasm will always be a subset of the full approved Wasm specification. Below is a table of the implemented and planned .
 
-- Wasm MVP
-- Mutable Globals
+| Feature                                                                                                      | Status              |
+| ------------------------------------------------------------------------------------------------------------ | ------------------- |
+| [Wasm MVP](https://www.w3.org/TR/2019/REC-wasm-core-1-20191205/)                                             | Supported           |
+| [Mutable globals](https://github.com/WebAssembly/mutable-global)                                             | Supported           |
+| [Custom page sizes](https://github.com/WebAssembly/custom-page-sizes)                                        | Planned             |
+| [Bulk memory operations](https://github.com/WebAssembly/bulk-memory-operations)                              | Planned             |
+| [Sign-extension operators](https://github.com/WebAssembly/sign-extension-ops)                                | Planned             |
+| [Non-trapping float-to-int conversions](https://github.com/WebAssembly/nontrapping-float-to-int-conversions) | Planned             |
+| [Multi-value](https://github.com/WebAssembly/multi-value)                                                    | Under Consideration |
+| [Multiple memories](https://github.com/WebAssembly/multi-memory)                                             | Under Consideration |
 
-Additional Wasm extensions/proposals could be developed later.
+Currently, all other proposals are not planned or considered.
 
 ## Copyright
 

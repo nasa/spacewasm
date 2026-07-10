@@ -89,9 +89,19 @@ datastructures within the implementation.
 - **Function parameters**: Maximum 255 32-bit words
 - **Local variables**: Maximum 65,535 32-bit words total per function
 
+### Linear Memory
+
+These follow the WebAssembly 1.0 specification and are validated at decode time.
+
+- **Page size**: 64 KiB (65,536 bytes) — the standard Wasm linear-memory page size. The
+  [custom-page-sizes proposal](https://github.com/WebAssembly/custom-page-sizes) is planned but not yet supported,
+  so this size is fixed.
+- **Maximum pages**: 65,536 pages (4 GiB) per memory. A declared `min` or `max` above this is rejected.
+
 ### IR Code Pages
 
-This limit comes from the encoding of program counters and the design choices of the IR.
+These pages hold the compiled IR (not raw Wasm bytecode) and are distinct from linear-memory pages. This limit comes
+from the encoding of program counters and the design choices of the IR.
 
 - **Code pages**: Configurable via generic parameter `MAX_CODE_PAGES`, typically set at module instantiation
 - **Page size**: 256 16-bit words (512 bytes)
