@@ -23,6 +23,12 @@ validate easily. These properties however make it slow to execute in-place. Duri
 instructions, SpaceWasm converts bytecode into another intermediate representation (IR) which includes properties better
 suited for interpretation. Read more about the IR in the [specification](src/SPEC.md).
 
+## Requirements
+
+The requirements of SpaceWasm are levied from similar work produced by [DLR](https://github.com/DLR-FT/wasm-interpreter).
+
+See [requirements](./REQUIREMENTS.md).
+
 ## Embedding
 
 Embedding the interpreter refers to instantiating it and providing implementations for the functions that are imported
@@ -167,3 +173,7 @@ OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
 WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
 OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
 ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+Portions of this interpreter have been based on code and insite from Deutsches Zentrum für Luft- und Raumfahrt e.V. (DLR) and OxidOS Automotive SRL.
+
+Copyright © 2024-2026 Deutsches Zentrum für Luft- und Raumfahrt e.V. (DLR) Copyright © 2024-2025 OxidOS Automotive SRL
