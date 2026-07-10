@@ -177,3 +177,8 @@ ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 Portions of this interpreter have been based on code and insite from Deutsches Zentrum für Luft- und Raumfahrt e.V. (DLR) and OxidOS Automotive SRL.
 
 Copyright © 2024-2026 Deutsches Zentrum für Luft- und Raumfahrt e.V. (DLR) Copyright © 2024-2025 OxidOS Automotive SRL
+
+The fuzzing infrastructure for this project (`crates/fuzzing`) is derived from the
+[Wasmtime](https://github.com/bytecodealliance/wasmtime) project, which is licensed under
+[Apache-2.0 WITH LLVM-exception](https://github.com/bytecodealliance/wasmtime/blob/main/LICENSE).
+The derived files have been modified for SpaceWasm and carry notices to that effect.
