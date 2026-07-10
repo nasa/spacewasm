@@ -2,9 +2,8 @@
 
 ## Our Position on Generative AI
 
-The primary purpose of SpaceWasm is to provide a safe boundary between untrusted or low-trust executables a
-path to execute on-board in a way that cannot pollute the rest of the system. To this end many design
-decisions require maticulous consideration.
+The primary purpose of SpaceWasm is to provide a safe boundary that gives untrusted or low-trust executables a path to execute on-board in a way that cannot pollute the rest of the system. To this end many design
+decisions require meticulous consideration.
 
 Our stance on Generative AI contributions for SpaceWasm is to generally **disallow** its use for development of the interpreter (code found in `src/*`).
 

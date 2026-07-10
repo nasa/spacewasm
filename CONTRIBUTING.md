@@ -7,7 +7,7 @@ please file a bug report in [GitHub](https://github.com/nasa/spacewasm/issues).
 
 ## Bug Fixes
 
-If you are interesting in contributing code to SpaceWasm, bugs already
+If you are interested in contributing code to SpaceWasm, bugs already
 reported in [GitHub Issues](https://github.com/nasa/spacewasm/issues)
 labeled with [good first issue](https://github.com/nasa/spacewasm/issues?q=is%3Aissue%20state%3Aopen%20label%3A%22good%20first%20issue%22) are a good first start.
 
