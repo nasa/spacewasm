@@ -174,6 +174,6 @@ WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
 OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
 ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-Portions of this interpreter have been based on code and insite from Deutsches Zentrum für Luft- und Raumfahrt e.V. (DLR) and OxidOS Automotive SRL.
+Portions of this interpreter have been based on code and insight from Deutsches Zentrum für Luft- und Raumfahrt e.V. (DLR) and OxidOS Automotive SRL.
 
-Copyright © 2024-2026 Deutsches Zentrum für Luft- und Raumfahrt e.V. (DLR) Copyright © 2024-2025 OxidOS Automotive SRL
+Copyright © 2024-2026 Deutsches Zentrum für Luft- und Raumfahrt e.V. (DLR). Copyright © 2024-2025 OxidOS Automotive SRL

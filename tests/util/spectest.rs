@@ -10,8 +10,8 @@
 /// ---
 /// Portions of this file are derived from https://github.com/DLR-FT/wasm-interpreter:
 /// Copyright © 2024-2026 Deutsches Zentrum für Luft- und Raumfahrt e.V.
-/// (DLR) Copyright © 2024-2025 OxidOS Automotive SRL
-/// Licensed under the Apache License, Version 2.0.
+/// (DLR).
+/// Copyright © 2024-2025 OxidOS Automotive SRL.
 use super::inspector::{Inspector, LimitedVec};
 use serde::{Deserialize, Serialize};
 use spacewasm::{

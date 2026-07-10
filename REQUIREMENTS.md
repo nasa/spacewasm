@@ -1,6 +1,6 @@
 # Requirements
 
-Adapted from [DLR-FT's embedded WASM interpreter](https://raw.githubusercontent.com/DLR-FT/wasm-interpreter/refs/heads/main/requirements/requirements.sdoc).
+Adapted from [DLR-FT's WASM interpreter](https://raw.githubusercontent.com/DLR-FT/wasm-interpreter/refs/heads/main/requirements/requirements.sdoc).
 
 | ID     | Title                                | Statement                                                                                                                                                                                                          | Rationale                                                                                                                                                                                                                                                                                                 | Relations                     |
 | ------ | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
