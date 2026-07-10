@@ -1,0 +1,58 @@
+SpaceWasm
+
+Copyright (c) 2026 California Institute of Technology ("Caltech").
+U.S. Government sponsorship acknowledged. All rights reserved.
+
+This product includes software developed by third parties. The relevant
+portions, their upstream projects, and their licenses are listed below.
+
+--------------------------------------------------------------------------------
+DLR-FT wasm-interpreter and OxidOS Automotive
+--------------------------------------------------------------------------------
+
+Portions of the interpreter are derived from the DLR-FT WebAssembly interpreter:
+
+    https://github.com/DLR-FT/wasm-interpreter
+
+    Copyright (c) 2024-2026 Deutsches Zentrum fuer Luft- und Raumfahrt e.V. (DLR)
+    Copyright (c) 2024-2025 OxidOS Automotive SRL
+
+    Licensed under the Apache License, Version 2.0.
+
+--------------------------------------------------------------------------------
+Wasmtime
+--------------------------------------------------------------------------------
+
+Portions of the fuzzing infrastructure in `crates/fuzzing` are derived from the
+Wasmtime project:
+
+    https://github.com/bytecodealliance/wasmtime
+
+    Licensed under Apache-2.0 WITH LLVM-exception:
+    https://github.com/bytecodealliance/wasmtime/blob/main/LICENSE
+
+--------------------------------------------------------------------------------
+WebAssembly Specification Test Suite (via WasmEdge)
+--------------------------------------------------------------------------------
+
+The integration tests under `tests/core` are WebAssembly 1.0 MVP specification
+tests, curated via the WasmEdge project and originating from the WebAssembly
+specification test suite:
+
+    https://github.com/WasmEdge/wasmedge-spectest
+    https://github.com/WebAssembly/testsuite
+
+    Licensed under the Apache License, Version 2.0.
+
+--------------------------------------------------------------------------------
+CoreMark (EEMBC, via wasm3/wasm-coremark)
+--------------------------------------------------------------------------------
+
+The benchmarking fixture `crates/spacewasm_std/benches/coremark-minimal.wasm`
+is a precompiled build of the CoreMark benchmark, obtained from the
+wasm3/wasm-coremark project:
+
+    https://github.com/wasm3/wasm-coremark
+    https://github.com/eembc/coremark
+
+    Licensed under the Apache License, Version 2.0.
