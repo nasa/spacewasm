@@ -10,7 +10,8 @@ portions, their upstream projects, and their licenses are listed below.
 DLR-FT wasm-interpreter and OxidOS Automotive
 --------------------------------------------------------------------------------
 
-Portions of the interpreter are derived from the DLR-FT WebAssembly interpreter:
+Portions of the interpreter, and the requirements in REQUIREMENTS.md, are
+derived from the DLR-FT WebAssembly interpreter:
 
     https://github.com/DLR-FT/wasm-interpreter
 
