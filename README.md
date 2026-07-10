@@ -40,9 +40,18 @@ time both for the Wasm module and the embedder.
 SpaceWasm has a unique dynamic memory allocation model. All of its design choices stem requirements levied by common
 flight-software standards. Dynamic allocation follows the following rules:
 
-1. All allocations occur over a discrete number of fixed size blocks called _pages_.
+SpaceWasm uses the term _page_ for three distinct units:
+
+- **Wasm linear memory pages** are the WebAssembly 1.0 unit for a module's linear memory. Each linear memory page is the
+  standard 64 KiB (65,536 bytes).
+- **Dynamic memory pages** are the fixed-size allocation blocks used by SpaceWasm's deterministic allocator to hold
+  loaded Wasm modules.
+- **IR code pages** are allocated from dynamic memory pages to store compiled IR. Each IR code page contains 256 16-bit
+  words (512 bytes) and is addressed by a 24-bit code-page index plus an 8-bit word offset.
+
+1. All allocations occur over a discrete number of fixed-size blocks called _dynamic memory pages_.
 2. Deallocation cannot precede allocation.
-3. Sub-regions inside pages cannot grow or shrink, sizes should be fixed ahead of time.
+3. Sub-regions inside dynamic memory pages cannot grow or shrink; sizes should be fixed ahead of time.
 4. Memory usage must be deterministic.
 5. Any allocation failures must _not_ result in panic.
 
@@ -80,10 +89,11 @@ resource-constrained spacecraft environments:
 
 ### IR Code Pages
 
-- **Code pages**: Configurable via generic parameter `MAX_PAGES`, typically set at module instantiation
-- **Page size**: 256 16-bit words (512 bytes)
-- **Maximum page address**: 24-bit (16,777,216 pages)
-- **Word offset in page**: 8-bit (0-255)
+- **IR code pages**: Configurable via generic parameter `MAX_PAGES`, typically set at module instantiation
+- **IR code page size**: 256 16-bit words (512 bytes)
+- **IR code-page address space**: 24-bit IR code-page index (16,777,216 addressable IR code pages); this is not a Wasm
+  linear memory page count
+- **Word offset within an IR code page**: 8-bit (0-255)
 
 ### Control Flow
 
