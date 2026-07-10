@@ -110,6 +110,19 @@ impl Memory {
         }
     }
 
+    /// Resolve a guest memory access `base + offset` to a byte address.
+    ///
+    /// The sum is evaluated in `u64` and narrowed back to `usize`, so it can
+    /// never wrap on 32-bit targets, where `usize` is 32-bit and `base + offset`
+    /// may exceed `u32::MAX`. An address that does not fit `usize` is rejected as
+    /// out of bounds rather than aliasing a valid cell. The resulting address is
+    /// still bounds-checked against the memory size by the individual load/store
+    /// operations.
+    #[inline]
+    pub fn effective_address(base: u32, offset: u32) -> Result<usize, MemoryError> {
+        usize::try_from(base as u64 + offset as u64).map_err(|_| MemoryError::OutOfBounds)
+    }
+
     pub fn store_u8(&self, addr: usize, i: u8) -> Result<(), MemoryError> {
         self.check_in_bounds(addr, 1)?;
         unsafe {
@@ -384,5 +397,15 @@ mod kani_proofs {
         // Prevent Drop from calling GlobalAllocator FFI
         core::mem::forget(mem);
         unsafe { alloc.dealloc(ptr, Layout::from_size_align(size, 16).unwrap()) };
+    }
+
+    /// The effective address is the exact sum of `base` and `offset`; it is
+    /// never silently wrapped modulo the pointer width.
+    #[kani::proof]
+    fn proof_effective_address_no_wrap() {
+        let base: u32 = kani::any();
+        let offset: u32 = kani::any();
+        let ea = Memory::effective_address(base, offset).unwrap();
+        assert_eq!(ea as u64, base as u64 + offset as u64);
     }
 }
