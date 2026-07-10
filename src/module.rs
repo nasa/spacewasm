@@ -64,20 +64,20 @@ impl CustomSectionHandler for DefaultCustomSectionHandler {
 
 impl Module {
     pub fn new<
-        const MAX_PAGES: usize,
+        const MAX_CODE_PAGES: usize,
         const MAX_CONTROL_FRAMES: usize,
         const MAX_STACK_DEPTH: usize,
     >(
         name: &str,
         stream: &mut dyn WasmStream,
         store: &mut Store,
-        code_builder: &mut CodeBuilder<MAX_PAGES>,
+        code_builder: &mut CodeBuilder<MAX_CODE_PAGES>,
         allocator: Rc<dyn WasmMemoryAllocator>,
         compiler_options: CompilerOptions,
     ) -> Result<Module, ParseError> {
         let mut wasm = Reader::new(stream);
 
-        Module::read::<MAX_PAGES, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
+        Module::read::<MAX_CODE_PAGES, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
             name,
             &mut wasm,
             store,
@@ -94,21 +94,21 @@ impl Module {
     }
 
     pub fn new_with_statistics<
-        const MAX_PAGES: usize,
+        const MAX_CODE_PAGES: usize,
         const MAX_CONTROL_FRAMES: usize,
         const MAX_STACK_DEPTH: usize,
     >(
         name: &str,
         stream: &mut dyn WasmStream,
         store: &mut Store,
-        code_builder: &mut CodeBuilder<MAX_PAGES>,
+        code_builder: &mut CodeBuilder<MAX_CODE_PAGES>,
         allocator: Rc<dyn WasmMemoryAllocator>,
         compiler_options: CompilerOptions,
     ) -> Result<(Module, [MemoryStatistics; SectionKind::N as usize]), ParseError> {
         let mut wasm = Reader::new(stream);
         let mut stats: [MemoryStatistics; SectionKind::N as usize] = Default::default();
 
-        let m = Module::read::<MAX_PAGES, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
+        let m = Module::read::<MAX_CODE_PAGES, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
             name,
             &mut wasm,
             store,
@@ -128,14 +128,14 @@ impl Module {
 
     #[allow(clippy::too_many_arguments)]
     fn read<
-        const MAX_PAGES: usize,
+        const MAX_CODE_PAGES: usize,
         const MAX_CONTROL_FRAMES: usize,
         const MAX_STACK_DEPTH: usize,
     >(
         name: &str,
         wasm: &mut Reader,
         store: &mut Store,
-        code_builder: &mut CodeBuilder<MAX_PAGES>,
+        code_builder: &mut CodeBuilder<MAX_CODE_PAGES>,
         custom_handler: &mut dyn CustomSectionHandler,
         allocator: Rc<dyn WasmMemoryAllocator>,
         mut stats: Option<&mut [MemoryStatistics; SectionKind::N as usize]>,
@@ -215,7 +215,7 @@ impl Module {
             let memory_before = GlobalAllocator.memory_statistics();
 
             module
-                .read_section::<MAX_PAGES, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
+                .read_section::<MAX_CODE_PAGES, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
                     wasm,
                     store,
                     section_size,
@@ -252,7 +252,7 @@ impl Module {
 
     #[allow(clippy::too_many_arguments)]
     fn read_section<
-        const MAX_PAGES: usize,
+        const MAX_CODE_PAGES: usize,
         const MAX_CONTROL_FRAMES: usize,
         const MAX_STACK_DEPTH: usize,
     >(
@@ -262,7 +262,7 @@ impl Module {
         section_size: usize,
         section_ty: SectionKind,
         custom_handler: &mut dyn CustomSectionHandler,
-        code_builder: &mut CodeBuilder<MAX_PAGES>,
+        code_builder: &mut CodeBuilder<MAX_CODE_PAGES>,
         allocator: Rc<dyn WasmMemoryAllocator>,
         compiler_options: CompilerOptions,
     ) -> Result<(), ValidationError> {
@@ -397,7 +397,7 @@ impl Module {
                 ElementSection::read(wasm, store, self)?;
             }
             Code => {
-                CodeSection::read::<MAX_PAGES, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
+                CodeSection::read::<MAX_CODE_PAGES, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
                     wasm,
                     code_builder,
                     store,
@@ -968,12 +968,12 @@ pub struct CodeSection;
 
 impl CodeSection {
     pub fn read<
-        const MAX_PAGES: usize,
+        const MAX_CODE_PAGES: usize,
         const MAX_CONTROL_FRAMES: usize,
         const MAX_STACK_DEPTH: usize,
     >(
         wasm: &mut Reader,
-        builder: &mut CodeBuilder<MAX_PAGES>,
+        builder: &mut CodeBuilder<MAX_CODE_PAGES>,
         store: &Store,
         module: &mut Module,
         compiler_options: CompilerOptions,
@@ -984,7 +984,7 @@ impl CodeSection {
         }
 
         for i in 0..n as usize {
-            module.read_function_code::<MAX_PAGES, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
+            module.read_function_code::<MAX_CODE_PAGES, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
                 wasm,
                 store,
                 builder,

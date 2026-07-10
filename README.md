@@ -37,10 +37,10 @@ time both for the Wasm module and the embedder.
 
 ## Dynamic Allocation
 
-SpaceWasm has a unique dynamic memory allocation model. All of its design choices stem requirements levied by common
+SpaceWasm has a unique dynamic memory allocation model. All of its design choices stem from requirements levied by common
 flight-software standards. Dynamic allocation follows the following rules:
 
-1. All allocations occur over a discrete number of fixed size blocks called _pages_.
+1. All allocations occur over a discrete number of fixed size blocks called _pages_. These pages are distinct from Wasm's linear memory pages.
 2. Deallocation cannot precede allocation.
 3. Sub-regions inside pages cannot grow or shrink, sizes should be fixed ahead of time.
 4. Memory usage must be deterministic.
@@ -49,6 +49,11 @@ flight-software standards. Dynamic allocation follows the following rules:
 The standard Rust [allocation](https://doc.rust-lang.org/alloc/) does not meet these constraints even with custom
 allocators. To that end, SpaceWasm provides its own data structures that guarantee these properties. You will find these
 data-structures contain the only usage of `unsafe` Rust semantics.
+
+> [!NOTE]
+> These limitations are only enforced on the implementation of the interpreter and _not_ on the Wasm bytecode it is made to interpret.
+
+Wasm linear memory pages are allocated outside of dynamic memory pages.
 
 ## Streaming
 
@@ -59,7 +64,7 @@ portions of memory for certain purposes. Therefore, requiring the entire Wasm bi
 memory is not feasible.
 
 SpaceWasm is highly optimized to reduce peak memory usage and not require deallocation after allocation required for
-streaming. To this end there are certain [constraints](#interpreter-limitations) imposed on the WebAssembly
+streaming. To this end, there are certain [constraints](#interpreter-limitations) imposed on the WebAssembly
 specification.
 
 SpaceWasm supports decoding and compiling Wasm binary in a single pass via a streaming mechanism. Chunks of the Wasm
@@ -69,37 +74,20 @@ synchronously.
 ## Interpreter Limitations
 
 This Wasm interpreter imposes additional constraints beyond the WebAssembly 1.0 specification to support
-resource-constrained spacecraft environments:
+resource-constrained spacecraft environments.
 
-### Module & Store Limits
-
-- **Modules in store**: Maximum 256 modules
-- **Host modules**: Maximum 256 host modules
-- **Function parameters**: Maximum 255 32-bit words
-- **Local variables**: Maximum 65,535 32-bit words total per function
-
-### IR Code Pages
-
-- **Code pages**: Configurable via generic parameter `MAX_PAGES`, typically set at module instantiation
-- **Page size**: 256 16-bit words (512 bytes)
-- **Maximum page address**: 24-bit (16,777,216 pages)
-- **Word offset in page**: 8-bit (0-255)
-
-### Control Flow
-
-- **Nesting depth**: Configurable via generic parameter `MAX_CONTROL_FRAMES` (blocks/loops/if-else)
-- **Value stack**: Configurable via generic parameter `MAX_STACK_DEPTH`, values per function
-- **Label jumps**: 22-bit signed offset (±2,097,151 instructions)
-- **Stack truncation depth**: Maximum 255 32-bit words per label jump
-
-### Instruction Encoding
-
-- **8-bit or 16-bit indexes**: 0-65,535
-- **8-bit or 32-bit immediate**: 0-254 inline, 255+ extended
-- **8-bit or 64-bit immediate**: 0-254 inline, 255+ extended
+See our [IR SPEC](./src/SPEC.md) for more details about the limitations.
 
 These constraints enable deterministic memory usage and efficient execution in resource-constrained environments while
 maintaining compatibility with most standard WebAssembly modules.
+
+## Similar Projects
+
+While SpaceWasm is a ground up implementation, it draws on some other similar projects:
+
+- https://github.com/wasmi-labs/wasmi
+- https://github.com/wasm3/wasm3
+- https://github.com/DLR-FT/wasm-interpreter
 
 ## Benchmarking
 
