@@ -152,7 +152,7 @@ mod fuzz_alloc {
     spacewasm::global_allocator!(SystemAllocator, SystemAllocator);
 }
 
-const MAX_PAGES: usize = 128;
+const MAX_CODE_PAGES: usize = 128;
 const MAX_CONTROL_FRAMES: usize = 128;
 const MAX_STACK_DEPTH: usize = 256;
 
@@ -171,7 +171,7 @@ pub fn validate(wasm: &[u8]) {
         }
     };
 
-    let mut code_builder = CodeBuilder::<MAX_PAGES>::default();
+    let mut code_builder = CodeBuilder::<MAX_CODE_PAGES>::default();
     let mut stream = ByteStream::new(wasm);
 
     let allocator = spacewasm::Rc::new(FuzzAllocator {
@@ -182,7 +182,7 @@ pub fn validate(wasm: &[u8]) {
     .into_wasm_memory_allocator();
 
     // Attempt to decode and validate the module
-    let result = Module::new::<MAX_PAGES, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
+    let result = Module::new::<MAX_CODE_PAGES, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
         "",
         &mut stream,
         &mut store,
@@ -224,7 +224,7 @@ pub fn no_traps(wasm: &[u8]) {
     };
 
     // Compile module with reduced code pages
-    let mut code_builder = CodeBuilder::<MAX_PAGES>::default();
+    let mut code_builder = CodeBuilder::<MAX_CODE_PAGES>::default();
     let mut stream = ByteStream::new(wasm);
 
     let allocator = Rc::new(FuzzAllocator {
@@ -234,7 +234,7 @@ pub fn no_traps(wasm: &[u8]) {
     .unwrap()
     .into_wasm_memory_allocator();
 
-    let module = match Module::new::<MAX_PAGES, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
+    let module = match Module::new::<MAX_CODE_PAGES, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
         "",
         &mut stream,
         &mut store,

@@ -72,3 +72,51 @@ Wasm instructions represented in the IR fall in the following categories:
    [16:index]
    ```
 8. Other...
+
+## Limitations
+
+Are several limitations enforced by the interpreter that generally stem
+from tuned fixed-width integer constraints imposed by the IR design and
+datastructures within the implementation.
+
+> [!NOTE]
+> We have found that these limitations are generally not highly restrictive and even got a Pyiodide interpreter running inside SpaceWasm.
+
+### Module & Store Limits
+
+- **Modules in store**: Maximum 256 modules
+- **Host modules**: Maximum 256 host modules
+- **Function parameters**: Maximum 255 32-bit words
+- **Local variables**: Maximum 65,535 32-bit words total per function
+
+### Linear Memory
+
+These follow the WebAssembly 1.0 specification and are validated at decode time.
+
+- **Page size**: 64 KiB (65,536 bytes) — the standard Wasm linear-memory page size. The
+  [custom-page-sizes proposal](https://github.com/WebAssembly/custom-page-sizes) is planned but not yet supported,
+  so this size is fixed.
+- **Maximum pages**: 65,536 pages (4 GiB) per memory. A declared `min` or `max` above this is rejected.
+
+### IR Code Pages
+
+These pages hold the compiled IR (not raw Wasm bytecode) and are distinct from linear-memory pages. This limit comes
+from the encoding of program counters and the design choices of the IR.
+
+- **Code pages**: Configurable via generic parameter `MAX_CODE_PAGES`, typically set at module instantiation
+- **Page size**: 256 16-bit words (512 bytes)
+- **Maximum page index**: 24-bit (16,777,216 pages)
+- **Word offset in page**: 8-bit (0-255)
+
+### Control Flow
+
+- **Nesting depth**: Configurable via generic parameter `MAX_CONTROL_FRAMES` (blocks/loops/if-else)
+- **Value stack**: Configurable via generic parameter `MAX_STACK_DEPTH`, values per function
+- **Label jumps**: 22-bit signed offset (±2,097,151 instructions)
+- **Stack truncation depth**: Maximum 255 32-bit words per label jump
+
+### Instruction Encoding
+
+- **8-bit or 16-bit indexes**: 0-65,535
+- **8-bit or 32-bit immediate**: 0-254 inline, 255+ extended
+- **8-bit or 64-bit immediate**: 0-254 inline, 255+ extended
