@@ -64,7 +64,7 @@ impl JumpOffset {
 }
 
 /// A 32-bit value encoding a label's arity, jump address, and stack truncation information
-/// [arity:2][depth:8][offset:22]
+/// `[arity:2][depth:8][offset:22]`
 ///
 /// Arity is the result type needed by the target block we are jumping to:
 /// arity == 0 (no result)

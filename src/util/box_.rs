@@ -6,7 +6,7 @@ use core::ops::{Deref, DerefMut};
 use core::{mem, ptr};
 
 /// A heap-allocated value with a configurable allocator.
-/// Similar to [::alloc::boxed::Box] but allows specifying a custom allocator.
+/// Similar to `alloc::boxed::Box` but allows specifying a custom allocator.
 pub struct Box<T: ?Sized, A: Allocator = GlobalAllocator> {
     ptr: *mut T,
     alloc: A,
