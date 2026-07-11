@@ -708,7 +708,7 @@ mod kani_proofs {
     fn proof_rc_get_mut_uniqueness() {
         let value: u32 = kani::any();
 
-        let mut rc1 = Rc::new_in(RustSystemAllocator, value);
+        let rc1 = Rc::new_in(RustSystemAllocator, value);
         kani::assume(rc1.is_ok());
         let mut rc1 = rc1.unwrap();
 
