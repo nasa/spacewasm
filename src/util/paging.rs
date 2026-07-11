@@ -3,6 +3,9 @@ use crate::alloc::{AllocError, Allocator};
 use core::alloc::Layout;
 use core::cell::UnsafeCell;
 
+// TODO(tumbar) Do we need to expose this or is it constant across all of SpaceWasm?
+const ALIGNMENT: usize = 8;
+
 #[derive(Debug, Default, Clone)]
 pub struct PageAllocatorStatistics {
     pub total_bytes: u32,
@@ -113,7 +116,7 @@ impl<'a, const MAX_PAGES: usize> PageAllocatorInner<'a, MAX_PAGES> {
                 None => {
                     // We have reached an empty page
                     // Allocate the page and place the allocation here
-                    let page_layout = Layout::from_size_align(self.page_size, 128).unwrap();
+                    let page_layout = Layout::from_size_align(self.page_size, ALIGNMENT).unwrap();
                     let addr = unsafe { self.page_allocator.alloc(page_layout)? };
 
                     // Attempt to allocate this memory into the page
@@ -153,7 +156,7 @@ impl<'a, const MAX_PAGES: usize> PageAllocatorInner<'a, MAX_PAGES> {
                             unsafe {
                                 self.page_allocator.dealloc(
                                     page.ptr,
-                                    Layout::from_size_align(self.page_size, 128).unwrap(),
+                                    Layout::from_size_align(self.page_size, ALIGNMENT).unwrap(),
                                 );
                             }
 
@@ -178,7 +181,7 @@ impl<'a, const MAX_PAGES: usize> Drop for PageAllocatorInner<'a, MAX_PAGES> {
                     unsafe {
                         self.page_allocator.dealloc(
                             page.ptr,
-                            Layout::from_size_align(self.page_size, 128).unwrap(),
+                            Layout::from_size_align(self.page_size, ALIGNMENT).unwrap(),
                         );
                     }
 
@@ -369,7 +372,7 @@ mod kani_proofs {
 
         // Allocate a page from backing allocator
         let page_size = 256;
-        let page_layout = Layout::from_size_align(page_size, 128).unwrap();
+        let page_layout = Layout::from_size_align(page_size, ALIGNMENT).unwrap();
         let page_ptr = unsafe { backing_alloc.alloc(page_layout).unwrap() };
 
         let mut page = Page::new(page_ptr, page_size);
@@ -379,7 +382,7 @@ mod kani_proofs {
         kani::assume(size > 0 && size <= 64);
 
         let align: usize = kani::any();
-        kani::assume(align > 0 && align <= 128);
+        kani::assume(align > 0 && align <= ALIGNMENT);
         kani::assume(align.is_power_of_two());
 
         let layout = Layout::from_size_align(size, align).unwrap();
@@ -483,7 +486,7 @@ mod kani_proofs {
         let backing_alloc = RustSystemAllocator;
 
         let page_size = 256;
-        let page_layout = Layout::from_size_align(page_size, 128).unwrap();
+        let page_layout = Layout::from_size_align(page_size, ALIGNMENT).unwrap();
         let page_ptr = unsafe { backing_alloc.alloc(page_layout).unwrap() };
 
         let mut page = Page::new(page_ptr, page_size);
@@ -606,7 +609,7 @@ mod kani_proofs {
             // (We can't directly verify this without accessing page internals,
             // but we can verify total_bytes is reasonable)
             assert!(
-                stats1.total_bytes <= stats1.pages as u32 * 128,
+                stats1.total_bytes <= stats1.pages as u32 * ALIGNMENT as u32,
                 "Total bytes must not exceed total page capacity"
             );
             assert!(
