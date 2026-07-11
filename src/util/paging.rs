@@ -225,16 +225,16 @@ impl Page {
     /// Attempt to allocate on the tail end of this page
     fn alloc(&mut self, layout: Layout) -> Option<*mut u8> {
         // Find the next address that is aligned to this layout
-        let mut start_address = (self.ptr as usize) + self.allocated;
+        let start_address = (self.ptr as usize) + self.allocated;
         let alignment_offset = if start_address.is_multiple_of(layout.align()) {
             0
         } else {
             layout.align() - start_address % layout.align()
         };
-        start_address += alignment_offset;
+        let aligned_start = start_address + alignment_offset;
 
         // Make sure out buffer can fit in here
-        let final_offset = (start_address - self.ptr as usize) + layout.size();
+        let final_offset = (aligned_start - self.ptr as usize) + layout.size();
         if final_offset <= self.size {
             assert!(!self.has_deallocated);
             self.cache = Some(AllocCache {
@@ -246,7 +246,7 @@ impl Page {
             self.allocated = final_offset;
             self.n_allocations += 1;
 
-            Some(start_address as *mut u8)
+            Some(aligned_start as *mut u8)
         } else {
             None
         }
