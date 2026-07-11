@@ -162,40 +162,14 @@ it). SpaceWasm will always be a subset of the full approved Wasm specification. 
 
 Currently, all other proposals are not planned or considered.
 
-## Copyright
+## Credits & Acknowledgments
 
-Copyright (c) 2026 California Institute of Technology (“Caltech”). U.S. Government
-sponsorship acknowledged.
-All rights reserved.
-Redistribution and use in source and binary forms, with or without modification, are permitted provided
-that the following conditions are met:
+Portions of this project are adapted from the open-source projects:
 
-* Redistributions of source code must retain the above copyright notice, this list of conditions and
-the following disclaimer.
-* Redistributions in binary form must reproduce the above copyright notice, this list of conditions
-and the following disclaimer in the documentation and/or other materials provided with the
-distribution.
-* Neither the name of Caltech nor its operating division, the Jet Propulsion Laboratory, nor the
-names of its contributors may be used to endorse or promote products derived from this software
-without specific prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
-IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
-THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
-PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR
-CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
-EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
-PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS;
-OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
-WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
-OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
-ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
-Portions of this interpreter have been based on code and insight from Deutsches Zentrum für Luft- und Raumfahrt e.V. (DLR) and OxidOS Automotive SRL.
-
-Copyright © 2024-2026 Deutsches Zentrum für Luft- und Raumfahrt e.V. (DLR). Copyright © 2024-2025 OxidOS Automotive SRL
-
-The fuzzing infrastructure for this project (`crates/fuzzing`) is derived from the
-[Wasmtime](https://github.com/bytecodealliance/wasmtime) project, which is licensed under
-[Apache-2.0 WITH LLVM-exception](https://github.com/bytecodealliance/wasmtime/blob/main/LICENSE).
-The derived files have been modified for SpaceWasm and carry notices to that effect.
+- [DLR-FT/wasm-interpreter](https://github.com/DLR-FT/wasm-interpreter), which is licensed under the Apache License 2.0.
+- [Wasmtime](https://github.com/bytecodealliance/wasmtime), which is licensed under the Apache License 2.0 with LLVM-exception.
+- [WABT](https://github.com/webassembly/wabt), which is licensed under the Apache License 2.0.
+- [wasmedge-spectest](https://github.com/WasmEdge/wasmedge-spectest), which is licensed under MIT.
+- [WebAssembly Testsuite](https://github.com/WebAssembly/testsuite), which is licensed under the Apache License 2.0.
+- [Coremark](https://github.com/eembc/coremark), which is licensed under the COREMARK ACCEPTABLE USE AGREEMENT.
+- [Wasm Coremark](https://github.com/wasm3/wasm-coremark), which provides no upstream license file; the wrapped CoreMark payload is governed by the COREMARK ACCEPTABLE USE AGREEMENT.
