@@ -597,15 +597,10 @@ mod kani_proofs {
         );
     }
 
-    /// Verify PageAllocator orchestration with multiple pages
-    ///
-    /// Each allocation is sized to exactly fill one page, so exhausting the
-    /// fixed `MAX_PAGES = 3` pages takes exactly 3 calls and the 4th call is
-    /// deterministically `OutOfMemory`. This avoids an unbounded retry loop,
-    /// which previously forced Kani to unwind many iterations (each creating
-    /// a fresh backing allocation) and blew up verification memory usage.
+    /// Verify that page allocations within bounds work correctly, but page allocs
+    /// that exceed total page capacity will fail
     #[kani::proof]
-    fn proof_page_alloc() {
+    fn proof_page_overalloc_failure() {
         let backing_alloc = RustSystemAllocator;
         let page_alloc = PageAllocator::<3>::new(&backing_alloc, 128);
         let layout = Layout::from_size_align(128, 8).unwrap();
@@ -636,8 +631,6 @@ mod kani_proofs {
 
         let ptr3 = unsafe { page_alloc.alloc(layout) }.expect("page 2 must fit");
 
-        // All 3 pages (MAX_PAGES) are now full; the next call must fail
-        // deterministically, with no retry loop required.
         let result4 = unsafe { page_alloc.alloc(layout) };
         assert!(
             matches!(result4, Err(AllocError::OutOfMemory)),
@@ -646,6 +639,37 @@ mod kani_proofs {
 
         unsafe {
             page_alloc.dealloc(ptr3, layout);
+            page_alloc.dealloc(ptr2, layout);
+            page_alloc.dealloc(ptr1, layout);
+        }
+    }
+
+    /// Verify that an allocation reuses an existing page with room instead
+    /// of creating a new one
+    #[kani::proof]
+    fn proof_page_alloc_reuses_existing_page() {
+        let backing_alloc = RustSystemAllocator;
+        let page_alloc = PageAllocator::<3>::new(&backing_alloc, 128);
+        let layout = Layout::from_size_align(64, 8).unwrap();
+
+        let ptr1 = unsafe { page_alloc.alloc(layout) }.expect("page 0 must fit");
+        assert_eq!(page_alloc.stats().pages, 1, "First allocation must create page 0");
+
+        let ptr2 = unsafe { page_alloc.alloc(layout) }.expect("page 0 must still fit");
+        assert_eq!(
+            page_alloc.stats().pages,
+            1,
+            "Second allocation must reuse page 0, not create a new page"
+        );
+
+        let ptr1_addr = ptr1 as usize;
+        let ptr2_addr = ptr2 as usize;
+        assert!(
+            ptr2_addr >= ptr1_addr + 64 || ptr1_addr >= ptr2_addr + 64,
+            "Allocations must not overlap"
+        );
+
+        unsafe {
             page_alloc.dealloc(ptr2, layout);
             page_alloc.dealloc(ptr1, layout);
         }
