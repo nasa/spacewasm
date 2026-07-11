@@ -226,11 +226,12 @@ impl Page {
     fn alloc(&mut self, layout: Layout) -> Option<*mut u8> {
         // Find the next address that is aligned to this layout
         let mut start_address = (self.ptr as usize) + self.allocated;
-        if !start_address.is_multiple_of(layout.align()) {
-            let alignment_offset = layout.align() - start_address % layout.align();
-            self.wasted += alignment_offset;
-            start_address += alignment_offset;
-        }
+        let alignment_offset = if start_address.is_multiple_of(layout.align()) {
+            0
+        } else {
+            layout.align() - start_address % layout.align()
+        };
+        start_address += alignment_offset;
 
         // Make sure out buffer can fit in here
         let final_offset = (start_address - self.ptr as usize) + layout.size();
@@ -241,6 +242,7 @@ impl Page {
                 alloc_ptr: start_address,
             });
 
+            self.wasted += alignment_offset;
             self.allocated = final_offset;
             self.n_allocations += 1;
 
@@ -566,6 +568,46 @@ mod kani_proofs {
             "Page should be dropped when n_allocations reaches 0"
         );
         assert_eq!(page.n_allocations, 0, "Counter must be 0");
+
+        // Cleanup
+        core::mem::forget(page);
+        unsafe { backing_alloc.dealloc(page_ptr, page_layout) };
+    }
+
+    /// Makes sure that padding is computed correctly
+    #[kani::proof]
+    fn proof_page_alignment_padding() {
+        let backing_alloc = RustSystemAllocator;
+
+        let page_size = 128;
+        let page_layout = Layout::from_size_align(page_size, ALIGNMENT).unwrap();
+        let page_ptr = unsafe { backing_alloc.alloc(page_layout).unwrap() };
+
+        let mut page = Page::new(page_ptr, page_size);
+
+        // Leave `allocated` at an offset that is not a multiple of 8, so the
+        // next allocation attempt needs alignment padding
+        let layout1 = Layout::from_size_align(10, 8).unwrap();
+        page.alloc(layout1).expect("first allocation must fit");
+        assert_eq!(page.allocated, 10);
+        assert_eq!(page.wasted, 0);
+
+        // Needs 6 bytes of padding, but 16 + 115 = 131 > 128, so this allocation must fail
+        let layout2 = Layout::from_size_align(115, 8).unwrap();
+        let wasted_before = page.wasted;
+        let allocated_before = page.allocated;
+
+        let result = page.alloc(layout2);
+
+        assert!(result.is_none(), "allocation must fail: it does not fit");
+        assert_eq!(
+            page.wasted, wasted_before,
+            "a failed allocation must not commit alignment padding to `wasted`"
+        );
+        assert_eq!(
+            page.allocated, allocated_before,
+            "a failed allocation must not advance `allocated`"
+        );
 
         // Cleanup
         core::mem::forget(page);
