@@ -33,7 +33,7 @@ use crate::MemoryStatistics;
 unsafe extern "C" {
     /// Allocate a pointer on the heap (or wherever) given a size and alignment.
     /// If allocation could not succeed, write the error code corresponding
-    /// to [AllocError] into [err] and return NULL.
+    /// to [AllocError] into `err` and return NULL.
     fn __spacewasm_alloc(size: usize, align: usize, err: *mut u32) -> *mut u8;
 
     /// Deallocate a pointer given it's size and alignment

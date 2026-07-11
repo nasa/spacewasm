@@ -39,7 +39,7 @@ pub struct Module {
 
 pub trait CustomSectionHandler {
     /// Called when we reach a custom section of the Wasm binary.
-    /// This reader must read _exactly_ [size] bytes out from the reader.
+    /// This reader must read _exactly_ `size` bytes out from the reader.
     /// If the reader does not follow this rule, a validation error will be triggered.
     fn custom_section(
         &mut self,
