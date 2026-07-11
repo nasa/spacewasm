@@ -20,33 +20,28 @@ Licensed under the Apache License, Version 2.0.
 
 ---
 
-This product includes software developed by [Wasmtime] 
-(https://github.com/bytecodealliance/wasmtime).
+This product includes software developed by [Wasmtime](https://github.com/bytecodealliance/wasmtime).
 Licensed under Apache-2.0 WITH LLVM-exception:
 https://github.com/bytecodealliance/wasmtime/blob/main/LICENSE
 
 ---
 
-This product includes software developed by 
-[WABT](https://github.com/webassembly/wabt)
+This product includes software developed by [WABT](https://github.com/webassembly/wabt).
 Licensed under the Apache License, Version 2.0.
 
 ---
 
-This product includes tests developed by [Wasmedge] 
-(https://github.com/WasmEdge/wasmedge-spectest).
-Licensed under MIT
+This product includes tests developed by [Wasmedge](https://github.com/WasmEdge/wasmedge-spectest).
+Licensed under the MIT License.
 
 ---
 
-This product includes tests developed by [WebAssembly] 
-(https://github.com/WebAssembly/testsuite).
+This product includes tests developed by [WebAssembly](https://github.com/WebAssembly/testsuite).
 Licensed under the Apache License, Version 2.0.
 
 ---
 
-This product includes software developed by [EMCC] 
-(https://github.com/eembc/coremark).
+This product includes software developed by [EEMBC](https://github.com/eembc/coremark).
 Licensed under the COREMARK ACCEPTABLE USE AGREEMENT.
 
 Copyright © 2009 EEMBC All rights reserved. CoreMark is a trademark of EEMBC and EEMBC is a registered trademark of the Embedded Microprocessor Benchmark Consortium.
@@ -54,3 +49,5 @@ Copyright © 2009 EEMBC All rights reserved. CoreMark is a trademark of EEMBC an
 ---
 
 This product includes software developed by [wasm3](https://github.com/wasm3/wasm-coremark).
+No license file is provided upstream. The wrapped CoreMark payload is governed
+by the COREMARK ACCEPTABLE USE AGREEMENT noted above.

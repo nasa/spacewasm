@@ -172,4 +172,4 @@ Portions of this project are adapted from the open-source projects:
 - [wasmedge-spectest](https://github.com/WasmEdge/wasmedge-spectest), which is licensed under MIT.
 - [WebAssembly Testsuite](https://github.com/WebAssembly/testsuite), which is licensed under the Apache License 2.0.
 - [Coremark](https://github.com/eembc/coremark), which is licensed under the COREMARK ACCEPTABLE USE AGREEMENT.
-- [Wasm Coremark](https://github.com/wasm3/wasm-coremark), which is unlicensed.
+- [Wasm Coremark](https://github.com/wasm3/wasm-coremark), which provides no upstream license file; the wrapped CoreMark payload is governed by the COREMARK ACCEPTABLE USE AGREEMENT.
