@@ -16,7 +16,7 @@ impl Name {
 
 /// Value types classify the individual values that WebAssembly code can compute with and the values
 /// that a variable accepts.
-/// https://www.w3.org/TR/wasm-core-1/#syntax-valtype
+/// <https://www.w3.org/TR/wasm-core-1/#syntax-valtype>
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 #[repr(u8)]
 pub enum ValType {

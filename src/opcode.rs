@@ -6,12 +6,13 @@
 /// you may not use this file except in compliance with the License.
 /// You may obtain a copy of the License at
 ///
-/// http://www.apache.org/licenses/LICENSE-2.0
+/// <http://www.apache.org/licenses/LICENSE-2.0>
 ///
 /// ---
-/// Portions of this file are derived from https://github.com/DLR-FT/wasm-interpreter:
+/// Portions of this file are derived from <https://github.com/DLR-FT/wasm-interpreter>:
 /// Copyright © 2024-2026 Deutsches Zentrum für Luft- und Raumfahrt e.V.
-/// (DLR) Copyright © 2024-2025 OxidOS Automotive SRL
+/// (DLR).
+/// Copyright © 2024-2025 OxidOS Automotive SRL.
 pub const UNREACHABLE: u8 = 0x00;
 pub const NOP: u8 = 0x01;
 pub const BLOCK: u8 = 0x02;

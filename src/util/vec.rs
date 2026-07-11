@@ -6,7 +6,7 @@ use core::ops::{Deref, DerefMut};
 
 /// A fixed size vector allocated on the heap.
 /// The capacity is set on construction and cannot be changed.
-/// This is very similar to [::alloc::Vec] however it guarantees
+/// This is very similar to `alloc::vec::Vec` however it guarantees
 /// maximum memory efficiency.
 pub struct Vec<T: Sized, A: Allocator = GlobalAllocator> {
     inner: InnerVec<T>,
@@ -197,9 +197,7 @@ impl<T: Sized, A: Allocator> Vec<T, A> {
     /// is empty.
     ///
     /// If you'd like to pop the first element, consider using
-    /// [`VecDeque::pop_front`] instead.
-    ///
-    /// [`VecDeque::pop_front`]: crate::collections::VecDeque::pop_front
+    /// `VecDeque::pop_front` instead.
     ///
     /// # Examples
     ///
