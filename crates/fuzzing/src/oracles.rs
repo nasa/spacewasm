@@ -1,3 +1,8 @@
+// Portions of this file are derived from the Wasmtime project
+// (https://github.com/bytecodealliance/wasmtime), licensed under
+// Apache-2.0 WITH LLVM-exception. These portions have been modified for
+// SpaceWasm.
+
 //! Oracles.
 //!
 //! Oracles take a test case and determine whether we have a bug. For example,
