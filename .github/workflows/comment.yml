@@ -1,0 +1,128 @@
+name: PR Comments
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types:
+      - completed
+
+permissions:
+  pull-requests: write
+  contents: read
+
+jobs:
+  comment:
+    name: Post PR comments
+    runs-on: ubuntu-latest
+    # Only act on CI runs that were triggered by a pull request.
+    if: github.event.workflow_run.event == 'pull_request'
+    steps:
+      - name: Download CI artifacts
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: artifacts
+          # The benchmark/coverage artifacts may not both exist (e.g. one job
+          # failed); tolerate missing ones instead of failing the whole run.
+        continue-on-error: true
+
+      - name: Post benchmark and coverage comments
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+
+            // Reads an artifact JSON file if it was downloaded, else null.
+            function readResults(name) {
+              const path = `artifacts/${name}/${name}.json`;
+              if (!fs.existsSync(path)) {
+                console.log(`No ${name} artifact found; skipping.`);
+                return null;
+              }
+              return JSON.parse(fs.readFileSync(path, 'utf8'));
+            }
+
+            // Creates a new comment or updates the existing bot comment that
+            // contains `marker` in its body.
+            async function upsertComment(prNumber, marker, body) {
+              const { data: comments } = await github.rest.issues.listComments({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+              });
+
+              const botComment = comments.find(c =>
+                c.user.type === 'Bot' && c.body.includes(marker)
+              );
+
+              if (botComment) {
+                await github.rest.issues.updateComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: botComment.id,
+                  body,
+                });
+              } else {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: prNumber,
+                  body,
+                });
+              }
+            }
+
+            const benchmark = readResults('benchmark-results');
+            if (benchmark) {
+              const currentScore = parseFloat(benchmark.currentScore);
+              const baselineScore = parseFloat(benchmark.baselineScore);
+
+              let comment = '## CoreMark Benchmark Results\n\n';
+              comment += `**Current Score:** ${currentScore.toFixed(3)}\n`;
+
+              if (baselineScore && !isNaN(baselineScore)) {
+                const diff = currentScore - baselineScore;
+                const percentChange = ((diff / baselineScore) * 100).toFixed(2);
+
+                comment += `**Baseline Score (main):** ${baselineScore.toFixed(3)}\n`;
+                comment += `**Difference:** ${diff >= 0 ? '+' : ''}${diff.toFixed(3)} (${percentChange}%)\n\n`;
+              } else {
+                comment += '\n_No baseline available for comparison_\n';
+              }
+
+              await upsertComment(
+                parseInt(benchmark.prNumber, 10),
+                'CoreMark Benchmark Results',
+                comment
+              );
+            }
+
+            const coverage = readResults('coverage-results');
+            if (coverage) {
+              const currentCoverage = parseFloat(coverage.currentCoverage);
+              const baselineCoverage = parseFloat(coverage.baselineCoverage);
+
+              let comment = '## Code Coverage Report\n\n';
+              comment += `**Current Coverage:** ${currentCoverage.toFixed(2)}%\n`;
+
+              if (baselineCoverage && !isNaN(baselineCoverage)) {
+                const diff = currentCoverage - baselineCoverage;
+
+                comment += `**Baseline Coverage (main):** ${baselineCoverage.toFixed(2)}%\n`;
+                comment += `**Difference:** ${diff >= 0 ? '+' : ''}${diff.toFixed(2)}%\n\n`;
+
+                if (diff < -1.0) {
+                  comment += '**Warning:** Coverage decreased by more than 1%\n';
+                } else if (diff >= 1.0) {
+                  comment += '**Improvement:** Coverage increased!\n';
+                }
+              } else {
+                comment += '\n_No baseline available for comparison_\n';
+              }
+
+              await upsertComment(
+                parseInt(coverage.prNumber, 10),
+                'Code Coverage Report',
+                comment
+              );
+            }

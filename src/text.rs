@@ -231,22 +231,22 @@ pub struct GlobalVariable {
 /// Manages allocation of pages and writing 16-bit words to the current position.
 /// The `N` generic parameter limits the maximum number of pages that can be allocated.
 #[derive(Clone)]
-pub struct CodeBuilder<const MAX_PAGES: usize> {
-    pages: StaticVec<Box<TextPage>, MAX_PAGES>,
+pub struct CodeBuilder<const MAX_CODE_PAGES: usize> {
+    pages: StaticVec<Box<TextPage>, MAX_CODE_PAGES>,
     offset: usize,
 }
 
-impl<const MAX_PAGES: usize> Default for CodeBuilder<MAX_PAGES> {
+impl<const MAX_CODE_PAGES: usize> Default for CodeBuilder<MAX_CODE_PAGES> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<const MAX_PAGES: usize> CodeBuilder<MAX_PAGES> {
-    pub fn new() -> CodeBuilder<MAX_PAGES> {
+impl<const MAX_CODE_PAGES: usize> CodeBuilder<MAX_CODE_PAGES> {
+    pub fn new() -> CodeBuilder<MAX_CODE_PAGES> {
         const {
             assert!(
-                MAX_PAGES < (1 << 24),
+                MAX_CODE_PAGES < (1 << 24),
                 "SpaceWasm supports up to 24-bit code pages"
             );
         }
@@ -401,11 +401,11 @@ impl<const MAX_PAGES: usize> CodeBuilder<MAX_PAGES> {
 /// The `N` generic parameter limits the maximum number of code pages.
 pub struct TextBuilder<
     'a,
-    const MAX_PAGES: usize,
+    const MAX_CODE_PAGES: usize,
     const MAX_CONTROL_FRAMES: usize,
     const MAX_STACK_DEPTH: usize,
 > {
-    code: &'a mut CodeBuilder<MAX_PAGES>,
+    code: &'a mut CodeBuilder<MAX_CODE_PAGES>,
     store: &'a Store,
     module: &'a Module,
     func: &'a Func,
@@ -450,11 +450,11 @@ impl From<OperandType> for u8 {
     }
 }
 
-impl<'a, const MAX_PAGES: usize, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize>
-    TextBuilder<'a, MAX_PAGES, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>
+impl<'a, const MAX_CODE_PAGES: usize, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize>
+    TextBuilder<'a, MAX_CODE_PAGES, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>
 {
     pub fn new(
-        code: &'a mut CodeBuilder<MAX_PAGES>,
+        code: &'a mut CodeBuilder<MAX_CODE_PAGES>,
         store: &'a Store,
         module: &'a Module,
         func: &'a Func,

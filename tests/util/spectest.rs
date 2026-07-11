@@ -232,14 +232,14 @@ impl WasmStream for ByteStream {
     }
 }
 
-const MAX_PAGES: usize = 256;
+const MAX_CODE_PAGES: usize = 256;
 const MAX_CONTROL_FRAMES: usize = 128;
 const MAX_STACK_DEPTH: usize = 256;
 
 struct TestContext {
     store: Store,
     stack: Stack,
-    code_builder: CodeBuilder<MAX_PAGES>,
+    code_builder: CodeBuilder<MAX_CODE_PAGES>,
     /// Maps instance names (like "$Mf") to module indices
     /// This is separate from the module's name field which is used for linking/imports
     instance_names: std::collections::HashMap<String, usize>,
@@ -570,7 +570,7 @@ fn load_module(
     let mut stream = ByteStream::new(wasm_bytes);
 
     // Parse and validate the module
-    let module = Module::new::<MAX_PAGES, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
+    let module = Module::new::<MAX_CODE_PAGES, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
         module_name.as_ref().map(|f| f.as_ref()).unwrap_or(""),
         &mut stream,
         &mut ctx.store,

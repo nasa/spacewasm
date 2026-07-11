@@ -12,7 +12,7 @@ spacewasm::global_allocator!(
     PageAllocator::new(&RustSystemAllocator {}, 8192)
 );
 
-const MAX_PAGES: usize = 256;
+const MAX_CODE_PAGES: usize = 256;
 const MAX_CONTROL_FRAMES: usize = 64;
 const MAX_STACK_DEPTH: usize = 256;
 
@@ -20,7 +20,7 @@ fn main() {
     let path = std::env::args().nth(1).unwrap();
 
     let start = Instant::now();
-    let mut code_builder = CodeBuilder::<MAX_PAGES>::default();
+    let mut code_builder = CodeBuilder::<MAX_CODE_PAGES>::default();
 
     let fprime_core = HostModule {
         name: "fprime_core",
@@ -127,18 +127,21 @@ fn main() {
 
     let file = std::fs::File::open(path).expect("failed to open file");
     let mut file_stream = FileStream::new(file);
-    let (module, stats) =
-        spacewasm::Module::new_with_statistics::<MAX_PAGES, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
-            "main",
-            &mut file_stream,
-            &mut store,
-            &mut code_builder,
-            spacewasm::Rc::new(RustSystemAllocator)
-                .unwrap()
-                .into_wasm_memory_allocator(),
-            CompilerOptions::default(),
-        )
-        .expect("failed to parse wasm module");
+    let (module, stats) = spacewasm::Module::new_with_statistics::<
+        MAX_CODE_PAGES,
+        MAX_CONTROL_FRAMES,
+        MAX_STACK_DEPTH,
+    >(
+        "main",
+        &mut file_stream,
+        &mut store,
+        &mut code_builder,
+        spacewasm::Rc::new(RustSystemAllocator)
+            .unwrap()
+            .into_wasm_memory_allocator(),
+        CompilerOptions::default(),
+    )
+    .expect("failed to parse wasm module");
 
     let (text, final_page_offset) = code_builder.finish().unwrap();
 
