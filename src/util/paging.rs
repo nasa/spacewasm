@@ -653,7 +653,11 @@ mod kani_proofs {
         let layout = Layout::from_size_align(64, 8).unwrap();
 
         let ptr1 = unsafe { page_alloc.alloc(layout) }.expect("page 0 must fit");
-        assert_eq!(page_alloc.stats().pages, 1, "First allocation must create page 0");
+        assert_eq!(
+            page_alloc.stats().pages,
+            1,
+            "First allocation must create page 0"
+        );
 
         let ptr2 = unsafe { page_alloc.alloc(layout) }.expect("page 0 must still fit");
         assert_eq!(
