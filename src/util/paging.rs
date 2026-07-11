@@ -576,7 +576,7 @@ mod kani_proofs {
     #[kani::proof]
     fn proof_page_allocator_correctness() {
         let backing_alloc = RustSystemAllocator;
-        let page_alloc = PageAllocator::<3>::new(&backing_alloc, ALIGNMENT);
+        let page_alloc = PageAllocator::<3>::new(&backing_alloc, 128);
 
         // Test zero-size allocation must fail
         let zero_layout = Layout::from_size_align(0, 1).unwrap();
@@ -609,7 +609,7 @@ mod kani_proofs {
             // (We can't directly verify this without accessing page internals,
             // but we can verify total_bytes is reasonable)
             assert!(
-                stats1.total_bytes <= stats1.pages as u32 * ALIGNMENT,
+                stats1.total_bytes <= stats1.pages as u32 * ALIGNMENT as u32,
                 "Total bytes must not exceed total page capacity"
             );
             assert!(
