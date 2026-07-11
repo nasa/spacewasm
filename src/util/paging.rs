@@ -572,84 +572,82 @@ mod kani_proofs {
         unsafe { backing_alloc.dealloc(page_ptr, page_layout) };
     }
 
-    /// Verify PageAllocator orchestration with multiple pages
+    /// Test zero-size allocation must fail
     #[kani::proof]
-    fn proof_page_allocator_correctness() {
+    fn proof_zero_size_alloc_fails() {
         let backing_alloc = RustSystemAllocator;
         let page_alloc = PageAllocator::<3>::new(&backing_alloc, 128);
 
-        // Test zero-size allocation must fail
         let zero_layout = Layout::from_size_align(0, 1).unwrap();
         let result_zero = unsafe { page_alloc.alloc(zero_layout) };
         assert!(result_zero.is_err(), "Zero-size allocation must fail");
+    }
 
-        // Test allocation too large for page size must fail
+    /// Test allocation too large for page size must fail
+    #[kani::proof]
+    fn proof_large_page_alloc_fails() {
+        let backing_alloc = RustSystemAllocator;
+        let page_alloc = PageAllocator::<3>::new(&backing_alloc, 128);
+
         let huge_layout = Layout::from_size_align(200, 8).unwrap();
         let result_huge = unsafe { page_alloc.alloc(huge_layout) };
         assert!(
             matches!(result_huge, Err(AllocError::PageTooSmall)),
             "Allocation larger than page size must fail with PageTooSmall"
         );
+    }
 
-        // Test basic allocation
-        let layout = Layout::from_size_align(32, 8).unwrap();
-        let result1 = unsafe { page_alloc.alloc(layout) };
+    /// Verify PageAllocator orchestration with multiple pages
+    ///
+    /// Each allocation is sized to exactly fill one page, so exhausting the
+    /// fixed `MAX_PAGES = 3` pages takes exactly 3 calls and the 4th call is
+    /// deterministically `OutOfMemory`. This avoids an unbounded retry loop,
+    /// which previously forced Kani to unwind many iterations (each creating
+    /// a fresh backing allocation) and blew up verification memory usage.
+    #[kani::proof]
+    fn proof_page_alloc() {
+        let backing_alloc = RustSystemAllocator;
+        let page_alloc = PageAllocator::<3>::new(&backing_alloc, 128);
+        let layout = Layout::from_size_align(128, 8).unwrap();
 
-        // If first allocation succeeds, verify properties
-        if let Ok(ptr1) = result1 {
-            // Pointer must be non-null and aligned
-            assert!(!ptr1.is_null(), "Allocated pointer must be non-null");
-            assert_eq!(ptr1 as usize % 8, 0, "Pointer must be aligned");
+        let ptr1 = unsafe { page_alloc.alloc(layout) }.expect("page 0 must fit");
+        assert!(!ptr1.is_null(), "Allocated pointer must be non-null");
+        assert_eq!(ptr1 as usize % 8, 0, "Pointer must be aligned");
 
-            let stats1 = page_alloc.stats();
-            assert!(stats1.pages >= 1, "Should have at least 1 page");
-            assert!(stats1.total_bytes >= 32, "Should track allocated bytes");
+        let stats1 = page_alloc.stats();
+        assert_eq!(stats1.pages, 1, "Should have exactly 1 page");
+        assert_eq!(stats1.total_bytes, 128, "Should track allocated bytes");
+        assert!(
+            stats1.total_bytes <= stats1.pages as u32 * 128,
+            "Total bytes must not exceed total page capacity"
+        );
+        assert!(
+            stats1.total_bytes >= stats1.pad_bytes,
+            "Total bytes must be >= pad bytes"
+        );
 
-            // Verify stats aggregation: total_bytes = allocated + wasted across all pages
-            // (We can't directly verify this without accessing page internals,
-            // but we can verify total_bytes is reasonable)
-            assert!(
-                stats1.total_bytes <= stats1.pages as u32 * ALIGNMENT as u32,
-                "Total bytes must not exceed total page capacity"
-            );
-            assert!(
-                stats1.total_bytes >= stats1.pad_bytes,
-                "Total bytes must be >= pad bytes"
-            );
+        let ptr2 = unsafe { page_alloc.alloc(layout) }.expect("page 1 must fit");
+        let ptr1_addr = ptr1 as usize;
+        let ptr2_addr = ptr2 as usize;
+        assert!(
+            ptr2_addr >= ptr1_addr + 128 || ptr1_addr >= ptr2_addr + 128,
+            "Allocations must not overlap"
+        );
 
-            // Try second allocation
-            let result2 = unsafe { page_alloc.alloc(layout) };
-            if let Ok(ptr2) = result2 {
-                // Verify no overlap
-                let ptr1_addr = ptr1 as usize;
-                let ptr2_addr = ptr2 as usize;
-                assert!(
-                    ptr2_addr >= ptr1_addr + 32 || ptr1_addr >= ptr2_addr + 32,
-                    "Allocations must not overlap"
-                );
+        let ptr3 = unsafe { page_alloc.alloc(layout) }.expect("page 2 must fit");
 
-                // Try to allocate until we run out of space
-                let result3 = unsafe { page_alloc.alloc(layout) };
-                let result4 = unsafe { page_alloc.alloc(layout) };
+        // All 3 pages (MAX_PAGES) are now full; the next call must fail
+        // deterministically, with no retry loop required.
+        let result4 = unsafe { page_alloc.alloc(layout) };
+        assert!(
+            matches!(result4, Err(AllocError::OutOfMemory)),
+            "4th allocation must fail once all pages are full"
+        );
 
-                // Eventually should run out of pages or backing memory
-                if result3.is_ok() && result4.is_ok() {
-                    // Keep trying until failure
-                    for _ in 0..10 {
-                        if unsafe { page_alloc.alloc(layout) }.is_err() {
-                            break;
-                        }
-                    }
-                    // With limited backing memory, should eventually fail
-                    // (but might not if state space exploration stops early)
-                }
-
-                // Test deallocation
-                unsafe {
-                    page_alloc.dealloc(ptr2, layout);
-                    page_alloc.dealloc(ptr1, layout);
-                }
-            }
+        unsafe {
+            page_alloc.dealloc(ptr3, layout);
+            page_alloc.dealloc(ptr2, layout);
+            page_alloc.dealloc(ptr1, layout);
         }
     }
 
