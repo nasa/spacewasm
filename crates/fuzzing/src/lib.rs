@@ -1,3 +1,8 @@
+// Portions of this file are derived from the Wasmtime project
+// (https://github.com/bytecodealliance/wasmtime), licensed under
+// Apache-2.0 WITH LLVM-exception. These portions have been modified for
+// SpaceWasm.
+
 //! Fuzzing infrastructure for SpaceWasm.
 //!
 //! This crate provides test case generators and oracles for fuzzing SpaceWasm.
