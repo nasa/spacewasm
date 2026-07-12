@@ -123,14 +123,6 @@ Here are a couple of limitations that may be relevant to developers of Wasm modu
 | Function parameters | 255 32-bit words      | Per function.                                                                                                                                                                                                                                                         |
 | Local variables     | 65,535 32-bit words   | Per function.                                                                                                                                                                                                                                                         |
 
-## Similar Projects
-
-While SpaceWasm is a ground up implementation, it draws on some other similar projects:
-
-- https://github.com/wasmi-labs/wasmi
-- https://github.com/wasm3/wasm3
-- https://github.com/DLR-FT/wasm-interpreter
-
 ## Benchmarking
 
 SpaceWasm is tested against the Coremark benchmark to trace performance regression.
