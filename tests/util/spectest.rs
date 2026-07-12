@@ -208,6 +208,30 @@ impl GlobalValue for StaticGlobal {
     }
 }
 
+struct MutableStaticGlobal {
+    value: Mutex<Value>,
+    ty: ValType,
+}
+
+impl GlobalValue for MutableStaticGlobal {
+    fn write(&self, value: Value) -> Result<(), GlobalValueError> {
+        *self.value.lock().unwrap() = value;
+        Ok(())
+    }
+
+    fn read(&self) -> Result<Value, GlobalValueError> {
+        Ok(*self.value.lock().unwrap())
+    }
+
+    fn ty(&self) -> ValType {
+        self.ty
+    }
+
+    fn mutable(&self) -> bool {
+        true
+    }
+}
+
 impl WasmStream for ByteStream {
     fn read(&mut self) -> Result<Option<InnerVec<u8>>, u8> {
         if self.consumed {
@@ -909,6 +933,42 @@ fn test_host_module() -> HostModule {
                 .unwrap()
                 .into_global_value_dyn(),
             },
+            HostGlobal {
+                name: "mut_global_i32",
+                value: spacewasm::Box::new(MutableStaticGlobal {
+                    value: Mutex::new(Value::I32(0)),
+                    ty: ValType::I32,
+                })
+                .unwrap()
+                .into_global_value_dyn(),
+            },
+            HostGlobal {
+                name: "mut_global_i64",
+                value: spacewasm::Box::new(MutableStaticGlobal {
+                    value: Mutex::new(Value::I64(0)),
+                    ty: ValType::I64,
+                })
+                .unwrap()
+                .into_global_value_dyn(),
+            },
+            HostGlobal {
+                name: "mut_global_f32",
+                value: spacewasm::Box::new(MutableStaticGlobal {
+                    value: Mutex::new(Value::F32(0.0)),
+                    ty: ValType::F32,
+                })
+                .unwrap()
+                .into_global_value_dyn(),
+            },
+            HostGlobal {
+                name: "mut_global_f64",
+                value: spacewasm::Box::new(MutableStaticGlobal {
+                    value: Mutex::new(Value::F64(0.0)),
+                    ty: ValType::F64,
+                })
+                .unwrap()
+                .into_global_value_dyn(),
+            },
         ],
         functions: vec![
             HostFunction::new("print", "".into(), "".into(), |_, _| {
@@ -930,6 +990,24 @@ fn test_host_module() -> HostModule {
                 ControlFlow::Continue(None)
             }),
             HostFunction::new("print_f64_f64", "dd".into(), "".into(), |_, _| {
+                ControlFlow::Continue(None)
+            }),
+            HostFunction::new(
+                "return_i32_from_all_args",
+                "iIfd".into(),
+                "i".into(),
+                |_, _| ControlFlow::Continue(Some(Value::I32(77))),
+            ),
+            HostFunction::new("return_i64", "".into(), "I".into(), |_, _| {
+                ControlFlow::Continue(Some(Value::I64(0x123456789)))
+            }),
+            HostFunction::new("return_f32", "".into(), "f".into(), |_, _| {
+                ControlFlow::Continue(Some(Value::F32(12.5)))
+            }),
+            HostFunction::new("return_f64", "".into(), "d".into(), |_, _| {
+                ControlFlow::Continue(Some(Value::F64(42.25)))
+            }),
+            HostFunction::new("noop", "".into(), "".into(), |_, _| {
                 ControlFlow::Continue(None)
             }),
         ],
