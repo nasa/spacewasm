@@ -11,8 +11,9 @@ specification meant to interpret Wasm binary on-board spacecraft. It is develope
 ## Rationale
 
 1. **Sequencing**: High-level spacecraft activities are typically encoded outside of the embedded flight-software in a command sequence.
-These activities can include anything from driving the Mars rover and operating its arm, to checking temperature ranges are nominal. Historically, the form and
-capability of sequences has varied from mission to mission, resulting in assorted/fragmented implementations. SpaceWasm implements an industry standard.
+These activities can include anything from driving the Mars rover and operating its arm, to checking temperature ranges are nominal.
+Historically, the form and capability of sequences has varied from mission to mission, resulting in assorted/fragmented implementations.
+SpaceWasm implements an industry standard, providing consolidation.
 
 2. **Sandboxing**: The cost and time of flight-software development is high due to its constrained requirements and scope. Validating a new flight-software capability
 often involves validating interactions with the entire system. This extends the V&V timeline and increases competition for testbed resources, which makes it hard to
