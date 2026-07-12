@@ -271,7 +271,7 @@ struct TestContext {
 
 impl TestContext {
     fn new() -> Self {
-        let store = Store::new(256, [test_host_module()]).unwrap();
+        let store = Store::new(256, [test_host_module(), host_coverage_module()]).unwrap();
 
         TestContext {
             store,
@@ -312,7 +312,7 @@ impl TestContext {
     /// Save the current store state
     /// Used to restore state after failed module loads that mutate the store (memory/tables)
     fn save_store(&self) -> Store {
-        let mut cloned = Store::new(256, [test_host_module()]).unwrap();
+        let mut cloned = Store::new(256, [test_host_module(), host_coverage_module()]).unwrap();
 
         // Clone all modules into the new store
         for module in self.store.modules().iter() {
@@ -933,6 +933,60 @@ fn test_host_module() -> HostModule {
                 .unwrap()
                 .into_global_value_dyn(),
             },
+        ],
+        functions: vec![
+            HostFunction::new("print", "".into(), "".into(), |_, _| {
+                ControlFlow::Continue(None)
+            }),
+            HostFunction::new("print_i32", "i".into(), "".into(), |_, _| {
+                ControlFlow::Continue(None)
+            }),
+            HostFunction::new("print_i64", "I".into(), "".into(), |_, _| {
+                ControlFlow::Continue(None)
+            }),
+            HostFunction::new("print_f32", "f".into(), "".into(), |_, _| {
+                ControlFlow::Continue(None)
+            }),
+            HostFunction::new("print_f64", "d".into(), "".into(), |_, _| {
+                ControlFlow::Continue(None)
+            }),
+            HostFunction::new("print_i32_f32", "if".into(), "".into(), |_, _| {
+                ControlFlow::Continue(None)
+            }),
+            HostFunction::new("print_f64_f64", "dd".into(), "".into(), |_, _| {
+                ControlFlow::Continue(None)
+            }),
+        ],
+        memory: vec![spacewasm::HostSymbol {
+            name: "memory",
+            value: spacewasm::Rc::new(
+                Memory::new(
+                    spacewasm::MemType::from(1, Some(2)),
+                    spacewasm::Rc::new(RustSystemAllocator)
+                        .unwrap()
+                        .into_wasm_memory_allocator(),
+                )
+                .unwrap(),
+            )
+            .unwrap(),
+        }],
+        table: vec![spacewasm::HostSymbol {
+            name: "table",
+            value: (
+                spacewasm::Rc::new_slice_with_default(10).unwrap(),
+                Limit {
+                    min: 10,
+                    max: Some(20),
+                },
+            ),
+        }],
+    }
+}
+
+fn host_coverage_module() -> HostModule {
+    HostModule {
+        name: "host",
+        globals: vec![
             HostGlobal {
                 name: "mut_global_i32",
                 value: spacewasm::Box::new(MutableStaticGlobal {
@@ -971,32 +1025,16 @@ fn test_host_module() -> HostModule {
             },
         ],
         functions: vec![
-            HostFunction::new("print", "".into(), "".into(), |_, _| {
-                ControlFlow::Continue(None)
-            }),
-            HostFunction::new("print_i32", "i".into(), "".into(), |_, _| {
-                ControlFlow::Continue(None)
-            }),
-            HostFunction::new("print_i64", "I".into(), "".into(), |_, _| {
-                ControlFlow::Continue(None)
-            }),
-            HostFunction::new("print_f32", "f".into(), "".into(), |_, _| {
-                ControlFlow::Continue(None)
-            }),
-            HostFunction::new("print_f64", "d".into(), "".into(), |_, _| {
-                ControlFlow::Continue(None)
-            }),
-            HostFunction::new("print_i32_f32", "if".into(), "".into(), |_, _| {
-                ControlFlow::Continue(None)
-            }),
-            HostFunction::new("print_f64_f64", "dd".into(), "".into(), |_, _| {
-                ControlFlow::Continue(None)
-            }),
             HostFunction::new(
                 "return_i32_from_all_args",
                 "iIfd".into(),
                 "i".into(),
-                |_, _| ControlFlow::Continue(Some(Value::I32(77))),
+                |_, args| {
+                    let Value::I32(v) = args[0] else {
+                        unreachable!()
+                    };
+                    ControlFlow::Continue(Some(Value::I32(v)))
+                },
             ),
             HostFunction::new("return_i64", "".into(), "I".into(), |_, _| {
                 ControlFlow::Continue(Some(Value::I64(0x123456789)))
@@ -1011,29 +1049,8 @@ fn test_host_module() -> HostModule {
                 ControlFlow::Continue(None)
             }),
         ],
-        memory: vec![spacewasm::HostSymbol {
-            name: "memory",
-            value: spacewasm::Rc::new(
-                Memory::new(
-                    spacewasm::MemType::from(1, Some(2)),
-                    spacewasm::Rc::new(RustSystemAllocator)
-                        .unwrap()
-                        .into_wasm_memory_allocator(),
-                )
-                .unwrap(),
-            )
-            .unwrap(),
-        }],
-        table: vec![spacewasm::HostSymbol {
-            name: "table",
-            value: (
-                spacewasm::Rc::new_slice_with_default(10).unwrap(),
-                Limit {
-                    min: 10,
-                    max: Some(20),
-                },
-            ),
-        }],
+        memory: vec![],
+        table: vec![],
     }
 }
 
