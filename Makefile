@@ -39,7 +39,7 @@ trace:
 		exit 1; \
 	fi
 	@echo "Converting seed to Wasm and tracing execution (release mode)..."
-	@cargo run --release -p spacewasm-fuzzing --bin seed_to_wasm $(CRASH) --stdout 2>/dev/null | \
+	@cargo run --release -p spacewasm-fuzzing --bin seed_to_wasm -- $(if $(TARGET),--target $(TARGET)) $(CRASH) --stdout 2>/dev/null | \
 		cargo run --release -p spacewasm_util --bin spacewasm-trace -- --stdin --limit $(or $(LIMIT),50)
 
 # Convert seed to Wasm and trace execution (debug mode with ASAN)
@@ -50,7 +50,7 @@ trace-debug:
 		exit 1; \
 	fi
 	@echo "Converting seed to Wasm and tracing execution (debug mode with ASAN)..."
-	@cargo run -p spacewasm-fuzzing --bin seed_to_wasm $(CRASH) --stdout 2>/dev/null | \
+	@cargo run -p spacewasm-fuzzing --bin seed_to_wasm -- $(if $(TARGET),--target $(TARGET)) $(CRASH) --stdout 2>/dev/null | \
 		RUSTFLAGS="-Zsanitizer=address" cargo +nightly run -p spacewasm_util --bin spacewasm-trace -- --stdin --limit $(or $(LIMIT),50)
 
 # Convert fuzzer seed to Wasm
@@ -61,9 +61,9 @@ seed-to-wasm:
 		exit 1; \
 	fi
 	@if [ -n "$(OUT)" ]; then \
-		cargo run --release -p spacewasm-fuzzing --bin seed_to_wasm -- $(CRASH) $(OUT); \
+		cargo run --release -p spacewasm-fuzzing --bin seed_to_wasm -- $(if $(TARGET),--target $(TARGET)) $(CRASH) $(OUT); \
 	else \
-		cargo run --release -p spacewasm-fuzzing --bin seed_to_wasm -- $(CRASH) $(CRASH).wasm; \
+		cargo run --release -p spacewasm-fuzzing --bin seed_to_wasm -- $(if $(TARGET),--target $(TARGET)) $(CRASH) $(CRASH).wasm; \
 	fi
 
 # Trace Wasm file execution (release mode)

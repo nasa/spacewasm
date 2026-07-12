@@ -171,3 +171,57 @@ impl<'a> Arbitrary<'a> for NoTrapsModule {
         Self::new(u)
     }
 }
+
+/// Which fuzz target's generator produced a seed.
+///
+/// The `no_traps` and `validate` targets configure wasm-smith differently
+/// ([`NoTrapsModule`] sets `disallow_traps`), so they consume input bytes
+/// differently and produce different modules from the same seed. A seed must be
+/// decoded with the generator that produced it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Target {
+    /// The `no_traps` target, which uses [`NoTrapsModule`].
+    NoTraps,
+    /// The `validate` target, which uses [`FuzzModule`].
+    Validate,
+}
+
+/// Generate the Wasm module a fuzz `target` would produce from `seed`.
+///
+/// This reproduces what the corresponding fuzz target feeds to its oracle, so a
+/// crash artifact can be decoded back into the exact module that triggered it.
+pub fn wasm_from_seed(seed: &[u8], target: Target) -> Result<Vec<u8>> {
+    let mut u = Unstructured::new(seed);
+    match target {
+        Target::NoTraps => NoTrapsModule::new(&mut u).map(|m| m.wasm),
+        Target::Validate => FuzzModule::new(&mut u).map(|m| m.wasm),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // A fixed seed with enough bytes for wasm-smith to build a non-trivial module.
+    fn seed() -> Vec<u8> {
+        (0..=u8::MAX).collect()
+    }
+
+    #[test]
+    fn targets_produce_different_wasm_from_same_seed() {
+        // The two generators configure wasm-smith differently, so the same seed
+        // yields different modules -- which is why seed_to_wasm must decode with
+        // the generator that produced the seed.
+        let no_traps = wasm_from_seed(&seed(), Target::NoTraps).unwrap();
+        let validate = wasm_from_seed(&seed(), Target::Validate).unwrap();
+        assert_ne!(no_traps, validate);
+    }
+
+    #[test]
+    fn wasm_from_seed_is_deterministic() {
+        assert_eq!(
+            wasm_from_seed(&seed(), Target::Validate).unwrap(),
+            wasm_from_seed(&seed(), Target::Validate).unwrap(),
+        );
+    }
+}
