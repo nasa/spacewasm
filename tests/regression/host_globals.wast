@@ -1,10 +1,10 @@
 ;; Host global reads and writes
 
 (module
-  (import "host" "mut_global_i32" (global $mut_global_i32 (mut i32)))
-  (import "host" "mut_global_i64" (global $mut_global_i64 (mut i64)))
-  (import "host" "mut_global_f32" (global $mut_global_f32 (mut f32)))
-  (import "host" "mut_global_f64" (global $mut_global_f64 (mut f64)))
+  (import "regression" "mut_global_i32" (global $mut_global_i32 (mut i32)))
+  (import "regression" "mut_global_i64" (global $mut_global_i64 (mut i64)))
+  (import "regression" "mut_global_f32" (global $mut_global_f32 (mut f32)))
+  (import "regression" "mut_global_f64" (global $mut_global_f64 (mut f64)))
 
   (func (export "set-i32") (param i32)
     (global.set $mut_global_i32 (local.get 0)))

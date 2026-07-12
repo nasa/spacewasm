@@ -271,7 +271,7 @@ struct TestContext {
 
 impl TestContext {
     fn new() -> Self {
-        let store = Store::new(256, [test_host_module(), host_coverage_module()]).unwrap();
+        let store = Store::new(256, [test_host_module(), regression_host_module()]).unwrap();
 
         TestContext {
             store,
@@ -312,7 +312,7 @@ impl TestContext {
     /// Save the current store state
     /// Used to restore state after failed module loads that mutate the store (memory/tables)
     fn save_store(&self) -> Store {
-        let mut cloned = Store::new(256, [test_host_module(), host_coverage_module()]).unwrap();
+        let mut cloned = Store::new(256, [test_host_module(), regression_host_module()]).unwrap();
 
         // Clone all modules into the new store
         for module in self.store.modules().iter() {
@@ -983,9 +983,9 @@ fn test_host_module() -> HostModule {
     }
 }
 
-fn host_coverage_module() -> HostModule {
+fn regression_host_module() -> HostModule {
     HostModule {
-        name: "host",
+        name: "regression",
         globals: vec![
             HostGlobal {
                 name: "mut_global_i32",
