@@ -8,6 +8,22 @@
 SpaceWasm is an implementation of the [Wasm 1.0](https://webassembly.github.io/spec/versions/core/WebAssembly-1.0.pdf)
 specification meant to interpret Wasm binary on-board spacecraft. It is developed at [NASA JPL](https://www.jpl.nasa.gov).
 
+## Rational
+
+1. **Sequencing**: High-level spacecraft activities spacecraft activities are typically encoded outside of the embedded flight-software in a command sequence.
+These activities can include anything from driving the Mars rover and operating it's arm, to checking temperature ranges are nominal. Historically, the form and
+capability of sequences has varied from mission to mission. SpaceWasm implements to an industry standard.
+
+2. **Sandboxing**: The cost and time of flight-software development is high due to it's constrained requirements and scope. Validating a new flight-software capability
+often involves validating interactions with the entire system. WebAssembly gives the opportunity for untrusted or low-trust executables to make their way on-board in a
+way that flight-software can restrict access and compute time as well as monitor health and safety.
+
+3. **Portability**: WebAssembly provides well defined interfaces and sandboxing that allows transferring to another platform trivial.
+
+4. **Tooling**: Standardizing to WebAssembly opens doors into a wide community of rich tooling and research!
+
+## Overview
+
 This software comes with two major components:
 
 1. Decoder/Validator:
