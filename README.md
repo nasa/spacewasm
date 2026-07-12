@@ -15,7 +15,8 @@ These activities can include anything from driving the Mars rover and operating 
 capability of sequences has varied from mission to mission, resulting in assorted/fragmented implementations. SpaceWasm implements an industry standard.
 
 2. **Sandboxing**: The cost and time of flight-software development is high due to its constrained requirements and scope. Validating a new flight-software capability
-often involves validating interactions with the entire system. WebAssembly gives the opportunity for untrusted or low-trust executables to make their way on-board in a
+often involves validating interactions with the entire system. This extends the V&V timeline and increases competition for testbed resources, which makes it hard to
+get new autonomy software into flight. WebAssembly gives the opportunity for untrusted or low-trust executables to make their way on-board in a
 way that flight-software can restrict access and compute time as well as monitor health and safety.
 
 3. **Portability**: WebAssembly provides well-defined interfaces and sandboxing that make transferring to another platform trivial.
