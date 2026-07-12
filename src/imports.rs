@@ -246,9 +246,15 @@ impl Store {
                                 return Err(ValidationError::InvalidTableIndex);
                             }
 
-                            let table_ty = match &module.table {
+                            let (table_ty, resolved) = match &module.table {
                                 None => return Err(ValidationError::TableNotDefined),
-                                Some(TableKind::Owned(table)) => table.1,
+                                Some(TableKind::Owned(table)) => (
+                                    table.1,
+                                    Import::Table {
+                                        module: ModuleRef(mi as u8),
+                                        index: 0,
+                                    },
+                                ),
                                 Some(TableKind::Import(import_module_ref)) => {
                                     let r = import_module_ref.0 as usize;
                                     let Some(TableKind::Owned(table)) = &self.modules()[r].table
@@ -256,7 +262,13 @@ impl Store {
                                         unreachable!()
                                     };
 
-                                    table.1
+                                    (
+                                        table.1,
+                                        Import::Table {
+                                            module: *import_module_ref,
+                                            index: 0,
+                                        },
+                                    )
                                 }
                                 Some(TableKind::ImportHost(host_import)) => {
                                     let l = self.host_modules()[host_import.module.0 as usize]
@@ -264,10 +276,16 @@ impl Store {
                                         .value
                                         .1;
 
-                                    TableType {
-                                        elem_type: ElemType::FuncRef,
-                                        limits: l,
-                                    }
+                                    (
+                                        TableType {
+                                            elem_type: ElemType::FuncRef,
+                                            limits: l,
+                                        },
+                                        Import::HostTable {
+                                            module: host_import.module,
+                                            index: host_import.index,
+                                        },
+                                    )
                                 }
                             };
 
@@ -275,10 +293,7 @@ impl Store {
                                 return Err(ValidationError::TableImportIncompatibleSize);
                             }
 
-                            Ok(Import::Table {
-                                module: ModuleRef(mi as u8),
-                                index: 0,
-                            })
+                            Ok(resolved)
                         } else {
                             Err(ValidationError::TableImportTypeMismatch)
                         };
