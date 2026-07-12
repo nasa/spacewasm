@@ -1,12 +1,12 @@
 ;; Host function calls and return values
 
 (module
-  (import "host" "return_i32_from_all_args"
+  (import "regression" "return_i32_from_all_args"
     (func $return_i32_from_all_args (param i32 i64 f32 f64) (result i32)))
-  (import "host" "return_i64" (func $return_i64 (result i64)))
-  (import "host" "return_f32" (func $return_f32 (result f32)))
-  (import "host" "return_f64" (func $return_f64 (result f64)))
-  (import "host" "noop" (func $noop))
+  (import "regression" "return_i64" (func $return_i64 (result i64)))
+  (import "regression" "return_f32" (func $return_f32 (result f32)))
+  (import "regression" "return_f64" (func $return_f64 (result f64)))
+  (import "regression" "noop" (func $noop))
 
   (func (export "call-all-args") (result i32)
     (call $return_i32_from_all_args
