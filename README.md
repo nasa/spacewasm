@@ -4,7 +4,9 @@
 [![codecov](https://codecov.io/gh/nasa/spacewasm/branch/main/graph/badge.svg)](https://codecov.io/gh/nasa/spacewasm)
 
 SpaceWasm is an implementation of the [Wasm 1.0](https://webassembly.github.io/spec/versions/core/WebAssembly-1.0.pdf)
-specification meant to interpret Wasm binary on-board spacecraft. This software comes with two major components:
+specification meant to interpret Wasm binary on-board spacecraft. It is developed at [NASA JPL](https://www.jpl.nasa.gov).
+
+This software comes with two major components:
 
 1. Decoder/Validator:
 
@@ -91,13 +93,13 @@ any module expected on flight hardware; the binding constraint in practice is th
 > [!NOTE]
 > `spacewasm-check` has not been developed yet. A similar tool can be found in `spacewasm-std`.
 
-Here are a couple of limitations that may be relavent to developers of Wasm modules.
+Here are a couple of limitations that may be relevant to developers of Wasm modules.
 
 | Limit               | Value                 | Notes                                                                                                                                                                                                                                                                 |
 | ------------------- | --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Wasm page size      | 64 KiB (65,536 bytes) | The standard WebAssembly [linear memory page](https://webassembly.github.io/spec/core/exec/runtime.html#page-size) size. The [custom-page-sizes proposal](https://github.com/WebAssembly/custom-page-sizes) is planned but not yet supported, so this value is fixed. |
 | Linear memory pages | 65,536 pages (4 GiB)  | Per the Wasm 1.0 spec. A module declaring more (or a `max` above this) is rejected. Note that the embedding will definitely limit this but it is dependent on how the interpreter is deployed.                                                                        |
-| IR Code             | 8GiB                  | Compiled IR, not raw bytecode. This limit is across all modules in the store. The IR / Bytecode ratio is printed in `spacewasm-std` as the "compilation ratio". It is difficult to estimate this upfront because it varies on the types of instructions used.         |
+| IR Code             | 8 GiB                 | Compiled IR, not raw bytecode. This limit is across all modules in the store. The IR / Bytecode ratio is printed in `spacewasm-std` as the "compilation ratio". It is difficult to estimate this upfront because it varies on the types of instructions used.         |
 | Function parameters | 255 32-bit words      | Per function.                                                                                                                                                                                                                                                         |
 | Local variables     | 65,535 32-bit words   | Per function.                                                                                                                                                                                                                                                         |
 
@@ -128,7 +130,7 @@ usage. There are also simple unit tests that cover all Wasm instructions without
 
 The integration tests are spectests from the Wasm 1.0 MVP suite
 which was curated in https://github.com/WasmEdge/wasmedge-spectest.
-These tests validate the integriy of the Wasm interpreter against
+These tests validate the integrity of the Wasm interpreter against
 the specification.
 
 ### Fuzzing
@@ -147,7 +149,7 @@ make trace CRASH=fuzz/artifacts/no_traps/crash-xxx
 ## Feature Support Matrix
 
 SpaceWasm currently implements exactly WebAssembly 1.0 (the MVP plus the mutable-globals proposal that was folded into
-it). SpaceWasm will always be a subset of the full approved Wasm specification. Below is a table of the implemented and planned .
+it). SpaceWasm will always be a subset of the full approved Wasm specification. Below is a table of the implemented and planned features.
 
 | Feature                                                                                                      | Status              |
 | ------------------------------------------------------------------------------------------------------------ | ------------------- |
