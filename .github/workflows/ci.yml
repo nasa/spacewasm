@@ -77,9 +77,11 @@ jobs:
         shell: bash
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+        # Pinned commit resolved from the annotated Swatinem/rust-cache@v2 tag.
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
         with:
           key: ${{ matrix.profile }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-bin: false
 
       - name: Run tests (debug)
@@ -210,8 +212,10 @@ jobs:
           sudo cp wabt-${WABT_VERSION}/bin/* /usr/local/bin/
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+        # Pinned commit resolved from the annotated Swatinem/rust-cache@v2 tag.
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
         with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-bin: false
 
       - name: Run CoreMark benchmark
@@ -315,8 +319,10 @@ jobs:
         uses: taiki-e/install-action@cargo-llvm-cov
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+        # Pinned commit resolved from the annotated Swatinem/rust-cache@v2 tag.
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
         with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-bin: false
 
       - name: Generate coverage
