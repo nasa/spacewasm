@@ -180,6 +180,7 @@ Currently, all other proposals are not planned or considered.
 
 Portions of this project are adapted from the open-source projects:
 
+- [rust-lang/rust](https://github.com/rust-lang/rust), which is dual-licensed under MIT OR Apache License 2.0.
 - [DLR-FT/wasm-interpreter](https://github.com/DLR-FT/wasm-interpreter), which is licensed under the Apache License 2.0.
 - [Wasmtime](https://github.com/bytecodealliance/wasmtime), which is licensed under the Apache License 2.0 with LLVM-exception.
 - [WABT](https://github.com/webassembly/wabt), which is licensed under the Apache License 2.0.
