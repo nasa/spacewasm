@@ -412,6 +412,7 @@ mod kani_proofs {
 #[cfg(test)]
 mod tests {
     use super::*;
+    extern crate std;
 
     #[test]
     fn test_zero() {
@@ -567,5 +568,152 @@ mod tests {
             count += 1;
         }
         assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn test_default() {
+        let vec: Vec<i32> = Vec::default();
+        assert_eq!(vec.len(), 0);
+        assert_eq!(vec.capacity(), 0);
+    }
+
+    #[test]
+    fn test_from_array() {
+        let vec = Vec::from_array([1, 2, 3, 4]).unwrap();
+        assert_eq!(vec.len(), 4);
+        assert_eq!(vec.capacity(), 4);
+        assert_eq!(&vec[..], &[1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn test_from_exact_iter() {
+        let vec = Vec::from_exact_iter([10, 20, 30].into_iter());
+        assert_eq!(vec.len(), 3);
+        assert_eq!(vec.capacity(), 3);
+        assert_eq!(&vec[..], &[10, 20, 30]);
+    }
+
+    #[test]
+    fn test_partial_eq() {
+        let a = Vec::from_array([1, 2, 3]).unwrap();
+        let b = Vec::from_array([1, 2, 3]).unwrap();
+        let c = Vec::from_array([1, 2, 4]).unwrap();
+        let mut short = Vec::new(3).unwrap();
+        short.push(1);
+        short.push(2);
+
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+        assert_ne!(a, short);
+    }
+
+    #[test]
+    fn test_debug() {
+        let vec = Vec::from_array([1, 2, 3]).unwrap();
+        let s = std::format!("{:?}", vec);
+        assert_eq!(s, "[1, 2, 3]");
+    }
+
+    #[test]
+    fn test_new_from() {
+        let capacity = 3u32;
+        let layout = Layout::array::<i32>(capacity as usize).unwrap();
+        let ptr = unsafe { GlobalAllocator.alloc(layout).unwrap() as *mut i32 };
+
+        let mut vec = Vec::new_from(ptr, capacity);
+        assert_eq!(vec.capacity(), 3);
+        assert_eq!(vec.len(), 0);
+
+        vec.push(7);
+        vec.push(8);
+        assert_eq!(&vec[..], &[7, 8]);
+        // Drop deallocates via GlobalAllocator using the recorded capacity.
+    }
+
+    #[test]
+    fn test_new_from_with_alloc() {
+        use crate::test_support::RustSystemAllocator;
+
+        let capacity = 2u32;
+        let layout = Layout::array::<i32>(capacity as usize).unwrap();
+        let ptr = unsafe { RustSystemAllocator.alloc(layout).unwrap() as *mut i32 };
+
+        let mut vec = Vec::new_from_with_alloc(ptr, capacity, RustSystemAllocator);
+        assert_eq!(vec.capacity(), 2);
+        assert_eq!(vec.len(), 0);
+
+        vec.push(42);
+        assert_eq!(&vec[..], &[42]);
+    }
+
+    #[test]
+    fn test_new_in_zero_capacity() {
+        use crate::test_support::RustSystemAllocator;
+
+        let vec: Vec<i32, _> = Vec::new_in(RustSystemAllocator, 0).unwrap();
+        assert_eq!(vec.capacity(), 0);
+        assert_eq!(vec.len(), 0);
+        assert!(vec.inner.ptr.is_null());
+    }
+
+    #[test]
+    fn test_assume_init() {
+        let capacity = 3u32;
+        let layout = Layout::array::<i32>(capacity as usize).unwrap();
+        let ptr = unsafe { GlobalAllocator.alloc(layout).unwrap() as *mut i32 };
+
+        // Initialize every slot up to capacity before calling assume_init.
+        unsafe {
+            for i in 0..capacity as usize {
+                core::ptr::write(ptr.add(i), (i as i32) * 100);
+            }
+        }
+
+        let vec = unsafe { Vec::new_from(ptr, capacity).assume_init() };
+        assert_eq!(vec.len(), 3);
+        assert_eq!(&vec[..], &[0, 100, 200]);
+    }
+
+    #[test]
+    fn test_ref_into_iter() {
+        let vec = Vec::from_array([1, 2, 3]).unwrap();
+
+        let mut collected = Vec::new(3).unwrap();
+        for v in &vec {
+            collected.push(*v);
+        }
+        assert_eq!(&collected[..], &[1, 2, 3]);
+    }
+
+    #[test]
+    fn test_ref_mut_into_iter() {
+        let mut vec = Vec::from_array([1, 2, 3]).unwrap();
+
+        for v in &mut vec {
+            *v += 1;
+        }
+        assert_eq!(&vec[..], &[2, 3, 4]);
+    }
+
+    #[test]
+    fn test_into_iter_size_hint() {
+        let vec = Vec::from_array([1, 2, 3, 4]).unwrap();
+        let mut iter = vec.into_iter();
+        assert_eq!(iter.size_hint(), (4, Some(4)));
+
+        iter.next();
+        assert_eq!(iter.size_hint(), (3, Some(3)));
+
+        iter.next_back();
+        assert_eq!(iter.size_hint(), (2, Some(2)));
+    }
+
+    #[test]
+    fn test_into_iter_empty() {
+        let vec: Vec<i32> = Vec::zero();
+        let mut iter = vec.into_iter();
+        assert_eq!(iter.size_hint(), (0, Some(0)));
+        assert_eq!(iter.next(), None);
+        assert_eq!(iter.next_back(), None);
     }
 }
