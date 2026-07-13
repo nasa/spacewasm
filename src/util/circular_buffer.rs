@@ -1,3 +1,9 @@
+// Portions of this file are derived from the circular-buffer crate
+// (https://github.com/andreacorbellini/rust-circular-buffer), Copyright (c)
+// 2023, 2024 Andrea Corbellini and contributors, licensed under BSD-3-Clause.
+// These portions have been modified for SpaceWasm. See the NOTICE file for the
+// full license text.
+
 use core::mem::MaybeUninit;
 use core::ptr;
 

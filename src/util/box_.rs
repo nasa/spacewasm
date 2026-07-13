@@ -1,3 +1,7 @@
+// Portions of this file are derived from the Rust project
+// (https://github.com/rust-lang/rust), licensed under Apache-2.0. These
+// portions have been modified for SpaceWasm.
+
 use crate::StaticAllocator;
 use crate::alloc::{AllocError, Allocator, GlobalAllocator};
 use crate::util::Vec;
