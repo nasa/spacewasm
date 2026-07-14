@@ -263,11 +263,7 @@ impl MemType {
         let limit = Limit::read(wasm)?;
 
         // Validate the memory limits
-        if limit.min > 65536 {
-            Err(ValidationError::MemoryTooLarge)
-        } else if let Some(max) = limit.max
-            && max > 65536
-        {
+        if limit.min > 65536 || matches!(limit.max, Some(max) if max > 65536) {
             Err(ValidationError::MemoryTooLarge)
         } else {
             Ok(MemType(limit))

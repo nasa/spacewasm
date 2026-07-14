@@ -202,29 +202,28 @@ impl Memory {
 
         let old_size = self.size;
         let new_size = (Self::PAGE_SIZE * n as usize) + self.size;
-        if let Some(allocator) = &self.allocator
-            && let Some(ptr) = NonNull::new(self.ptr)
-        {
-            self.ptr = allocator
-                .reallocate(
-                    ptr,
-                    Layout::from_size_align(old_size, 16).unwrap(),
-                    Layout::from_size_align(new_size, 16).unwrap(),
-                )?
-                .as_ptr();
+        if let Some(allocator) = &self.allocator {
+            if let Some(ptr) = NonNull::new(self.ptr) {
+                self.ptr = allocator
+                    .reallocate(
+                        ptr,
+                        Layout::from_size_align(old_size, 16).unwrap(),
+                        Layout::from_size_align(new_size, 16).unwrap(),
+                    )?
+                    .as_ptr();
 
-            // Clear the new memory
-            let new_ptr = unsafe { self.ptr.add(old_size) };
-            unsafe {
-                new_ptr.write_bytes(0, Self::PAGE_SIZE * n as usize);
+                // Clear the new memory
+                let new_ptr = unsafe { self.ptr.add(old_size) };
+                unsafe {
+                    new_ptr.write_bytes(0, Self::PAGE_SIZE * n as usize);
+                }
+
+                self.size = new_size;
+
+                return Ok((old_size / Self::PAGE_SIZE) as u32);
             }
-
-            self.size = new_size;
-
-            Ok((old_size / Self::PAGE_SIZE) as u32)
-        } else {
-            Err(MemoryError::OutOfMemory)
         }
+        Err(MemoryError::OutOfMemory)
     }
 
     pub fn mem_type(&self) -> MemType {

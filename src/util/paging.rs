@@ -262,13 +262,13 @@ impl Page {
             assert!(self.n_allocations > 0);
 
             // Check is we can deallocate this pointer without marking this page with a dealloc flag
-            if let Some(cache) = self.cache.take()
-                && cache.alloc_ptr == dealloc_ptr
-            {
-                self.n_allocations -= 1;
-                self.allocated = cache.restore_ptr - page_ptr;
-                self.wasted -= dealloc_ptr - cache.restore_ptr;
-                return Some(self.n_allocations == 0);
+            if let Some(cache) = self.cache.take() {
+                if cache.alloc_ptr == dealloc_ptr {
+                    self.n_allocations -= 1;
+                    self.allocated = cache.restore_ptr - page_ptr;
+                    self.wasted -= dealloc_ptr - cache.restore_ptr;
+                    return Some(self.n_allocations == 0);
+                }
             };
 
             // FIXME(tumbar) We may want to track used regions of the pages
