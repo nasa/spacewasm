@@ -47,7 +47,7 @@ impl WasmStream for FileStream {
         } else {
             let m = InnerVec {
                 ptr: buf.as_mut_ptr(),
-                capacity: 4096,
+                capacity: buf.capacity() as u32,
                 len: n as u32,
             };
 
