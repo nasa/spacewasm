@@ -80,7 +80,7 @@ impl Memory {
     pub fn new(ty: MemType, allocator: Rc<dyn WasmMemoryAllocator>) -> Result<Memory, AllocError> {
         let size = (ty.min() as usize) * ty.page_size();
         let ptr = allocator
-            .allocate(Layout::from_size_align(size, 16).unwrap())?
+            .allocate(Layout::from_size_align(size, ty.page_alignment()).unwrap())?
             .as_ptr();
 
         // Clear the pages
@@ -205,8 +205,8 @@ impl Memory {
             self.ptr = allocator
                 .reallocate(
                     ptr,
-                    Layout::from_size_align(old_size, 16).unwrap(),
-                    Layout::from_size_align(new_size, 16).unwrap(),
+                    Layout::from_size_align(old_size, self.ty.page_alignment()).unwrap(),
+                    Layout::from_size_align(new_size, self.ty.page_alignment()).unwrap(),
                 )?
                 .as_ptr();
 
@@ -243,7 +243,7 @@ impl Drop for Memory {
             let allocator = self.allocator.take().unwrap();
             allocator.deallocate(
                 NonNull::new(self.ptr).unwrap(),
-                Layout::from_size_align(self.size, 16).unwrap(),
+                Layout::from_size_align(self.size, self.ty.page_alignment()).unwrap(),
             )
         }
     }
@@ -253,6 +253,7 @@ impl Drop for Memory {
 mod kani_proofs {
     use super::*;
     use crate::Allocator;
+    use crate::MemPageSize;
     extern crate std;
 
     use crate::test_support::RustSystemAllocator;
@@ -264,7 +265,7 @@ mod kani_proofs {
 
         let ptr = unsafe {
             alloc
-                .alloc(Layout::from_size_align(size, 16).unwrap())
+                .alloc(Layout::from_size_align(size, (MemPageSize::_65536).alignment()).unwrap())
                 .unwrap()
         };
         let mem = Memory {
@@ -345,7 +346,7 @@ mod kani_proofs {
 
         // Prevent Drop from calling GlobalAllocator FFI
         core::mem::forget(mem);
-        unsafe { alloc.dealloc(ptr, Layout::from_size_align(size, 16).unwrap()) };
+        unsafe { alloc.dealloc(ptr, Layout::from_size_align(size, mem.ty.page_alignment()).unwrap()) };
     }
 
     #[kani::proof]
@@ -355,7 +356,7 @@ mod kani_proofs {
 
         let ptr = unsafe {
             alloc
-                .alloc(Layout::from_size_align(size, 16).unwrap())
+                .alloc(Layout::from_size_align(size, (MemPageSize::_65536).alignment()).unwrap())
                 .unwrap()
         };
         let mem = Memory {
@@ -393,7 +394,7 @@ mod kani_proofs {
 
         // Prevent Drop from calling GlobalAllocator FFI
         core::mem::forget(mem);
-        unsafe { alloc.dealloc(ptr, Layout::from_size_align(size, 16).unwrap()) };
+        unsafe { alloc.dealloc(ptr, Layout::from_size_align(size, (MemPageSize::_65536).alignment()).unwrap()) };
     }
 
     /// The effective address is the exact sum of `base` and `offset`; it is

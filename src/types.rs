@@ -267,6 +267,13 @@ impl MemPageSize {
             MemPageSize::_65536 => 65536,
         }
     }
+
+    pub fn alignment(&self) -> usize {
+        match self {
+            MemPageSize::_1 => 1,
+            MemPageSize::_65536 => 16,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -378,6 +385,10 @@ impl MemType {
 
     pub fn page_size(&self) -> usize {
         self.page_size.size()
+    }
+
+    pub fn page_alignment(&self) -> usize {
+        self.page_size.alignment()
     }
 
     pub fn matches(&self, other: &MemType) -> bool {
