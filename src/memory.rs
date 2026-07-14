@@ -80,7 +80,10 @@ impl Memory {
     pub fn new(ty: MemType, allocator: Rc<dyn WasmMemoryAllocator>) -> Result<Memory, AllocError> {
         let size = (ty.min() as usize) * ty.page_size();
         let ptr = allocator
-            .allocate(Layout::from_size_align(size, ty.page_alignment()).unwrap())?
+            .allocate(
+                Layout::from_size_align(size, ty.page_alignment())
+                    .map_err(|_| AllocError::AllocationFailed)?,
+            )?
             .as_ptr();
 
         // Clear the pages
@@ -205,8 +208,10 @@ impl Memory {
             self.ptr = allocator
                 .reallocate(
                     ptr,
-                    Layout::from_size_align(old_size, self.ty.page_alignment()).unwrap(),
-                    Layout::from_size_align(new_size, self.ty.page_alignment()).unwrap(),
+                    Layout::from_size_align(old_size, self.ty.page_alignment())
+                        .map_err(|_| MemoryError::AllocationFailed)?,
+                    Layout::from_size_align(new_size, self.ty.page_alignment())
+                        .map_err(|_| MemoryError::AllocationFailed)?,
                 )?
                 .as_ptr();
 
