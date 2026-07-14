@@ -25,7 +25,7 @@ impl<T, const N: usize> CircularBuffer<T, N> {
         Self {
             size: 0,
             start: 0,
-            items: unsafe { MaybeUninit::uninit().assume_init() },
+            items: [const { MaybeUninit::uninit() }; N],
         }
     }
 

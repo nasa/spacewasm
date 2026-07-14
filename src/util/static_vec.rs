@@ -37,7 +37,7 @@ impl<T: Sized, const N: usize> StaticVec<T, N> {
 impl<T: Sized, const N: usize> Default for StaticVec<T, N> {
     fn default() -> Self {
         Self {
-            data: unsafe { MaybeUninit::uninit().assume_init() },
+            data: [const { MaybeUninit::uninit() }; N],
             len: 0,
         }
     }
