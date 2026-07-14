@@ -19,7 +19,7 @@ fn hello_universe() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut cmd = cargo_bin_cmd!("spacewasi");
 
-    cmd.arg(&path);
+    cmd.arg(path);
     let assertion = cmd.assert();
 
     assertion.success().stdout("hello universe!\n");
@@ -33,7 +33,7 @@ fn argv() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut cmd = cargo_bin_cmd!("spacewasi");
 
-    cmd.arg(&path).arg("arg1").arg("arg2");
+    cmd.arg(path).arg("arg1").arg("arg2");
     let assertion = cmd.assert();
 
     assertion.success().stdout(format!("3 {path} arg1 arg2\n"));
@@ -49,7 +49,7 @@ fn argv0() -> Result<(), Box<dyn std::error::Error>> {
 
     cmd.arg("--argv0")
         .arg("arg0")
-        .arg(&path)
+        .arg(path)
         .arg("arg1")
         .arg("arg2");
     let assertion = cmd.assert();
@@ -65,7 +65,7 @@ fn file_system() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut cmd = cargo_bin_cmd!("spacewasi");
 
-    cmd.arg("--dir").arg("tests/wasm/::/").arg(&path);
+    cmd.arg("--dir").arg("tests/wasm/::/").arg(path);
     let assertion = cmd.assert();
 
     assertion
@@ -81,7 +81,7 @@ fn env() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut cmd = cargo_bin_cmd!("spacewasi");
 
-    cmd.arg("--env").arg("TESTKEY=testvalue").arg(&path);
+    cmd.arg("--env").arg("TESTKEY=testvalue").arg(path);
     let assertion = cmd.assert();
 
     assertion.success().stdout("testvalue\n".to_string());
@@ -95,7 +95,7 @@ fn return_code() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut cmd = cargo_bin_cmd!("spacewasi");
 
-    cmd.arg(&path);
+    cmd.arg(path);
     let assertion = cmd.assert();
 
     assertion.failure().code(87);
