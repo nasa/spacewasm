@@ -163,16 +163,16 @@ make trace CRASH=fuzz/artifacts/no_traps/crash-xxx
 SpaceWasm currently implements exactly WebAssembly 1.0 (the MVP plus the mutable-globals proposal that was folded into
 it). SpaceWasm will always be a subset of the full approved Wasm specification. Below is a table of the implemented and planned features.
 
-| Feature                                                                                                      | Status              |
-| ------------------------------------------------------------------------------------------------------------ | ------------------- |
-| [Wasm MVP](https://www.w3.org/TR/2019/REC-wasm-core-1-20191205/)                                             | Supported           |
-| [Mutable globals](https://github.com/WebAssembly/mutable-global)                                             | Supported           |
-| [Custom page sizes](https://github.com/WebAssembly/custom-page-sizes)                                        | Planned             |
-| [Bulk memory operations](https://github.com/WebAssembly/bulk-memory-operations)                              | Planned             |
-| [Sign-extension operators](https://github.com/WebAssembly/sign-extension-ops)                                | Planned             |
-| [Non-trapping float-to-int conversions](https://github.com/WebAssembly/nontrapping-float-to-int-conversions) | Planned             |
-| [Multi-value](https://github.com/WebAssembly/multi-value)                                                    | Under Consideration |
-| [Multiple memories](https://github.com/WebAssembly/multi-memory)                                             | Under Consideration |
+| Feature                                                                                                      | Status                                                     |
+| ------------------------------------------------------------------------------------------------------------ |------------------------------------------------------------|
+| [Wasm MVP](https://www.w3.org/TR/2019/REC-wasm-core-1-20191205/)                                             | Supported                                                  |
+| [Mutable globals](https://github.com/WebAssembly/mutable-global)                                             | Supported                                                  |
+| [Custom page sizes](https://github.com/WebAssembly/custom-page-sizes)                                        | [In Progress](https://github.com/nasa/spacewasm/issues/53) |
+| [Bulk memory operations](https://github.com/WebAssembly/bulk-memory-operations)                              | [Planned](https://github.com/nasa/spacewasm/issues/54)     |
+| [Sign-extension operators](https://github.com/WebAssembly/sign-extension-ops)                                | [Planned](https://github.com/nasa/spacewasm/issues/55)     |
+| [Non-trapping float-to-int conversions](https://github.com/WebAssembly/nontrapping-float-to-int-conversions) | [Planned](https://github.com/nasa/spacewasm/issues/56)     |
+| [Multi-value](https://github.com/WebAssembly/multi-value)                                                    | Under Consideration                                        |
+| [Multiple memories](https://github.com/WebAssembly/multi-memory)                                             | Under Consideration                                        |
 
 Currently, all other proposals are not planned or considered.
 
