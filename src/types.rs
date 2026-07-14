@@ -255,12 +255,6 @@ impl Limit {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MemSharedType {
-    Shared,
-    Unshared,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MemPageSize {
     _1,
     _65536,
@@ -334,15 +328,15 @@ impl MemType {
         // The limits must be valid within the range 2**32 - 1.
         // The limits must be valid within the range 2**32 / pagesize
 
-        let max_pages = match page_size {
+        let max_allowed_pages = match page_size {
             MemPageSize::_1 => (u32::MAX as u64) + 1,
             MemPageSize::_65536 => 65536,
         };
 
-        if min as u64 > max_pages {
+        if min as u64 > max_allowed_pages {
             return Err(ValidationError::MemoryTooLarge);
         } else if let Some(max) = max {
-            if max as u64 > max_pages {
+            if max as u64 > max_allowed_pages {
                 return Err(ValidationError::MemoryTooLarge);
             }
         }

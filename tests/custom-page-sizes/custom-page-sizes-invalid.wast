@@ -77,6 +77,24 @@
   "invalid custom page size"
 )
 
+;; A custom page size does not change the limits check: the maximum must not be
+;; smaller than the minimum. This holds for both valid page sizes.
+(assert_invalid
+  (module (memory 1 0 (pagesize 1)))
+  "size minimum must not be greater than maximum"
+)
+(assert_invalid
+  (module (memory 2 1 (pagesize 65536)))
+  "size minimum must not be greater than maximum"
+)
+
+;; The maximum limit (not only the minimum) must also fit within the range
+;; allowed for the configured page size.
+(assert_invalid
+  (module (memory 0 65537 (pagesize 65536)))
+  "memory size must be at most 4 GiB"
+)
+
 ;; Power of two page size that cannot fit in a u64 to exercise checks against
 ;; shift overflow.
 (assert_malformed
@@ -114,6 +132,15 @@
 (assert_unlinkable
   (module
     (memory (import "m2" "large-pages-memory") 0 (pagesize 1))
+  )
+  "incompatible import type"
+)
+
+;; Omitting the page size on an import defaults it to 64KiB, which must not match
+;; an exported memory that uses a page size of 1.
+(assert_unlinkable
+  (module
+    (memory (import "m" "small-pages-memory") 0)
   )
   "incompatible import type"
 )
