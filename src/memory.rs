@@ -346,7 +346,12 @@ mod kani_proofs {
 
         // Prevent Drop from calling GlobalAllocator FFI
         core::mem::forget(mem);
-        unsafe { alloc.dealloc(ptr, Layout::from_size_align(size, mem.ty.page_alignment()).unwrap()) };
+        unsafe {
+            alloc.dealloc(
+                ptr,
+                Layout::from_size_align(size, mem.ty.page_alignment()).unwrap(),
+            )
+        };
     }
 
     #[kani::proof]
@@ -394,7 +399,12 @@ mod kani_proofs {
 
         // Prevent Drop from calling GlobalAllocator FFI
         core::mem::forget(mem);
-        unsafe { alloc.dealloc(ptr, Layout::from_size_align(size, (MemPageSize::_65536).alignment()).unwrap()) };
+        unsafe {
+            alloc.dealloc(
+                ptr,
+                Layout::from_size_align(size, (MemPageSize::_65536).alignment()).unwrap(),
+            )
+        };
     }
 
     /// The effective address is the exact sum of `base` and `offset`; it is
