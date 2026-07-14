@@ -78,7 +78,17 @@ impl Memory {
     }
 
     pub fn new(ty: MemType, allocator: Rc<dyn WasmMemoryAllocator>) -> Result<Memory, AllocError> {
-        let size = (ty.min() as usize) * ty.page_size();
+        let size = if let Some(size) = (ty.min() as u64).checked_mul(ty.page_size() as u64) {
+            if size > usize::MAX as u64 {
+                // Make sure this platform can actually do this allocation
+                return Err(AllocError::AllocationFailed);
+            } else {
+                size as usize
+            }
+        } else {
+            return Err(AllocError::AllocationFailed);
+        };
+
         let ptr = allocator
             .allocate(
                 Layout::from_size_align(size, ty.page_alignment())
