@@ -860,6 +860,7 @@ fn check_decode_error(err: ParseError, text: String) {
 fn check_initialization_error(result: InterpreterResult, text: &str) {
     match (result, text) {
         (InterpreterResult::Trap(TrapReason::Unreachable), "unreachable") => {}
+        (InterpreterResult::Trap(TrapReason::StackOverflow), "stack overflow") => {}
         (result, text) => {
             panic!("Could not match initialization error text '{text}' with result {result:?}")
         }

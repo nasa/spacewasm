@@ -63,6 +63,8 @@ pub enum InvokeError {
     ParamLenMismatch,
     /// A parameter value's type does not match the definition in the module
     ParamTypeMismatch,
+    /// The function requires more stack space than the interpreter has remaining
+    StackOverflow,
 }
 
 impl<'store> InterpreterState<'store> {
@@ -179,8 +181,8 @@ impl<'store> InterpreterState<'store> {
         self.module = f_ref.module;
         self.memory = self.store.get_memory(self.module).clone();
         self.table = self.store.get_table(self.module).clone();
-
-        self.call_impl(0, f_ref.index).unwrap();
+        self.call_impl(0, f_ref.index)
+            .map_err(|_| InvokeError::StackOverflow)?;
         self.jumped = false;
         self.result = None;
 
