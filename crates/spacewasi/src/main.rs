@@ -58,19 +58,37 @@ fn main() {
     let mut wasi_ctx_builder: WasiCtxBuilder = WasiCtxBuilder::new();
 
     // set argv
-    let _ = wasi_ctx_builder.arg(&args.argv0.unwrap_or(args.file.clone()));
-    let _ = wasi_ctx_builder.args(&args.args);
+    let Ok(_) = wasi_ctx_builder.arg(&args.argv0.unwrap_or(args.file.clone())) else {
+        eprintln!("error setting argv[0]");
+        std::process::exit(1);
+    };
+    let Ok(_) = wasi_ctx_builder.args(&args.args) else {
+        eprintln!("error setting arguments");
+        std::process::exit(1);
+    };
 
     // set env
     if args.inherit_env.unwrap_or(false) {
-        let _ = wasi_ctx_builder.inherit_env();
+        let Ok(_) = wasi_ctx_builder.inherit_env() else {
+            eprintln!("error inheriting env");
+            std::process::exit(1);
+        };
     }
     for env in args.env {
         if env.contains("=") {
             let mut split = env.splitn(2, "=");
-            let _ = wasi_ctx_builder.env(split.next().unwrap_or(""), split.next().unwrap_or(""));
+            let Ok(_) =
+                wasi_ctx_builder.env(split.next().unwrap_or(""), split.next().unwrap_or(""))
+            else {
+                eprintln!("error setting env");
+                std::process::exit(1);
+            };
         } else {
-            let _ = wasi_ctx_builder.env(&env, &std::env::var(&env).unwrap_or("".to_owned()));
+            let Ok(_) = wasi_ctx_builder.env(&env, &std::env::var(&env).unwrap_or("".to_owned()))
+            else {
+                eprintln!("error setting env");
+                std::process::exit(1);
+            };
         }
     }
 
@@ -88,7 +106,10 @@ fn main() {
 
         match Dir::open_ambient_dir(&host_dir, ambient_authority()) {
             Ok(opened_dir) => {
-                let _ = wasi_ctx_builder.preopened_dir(opened_dir, guest_dir);
+                let Ok(_) = wasi_ctx_builder.preopened_dir(opened_dir, guest_dir) else {
+                    eprintln!("cannot open preopened_dir in WASI context");
+                    std::process::exit(1);
+                };
             }
             Err(error) => {
                 eprintln!("cannot open host directory {host_dir}: {error}");
@@ -100,7 +121,10 @@ fn main() {
     if args.cwd_is_root.unwrap_or(false) {
         match Dir::open_ambient_dir(".", ambient_authority()) {
             Ok(opened_dir) => {
-                let _ = wasi_ctx_builder.preopened_dir(opened_dir, "/");
+                let Ok(_) = wasi_ctx_builder.preopened_dir(opened_dir, "/") else {
+                    eprintln!("cannot open preopened_dir in WASI context");
+                    std::process::exit(1);
+                };
             }
             Err(error) => {
                 eprintln!("error mounting cwd as root: {error}");
@@ -189,14 +213,12 @@ fn main() {
 
     let interpreter = spacewasm::Interpreter::default();
 
-    // let _ = crossterm::terminal::enable_raw_mode();
+    // TODO(cbwilson) Need to enable raw terminal mode somehow for TTY escape codes and control sequences
 
     let mut result = InterpreterResult::OutOfFuel;
     while result == InterpreterResult::OutOfFuel {
         result = interpreter.run(&text, &mut state, usize::MAX)
     }
-
-    // let _ = crossterm::terminal::disable_raw_mode();
 
     let InterpreterResult::Finished = result else {
         eprintln!("interpreter failed: {:?}", result);
