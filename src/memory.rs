@@ -270,7 +270,7 @@ mod kani_proofs {
         let mem = Memory {
             ptr,
             size,
-            limits: MemType::zero(),
+            ty: MemType::zero(),
             allocator: None,
         };
 
@@ -361,7 +361,7 @@ mod kani_proofs {
         let mem = Memory {
             ptr,
             size,
-            limits: MemType::zero(),
+            ty: MemType::zero(),
             allocator: None,
         };
 
