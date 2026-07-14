@@ -1,3 +1,9 @@
+// Portions of this file are derived from the circular-buffer crate
+// (https://github.com/andreacorbellini/rust-circular-buffer), Copyright (c)
+// 2023, 2024 Andrea Corbellini and contributors, licensed under BSD-3-Clause.
+// These portions have been modified for SpaceWasm. See the NOTICE file for the
+// full license text.
+
 use core::mem::MaybeUninit;
 use core::ptr;
 
@@ -6,7 +12,7 @@ use core::ptr;
 /// A `CircularBuffer` may live on the stack with a fixed size determined at compile time.
 /// When the buffer is full, pushing new elements will overwrite the oldest elements.
 ///
-/// See the [module-level documentation](self) for more details and examples.
+/// See the module-level documentation for more details and examples.
 pub struct CircularBuffer<T, const N: usize> {
     size: usize,
     start: usize,

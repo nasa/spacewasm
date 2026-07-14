@@ -1,10 +1,32 @@
-# SpaceWasm
-
-[![CI](https://github.com/nasa/spacewasm/actions/workflows/ci.yml/badge.svg)](https://github.com/nasa/spacewasm/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/nasa/spacewasm/branch/main/graph/badge.svg)](https://codecov.io/gh/nasa/spacewasm)
+<h1 align="center">SpaceWasm</h2>
+<p align="center">
+  <a href="https://github.com/nasa/spacewasm/actions/workflows/ci.yml"><img src="https://github.com/nasa/spacewasm/actions/workflows/ci.yml/badge.svg" /></a>
+  <a href="https://codecov.io/gh/nasa/spacewasm"><img src="https://codecov.io/gh/nasa/spacewasm/branch/main/graph/badge.svg" /></a>
+  <a href="#license"><img src="https://img.shields.io/badge/license-Apache%202.0-blue" alt="license" /></a>
+</p>
 
 SpaceWasm is an implementation of the [Wasm 1.0](https://webassembly.github.io/spec/versions/core/WebAssembly-1.0.pdf)
-specification meant to interpret Wasm binary on-board spacecraft. This software comes with two major components:
+specification meant to interpret Wasm binary on-board spacecraft. It is developed at [NASA JPL](https://www.jpl.nasa.gov).
+
+## Rationale
+
+1. **Sequencing**: High-level spacecraft activities are typically encoded outside of the embedded flight-software in a command sequence.
+These activities can include anything from driving the Mars rover and operating its arm, to checking temperature ranges are nominal.
+Historically, the form and capability of sequences has varied from mission to mission, resulting in assorted/fragmented implementations.
+SpaceWasm implements an industry standard, providing consolidation.
+
+2. **Sandboxing**: The cost and time of flight-software development is high due to its constrained requirements and scope. Validating a new flight-software capability
+often involves validating interactions with the entire system. This extends the V&V timeline and increases competition for testbed resources, which makes it hard to
+get new autonomy software into flight. WebAssembly gives the opportunity for untrusted or low-trust executables to make their way on-board in a
+way that flight-software can restrict access and compute time as well as monitor health and safety.
+
+3. **Portability**: WebAssembly provides well-defined interfaces and sandboxing that make transferring to another platform trivial.
+
+4. **Tooling**: Standardizing to WebAssembly opens doors into a wide community of rich tooling and research!
+
+## Overview
+
+This software comes with two major components:
 
 1. Decoder/Validator:
 
@@ -23,6 +45,12 @@ validate easily. These properties however make it slow to execute in-place. Duri
 instructions, SpaceWasm converts bytecode into another intermediate representation (IR) which includes properties better
 suited for interpretation. Read more about the IR in the [specification](src/SPEC.md).
 
+## Requirements
+
+The requirements of SpaceWasm are levied from similar work produced by [DLR](https://github.com/DLR-FT/wasm-interpreter).
+
+See [requirements](./REQUIREMENTS.md).
+
 ## Embedding
 
 Embedding the interpreter refers to instantiating it and providing implementations for the functions that are imported
@@ -31,10 +59,10 @@ time both for the Wasm module and the embedder.
 
 ## Dynamic Allocation
 
-SpaceWasm has a unique dynamic memory allocation model. All of its design choices stem requirements levied by common
+SpaceWasm has a unique dynamic memory allocation model. All of its design choices stem from requirements levied by common
 flight-software standards. Dynamic allocation follows the following rules:
 
-1. All allocations occur over a discrete number of fixed size blocks called _pages_.
+1. All allocations occur over a discrete number of fixed size blocks called _pages_. These pages are distinct from Wasm's linear memory pages.
 2. Deallocation cannot precede allocation.
 3. Sub-regions inside pages cannot grow or shrink, sizes should be fixed ahead of time.
 4. Memory usage must be deterministic.
@@ -43,6 +71,11 @@ flight-software standards. Dynamic allocation follows the following rules:
 The standard Rust [allocation](https://doc.rust-lang.org/alloc/) does not meet these constraints even with custom
 allocators. To that end, SpaceWasm provides its own data structures that guarantee these properties. You will find these
 data-structures contain the only usage of `unsafe` Rust semantics.
+
+> [!NOTE]
+> These limitations are only enforced on the implementation of the interpreter and _not_ on the Wasm bytecode it is made to interpret.
+
+Wasm linear memory pages are allocated outside of dynamic memory pages.
 
 ## Streaming
 
@@ -53,7 +86,7 @@ portions of memory for certain purposes. Therefore, requiring the entire Wasm bi
 memory is not feasible.
 
 SpaceWasm is highly optimized to reduce peak memory usage and not require deallocation after allocation required for
-streaming. To this end there are certain [constraints](#interpreter-limitations) imposed on the WebAssembly
+streaming. To this end, there are certain [constraints](#interpreter-limitations) imposed on the WebAssembly
 specification.
 
 SpaceWasm supports decoding and compiling Wasm binary in a single pass via a streaming mechanism. Chunks of the Wasm
@@ -80,37 +113,32 @@ For more information about this command and basic WASI compilation, see [`spacew
 ## Interpreter Limitations
 
 This Wasm interpreter imposes additional constraints beyond the WebAssembly 1.0 specification to support
-resource-constrained spacecraft environments:
+resource-constrained spacecraft environments.
 
-### Module & Store Limits
-
-- **Modules in store**: Maximum 256 modules
-- **Host modules**: Maximum 256 host modules
-- **Function parameters**: Maximum 255 32-bit words
-- **Local variables**: Maximum 65,535 32-bit words total per function
-
-### IR Code Pages
-
-- **Code pages**: Configurable via generic parameter `MAX_PAGES`, typically set at module instantiation
-- **Page size**: 256 16-bit words (512 bytes)
-- **Maximum page address**: 24-bit (16,777,216 pages)
-- **Word offset in page**: 8-bit (0-255)
-
-### Control Flow
-
-- **Nesting depth**: Configurable via generic parameter `MAX_CONTROL_FRAMES` (blocks/loops/if-else)
-- **Value stack**: Configurable via generic parameter `MAX_STACK_DEPTH`, values per function
-- **Label jumps**: 22-bit signed offset (±2,097,151 instructions)
-- **Stack truncation depth**: Maximum 255 32-bit words per label jump
-
-### Instruction Encoding
-
-- **8-bit or 16-bit indexes**: 0-65,535
-- **8-bit or 32-bit immediate**: 0-254 inline, 255+ extended
-- **8-bit or 64-bit immediate**: 0-254 inline, 255+ extended
+See our [IR SPEC](./src/SPEC.md) for the full list of limitations.
 
 These constraints enable deterministic memory usage and efficient execution in resource-constrained environments while
 maintaining compatibility with most standard WebAssembly modules.
+
+### Limits for Wasm Module Producers
+
+Because SpaceWasm compiles bytecode into a fixed-width IR that is typically larger than the original bytecode, the
+practical ceiling on raw module size is bounded by the IR code-page limit above (~8 GiB of IR). This is far larger than
+any module expected on flight hardware; the binding constraint in practice is the peak memory configured for the
+[streaming](#streaming) decoder, which is measured per-module on the ground with `spacewasm-check`.
+
+> [!NOTE]
+> `spacewasm-check` has not been developed yet. A similar tool can be found in `spacewasm-std`.
+
+Here are a couple of limitations that may be relevant to developers of Wasm modules.
+
+| Limit               | Value                 | Notes                                                                                                                                                                                                                                                                 |
+| ------------------- | --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Wasm page size      | 64 KiB (65,536 bytes) | The standard WebAssembly [linear memory page](https://webassembly.github.io/spec/core/exec/runtime.html#page-size) size. The [custom-page-sizes proposal](https://github.com/WebAssembly/custom-page-sizes) is planned but not yet supported, so this value is fixed. |
+| Linear memory pages | 65,536 pages (4 GiB)  | Per the Wasm 1.0 spec. A module declaring more (or a `max` above this) is rejected. Note that the embedding will definitely limit this but it is dependent on how the interpreter is deployed.                                                                        |
+| IR Code             | 8 GiB                 | Compiled IR, not raw bytecode. This limit is across all modules in the store. The IR / Bytecode ratio is printed in `spacewasm-std` as the "compilation ratio". It is difficult to estimate this upfront because it varies on the types of instructions used.         |
+| Function parameters | 255 32-bit words      | Per function.                                                                                                                                                                                                                                                         |
+| Local variables     | 65,535 32-bit words   | Per function.                                                                                                                                                                                                                                                         |
 
 ## Benchmarking
 
@@ -131,7 +159,7 @@ usage. There are also simple unit tests that cover all Wasm instructions without
 
 The integration tests are spectests from the Wasm 1.0 MVP suite
 which was curated in https://github.com/WasmEdge/wasmedge-spectest.
-These tests validate the integriy of the Wasm interpreter against
+These tests validate the integrity of the Wasm interpreter against
 the specification.
 
 ### Fuzzing
@@ -147,40 +175,33 @@ make fuzz
 make trace CRASH=fuzz/artifacts/no_traps/crash-xxx
 ```
 
-## Proposals
+## Feature Support Matrix
 
-Currently SpaceWasm implements exactly WebAssembly 1.0 which is:
+SpaceWasm currently implements exactly WebAssembly 1.0 (the MVP plus the mutable-globals proposal that was folded into
+it). SpaceWasm will always be a subset of the full approved Wasm specification. Below is a table of the implemented and planned features.
 
-- Wasm MVP
-- Mutable Globals
+| Feature                                                                                                      | Status              |
+| ------------------------------------------------------------------------------------------------------------ | ------------------- |
+| [Wasm MVP](https://www.w3.org/TR/2019/REC-wasm-core-1-20191205/)                                             | Supported           |
+| [Mutable globals](https://github.com/WebAssembly/mutable-global)                                             | Supported           |
+| [Custom page sizes](https://github.com/WebAssembly/custom-page-sizes)                                        | Planned             |
+| [Bulk memory operations](https://github.com/WebAssembly/bulk-memory-operations)                              | Planned             |
+| [Sign-extension operators](https://github.com/WebAssembly/sign-extension-ops)                                | Planned             |
+| [Non-trapping float-to-int conversions](https://github.com/WebAssembly/nontrapping-float-to-int-conversions) | Planned             |
+| [Multi-value](https://github.com/WebAssembly/multi-value)                                                    | Under Consideration |
+| [Multiple memories](https://github.com/WebAssembly/multi-memory)                                             | Under Consideration |
 
-Additional Wasm extensions/proposals could be developed later.
+Currently, all other proposals are not planned or considered.
 
-## Copyright
+## Credits & Acknowledgments
 
-Copyright (c) 2026 California Institute of Technology (“Caltech”). U.S. Government
-sponsorship acknowledged.
-All rights reserved.
-Redistribution and use in source and binary forms, with or without modification, are permitted provided
-that the following conditions are met:
+Portions of this project are adapted from the open-source projects:
 
-* Redistributions of source code must retain the above copyright notice, this list of conditions and
-the following disclaimer.
-* Redistributions in binary form must reproduce the above copyright notice, this list of conditions
-and the following disclaimer in the documentation and/or other materials provided with the
-distribution.
-* Neither the name of Caltech nor its operating division, the Jet Propulsion Laboratory, nor the
-names of its contributors may be used to endorse or promote products derived from this software
-without specific prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
-IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
-THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
-PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR
-CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
-EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
-PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS;
-OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
-WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
-OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
-ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+- [rust-lang/rust](https://github.com/rust-lang/rust), which is dual-licensed under MIT OR Apache License 2.0.
+- [DLR-FT/wasm-interpreter](https://github.com/DLR-FT/wasm-interpreter), which is licensed under the Apache License 2.0.
+- [Wasmtime](https://github.com/bytecodealliance/wasmtime), which is licensed under the Apache License 2.0 with LLVM-exception.
+- [WABT](https://github.com/webassembly/wabt), which is licensed under the Apache License 2.0.
+- [wasmedge-spectest](https://github.com/WasmEdge/wasmedge-spectest), which is licensed under MIT.
+- [WebAssembly Testsuite](https://github.com/WebAssembly/testsuite), which is licensed under the Apache License 2.0.
+- [Coremark](https://github.com/eembc/coremark), which is licensed under the COREMARK ACCEPTABLE USE AGREEMENT.
+- [Wasm Coremark](https://github.com/wasm3/wasm-coremark), which provides no upstream license file; the wrapped CoreMark payload is governed by the COREMARK ACCEPTABLE USE AGREEMENT.

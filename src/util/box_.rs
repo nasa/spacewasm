@@ -1,3 +1,7 @@
+// Portions of this file are derived from the Rust project
+// (https://github.com/rust-lang/rust), licensed under Apache-2.0. These
+// portions have been modified for SpaceWasm.
+
 use crate::StaticAllocator;
 use crate::alloc::{AllocError, Allocator, GlobalAllocator};
 use crate::util::Vec;
@@ -6,7 +10,7 @@ use core::ops::{Deref, DerefMut};
 use core::{mem, ptr};
 
 /// A heap-allocated value with a configurable allocator.
-/// Similar to [::alloc::boxed::Box] but allows specifying a custom allocator.
+/// Similar to `alloc::boxed::Box` but allows specifying a custom allocator.
 pub struct Box<T: ?Sized, A: Allocator = GlobalAllocator> {
     ptr: *mut T,
     alloc: A,
@@ -72,7 +76,7 @@ impl<T: Sized, A: Allocator> Box<T, A> {
     pub fn new_in(alloc: A, value: T) -> Result<Box<T, A>, AllocError> {
         if size_of::<T>() == 0 {
             Ok(Box {
-                ptr: ptr::null_mut(),
+                ptr: core::ptr::NonNull::<T>::dangling().as_ptr(),
                 alloc,
             })
         } else {
@@ -120,16 +124,17 @@ impl<T: ?Sized, A: Allocator> DerefMut for Box<T, A> {
 
 impl<T: ?Sized, A: Allocator> Drop for Box<T, A> {
     fn drop(&mut self) {
-        // Null pointers do not have an allocation, they are usually just for dyn* on ZSTs
-        if !self.ptr.is_null() {
-            unsafe {
-                // SAFETY: Compute the layout before dropping the value.
-                // Creating a reference to get metadata is safe even though we're about to drop.
-                let layout = Layout::for_value(&*self.ptr);
+        unsafe {
+            // SAFETY: Compute the layout before dropping the value.
+            // Creating a reference to get metadata is safe even though we're about to drop.
+            let layout = Layout::for_value(&*self.ptr);
 
-                // Drop the contained value
-                ptr::drop_in_place(self.ptr);
+            // Drop the contained value
+            ptr::drop_in_place(self.ptr);
 
+            // Zero-sized layouts (ZSTs and empty slices) never allocated, so there is
+            // nothing to free. Their pointer is a dangling sentinel, not a real allocation.
+            if layout.size() != 0 {
                 // Deallocate the memory
                 self.alloc.dealloc(self.ptr as *mut u8, layout);
             }
@@ -277,7 +282,11 @@ mod kani_proofs {
         let boxed = boxed.unwrap();
 
         let ptr = boxed.as_ptr();
-        assert!(ptr.is_null(), "pointer should be null for ZST");
+        assert!(
+            !ptr.is_null(),
+            "ZST pointer should be a dangling non-null sentinel"
+        );
+        assert!(ptr.is_aligned(), "ZST pointer should be well-aligned");
 
         assert_eq!(*boxed, (), "ZST value should be unit");
     }

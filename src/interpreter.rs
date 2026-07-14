@@ -528,106 +528,106 @@ impl<'store> BaseVisitor for Interpreter<'store> {
     }
 
     fn i32_load(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
-        let addr = state.stack.read_u32(state.sp - 1) as usize;
-        let val = state.memory.load_u32(addr + m.offset as usize)?;
+        let addr = Memory::effective_address(state.stack.read_u32(state.sp - 1), m.offset)?;
+        let val = state.memory.load_u32(addr)?;
         state.stack.write_u32(state.sp - 1, val);
         Ok(())
     }
 
     fn i64_load(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
-        let addr = state.stack.read_u32(state.sp - 1) as usize;
-        let val = state.memory.load_u64(addr + m.offset as usize)?;
+        let addr = Memory::effective_address(state.stack.read_u32(state.sp - 1), m.offset)?;
+        let val = state.memory.load_u64(addr)?;
         state.stack.write_u64(state.sp - 1, val);
         state.sp += 1;
         Ok(())
     }
 
     fn f32_load(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
-        let addr = state.stack.read_u32(state.sp - 1) as usize;
-        let val = state.memory.load_u32(addr + m.offset as usize)?;
+        let addr = Memory::effective_address(state.stack.read_u32(state.sp - 1), m.offset)?;
+        let val = state.memory.load_u32(addr)?;
         state.stack.write_u32(state.sp - 1, val);
         Ok(())
     }
 
     fn f64_load(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
-        let addr = state.stack.read_u32(state.sp - 1) as usize;
-        let val = state.memory.load_u64(addr + m.offset as usize)?;
+        let addr = Memory::effective_address(state.stack.read_u32(state.sp - 1), m.offset)?;
+        let val = state.memory.load_u64(addr)?;
         state.stack.write_u64(state.sp - 1, val);
         state.sp += 1;
         Ok(())
     }
 
     fn i32_load8_s(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
-        let addr = state.stack.read_u32(state.sp - 1) as usize;
-        let val = state.memory.load_u8(addr + m.offset as usize)? as i8 as i32;
+        let addr = Memory::effective_address(state.stack.read_u32(state.sp - 1), m.offset)?;
+        let val = state.memory.load_u8(addr)? as i8 as i32;
         state.stack.write_u32(state.sp - 1, val as u32);
         Ok(())
     }
 
     fn i32_load8_u(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
-        let addr = state.stack.read_u32(state.sp - 1) as usize;
-        let val = state.memory.load_u8(addr + m.offset as usize)? as u32;
+        let addr = Memory::effective_address(state.stack.read_u32(state.sp - 1), m.offset)?;
+        let val = state.memory.load_u8(addr)? as u32;
         state.stack.write_u32(state.sp - 1, val);
         Ok(())
     }
 
     fn i32_load16_s(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
-        let addr = state.stack.read_u32(state.sp - 1) as usize;
-        let val = state.memory.load_u16(addr + m.offset as usize)? as i16 as i32;
+        let addr = Memory::effective_address(state.stack.read_u32(state.sp - 1), m.offset)?;
+        let val = state.memory.load_u16(addr)? as i16 as i32;
         state.stack.write_u32(state.sp - 1, val as u32);
         Ok(())
     }
 
     fn i32_load16_u(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
-        let addr = state.stack.read_u32(state.sp - 1) as usize;
-        let val = state.memory.load_u16(addr + m.offset as usize)? as u32;
+        let addr = Memory::effective_address(state.stack.read_u32(state.sp - 1), m.offset)?;
+        let val = state.memory.load_u16(addr)? as u32;
         state.stack.write_u32(state.sp - 1, val);
         Ok(())
     }
 
     fn i64_load8_s(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
-        let addr = state.stack.read_u32(state.sp - 1) as usize;
-        let val = state.memory.load_u8(addr + m.offset as usize)? as i8 as i64 as u64;
+        let addr = Memory::effective_address(state.stack.read_u32(state.sp - 1), m.offset)?;
+        let val = state.memory.load_u8(addr)? as i8 as i64 as u64;
         state.stack.write_u64(state.sp - 1, val);
         state.sp += 1;
         Ok(())
     }
 
     fn i64_load8_u(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
-        let addr = state.stack.read_u32(state.sp - 1) as usize;
-        let val = state.memory.load_u8(addr + m.offset as usize)? as u64;
+        let addr = Memory::effective_address(state.stack.read_u32(state.sp - 1), m.offset)?;
+        let val = state.memory.load_u8(addr)? as u64;
         state.stack.write_u64(state.sp - 1, val);
         state.sp += 1;
         Ok(())
     }
 
     fn i64_load16_s(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
-        let addr = state.stack.read_u32(state.sp - 1) as usize;
-        let val = state.memory.load_u16(addr + m.offset as usize)? as i16 as i64 as u64;
+        let addr = Memory::effective_address(state.stack.read_u32(state.sp - 1), m.offset)?;
+        let val = state.memory.load_u16(addr)? as i16 as i64 as u64;
         state.stack.write_u64(state.sp - 1, val);
         state.sp += 1;
         Ok(())
     }
 
     fn i64_load16_u(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
-        let addr = state.stack.read_u32(state.sp - 1) as usize;
-        let val = state.memory.load_u16(addr + m.offset as usize)? as u64;
+        let addr = Memory::effective_address(state.stack.read_u32(state.sp - 1), m.offset)?;
+        let val = state.memory.load_u16(addr)? as u64;
         state.stack.write_u64(state.sp - 1, val);
         state.sp += 1;
         Ok(())
     }
 
     fn i64_load32_s(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
-        let addr = state.stack.read_u32(state.sp - 1) as usize;
-        let val = state.memory.load_u32(addr + m.offset as usize)? as i32 as i64 as u64;
+        let addr = Memory::effective_address(state.stack.read_u32(state.sp - 1), m.offset)?;
+        let val = state.memory.load_u32(addr)? as i32 as i64 as u64;
         state.stack.write_u64(state.sp - 1, val);
         state.sp += 1;
         Ok(())
     }
 
     fn i64_load32_u(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
-        let addr = state.stack.read_u32(state.sp - 1) as usize;
-        let val = state.memory.load_u32(addr + m.offset as usize)? as u64;
+        let addr = Memory::effective_address(state.stack.read_u32(state.sp - 1), m.offset)?;
+        let val = state.memory.load_u32(addr)? as u64;
         state.stack.write_u64(state.sp - 1, val);
         state.sp += 1;
         Ok(())
@@ -636,72 +636,72 @@ impl<'store> BaseVisitor for Interpreter<'store> {
     fn i32_store(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
         state.sp -= 2;
         let val = state.stack.read_u32(state.sp + 1);
-        let addr = state.stack.read_u32(state.sp) as usize;
-        state.memory.store_u32(addr + m.offset as usize, val)?;
+        let addr = Memory::effective_address(state.stack.read_u32(state.sp), m.offset)?;
+        state.memory.store_u32(addr, val)?;
         Ok(())
     }
 
     fn i64_store(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
         state.sp -= 3;
         let val = state.stack.read_u64(state.sp + 1);
-        let addr = state.stack.read_u32(state.sp) as usize;
-        state.memory.store_u64(addr + m.offset as usize, val)?;
+        let addr = Memory::effective_address(state.stack.read_u32(state.sp), m.offset)?;
+        state.memory.store_u64(addr, val)?;
         Ok(())
     }
 
     fn f32_store(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
         state.sp -= 2;
         let val = state.stack.read_u32(state.sp + 1);
-        let addr = state.stack.read_u32(state.sp) as usize;
-        state.memory.store_u32(addr + m.offset as usize, val)?;
+        let addr = Memory::effective_address(state.stack.read_u32(state.sp), m.offset)?;
+        state.memory.store_u32(addr, val)?;
         Ok(())
     }
 
     fn f64_store(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
         state.sp -= 3;
         let val = state.stack.read_u64(state.sp + 1);
-        let addr = state.stack.read_u32(state.sp) as usize;
-        state.memory.store_u64(addr + m.offset as usize, val)?;
+        let addr = Memory::effective_address(state.stack.read_u32(state.sp), m.offset)?;
+        state.memory.store_u64(addr, val)?;
         Ok(())
     }
 
     fn i32_store8(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
         state.sp -= 2;
         let val = state.stack.read_u32(state.sp + 1) as u8;
-        let addr = state.stack.read_u32(state.sp) as usize;
-        state.memory.store_u8(addr + m.offset as usize, val)?;
+        let addr = Memory::effective_address(state.stack.read_u32(state.sp), m.offset)?;
+        state.memory.store_u8(addr, val)?;
         Ok(())
     }
 
     fn i32_store16(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
         state.sp -= 2;
         let val = state.stack.read_u32(state.sp + 1) as u16;
-        let addr = state.stack.read_u32(state.sp) as usize;
-        state.memory.store_u16(addr + m.offset as usize, val)?;
+        let addr = Memory::effective_address(state.stack.read_u32(state.sp), m.offset)?;
+        state.memory.store_u16(addr, val)?;
         Ok(())
     }
 
     fn i64_store8(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
         state.sp -= 3;
         let val = state.stack.read_u64(state.sp + 1) as u8;
-        let addr = state.stack.read_u32(state.sp) as usize;
-        state.memory.store_u8(addr + m.offset as usize, val)?;
+        let addr = Memory::effective_address(state.stack.read_u32(state.sp), m.offset)?;
+        state.memory.store_u8(addr, val)?;
         Ok(())
     }
 
     fn i64_store16(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
         state.sp -= 3;
         let val = state.stack.read_u64(state.sp + 1) as u16;
-        let addr = state.stack.read_u32(state.sp) as usize;
-        state.memory.store_u16(addr + m.offset as usize, val)?;
+        let addr = Memory::effective_address(state.stack.read_u32(state.sp), m.offset)?;
+        state.memory.store_u16(addr, val)?;
         Ok(())
     }
 
     fn i64_store32(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
         state.sp -= 3;
         let val = state.stack.read_u64(state.sp + 1) as u32;
-        let addr = state.stack.read_u32(state.sp) as usize;
-        state.memory.store_u32(addr + m.offset as usize, val)?;
+        let addr = Memory::effective_address(state.stack.read_u32(state.sp), m.offset)?;
+        state.memory.store_u32(addr, val)?;
         Ok(())
     }
 

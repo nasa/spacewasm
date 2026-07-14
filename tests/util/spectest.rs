@@ -1,3 +1,17 @@
+///
+/// Copyright 2026 California Institute of Technology
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+/// http://www.apache.org/licenses/LICENSE-2.0
+///
+/// ---
+/// Portions of this file are derived from https://github.com/DLR-FT/wasm-interpreter:
+/// Copyright © 2024-2026 Deutsches Zentrum für Luft- und Raumfahrt e.V.
+/// (DLR).
+/// Copyright © 2024-2025 OxidOS Automotive SRL.
 use super::inspector::{Inspector, LimitedVec};
 use serde::{Deserialize, Serialize};
 use spacewasm::{
@@ -194,6 +208,30 @@ impl GlobalValue for StaticGlobal {
     }
 }
 
+struct MutableStaticGlobal {
+    value: Mutex<Value>,
+    ty: ValType,
+}
+
+impl GlobalValue for MutableStaticGlobal {
+    fn write(&self, value: Value) -> Result<(), GlobalValueError> {
+        *self.value.lock().unwrap() = value;
+        Ok(())
+    }
+
+    fn read(&self) -> Result<Value, GlobalValueError> {
+        Ok(*self.value.lock().unwrap())
+    }
+
+    fn ty(&self) -> ValType {
+        self.ty
+    }
+
+    fn mutable(&self) -> bool {
+        true
+    }
+}
+
 impl WasmStream for ByteStream {
     fn read(&mut self) -> Result<Option<InnerVec<u8>>, u8> {
         if self.consumed {
@@ -218,14 +256,14 @@ impl WasmStream for ByteStream {
     }
 }
 
-const MAX_PAGES: usize = 256;
+const MAX_CODE_PAGES: usize = 256;
 const MAX_CONTROL_FRAMES: usize = 128;
 const MAX_STACK_DEPTH: usize = 256;
 
 struct TestContext {
     store: Store,
     stack: Stack,
-    code_builder: CodeBuilder<MAX_PAGES>,
+    code_builder: CodeBuilder<MAX_CODE_PAGES>,
     /// Maps instance names (like "$Mf") to module indices
     /// This is separate from the module's name field which is used for linking/imports
     instance_names: std::collections::HashMap<String, usize>,
@@ -233,7 +271,7 @@ struct TestContext {
 
 impl TestContext {
     fn new() -> Self {
-        let store = Store::new(256, [test_host_module()]).unwrap();
+        let store = Store::new(256, [test_host_module(), regression_host_module()]).unwrap();
 
         TestContext {
             store,
@@ -274,7 +312,7 @@ impl TestContext {
     /// Save the current store state
     /// Used to restore state after failed module loads that mutate the store (memory/tables)
     fn save_store(&self) -> Store {
-        let mut cloned = Store::new(256, [test_host_module()]).unwrap();
+        let mut cloned = Store::new(256, [test_host_module(), regression_host_module()]).unwrap();
 
         // Clone all modules into the new store
         for module in self.store.modules().iter() {
@@ -556,7 +594,7 @@ fn load_module(
     let mut stream = ByteStream::new(wasm_bytes);
 
     // Parse and validate the module
-    let module = Module::new::<MAX_PAGES, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
+    let module = Module::new::<MAX_CODE_PAGES, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
         module_name.as_ref().map(|f| f.as_ref()).unwrap_or(""),
         &mut stream,
         &mut ctx.store,
@@ -942,6 +980,77 @@ fn test_host_module() -> HostModule {
                 },
             ),
         }],
+    }
+}
+
+fn regression_host_module() -> HostModule {
+    HostModule {
+        name: "regression",
+        globals: vec![
+            HostGlobal {
+                name: "mut_global_i32",
+                value: spacewasm::Box::new(MutableStaticGlobal {
+                    value: Mutex::new(Value::I32(0)),
+                    ty: ValType::I32,
+                })
+                .unwrap()
+                .into_global_value_dyn(),
+            },
+            HostGlobal {
+                name: "mut_global_i64",
+                value: spacewasm::Box::new(MutableStaticGlobal {
+                    value: Mutex::new(Value::I64(0)),
+                    ty: ValType::I64,
+                })
+                .unwrap()
+                .into_global_value_dyn(),
+            },
+            HostGlobal {
+                name: "mut_global_f32",
+                value: spacewasm::Box::new(MutableStaticGlobal {
+                    value: Mutex::new(Value::F32(0.0)),
+                    ty: ValType::F32,
+                })
+                .unwrap()
+                .into_global_value_dyn(),
+            },
+            HostGlobal {
+                name: "mut_global_f64",
+                value: spacewasm::Box::new(MutableStaticGlobal {
+                    value: Mutex::new(Value::F64(0.0)),
+                    ty: ValType::F64,
+                })
+                .unwrap()
+                .into_global_value_dyn(),
+            },
+        ],
+        functions: vec![
+            HostFunction::new(
+                "return_i32_from_all_args",
+                "iIfd".into(),
+                "i".into(),
+                |_, args| {
+                    let Value::I32(v) = args[0] else {
+                        unreachable!()
+                    };
+                    ControlFlow::Continue(Some(Value::I32(v)))
+                },
+            ),
+            HostFunction::new("return_i64", "".into(), "I".into(), |_, _| {
+                ControlFlow::Continue(Some(Value::I64(0x123456789)))
+            }),
+            HostFunction::new("return_f32", "".into(), "f".into(), |_, _| {
+                ControlFlow::Continue(Some(Value::F32(12.5)))
+            }),
+            HostFunction::new("return_f64", "".into(), "d".into(), |_, _| {
+                ControlFlow::Continue(Some(Value::F64(42.25)))
+            }),
+            HostFunction::new("noop", "".into(), "".into(), |_, _| {
+                ControlFlow::Continue(None)
+            }),
+        ],
+        memory: vec![],
+        table: vec![],
     }
 }
 

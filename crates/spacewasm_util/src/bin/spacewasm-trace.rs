@@ -19,7 +19,7 @@ use std::fs;
 use std::io::{self, Read};
 use std::process;
 
-const MAX_PAGES: usize = 128;
+const MAX_CODE_PAGES: usize = 128;
 const MAX_CONTROL_FRAMES: usize = 128;
 const MAX_STACK_DEPTH: usize = 256;
 
@@ -189,10 +189,10 @@ fn main() {
         process::exit(1);
     });
 
-    let mut code_builder = CodeBuilder::<MAX_PAGES>::default();
+    let mut code_builder = CodeBuilder::<MAX_CODE_PAGES>::default();
     let mut stream = ByteStream::new(wasm_bytes);
 
-    let module = Module::new::<MAX_PAGES, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
+    let module = Module::new::<MAX_CODE_PAGES, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
         "",
         &mut stream,
         &mut store,

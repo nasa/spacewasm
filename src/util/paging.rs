@@ -3,6 +3,9 @@ use crate::alloc::{AllocError, Allocator};
 use core::alloc::Layout;
 use core::cell::UnsafeCell;
 
+// TODO(tumbar) Do we need to expose this or is it constant across all of SpaceWasm?
+const ALIGNMENT: usize = 8;
+
 #[derive(Debug, Default, Clone)]
 pub struct PageAllocatorStatistics {
     pub total_bytes: u32,
@@ -113,7 +116,7 @@ impl<'a, const MAX_PAGES: usize> PageAllocatorInner<'a, MAX_PAGES> {
                 None => {
                     // We have reached an empty page
                     // Allocate the page and place the allocation here
-                    let page_layout = Layout::from_size_align(self.page_size, 128).unwrap();
+                    let page_layout = Layout::from_size_align(self.page_size, ALIGNMENT).unwrap();
                     let addr = unsafe { self.page_allocator.alloc(page_layout)? };
 
                     // Attempt to allocate this memory into the page
@@ -153,7 +156,7 @@ impl<'a, const MAX_PAGES: usize> PageAllocatorInner<'a, MAX_PAGES> {
                             unsafe {
                                 self.page_allocator.dealloc(
                                     page.ptr,
-                                    Layout::from_size_align(self.page_size, 128).unwrap(),
+                                    Layout::from_size_align(self.page_size, ALIGNMENT).unwrap(),
                                 );
                             }
 
@@ -178,7 +181,7 @@ impl<'a, const MAX_PAGES: usize> Drop for PageAllocatorInner<'a, MAX_PAGES> {
                     unsafe {
                         self.page_allocator.dealloc(
                             page.ptr,
-                            Layout::from_size_align(self.page_size, 128).unwrap(),
+                            Layout::from_size_align(self.page_size, ALIGNMENT).unwrap(),
                         );
                     }
 
@@ -222,15 +225,16 @@ impl Page {
     /// Attempt to allocate on the tail end of this page
     fn alloc(&mut self, layout: Layout) -> Option<*mut u8> {
         // Find the next address that is aligned to this layout
-        let mut start_address = (self.ptr as usize) + self.allocated;
-        if !start_address.is_multiple_of(layout.align()) {
-            let alignment_offset = layout.align() - start_address % layout.align();
-            self.wasted += alignment_offset;
-            start_address += alignment_offset;
-        }
+        let start_address = (self.ptr as usize) + self.allocated;
+        let alignment_offset = if start_address.is_multiple_of(layout.align()) {
+            0
+        } else {
+            layout.align() - start_address % layout.align()
+        };
+        let aligned_start = start_address + alignment_offset;
 
         // Make sure out buffer can fit in here
-        let final_offset = (start_address - self.ptr as usize) + layout.size();
+        let final_offset = (aligned_start - self.ptr as usize) + layout.size();
         if final_offset <= self.size {
             assert!(!self.has_deallocated);
             self.cache = Some(AllocCache {
@@ -238,10 +242,11 @@ impl Page {
                 alloc_ptr: start_address,
             });
 
+            self.wasted += alignment_offset;
             self.allocated = final_offset;
             self.n_allocations += 1;
 
-            Some(start_address as *mut u8)
+            Some(aligned_start as *mut u8)
         } else {
             None
         }
@@ -369,7 +374,7 @@ mod kani_proofs {
 
         // Allocate a page from backing allocator
         let page_size = 256;
-        let page_layout = Layout::from_size_align(page_size, 128).unwrap();
+        let page_layout = Layout::from_size_align(page_size, ALIGNMENT).unwrap();
         let page_ptr = unsafe { backing_alloc.alloc(page_layout).unwrap() };
 
         let mut page = Page::new(page_ptr, page_size);
@@ -379,7 +384,7 @@ mod kani_proofs {
         kani::assume(size > 0 && size <= 64);
 
         let align: usize = kani::any();
-        kani::assume(align > 0 && align <= 128);
+        kani::assume(align > 0 && align <= ALIGNMENT);
         kani::assume(align.is_power_of_two());
 
         let layout = Layout::from_size_align(size, align).unwrap();
@@ -483,7 +488,7 @@ mod kani_proofs {
         let backing_alloc = RustSystemAllocator;
 
         let page_size = 256;
-        let page_layout = Layout::from_size_align(page_size, 128).unwrap();
+        let page_layout = Layout::from_size_align(page_size, ALIGNMENT).unwrap();
         let page_ptr = unsafe { backing_alloc.alloc(page_layout).unwrap() };
 
         let mut page = Page::new(page_ptr, page_size);
@@ -569,84 +574,150 @@ mod kani_proofs {
         unsafe { backing_alloc.dealloc(page_ptr, page_layout) };
     }
 
-    /// Verify PageAllocator orchestration with multiple pages
+    /// Makes sure that padding is computed correctly
     #[kani::proof]
-    fn proof_page_allocator_correctness() {
+    fn proof_page_alignment_padding() {
+        let backing_alloc = RustSystemAllocator;
+
+        let page_size = 128;
+        let page_layout = Layout::from_size_align(page_size, ALIGNMENT).unwrap();
+        let page_ptr = unsafe { backing_alloc.alloc(page_layout).unwrap() };
+
+        let mut page = Page::new(page_ptr, page_size);
+
+        // Leave `allocated` at an offset that is not a multiple of 8, so the
+        // next allocation attempt needs alignment padding
+        let layout1 = Layout::from_size_align(10, 8).unwrap();
+        page.alloc(layout1).expect("first allocation must fit");
+        assert_eq!(page.allocated, 10);
+        assert_eq!(page.wasted, 0);
+
+        // Needs 6 bytes of padding, but 16 + 115 = 131 > 128, so this allocation must fail
+        let layout2 = Layout::from_size_align(115, 8).unwrap();
+        let wasted_before = page.wasted;
+        let allocated_before = page.allocated;
+
+        let result = page.alloc(layout2);
+
+        assert!(result.is_none(), "allocation must fail: it does not fit");
+        assert_eq!(
+            page.wasted, wasted_before,
+            "a failed allocation must not commit alignment padding to `wasted`"
+        );
+        assert_eq!(
+            page.allocated, allocated_before,
+            "a failed allocation must not advance `allocated`"
+        );
+
+        // Cleanup
+        core::mem::forget(page);
+        unsafe { backing_alloc.dealloc(page_ptr, page_layout) };
+    }
+
+    /// Test zero-size allocation must fail
+    #[kani::proof]
+    fn proof_zero_size_alloc_fails() {
         let backing_alloc = RustSystemAllocator;
         let page_alloc = PageAllocator::<3>::new(&backing_alloc, 128);
 
-        // Test zero-size allocation must fail
         let zero_layout = Layout::from_size_align(0, 1).unwrap();
         let result_zero = unsafe { page_alloc.alloc(zero_layout) };
         assert!(result_zero.is_err(), "Zero-size allocation must fail");
+    }
 
-        // Test allocation too large for page size must fail
+    /// Test allocation too large for page size must fail
+    #[kani::proof]
+    fn proof_large_page_alloc_fails() {
+        let backing_alloc = RustSystemAllocator;
+        let page_alloc = PageAllocator::<3>::new(&backing_alloc, 128);
+
         let huge_layout = Layout::from_size_align(200, 8).unwrap();
         let result_huge = unsafe { page_alloc.alloc(huge_layout) };
         assert!(
             matches!(result_huge, Err(AllocError::PageTooSmall)),
             "Allocation larger than page size must fail with PageTooSmall"
         );
+    }
 
-        // Test basic allocation
-        let layout = Layout::from_size_align(32, 8).unwrap();
-        let result1 = unsafe { page_alloc.alloc(layout) };
+    /// Verify that page allocations within bounds work correctly, but page allocs
+    /// that exceed total page capacity will fail
+    #[kani::proof]
+    fn proof_page_overalloc_failure() {
+        let backing_alloc = RustSystemAllocator;
+        let page_alloc = PageAllocator::<3>::new(&backing_alloc, 128);
+        let layout = Layout::from_size_align(128, 8).unwrap();
 
-        // If first allocation succeeds, verify properties
-        if let Ok(ptr1) = result1 {
-            // Pointer must be non-null and aligned
-            assert!(!ptr1.is_null(), "Allocated pointer must be non-null");
-            assert_eq!(ptr1 as usize % 8, 0, "Pointer must be aligned");
+        let ptr1 = unsafe { page_alloc.alloc(layout) }.expect("page 0 must fit");
+        assert!(!ptr1.is_null(), "Allocated pointer must be non-null");
+        assert_eq!(ptr1 as usize % 8, 0, "Pointer must be aligned");
 
-            let stats1 = page_alloc.stats();
-            assert!(stats1.pages >= 1, "Should have at least 1 page");
-            assert!(stats1.total_bytes >= 32, "Should track allocated bytes");
+        let stats1 = page_alloc.stats();
+        assert_eq!(stats1.pages, 1, "Should have exactly 1 page");
+        assert_eq!(stats1.total_bytes, 128, "Should track allocated bytes");
+        assert!(
+            stats1.total_bytes <= stats1.pages as u32 * 128,
+            "Total bytes must not exceed total page capacity"
+        );
+        assert!(
+            stats1.total_bytes >= stats1.pad_bytes,
+            "Total bytes must be >= pad bytes"
+        );
 
-            // Verify stats aggregation: total_bytes = allocated + wasted across all pages
-            // (We can't directly verify this without accessing page internals,
-            // but we can verify total_bytes is reasonable)
-            assert!(
-                stats1.total_bytes <= stats1.pages as u32 * 128,
-                "Total bytes must not exceed total page capacity"
-            );
-            assert!(
-                stats1.total_bytes >= stats1.pad_bytes,
-                "Total bytes must be >= pad bytes"
-            );
+        let ptr2 = unsafe { page_alloc.alloc(layout) }.expect("page 1 must fit");
+        let ptr1_addr = ptr1 as usize;
+        let ptr2_addr = ptr2 as usize;
+        assert!(
+            ptr2_addr >= ptr1_addr + 128 || ptr1_addr >= ptr2_addr + 128,
+            "Allocations must not overlap"
+        );
 
-            // Try second allocation
-            let result2 = unsafe { page_alloc.alloc(layout) };
-            if let Ok(ptr2) = result2 {
-                // Verify no overlap
-                let ptr1_addr = ptr1 as usize;
-                let ptr2_addr = ptr2 as usize;
-                assert!(
-                    ptr2_addr >= ptr1_addr + 32 || ptr1_addr >= ptr2_addr + 32,
-                    "Allocations must not overlap"
-                );
+        let ptr3 = unsafe { page_alloc.alloc(layout) }.expect("page 2 must fit");
 
-                // Try to allocate until we run out of space
-                let result3 = unsafe { page_alloc.alloc(layout) };
-                let result4 = unsafe { page_alloc.alloc(layout) };
+        let result4 = unsafe { page_alloc.alloc(layout) };
+        assert!(
+            matches!(result4, Err(AllocError::OutOfMemory)),
+            "4th allocation must fail once all pages are full"
+        );
 
-                // Eventually should run out of pages or backing memory
-                if result3.is_ok() && result4.is_ok() {
-                    // Keep trying until failure
-                    for _ in 0..10 {
-                        if unsafe { page_alloc.alloc(layout) }.is_err() {
-                            break;
-                        }
-                    }
-                    // With limited backing memory, should eventually fail
-                    // (but might not if state space exploration stops early)
-                }
+        unsafe {
+            page_alloc.dealloc(ptr3, layout);
+            page_alloc.dealloc(ptr2, layout);
+            page_alloc.dealloc(ptr1, layout);
+        }
+    }
 
-                // Test deallocation
-                unsafe {
-                    page_alloc.dealloc(ptr2, layout);
-                    page_alloc.dealloc(ptr1, layout);
-                }
-            }
+    /// Verify that an allocation reuses an existing page with room instead
+    /// of creating a new one
+    #[kani::proof]
+    fn proof_page_alloc_reuses_existing_page() {
+        let backing_alloc = RustSystemAllocator;
+        let page_alloc = PageAllocator::<3>::new(&backing_alloc, 128);
+        let layout = Layout::from_size_align(64, 8).unwrap();
+
+        let ptr1 = unsafe { page_alloc.alloc(layout) }.expect("page 0 must fit");
+        assert_eq!(
+            page_alloc.stats().pages,
+            1,
+            "First allocation must create page 0"
+        );
+
+        let ptr2 = unsafe { page_alloc.alloc(layout) }.expect("page 0 must still fit");
+        assert_eq!(
+            page_alloc.stats().pages,
+            1,
+            "Second allocation must reuse page 0, not create a new page"
+        );
+
+        let ptr1_addr = ptr1 as usize;
+        let ptr2_addr = ptr2 as usize;
+        assert!(
+            ptr2_addr >= ptr1_addr + 64 || ptr1_addr >= ptr2_addr + 64,
+            "Allocations must not overlap"
+        );
+
+        unsafe {
+            page_alloc.dealloc(ptr2, layout);
+            page_alloc.dealloc(ptr1, layout);
         }
     }
 

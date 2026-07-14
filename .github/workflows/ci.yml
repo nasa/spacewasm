@@ -6,6 +6,9 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 env:
   RUST_BACKTRACE: 1
   CARGO_TERM_COLOR: always
@@ -73,29 +76,13 @@ jobs:
           sudo cp wabt-${WABT_VERSION}/bin/* /usr/local/bin/
         shell: bash
 
-      - name: Cache Cargo registry
-        uses: actions/cache@v4
+      - name: Cache Rust dependencies
+        # Pinned commit resolved from the annotated Swatinem/rust-cache@v2 tag.
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
         with:
-          path: ~/.cargo/registry/index
-          key: ${{ runner.os }}-${{ runner.arch }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ runner.arch }}-cargo-registry-
-
-      - name: Cache Cargo git
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/git
-          key: ${{ runner.os }}-${{ runner.arch }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ runner.arch }}-cargo-git-
-
-      - name: Cache build artifacts
-        uses: actions/cache@v4
-        with:
-          path: target
-          key: ${{ runner.os }}-${{ runner.arch }}-cargo-build-${{ matrix.profile }}-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ runner.arch }}-cargo-build-${{ matrix.profile }}-
+          key: ${{ matrix.profile }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-bin: false
 
       - name: Run tests (debug)
         if: matrix.profile == 'debug'
@@ -112,6 +99,50 @@ jobs:
       - name: Run tests with strict-assertions (release)
         if: matrix.profile == 'release'
         run: cargo test --workspace --release --features strict-assertions --verbose
+
+  test-32bit:
+    name: Test (i686-unknown-linux-gnu, ${{ matrix.profile }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        profile:
+          - debug
+          - release
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install 32-bit system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-multilib
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: i686-unknown-linux-gnu
+
+      - name: Install WABT (WebAssembly Binary Toolkit)
+        run: |
+          WABT_VERSION=1.0.41
+          wget https://github.com/WebAssembly/wabt/releases/download/${WABT_VERSION}/wabt-${WABT_VERSION}-linux-x64.tar.gz
+          tar -xzf wabt-${WABT_VERSION}-linux-x64.tar.gz
+          sudo cp wabt-${WABT_VERSION}/bin/* /usr/local/bin/
+        shell: bash
+
+      # Only the interpreter library is deployed to the 32-bit target, so the
+      # host-only workspace tooling is not built here. Running the suite on a
+      # 32-bit `usize` guards pointer-width regressions (e.g. memory
+      # effective-address overflow) that the 64-bit test matrix cannot observe.
+      - name: Run tests (debug)
+        if: matrix.profile == 'debug'
+        run: cargo test -p spacewasm --target i686-unknown-linux-gnu --verbose
+
+      - name: Run tests (release)
+        if: matrix.profile == 'release'
+        run: cargo test -p spacewasm --release --target i686-unknown-linux-gnu --verbose
 
   lint:
     name: Lint
@@ -162,7 +193,6 @@ jobs:
     name: Benchmark
     runs-on: ubuntu-latest
     permissions:
-      pull-requests: write
       contents: read
     steps:
       - name: Checkout code
@@ -181,29 +211,12 @@ jobs:
           tar -xzf wabt-${WABT_VERSION}-${WABT_PLATFORM}.tar.gz
           sudo cp wabt-${WABT_VERSION}/bin/* /usr/local/bin/
 
-      - name: Cache Cargo registry
-        uses: actions/cache@v4
+      - name: Cache Rust dependencies
+        # Pinned commit resolved from the annotated Swatinem/rust-cache@v2 tag.
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
         with:
-          path: ~/.cargo/registry/index
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-registry-
-
-      - name: Cache Cargo git
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/git
-          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-git-
-
-      - name: Cache build artifacts
-        uses: actions/cache@v4
-        with:
-          path: target
-          key: ${{ runner.os }}-cargo-build-bench-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-build-bench-
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-bin: false
 
       - name: Run CoreMark benchmark
         id: benchmark
@@ -244,53 +257,23 @@ jobs:
             echo "baseline=" >> $GITHUB_OUTPUT
           fi
 
-      - name: Comment benchmark results on PR
+      - name: Save benchmark results
         if: github.event_name == 'pull_request'
-        uses: actions/github-script@v7
+        run: |
+          cat > benchmark-results.json <<EOF
+          {
+            "prNumber": "${{ github.event.pull_request.number }}",
+            "currentScore": "${{ steps.benchmark.outputs.score }}",
+            "baselineScore": "${{ steps.baseline.outputs.baseline }}"
+          }
+          EOF
+
+      - name: Upload benchmark results
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
         with:
-          script: |
-            const currentScore = parseFloat('${{ steps.benchmark.outputs.score }}');
-            const baselineScore = parseFloat('${{ steps.baseline.outputs.baseline }}');
-
-            let comment = '## CoreMark Benchmark Results\n\n';
-            comment += `**Current Score:** ${currentScore.toFixed(3)}\n`;
-
-            if (baselineScore && !isNaN(baselineScore)) {
-              const diff = currentScore - baselineScore;
-              const percentChange = ((diff / baselineScore) * 100).toFixed(2);
-
-              comment += `**Baseline Score (main):** ${baselineScore.toFixed(3)}\n`;
-              comment += `**Difference:** ${diff >= 0 ? '+' : ''}${diff.toFixed(3)} (${percentChange}%)\n\n`;
-            } else {
-              comment += '\n_No baseline available for comparison_\n';
-            }
-
-            // Find existing benchmark comment
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-            });
-
-            const botComment = comments.find(c =>
-              c.user.type === 'Bot' && c.body.includes('CoreMark Benchmark Results')
-            );
-
-            if (botComment) {
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: botComment.id,
-                body: comment
-              });
-            } else {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-                body: comment
-              });
-            }
+          name: benchmark-results
+          path: benchmark-results.json
 
   model-checking:
     name: Formal Verification
@@ -312,7 +295,6 @@ jobs:
     name: Code Coverage
     runs-on: ubuntu-latest
     permissions:
-      pull-requests: write
       contents: read
     steps:
       - name: Checkout code
@@ -336,21 +318,12 @@ jobs:
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
 
-      - name: Cache Cargo registry
-        uses: actions/cache@v4
+      - name: Cache Rust dependencies
+        # Pinned commit resolved from the annotated Swatinem/rust-cache@v2 tag.
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
         with:
-          path: ~/.cargo/registry/index
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-registry-
-
-      - name: Cache Cargo git
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/git
-          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-git-
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-bin: false
 
       - name: Generate coverage
         run: |
@@ -388,58 +361,23 @@ jobs:
             echo "baseline=" >> $GITHUB_OUTPUT
           fi
 
-      - name: Comment coverage results on PR
+      - name: Save coverage results
         if: github.event_name == 'pull_request'
-        uses: actions/github-script@v7
+        run: |
+          cat > coverage-results.json <<EOF
+          {
+            "prNumber": "${{ github.event.pull_request.number }}",
+            "currentCoverage": "${{ steps.coverage.outputs.percentage }}",
+            "baselineCoverage": "${{ steps.baseline-coverage.outputs.baseline }}"
+          }
+          EOF
+
+      - name: Upload coverage results
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
         with:
-          script: |
-            const currentCoverage = parseFloat('${{ steps.coverage.outputs.percentage }}');
-            const baselineCoverage = parseFloat('${{ steps.baseline-coverage.outputs.baseline }}');
-
-            let comment = '## Code Coverage Report\n\n';
-            comment += `**Current Coverage:** ${currentCoverage.toFixed(2)}%\n`;
-
-            if (baselineCoverage && !isNaN(baselineCoverage)) {
-              const diff = currentCoverage - baselineCoverage;
-
-              comment += `**Baseline Coverage (main):** ${baselineCoverage.toFixed(2)}%\n`;
-              comment += `**Difference:** ${diff >= 0 ? '+' : ''}${diff.toFixed(2)}%\n\n`;
-
-              if (diff < -1.0) {
-                comment += '**Warning:** Coverage decreased by more than 1%\n';
-              } else if (diff >= 1.0) {
-                comment += '**Improvement:** Coverage increased!\n';
-              }
-            } else {
-              comment += '\n_No baseline available for comparison_\n';
-            }
-
-            // Find existing coverage comment
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-            });
-
-            const botComment = comments.find(c =>
-              c.user.type === 'Bot' && c.body.includes('Code Coverage Report')
-            );
-
-            if (botComment) {
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: botComment.id,
-                body: comment
-              });
-            } else {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-                body: comment
-              });
-            }
+          name: coverage-results
+          path: coverage-results.json
 
       - name: Upload coverage to Codecov
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'

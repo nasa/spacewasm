@@ -28,7 +28,7 @@ pub mod module;
 pub use module::*;
 
 pub(crate) mod opcode;
-pub use opcode::*;
+pub(crate) use opcode::*;
 
 mod types;
 pub use types::*;

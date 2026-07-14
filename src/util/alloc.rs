@@ -1,3 +1,7 @@
+// Portions of this file are derived from the Rust project
+// (https://github.com/rust-lang/rust), licensed under Apache-2.0. These
+// portions have been modified for SpaceWasm.
+
 use core::{alloc::Layout, marker::PhantomData};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -33,7 +37,7 @@ use crate::MemoryStatistics;
 unsafe extern "C" {
     /// Allocate a pointer on the heap (or wherever) given a size and alignment.
     /// If allocation could not succeed, write the error code corresponding
-    /// to [AllocError] into [err] and return NULL.
+    /// to [AllocError] into `err` and return NULL.
     fn __spacewasm_alloc(size: usize, align: usize, err: *mut u32) -> *mut u8;
 
     /// Deallocate a pointer given it's size and alignment
@@ -182,6 +186,136 @@ unsafe impl Allocator for GlobalAllocator {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_alloc_error_from_u32() {
+        assert_eq!(AllocError::from(1u32), AllocError::OutOfMemory);
+        assert_eq!(AllocError::from(2u32), AllocError::PageTooSmall);
+        assert_eq!(AllocError::from(0u32), AllocError::AllocationFailed);
+        // Any unrecognized code falls back to the generic failure.
+        assert_eq!(AllocError::from(42u32), AllocError::AllocationFailed);
+    }
+
+    #[test]
+    fn test_alloc_error_into_u32() {
+        assert_eq!(u32::from(AllocError::AllocationFailed), 0);
+        assert_eq!(u32::from(AllocError::OutOfMemory), 1);
+        assert_eq!(u32::from(AllocError::PageTooSmall), 2);
+    }
+
+    #[test]
+    fn test_alloc_error_round_trip() {
+        for err in [
+            AllocError::AllocationFailed,
+            AllocError::OutOfMemory,
+            AllocError::PageTooSmall,
+        ] {
+            let code: u32 = err.clone().into();
+            assert_eq!(AllocError::from(code), err);
+        }
+    }
+
+    #[test]
+    fn test_reference_allocator_delegates() {
+        // The blanket `impl Allocator for &T` should forward every call to the
+        // underlying allocator.
+        let mut backing = [0u8; 4];
+        let expected = backing.as_mut_ptr();
+        let alloc = StaticAllocator::<4>::new(&mut backing);
+        let by_ref = &alloc;
+
+        let layout = Layout::from_size_align(4, 1).unwrap();
+        let ptr = unsafe { Allocator::alloc(&by_ref, layout) }.unwrap();
+        assert_eq!(ptr, expected);
+
+        unsafe { Allocator::dealloc(&by_ref, ptr, layout) };
+
+        // Call through the reference impl explicitly so the `&T` forwarding
+        // (rather than the concrete impl via auto-deref) is exercised.
+        let stats = Allocator::memory_statistics(&by_ref);
+        assert_eq!(stats.total_bytes, 0);
+        assert_eq!(stats.pad_bytes, 0);
+    }
+
+    #[test]
+    fn test_static_allocator_new() {
+        let mut backing = [0u8; 8];
+        let expected = backing.as_mut_ptr();
+        let alloc = StaticAllocator::<8>::new(&mut backing);
+
+        let layout = Layout::from_size_align(8, 1).unwrap();
+        let ptr = unsafe { alloc.alloc(layout) }.unwrap();
+        assert_eq!(ptr, expected);
+
+        unsafe { alloc.dealloc(ptr, layout) };
+    }
+
+    #[test]
+    fn test_static_allocator_new_from_ptr() {
+        let mut backing = [0u8; 16];
+        let raw = backing.as_mut_ptr();
+        let alloc = StaticAllocator::<16>::new_from_ptr(raw);
+
+        let layout = Layout::from_size_align(16, 1).unwrap();
+        let ptr = unsafe { alloc.alloc(layout) }.unwrap();
+        assert_eq!(ptr, raw);
+
+        unsafe { alloc.dealloc(ptr, layout) };
+    }
+
+    #[test]
+    fn test_static_allocator_memory_statistics() {
+        let mut backing = [0u8; 4];
+        let alloc = StaticAllocator::<4>::new(&mut backing);
+        let stats = alloc.memory_statistics();
+        assert_eq!(stats.total_bytes, 0);
+        assert_eq!(stats.pad_bytes, 0);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_static_allocator_alloc_wrong_size_panics() {
+        let mut backing = [0u8; 4];
+        let alloc = StaticAllocator::<4>::new(&mut backing);
+        // The layout size must equal the const generic N.
+        let layout = Layout::from_size_align(2, 1).unwrap();
+        let _ = unsafe { alloc.alloc(layout) };
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_static_allocator_dealloc_wrong_ptr_panics() {
+        let mut backing = [0u8; 4];
+        let alloc = StaticAllocator::<4>::new(&mut backing);
+        let layout = Layout::from_size_align(4, 1).unwrap();
+        let mut other = 0u8;
+        unsafe { alloc.dealloc(&mut other as *mut u8, layout) };
+    }
+
+    #[test]
+    fn test_global_allocator_alloc_dealloc() {
+        let alloc = GlobalAllocator;
+        let layout = Layout::from_size_align(32, 8).unwrap();
+        let ptr = unsafe { alloc.alloc(layout) }.unwrap();
+        assert!(!ptr.is_null());
+        unsafe { alloc.dealloc(ptr, layout) };
+    }
+
+    #[test]
+    fn test_global_allocator_alloc_error() {
+        // The test-backing `__spacewasm_alloc` returns NULL for a zero-sized
+        // allocation, which drives `GlobalAllocator::alloc` down its error path.
+        let alloc = GlobalAllocator;
+        let layout = Layout::from_size_align(0, 1).unwrap();
+        let result = unsafe { alloc.alloc(layout) };
+        assert_eq!(result, Err(AllocError::AllocationFailed));
+    }
+
+    #[test]
+    fn test_global_allocator_memory_statistics() {
+        // Just ensure the FFI passthrough is callable and returns a value.
+        let _ = GlobalAllocator.memory_statistics();
+    }
 
     #[test]
     fn test_memory_statistics_sub() {

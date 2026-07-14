@@ -1,3 +1,7 @@
+// Portions of this file are derived from the Rust project
+// (https://github.com/rust-lang/rust), licensed under Apache-2.0. These
+// portions have been modified for SpaceWasm.
+
 use crate::util::Vec;
 use crate::{Allocator, GlobalAllocator, ValidationError};
 use core::fmt;
@@ -93,6 +97,7 @@ impl<A: Allocator> Deref for String<A> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    extern crate std;
 
     #[test]
     fn test_from_str() {
@@ -125,5 +130,58 @@ mod tests {
 
         let s = String::try_from(vec).unwrap();
         assert_eq!(&*s, "hello");
+    }
+
+    #[test]
+    fn test_from_vec_invalid() {
+        let mut vec = Vec::new(3).unwrap();
+        vec.push(0xFF);
+        vec.push(0xFE);
+        vec.push(0xFD);
+
+        let result = String::try_from(vec);
+        assert!(matches!(result, Err(ValidationError::MalformedUtf8)));
+    }
+
+    #[test]
+    fn test_display() {
+        let s = String::try_from("display me").unwrap();
+        assert_eq!(std::format!("{}", s), "display me");
+    }
+
+    #[test]
+    fn test_debug() {
+        let s = String::try_from("debug me").unwrap();
+        assert_eq!(std::format!("{:?}", s), "debug me");
+    }
+
+    #[test]
+    fn test_as_ref() {
+        let s = String::try_from("as ref").unwrap();
+        let r: &str = s.as_ref();
+        assert_eq!(r, "as ref");
+    }
+
+    #[test]
+    fn test_clone() {
+        let s = String::try_from("clone me").unwrap();
+        let c = s.clone();
+        assert_eq!(&*c, "clone me");
+        assert_eq!(&*s, &*c);
+    }
+
+    #[test]
+    fn test_eq_str() {
+        let s = String::try_from("match").unwrap();
+
+        // Exercise both directions of `impl_eq! { String, str }`.
+        assert_eq!(s, *"match");
+        assert_eq!(*"match", s);
+        assert_ne!(s, *"nope");
+
+        // And both directions of `impl_eq! { String, &str }`.
+        assert_eq!(s, "match");
+        assert_eq!("match", s);
+        assert_ne!(s, "nope");
     }
 }
