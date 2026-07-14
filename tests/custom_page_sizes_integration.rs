@@ -12,6 +12,13 @@ fn custom_page_sizes() {
 }
 
 #[test]
+#[cfg(target_pointer_width = "64")]
 fn memory_max() {
     run_wast_test_file("custom-page-sizes/memory_max");
+}
+
+#[test]
+#[cfg(target_pointer_width = "32")]
+fn memory_max() {
+    run_wast_test_file("custom-page-sizes/memory_max_32");
 }

@@ -706,8 +706,6 @@ impl MemorySection {
         } else {
             // We are allocating memory for this module
             let ty = MemType::read(wasm)?;
-            extern crate std;
-            std::eprintln!("{ty:?}");
             let memory = Memory::new(ty, allocator)?;
             Ok(Some(MemoryKind::Owned(Rc::new(memory)?)))
         }
