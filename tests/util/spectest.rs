@@ -853,6 +853,7 @@ fn check_decode_error(err: ParseError, text: String) {
         (ValidationError::TableImportNotFound, "incompatible import type") => {}
         (ValidationError::MemoryImportTooLarge, "incompatible import type") => {}
         (ValidationError::InvalidPageSize(_), "invalid custom page size") => {}
+        (ValidationError::AllocError(AllocError::AllocationFailed), "allocation failed") => {}
         err => {
             panic!("Could not match validation error text '{text}' with error {err:?}")
         }
