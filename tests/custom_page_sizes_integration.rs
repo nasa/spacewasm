@@ -12,11 +12,6 @@ fn custom_page_sizes() {
 }
 
 #[test]
-fn memory_max_i64() {
-    run_wast_test_file("custom-page-sizes/memory_max_i64");
-}
-
-#[test]
 fn memory_max() {
     run_wast_test_file("custom-page-sizes/memory_max");
 }

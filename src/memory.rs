@@ -33,7 +33,7 @@ impl<T: WasmMemoryAllocator> Rc<T> {
 pub struct Memory {
     ptr: *mut u8,
     size: usize,
-    limits: MemType,
+    ty: MemType,
     allocator: Option<Rc<dyn WasmMemoryAllocator>>,
 }
 
@@ -68,20 +68,17 @@ impl Default for Memory {
 }
 
 impl Memory {
-    // TODO(tumbar) Implement the custom page size proposal
-    const PAGE_SIZE: usize = 65536;
-
     pub fn zero() -> Memory {
         Memory {
             ptr: core::ptr::null_mut(),
             size: 0,
-            limits: MemType::zero(),
+            ty: MemType::zero(),
             allocator: None,
         }
     }
 
     pub fn new(ty: MemType, allocator: Rc<dyn WasmMemoryAllocator>) -> Result<Memory, AllocError> {
-        let size = (ty.min() as usize) * Self::PAGE_SIZE;
+        let size = (ty.min() as usize) * ty.page_size();
         let ptr = allocator
             .allocate(Layout::from_size_align(size, 16).unwrap())?
             .as_ptr();
@@ -94,7 +91,7 @@ impl Memory {
         Ok(Memory {
             ptr,
             size,
-            limits: ty,
+            ty,
             allocator: Some(allocator),
         })
     }
@@ -196,12 +193,12 @@ impl Memory {
             return Err(MemoryError::OutOfMemory);
         };
 
-        if !self.limits.can_hold(total_pages) {
+        if !self.ty.can_hold(total_pages) {
             return Err(MemoryError::OutOfMemory);
         }
 
         let old_size = self.size;
-        let new_size = (Self::PAGE_SIZE * n as usize) + self.size;
+        let new_size = (self.ty.page_size() * n as usize) + self.size;
         if let Some(allocator) = &self.allocator
             && let Some(ptr) = NonNull::new(self.ptr)
         {
@@ -216,23 +213,23 @@ impl Memory {
             // Clear the new memory
             let new_ptr = unsafe { self.ptr.add(old_size) };
             unsafe {
-                new_ptr.write_bytes(0, Self::PAGE_SIZE * n as usize);
+                new_ptr.write_bytes(0, self.ty.page_size() * n as usize);
             }
 
             self.size = new_size;
 
-            Ok((old_size / Self::PAGE_SIZE) as u32)
+            Ok((old_size / self.ty.page_size()) as u32)
         } else {
             Err(MemoryError::OutOfMemory)
         }
     }
 
     pub fn mem_type(&self) -> MemType {
-        self.limits
+        self.ty
     }
 
     pub fn size(&self) -> u32 {
-        (self.size / Self::PAGE_SIZE) as u32
+        (self.size / self.ty.page_size()) as u32
     }
 
     pub fn is_zero(&self) -> bool {

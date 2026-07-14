@@ -96,7 +96,6 @@
 
 (module $m
   (memory (export "small-pages-memory") 0 (pagesize 1))
-  (memory (export "large-pages-memory") 0 (pagesize 65536))
 )
 (register "m" $m)
 
@@ -107,9 +106,14 @@
   "incompatible import type"
 )
 
+(module $m2
+  (memory (export "large-pages-memory") 0 (pagesize 65536))
+)
+(register "m2" $m2)
+
 (assert_unlinkable
   (module
-    (memory (import "m" "large-pages-memory") 0 (pagesize 1))
+    (memory (import "m2" "large-pages-memory") 0 (pagesize 1))
   )
   "incompatible import type"
 )

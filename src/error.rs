@@ -52,6 +52,8 @@ pub enum ValidationError {
     MalformedSectionSize,
     ExpectedConstOrVar(u8),
     MalformedImportExportDesc(u8),
+    MalformedMemType(u8),
+    InvalidPageSize(u8),
     InvalidSectionOrdering(SectionKind, SectionKind),
     DuplicateSection(SectionKind),
     InvalidMaxLimit,

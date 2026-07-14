@@ -255,55 +255,146 @@ impl Limit {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MemType(Limit);
+pub enum MemSharedType {
+    Shared,
+    Unshared,
+}
 
-impl MemType {
-    pub(crate) fn read(wasm: &mut Reader) -> Result<Self, ValidationError> {
-        // Memory types are encoded with their limits.
-        let limit = Limit::read(wasm)?;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemPageSize {
+    _1,
+    _65536,
+}
 
-        // Validate the memory limits
-        if limit.min > 65536 {
-            Err(ValidationError::MemoryTooLarge)
-        } else if let Some(max) = limit.max
-            && max > 65536
-        {
-            Err(ValidationError::MemoryTooLarge)
-        } else {
-            Ok(MemType(limit))
+impl MemPageSize {
+    pub fn size(&self) -> usize {
+        match self {
+            MemPageSize::_1 => 1,
+            MemPageSize::_65536 => 65536,
         }
     }
+}
 
-    pub fn from(min: u32, max: Option<u32>) -> Self {
-        MemType(Limit { min, max })
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MemType {
+    pub initial_pages: u32,
+    pub max_pages: Option<u32>,
+    pub page_size: MemPageSize,
+}
 
-    pub fn zero() -> MemType {
-        MemType(Limit {
-            min: 0,
-            max: Some(0),
+impl MemType {
+    pub(crate) fn read(wasm: &mut Reader) -> Result<MemType, ValidationError> {
+        let flag = wasm.read_u8()?;
+
+        let min = wasm.read_u32()?;
+
+        // Bit 0: Whether a maximum bound (m) for the limit follows.
+        let max = if (flag & (1 << 0)) != 0 {
+            let max = wasm.read_u32()?;
+            if max < min {
+                return Err(ValidationError::InvalidMaxLimit);
+            }
+
+            Some(max)
+        } else {
+            None
+        };
+
+        // Bit 1: Whether the memory is shared or unshared. This was introduced in the threads proposal.
+        // Not supported
+        if (flag & (1 << 1)) != 0 {
+            return Err(ValidationError::MalformedMemType(flag));
+        }
+
+        // Bit 2: Whether the memory's index type is i32 or i64. This was introduced in the memory64 proposal.
+        // Not supported
+        if (flag & (1 << 2)) != 0 {
+            return Err(ValidationError::MalformedMemType(flag));
+        }
+
+        // Bit 3: Whether the memory defines a custom page size (p) or not and therefore whether another u32 follows after the limits.
+        // This was introduced in the custom-page-sizes proposal
+        let page_size = if (flag & (1 << 3)) != 0 {
+            let p = wasm.read_u32()?;
+            match p {
+                0 => MemPageSize::_1,
+                16 => MemPageSize::_65536,
+                p if p <= 64 => return Err(ValidationError::InvalidPageSize(p as u8)),
+                _ => return Err(ValidationError::InvalidPageSize(0xFF)),
+            }
+        } else {
+            MemPageSize::_65536
+        };
+
+        // Mask the rest of the flag bits to validate they are not set
+        if (flag & 0xF0) != 0 {
+            return Err(ValidationError::MalformedMemType(flag));
+        }
+
+        // The limits must be valid within the range 2**32 - 1.
+        // The limits must be valid within the range 2**32 / pagesize
+
+        let max_pages = match page_size {
+            MemPageSize::_1 => (u32::MAX as u64) + 1,
+            MemPageSize::_65536 => 65536,
+        };
+
+        if min as u64 > max_pages {
+            return Err(ValidationError::MemoryTooLarge);
+        } else if let Some(max) = max {
+            if max as u64 > max_pages {
+                return Err(ValidationError::MemoryTooLarge);
+            }
+        }
+
+        Ok(MemType {
+            initial_pages: min,
+            max_pages: max,
+            page_size,
         })
     }
 
+    pub fn zero() -> MemType {
+        MemType {
+            initial_pages: 0,
+            max_pages: Some(0),
+            page_size: MemPageSize::_65536,
+        }
+    }
+
     pub fn min(&self) -> u32 {
-        self.0.min
+        self.initial_pages
     }
 
     pub fn can_hold(&self, n_pages: u32) -> bool {
-        if let Some(max) = self.0.max {
+        if let Some(max) = self.max_pages {
             if n_pages > max {
                 return false;
             }
-        } else if n_pages > 65536 {
-            // Wasm only has 4Gib of pages
-            return false;
+        } else {
+            // Wasm only has 4 GiB per memory
+            let n_bytes = (n_pages as u64) * (self.page_size() as u64);
+            if n_bytes > (1 << 32) {
+                return false;
+            }
         }
 
-        self.0.min <= n_pages
+        self.initial_pages <= n_pages
+    }
+
+    pub fn page_size(&self) -> usize {
+        self.page_size.size()
     }
 
     pub fn matches(&self, other: &MemType) -> bool {
-        self.0.matches(&other.0)
+        Limit {
+            min: self.initial_pages,
+            max: self.max_pages,
+        }
+        .matches(&Limit {
+            min: other.initial_pages,
+            max: other.max_pages,
+        }) && self.page_size == other.page_size
     }
 }
 
