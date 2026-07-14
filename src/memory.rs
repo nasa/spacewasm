@@ -349,7 +349,7 @@ mod kani_proofs {
         unsafe {
             alloc.dealloc(
                 ptr,
-                Layout::from_size_align(size, mem.ty.page_alignment()).unwrap(),
+                Layout::from_size_align(size, (MemPageSize::_65536).alignment()).unwrap(),
             )
         };
     }
