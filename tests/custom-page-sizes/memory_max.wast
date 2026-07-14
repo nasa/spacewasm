@@ -22,7 +22,7 @@
 ;; i32 (pagesize 1)
 (assert_invalid
   (module
-    (memory 0x1_0000_0000 (pagesize 1)))
+    (memory 4294967296 (pagesize 1)))
   "memory size must be at most")
 
 ;; i32 (default pagesize)
