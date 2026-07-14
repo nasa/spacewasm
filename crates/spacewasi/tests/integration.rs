@@ -1,28 +1,6 @@
 use assert_cmd::cargo::*;
 use predicates::prelude::*;
 
-use std::{fs, process::Command as ProcessCommand};
-
-fn compile_c_to_wasm(source: &str) -> String {
-    let output = source.replace(".c", ".wasm");
-    let _ = ProcessCommand::new("clang")
-        .arg(source)
-        .arg("--target=wasm32-wasip1")
-        .arg("-mcpu=mvp")
-        .arg("-o")
-        .arg(&output)
-        .output()
-        .unwrap_or_else(|e| panic!("Failed to run emcc: {e}"));
-
-    let _ = ProcessCommand::new("scripts/wasm2mvp.sh")
-        .arg(&output)
-        .arg(&output)
-        .output()
-        .unwrap_or_else(|e| panic!("Failed to run emcc: {e}"));
-
-    output
-}
-
 #[test]
 fn fake_file() -> Result<(), Box<dyn std::error::Error>> {
     let mut cmd = cargo_bin_cmd!("spacewasi");
@@ -37,14 +15,12 @@ fn fake_file() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn hello_universe() -> Result<(), Box<dyn std::error::Error>> {
-    let path = compile_c_to_wasm("tests/wasm/hello_universe.c");
+    let path = "tests/wasm/hello_universe.wasm";
 
     let mut cmd = cargo_bin_cmd!("spacewasi");
 
     cmd.arg(&path);
     let assertion = cmd.assert();
-
-    let _ = fs::remove_file(path);
 
     assertion.success().stdout("hello universe!\n");
 
@@ -53,14 +29,12 @@ fn hello_universe() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn argv() -> Result<(), Box<dyn std::error::Error>> {
-    let path = compile_c_to_wasm("tests/wasm/argv.c");
+    let path = "tests/wasm/argv.wasm";
 
     let mut cmd = cargo_bin_cmd!("spacewasi");
 
     cmd.arg(&path).arg("arg1").arg("arg2");
     let assertion = cmd.assert();
-
-    let _ = fs::remove_file(&path);
 
     assertion.success().stdout(format!("3 {path} arg1 arg2\n"));
 
@@ -69,7 +43,7 @@ fn argv() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn argv0() -> Result<(), Box<dyn std::error::Error>> {
-    let path = compile_c_to_wasm("tests/wasm/argv0.c");
+    let path = "tests/wasm/argv0.wasm";
 
     let mut cmd = cargo_bin_cmd!("spacewasi");
 
@@ -80,8 +54,6 @@ fn argv0() -> Result<(), Box<dyn std::error::Error>> {
         .arg("arg2");
     let assertion = cmd.assert();
 
-    let _ = fs::remove_file(&path);
-
     assertion.success().stdout("arg0\n".to_string());
 
     Ok(())
@@ -89,14 +61,12 @@ fn argv0() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn file_system() -> Result<(), Box<dyn std::error::Error>> {
-    let path = compile_c_to_wasm("tests/wasm/fs.c");
+    let path = "tests/wasm/fs.wasm";
 
     let mut cmd = cargo_bin_cmd!("spacewasi");
 
     cmd.arg("--dir").arg("tests/wasm/::/").arg(&path);
     let assertion = cmd.assert();
-
-    let _ = fs::remove_file(&path);
 
     assertion
         .success()
@@ -107,14 +77,12 @@ fn file_system() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn env() -> Result<(), Box<dyn std::error::Error>> {
-    let path = compile_c_to_wasm("tests/wasm/env.c");
+    let path = "tests/wasm/env.wasm";
 
     let mut cmd = cargo_bin_cmd!("spacewasi");
 
     cmd.arg("--env").arg("TESTKEY=testvalue").arg(&path);
     let assertion = cmd.assert();
-
-    let _ = fs::remove_file(&path);
 
     assertion.success().stdout("testvalue\n".to_string());
 
@@ -123,14 +91,12 @@ fn env() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn return_code() -> Result<(), Box<dyn std::error::Error>> {
-    let path = compile_c_to_wasm("tests/wasm/rc.c");
+    let path = "tests/wasm/rc.wasm";
 
     let mut cmd = cargo_bin_cmd!("spacewasi");
 
     cmd.arg(&path);
     let assertion = cmd.assert();
-
-    let _ = fs::remove_file(&path);
 
     assertion.failure().code(87);
 
