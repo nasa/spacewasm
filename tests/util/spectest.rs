@@ -826,6 +826,7 @@ fn check_decode_error(err: ParseError, text: String) {
         (ValidationError::MemoryNotDefined, "unknown memory") => {}
         (ValidationError::InvalidMaxLimit, "size minimum must not be greater than maximum") => {}
         (ValidationError::MemoryTooLarge, "memory size must be at most 65536 pages (4GiB)") => {}
+        (ValidationError::MemoryTooLarge, "memory size must be at most 4 GiB") => {}
         (ValidationError::InvalidNegativeMemOffset, "data segment does not fit") => {}
         (ValidationError::InvalidMemOffsetType, "type mismatch") => {}
         (ValidationError::InvalidStartFunctionSignature, "start function") => {}
@@ -851,6 +852,8 @@ fn check_decode_error(err: ParseError, text: String) {
         (ValidationError::TableImportTypeMismatch, "incompatible import type") => {}
         (ValidationError::TableImportNotFound, "incompatible import type") => {}
         (ValidationError::MemoryImportTooLarge, "incompatible import type") => {}
+        (ValidationError::InvalidPageSize(_), "invalid custom page size") => {}
+        (ValidationError::AllocError(AllocError::AllocationFailed), "allocation failed") => {}
         err => {
             panic!("Could not match validation error text '{text}' with error {err:?}")
         }
@@ -962,7 +965,11 @@ fn test_host_module() -> HostModule {
             name: "memory",
             value: spacewasm::Rc::new(
                 Memory::new(
-                    spacewasm::MemType::from(1, Some(2)),
+                    spacewasm::MemType {
+                        initial_pages: 1,
+                        max_pages: Some(2),
+                        page_size: spacewasm::MemPageSize::_65536,
+                    },
                     spacewasm::Rc::new(RustSystemAllocator)
                         .unwrap()
                         .into_wasm_memory_allocator(),
@@ -1312,6 +1319,7 @@ pub fn run_wast_test_file(test_name: &str) {
     // Run wast2json to generate Wasm modules and JSON descriptor
     let output = ProcessCommand::new("wast2json")
         .arg(&source_wast_path)
+        .arg("--enable-custom-page-sizes")
         .arg("-o")
         .arg(temp_path.join(format!("{}.json", test_filename)))
         .current_dir(temp_path)
