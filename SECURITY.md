@@ -9,6 +9,9 @@ will be added to the pre-release versions v0.x.x.
 | ------- | ------------------ |
 | 0.x.x   | :white_check_mark: |
 
+> [!NOTE]
+> Security fixes will _not_ be backported to prior pre-release versions.
+
 ## Reporting a Vulnerability
 
 For general bugs, please submit a [Bug Report](https://github.com/nasa/spacewasm/issues).
