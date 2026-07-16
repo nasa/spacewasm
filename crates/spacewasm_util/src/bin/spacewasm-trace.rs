@@ -8,8 +8,8 @@
 //!   spacewasm-trace --stdin [--limit N]
 
 use spacewasm::{
-    AllocError, Allocator, CodeBuilder, CompilerOptions, ExportDesc, InnerVec, Interpreter,
-    InterpreterResult, InterpreterRunner, MemoryStatistics, Module, ModuleRef, Ref, Store,
+    AllocError, Allocator, CodeBuilder, CompilerOptions, Engine, ExportDesc, InnerVec, Interpreter,
+    InterpreterResult, InterpreterRunner, MemoryStatistics, Module, ModuleRef, Ref, Vec as WasmVec,
     WasmMemoryAllocator, WasmRef, WasmStream,
 };
 use spacewasm::{ValType, Value};
@@ -19,7 +19,7 @@ use std::fs;
 use std::io::{self, Read};
 use std::process;
 
-const MAX_CODE_PAGES: usize = 128;
+const MAX_CODE_PAGES: u32 = 128;
 const MAX_CONTROL_FRAMES: usize = 128;
 const MAX_STACK_DEPTH: usize = 256;
 
@@ -183,19 +183,20 @@ fn main() {
 
     eprintln!("Loaded {} bytes", wasm_bytes.len());
 
-    // Compile module
-    let mut store = Store::new(16, []).unwrap_or_else(|e| {
-        eprintln!("Failed to create store: {:?}", e);
+    // Create the engine (owns the store + execution state).
+    let mut state = Engine::new(512, 16, WasmVec::zero()).unwrap_or_else(|e| {
+        eprintln!("Failed to create engine: {:?}", e);
         process::exit(1);
     });
 
-    let mut code_builder = CodeBuilder::<MAX_CODE_PAGES>::default();
+    // Compile module
+    let mut code_builder = CodeBuilder::new(MAX_CODE_PAGES).unwrap();
     let mut stream = ByteStream::new(wasm_bytes);
 
-    let module = Module::new::<MAX_CODE_PAGES, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
+    let module = Module::new::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
         "",
         &mut stream,
-        &mut store,
+        &mut state.store,
         &mut code_builder,
         spacewasm::Rc::new(SystemAllocator)
             .unwrap()
@@ -209,21 +210,13 @@ fn main() {
         process::exit(1);
     });
 
-    let (text, _) = code_builder.finish().unwrap_or_else(|e| {
-        eprintln!("Failed to finish compilation: {:?}", e);
-        process::exit(1);
-    });
-
-    // Initialize
-    let mut state = store.allocate(512).unwrap_or_else(|e| {
-        eprintln!("Failed to allocate state: {:?}", e);
-        process::exit(1);
-    });
+    // Borrow the compiled text straight from the builder (no copy needed).
+    let text = code_builder.pages();
 
     // Initialize with instruction limit to prevent infinite loops in start functions
     // Catch panics (e.g., from strict-assertions) during initialization
     let init_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        state.initialize_module(module, &text, 10000)
+        state.initialize_module(module, text, 10000)
     }));
 
     let init_result = match init_result {
@@ -344,7 +337,7 @@ fn main() {
 
         // Catch panics to dump trace before crashing
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            tracer.run(&text, &mut state, 10000)
+            tracer.run(text, &mut state, 10000)
         }));
 
         // Always dump trace

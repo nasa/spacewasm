@@ -256,13 +256,13 @@ impl WasmStream for ByteStream {
     }
 }
 
-const MAX_CODE_PAGES: usize = 256;
+const MAX_CODE_PAGES: u32 = 256;
 const MAX_CONTROL_FRAMES: usize = 128;
 const MAX_STACK_DEPTH: usize = 256;
 
 struct TestContext {
     engine: Engine,
-    code_builder: CodeBuilder<MAX_CODE_PAGES>,
+    code_builder: CodeBuilder,
     /// Maps instance names (like "$Mf") to module indices
     /// This is separate from the module's name field which is used for linking/imports
     instance_names: std::collections::HashMap<String, usize>,
@@ -281,16 +281,9 @@ impl TestContext {
     fn new() -> Self {
         TestContext {
             engine: new_engine(),
-            code_builder: CodeBuilder::<256>::default(),
+            code_builder: CodeBuilder::new(MAX_CODE_PAGES).unwrap(),
             instance_names: std::collections::HashMap::new(),
         }
-    }
-
-    fn with_state<F, R>(&mut self, f: F) -> R
-    where
-        F: FnOnce(&mut Engine) -> R,
-    {
-        f(&mut self.engine)
     }
 
     fn current_module_index(&self) -> usize {
@@ -603,7 +596,7 @@ fn load_module(
     let mut stream = ByteStream::new(wasm_bytes);
 
     // Parse and validate the module
-    let module = Module::new::<MAX_CODE_PAGES, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
+    let module = Module::new::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
         module_name.as_ref().map(|f| f.as_ref()).unwrap_or(""),
         &mut stream,
         &mut ctx.engine.store,
@@ -616,16 +609,16 @@ fn load_module(
         },
     )?;
 
-    // Finish the code builder to get the text
-    let (text, _final_page_offset) = ctx.code_builder.clone().finish().unwrap();
-
-    // Initialize the module
-    ctx.with_state(
-        |state| match state.initialize_module(module, &text, usize::MAX) {
-            InterpreterResult::Finished => Ok(()),
-            result => Err(ModuleLoadError::InitializeError(result)),
-        },
-    )
+    // Initialize the module. `engine` and `code_builder` are disjoint fields,
+    // so the interpreter reads code straight from the builder's pages without a
+    // copy while `engine` is borrowed mutably.
+    match ctx
+        .engine
+        .initialize_module(module, ctx.code_builder.pages(), usize::MAX)
+    {
+        InterpreterResult::Finished => Ok(()),
+        result => Err(ModuleLoadError::InitializeError(result)),
+    }
 }
 
 fn invoke_function(
@@ -693,42 +686,43 @@ fn invoke_function(
         (func_ref, return_types, params)
     };
 
-    let (text, _final_page_offset) = ctx.code_builder.clone().finish().unwrap();
+    // `engine` and `code_builder` are disjoint fields, so the interpreter reads
+    // code straight from the builder's pages while `engine` is borrowed mutably.
+    let text = ctx.code_builder.pages();
+    let state = &mut ctx.engine;
 
-    ctx.with_state(|state| {
-        state.invoke(f_ref, &params).unwrap();
+    state.invoke(f_ref, &params).unwrap();
 
-        let interpreter = Interpreter::default();
+    let interpreter = Interpreter::default();
 
-        let test_runner = Inspector {
-            v: &interpreter,
-            out: test_log.clone(),
-        };
+    let test_runner = Inspector {
+        v: &interpreter,
+        out: test_log.clone(),
+    };
 
-        test_runner
-            .out
-            .borrow_mut()
-            .push(format!("invoke {}({:?})", func_name, params));
+    test_runner
+        .out
+        .borrow_mut()
+        .push(format!("invoke {}({:?})", func_name, params));
 
-        // Run until completion - up to 10-million instructions to catch infinite loops
-        let result = test_runner.run(&text, state, 10000000);
+    // Run until completion - up to 10-million instructions to catch infinite loops
+    let result = test_runner.run(text, state, 10000000);
 
-        // Check the result
-        match result {
-            InterpreterResult::Finished => {
-                if return_types.is_empty() {
-                    Ok(None)
-                } else if return_types.len() == 1 {
-                    Ok(Some(state.result.unwrap().to_value(return_types[0])))
-                } else {
-                    panic!("Multi-value returns not supported");
-                }
+    // Check the result
+    match result {
+        InterpreterResult::Finished => {
+            if return_types.is_empty() {
+                Ok(None)
+            } else if return_types.len() == 1 {
+                Ok(Some(state.result.unwrap().to_value(return_types[0])))
+            } else {
+                panic!("Multi-value returns not supported");
             }
-            InterpreterResult::ReaderError(err) => panic!("Reader error: {err:?}"),
-            InterpreterResult::OutOfFuel => panic!("Infinite loop detected"),
-            err => Err(err),
         }
-    })
+        InterpreterResult::ReaderError(err) => panic!("Reader error: {err:?}"),
+        InterpreterResult::OutOfFuel => panic!("Infinite loop detected"),
+        err => Err(err),
+    }
 }
 
 fn check_trap_reason(reason: TrapReason, text: &str) {
