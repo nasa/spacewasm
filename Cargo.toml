@@ -49,12 +49,12 @@ spacewasm = { path = ".", features = ["strict-assertions"] }
 
 [profile.release]
 opt-level = 3
-lto = true
+lto = "thin"
 debug = "full"
 strip = false
 codegen-units = 1
 
 [profile.bench]
 opt-level = 3
-lto = true
+lto = "thin"
 codegen-units = 1
