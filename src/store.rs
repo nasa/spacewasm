@@ -15,10 +15,32 @@ impl Store {
         max_modules: usize,
         host_modules: [HostModule; HOST_MODULE_N],
     ) -> Result<Self, AllocError> {
-        assert!(max_modules <= 256);
+        if max_modules > 256 {
+            return Err(AllocError::OutOfMemory);
+        }
         Ok(Store {
             modules: Vec::new(max_modules as u32)?,
             host_modules: Vec::from_array(host_modules)?,
+            zero_memory: Rc::new(Memory::zero())?,
+            zero_table: Rc::new_slice_with_default(0)?,
+        })
+    }
+
+    /// Construct a store from a runtime-built collection of host modules,
+    /// rather than a const-sized array. Useful for embedders (e.g. the C FFI
+    /// layer) that accumulate host modules dynamically. Returns
+    /// [`AllocError::OutOfMemory`] if `max_modules` exceeds the 256-module
+    /// limit, instead of panicking.
+    pub fn from_host_modules(
+        max_modules: usize,
+        host_modules: Vec<HostModule>,
+    ) -> Result<Self, AllocError> {
+        if max_modules > 256 {
+            return Err(AllocError::OutOfMemory);
+        }
+        Ok(Store {
+            modules: Vec::new(max_modules as u32)?,
+            host_modules,
             zero_memory: Rc::new(Memory::zero())?,
             zero_table: Rc::new_slice_with_default(0)?,
         })
@@ -56,22 +78,6 @@ impl Store {
     #[inline(always)]
     pub fn push_module(&mut self, module: Module) {
         self.modules.push(module);
-    }
-
-    /// Finish linking Wasm modules and generate the next stage of store
-    pub fn allocate(&mut self, stack_size: usize) -> Result<InterpreterState<'_>, MemoryError> {
-        Ok(InterpreterState {
-            pc: JumpTarget::SENTINEL,
-            sp: 0x0,
-            fp: 0x0,
-            stack: Stack::new(stack_size)?,
-            memory: self.zero_memory.clone(),
-            table: self.zero_table.clone(),
-            jumped: false,
-            module: ModuleRef(0),
-            store: self,
-            result: None,
-        })
     }
 
     pub fn get_memory(&mut self, module_ref: ModuleRef) -> &Rc<Memory> {
@@ -140,7 +146,38 @@ impl Store {
     }
 }
 
-impl<'store> InterpreterState<'store> {
+impl Engine {
+    pub fn new(
+        stack_size: usize,
+        max_modules: usize,
+        host_modules: Vec<HostModule>,
+    ) -> Result<Engine, MemoryError> {
+        let store = Store::from_host_modules(max_modules, host_modules)?;
+
+        Ok(Engine {
+            pc: JumpTarget::SENTINEL,
+            sp: 0x0,
+            fp: 0x0,
+            stack: Stack::new(stack_size)?,
+            memory: store.zero_memory.clone(),
+            table: store.zero_table.clone(),
+            jumped: false,
+            module: ModuleRef(0),
+            store,
+            result: None,
+        })
+    }
+
+    pub fn reset(&mut self) {
+        self.pc = JumpTarget::SENTINEL;
+        self.sp = 0;
+        self.fp = 0;
+        self.jumped = false;
+        self.result = None;
+        self.clear_memory();
+        self.clear_table();
+    }
+
     pub fn clear_memory(&mut self) {
         self.memory = self.store.zero_memory.clone();
     }

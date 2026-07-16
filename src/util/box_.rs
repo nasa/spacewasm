@@ -93,8 +93,31 @@ impl<T: Sized, A: Allocator> Box<T, A> {
     }
 }
 
+impl<T: Sized, A: Allocator> Box<T, A> {
+    /// Consume the box, returning the contained value and freeing the backing
+    /// allocation. This is the inverse of [`Box::new_in`].
+    pub fn into_inner(b: Self) -> T {
+        let (ptr, alloc) = b.into_raw_with_allocator();
+        // SAFETY: `ptr` came from a live box; read the value out, then free the
+        // (now logically-empty) allocation without running the value's drop.
+        let value = unsafe { ptr::read(ptr) };
+        if size_of::<T>() != 0 {
+            let layout = Layout::new::<T>();
+            unsafe { alloc.dealloc(ptr as *mut u8, layout) };
+        }
+        value
+    }
+}
+
 impl<T: ?Sized, A: Allocator> Box<T, A> {
-    pub(crate) unsafe fn from_raw(alloc: A, ptr: *mut T) -> Box<T, A> {
+    /// Reconstruct a box from a raw pointer and allocator previously obtained
+    /// from [`Box::leak`] / `into_raw_with_allocator`.
+    ///
+    /// # Safety
+    /// `ptr` must have come from a `Box<T, A>` allocated with `alloc`, and must
+    /// not be used again after this call. Reconstructing a box twice from the
+    /// same pointer is undefined behavior (double free).
+    pub unsafe fn from_raw(alloc: A, ptr: *mut T) -> Box<T, A> {
         Box { ptr, alloc }
     }
 

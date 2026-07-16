@@ -57,6 +57,9 @@ pub use stack::*;
 mod ir_reader;
 pub use ir_reader::*;
 
+mod engine;
+pub use engine::*;
+
 #[derive(Debug, Default, Clone)]
 #[repr(C)]
 pub struct MemoryStatistics {

@@ -3,8 +3,8 @@
 #[allow(clippy::excessive_precision)]
 mod tests {
     use crate::{
-        AllocError, BaseVisitor, Interpreter, InterpreterResult, InterpreterState, IrVisitor,
-        MemArg, MemType, Memory, MemoryKind, Module, ModuleRef, Store, ValType,
+        AllocError, BaseVisitor, Engine, Interpreter, InterpreterResult, IrVisitor, MemArg,
+        MemType, Memory, MemoryKind, Module, ModuleRef, ValType,
     };
 
     extern crate std;
@@ -42,9 +42,9 @@ mod tests {
 
     fn with_test_context<F>(f: F)
     where
-        F: for<'a> FnOnce(&mut InterpreterState<'a>),
+        F: FnOnce(&mut Engine),
     {
-        let mut store = Store::new(1, []).unwrap();
+        let mut engine = Engine::new(1024, 1, crate::Vec::zero()).unwrap();
 
         // Create a minimal valid module
         let module = Module {
@@ -74,8 +74,7 @@ mod tests {
             exports: crate::Vec::zero(),
         };
 
-        let mut state = store.allocate(1024).unwrap();
-        match state.initialize_module(module, &[], usize::MAX) {
+        match engine.initialize_module(module, &[], usize::MAX) {
             InterpreterResult::Finished => {}
             InterpreterResult::OutOfFuel => panic!("insufficient fuel for initialization"),
             InterpreterResult::Trap(t) => panic!("trap during initialization {t:?}"),
@@ -83,10 +82,10 @@ mod tests {
             InterpreterResult::Pause => panic!("pause during init"),
         }
 
-        state.memory = state.store.get_memory(ModuleRef(0)).clone();
-        state.table = state.store.get_table(ModuleRef(0)).clone();
+        engine.memory = engine.store.get_memory(ModuleRef(0)).clone();
+        engine.table = engine.store.get_table(ModuleRef(0)).clone();
 
-        f(&mut state);
+        f(&mut engine);
     }
 
     // Helper macro for testing operations

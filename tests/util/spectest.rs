@@ -15,11 +15,11 @@
 use super::inspector::{Inspector, LimitedVec};
 use serde::{Deserialize, Serialize};
 use spacewasm::{
-    AllocError, Allocator, CodeBuilder, CompilerOptions, ConstantExprError, ExportDesc,
+    AllocError, Allocator, CodeBuilder, CompilerOptions, ConstantExprError, Engine, ExportDesc,
     GlobalValue, GlobalValueError, HostFunction, HostGlobal, HostModule, InnerVec, Interpreter,
-    InterpreterResult, InterpreterRunner, InterpreterState, Limit, Memory, MemoryError,
-    MemoryStatistics, Module, ModuleRef, ParseError, Ref, Stack, Store, TrapReason, ValType,
-    ValidationError, Value, WasmMemoryAllocator, WasmRef, WasmStream, global_allocator, vec,
+    InterpreterResult, InterpreterRunner, Limit, Memory, MemoryError, MemoryStatistics, Module,
+    ModuleRef, ParseError, Ref, TrapReason, ValType, ValidationError, Value, WasmMemoryAllocator,
+    WasmRef, WasmStream, global_allocator, vec,
 };
 use std::alloc::Layout;
 use std::cell::RefCell;
@@ -261,21 +261,26 @@ const MAX_CONTROL_FRAMES: usize = 128;
 const MAX_STACK_DEPTH: usize = 256;
 
 struct TestContext {
-    store: Store,
-    stack: Stack,
+    engine: Engine,
     code_builder: CodeBuilder<MAX_CODE_PAGES>,
     /// Maps instance names (like "$Mf") to module indices
     /// This is separate from the module's name field which is used for linking/imports
     instance_names: std::collections::HashMap<String, usize>,
 }
 
+fn new_engine() -> Engine {
+    Engine::new(
+        1024,
+        256,
+        vec![test_host_module(), regression_host_module()],
+    )
+    .unwrap()
+}
+
 impl TestContext {
     fn new() -> Self {
-        let store = Store::new(256, [test_host_module(), regression_host_module()]).unwrap();
-
         TestContext {
-            store,
-            stack: Stack::new(1024).unwrap(),
+            engine: new_engine(),
             code_builder: CodeBuilder::<256>::default(),
             instance_names: std::collections::HashMap::new(),
         }
@@ -283,20 +288,16 @@ impl TestContext {
 
     fn with_state<F, R>(&mut self, f: F) -> R
     where
-        F: for<'a> FnOnce(&mut InterpreterState<'a>) -> R,
+        F: FnOnce(&mut Engine) -> R,
     {
-        let mut state = self.store.allocate(1024).unwrap();
-        state.stack = core::mem::replace(&mut self.stack, Stack::new(1024).unwrap());
-        let result = f(&mut state);
-        self.stack = state.stack;
-        result
+        f(&mut self.engine)
     }
 
     fn current_module_index(&self) -> usize {
-        if self.store.modules().is_empty() {
+        if self.engine.store.modules().is_empty() {
             0
         } else {
-            self.store.modules().len() - 1
+            self.engine.store.modules().len() - 1
         }
     }
 
@@ -306,26 +307,30 @@ impl TestContext {
             return Some(idx);
         }
         // Fall back to checking the module's name field (registered name)
-        self.store.modules().iter().position(|m| m.name == name)
+        self.engine
+            .store
+            .modules()
+            .iter()
+            .position(|m| m.name == name)
     }
 
     /// Save the current store state
     /// Used to restore state after failed module loads that mutate the store (memory/tables)
-    fn save_store(&self) -> Store {
-        let mut cloned = Store::new(256, [test_host_module(), regression_host_module()]).unwrap();
+    fn save_store(&self) -> Engine {
+        let mut cloned = new_engine();
 
         // Clone all modules into the new store
-        for module in self.store.modules().iter() {
+        for module in self.engine.store.modules().iter() {
             let cloned_module = clone_module(module);
-            cloned.push_module(cloned_module);
+            cloned.store.push_module(cloned_module);
         }
 
         cloned
     }
 
     /// Restore the store from a saved copy
-    fn restore_store(&mut self, saved: Store) {
-        self.store = saved;
+    fn restore_store(&mut self, saved: Engine) {
+        self.engine = saved;
     }
 }
 
@@ -584,11 +589,15 @@ fn load_module(
     // This prevents hitting the 256 module limit in long test suites
     // We can only remove the last module to maintain index-based references
     {
-        let modules = ctx.store.modules();
+        let modules = ctx.engine.store.modules();
         if !modules.is_empty() && modules[modules.len() - 1].name.is_empty() {
-            ctx.store.pop_module();
+            ctx.engine.store.pop_module();
         }
     }
+
+    // The engine persists across module loads
+    // Clear the run state before invoking new functions
+    ctx.engine.reset();
 
     // Create a ByteStream
     let mut stream = ByteStream::new(wasm_bytes);
@@ -597,7 +606,7 @@ fn load_module(
     let module = Module::new::<MAX_CODE_PAGES, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
         module_name.as_ref().map(|f| f.as_ref()).unwrap_or(""),
         &mut stream,
-        &mut ctx.store,
+        &mut ctx.engine.store,
         &mut ctx.code_builder,
         spacewasm::Rc::new(RustSystemAllocator)
             .unwrap()
@@ -637,6 +646,7 @@ fn invoke_function(
     // Look up function metadata from the store
     let (f_ref, return_types, params) = {
         let module = ctx
+            .engine
             .store
             .modules()
             .get(module_index)
@@ -672,7 +682,7 @@ fn invoke_function(
         };
 
         // Get all the immutable data we need
-        let m = &ctx.store.modules()[func_ref.module.0 as usize];
+        let m = &ctx.engine.store.modules()[func_ref.module.0 as usize];
         let f = &m.functions[func_ref.index as usize];
         let func_type = &m.types[f.ty.0 as usize];
         let return_types = func_type.returns.clone();
@@ -899,10 +909,10 @@ impl Drop for TempDir {
 
 fn test_host_module() -> HostModule {
     HostModule {
-        name: "spectest",
+        name: "spectest".into(),
         globals: vec![
             HostGlobal {
-                name: "global_i32",
+                name: "global_i32".into(),
                 value: spacewasm::Box::new(StaticGlobal {
                     value: Mutex::new(Value::I32(666)),
                     ty: ValType::I32,
@@ -911,7 +921,7 @@ fn test_host_module() -> HostModule {
                 .into_global_value_dyn(),
             },
             HostGlobal {
-                name: "global_i64",
+                name: "global_i64".into(),
                 value: spacewasm::Box::new(StaticGlobal {
                     value: Mutex::new(Value::I64(666)),
                     ty: ValType::I64,
@@ -920,7 +930,7 @@ fn test_host_module() -> HostModule {
                 .into_global_value_dyn(),
             },
             HostGlobal {
-                name: "global_f32",
+                name: "global_f32".into(),
                 value: spacewasm::Box::new(StaticGlobal {
                     value: Mutex::new(Value::F32(666.6)),
                     ty: ValType::F32,
@@ -929,7 +939,7 @@ fn test_host_module() -> HostModule {
                 .into_global_value_dyn(),
             },
             HostGlobal {
-                name: "global_f64",
+                name: "global_f64".into(),
                 value: spacewasm::Box::new(StaticGlobal {
                     value: Mutex::new(Value::F64(666.6)),
                     ty: ValType::F64,
@@ -962,7 +972,7 @@ fn test_host_module() -> HostModule {
             }),
         ],
         memory: vec![spacewasm::HostSymbol {
-            name: "memory",
+            name: "memory".into(),
             value: spacewasm::Rc::new(
                 Memory::new(
                     spacewasm::MemType {
@@ -979,7 +989,7 @@ fn test_host_module() -> HostModule {
             .unwrap(),
         }],
         table: vec![spacewasm::HostSymbol {
-            name: "table",
+            name: "table".into(),
             value: (
                 spacewasm::Rc::new_slice_with_default(10).unwrap(),
                 Limit {
@@ -993,10 +1003,10 @@ fn test_host_module() -> HostModule {
 
 fn regression_host_module() -> HostModule {
     HostModule {
-        name: "regression",
+        name: "regression".into(),
         globals: vec![
             HostGlobal {
-                name: "mut_global_i32",
+                name: "mut_global_i32".into(),
                 value: spacewasm::Box::new(MutableStaticGlobal {
                     value: Mutex::new(Value::I32(0)),
                     ty: ValType::I32,
@@ -1005,7 +1015,7 @@ fn regression_host_module() -> HostModule {
                 .into_global_value_dyn(),
             },
             HostGlobal {
-                name: "mut_global_i64",
+                name: "mut_global_i64".into(),
                 value: spacewasm::Box::new(MutableStaticGlobal {
                     value: Mutex::new(Value::I64(0)),
                     ty: ValType::I64,
@@ -1014,7 +1024,7 @@ fn regression_host_module() -> HostModule {
                 .into_global_value_dyn(),
             },
             HostGlobal {
-                name: "mut_global_f32",
+                name: "mut_global_f32".into(),
                 value: spacewasm::Box::new(MutableStaticGlobal {
                     value: Mutex::new(Value::F32(0.0)),
                     ty: ValType::F32,
@@ -1023,7 +1033,7 @@ fn regression_host_module() -> HostModule {
                 .into_global_value_dyn(),
             },
             HostGlobal {
-                name: "mut_global_f64",
+                name: "mut_global_f64".into(),
                 value: spacewasm::Box::new(MutableStaticGlobal {
                     value: Mutex::new(Value::F64(0.0)),
                     ty: ValType::F64,
@@ -1241,7 +1251,12 @@ fn run_wast_command(
 
             // Update the module name in the store to the registered alias
             // This allows linking to find it by the registered name
-            let module = ctx.store.modules_mut().get_mut(module_index).unwrap();
+            let module = ctx
+                .engine
+                .store
+                .modules_mut()
+                .get_mut(module_index)
+                .unwrap();
             module.name = as_name.as_str().try_into().unwrap();
         }
         Command::Action { action, .. } => match action {
