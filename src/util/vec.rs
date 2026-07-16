@@ -197,6 +197,10 @@ impl<T: Sized, A: Allocator> Vec<T, A> {
         self.inner.push(value)
     }
 
+    pub fn try_push(&mut self, value: T) -> Result<(), AllocError> {
+        self.inner.try_push(value)
+    }
+
     /// Removes the last element from a vector and returns it, or [`None`] if it
     /// is empty.
     ///

@@ -34,6 +34,18 @@ impl<T: Sized, const N: usize> StaticVec<T, N> {
     }
 }
 
+impl<T: Sized, const N: usize> Drop for StaticVec<T, N> {
+    fn drop(&mut self) {
+        // Drop the initialized elements [0..len). Consuming iterators wrap the
+        // vec in `ManuallyDrop`, so this does not run there (no double-drop);
+        // `pop` decrements `len` before reading, so popped elements are skipped.
+        for i in 0..(self.len as usize) {
+            // SAFETY: elements [0..len) are initialized.
+            unsafe { self.data[i].assume_init_drop() };
+        }
+    }
+}
+
 impl<T: Sized, const N: usize> Default for StaticVec<T, N> {
     fn default() -> Self {
         Self {
