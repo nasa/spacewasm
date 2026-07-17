@@ -1411,7 +1411,7 @@ impl<'store> IrVisitor for Interpreter<'store> {
         let m = &state.store.host_modules()[module.0 as usize];
         let f = &m.functions[x as usize];
 
-        let mut sv: StaticVec<Value, 8> = StaticVec::new();
+        let mut sv: StaticVec<Value, 9> = StaticVec::new();
 
         state.sp -= f.param_size();
         let mut offset = 0;

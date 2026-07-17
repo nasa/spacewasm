@@ -93,6 +93,23 @@ SpaceWasm supports decoding and compiling Wasm binary in a single pass via a str
 binary may be provided to the interpreter as they are read/requested from the filesystem. The stream must provide chunks
 synchronously.
 
+
+## WASI 0.1 Support
+The [`spacewasi`](crates/spacewasi#readme) crate provides a binary which can run arbitrary WASM modules that adhere to the WASI 0.1 (`wasip1`) spec in a sandboxed environment. Command line flags are available to mount host directories and environment variables:
+
+```bash
+# compile example from crates/spacewasi/tests/wasm/
+$ clang --target=wasm32-wasip1 -mcpu=mvp hello_universe.c -o hello_universe.wasm
+
+# convert module to MVP compatible file
+$ crates/spacewasi/scripts/wasm2mvp.sh hello_universe.wasm
+
+$ spacewasi hello_universe.wasm
+hello universe!
+```
+
+For more information about this command and basic WASI compilation, see [`spacewasi/README.md`](crates/spacewasi/README.md).
+
 ## Interpreter Limitations
 
 This Wasm interpreter imposes additional constraints beyond the WebAssembly 1.0 specification to support
