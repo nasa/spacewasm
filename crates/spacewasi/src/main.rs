@@ -1,3 +1,20 @@
+/// An executable program to run WASI compatible modules
+///
+/// Copyright 2026 California Institute of Technology
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+/// <http://www.apache.org/licenses/LICENSE-2.0>
+///
+/// ---
+/// Portions of this file are derived from <https://github.com/bytecodealliance/wasmtime>
+/// and the wasi-common crate developed by the wasmtime community.
+/// 
+/// Portions of this file are derived from <https://github.com/clap-rs/clap>:
+/// Copyright (c) 2026 Knapp, K. B., & The Clap Community.
+
 use spacewasm::{
     CodeBuilder, CompilerOptions, ExportDesc, InterpreterResult, InterpreterRunner, ModuleRef,
     PageAllocator, Ref, WasmRef,
