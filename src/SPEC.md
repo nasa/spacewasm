@@ -93,10 +93,8 @@ datastructures within the implementation.
 
 These follow the WebAssembly 1.0 specification and are validated at decode time.
 
-- **Page size**: 64 KiB (65,536 bytes) — the standard Wasm linear-memory page size. The
-  [custom-page-sizes proposal](https://github.com/WebAssembly/custom-page-sizes) is planned but not yet supported,
-  so this size is fixed.
-- **Maximum pages**: 65,536 pages (4 GiB) per memory. A declared `min` or `max` above this is rejected.
+- **Page size**: 64 KiB or 1 B — [custom-page-sizes proposal](https://github.com/WebAssembly/custom-page-sizes) is implemented.
+- **Maximum pages**: 4 GiB per memory. A declared `min` or `max` above this is rejected.
 
 ### IR Code Pages
 

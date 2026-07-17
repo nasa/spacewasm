@@ -34,7 +34,7 @@ impl<T: WasmMemoryAllocator> Rc<T> {
 pub struct Memory {
     ptr: *mut u8,
     size: usize,
-    limits: MemType,
+    ty: MemType,
     allocator: Option<Rc<dyn WasmMemoryAllocator>>,
 }
 
@@ -69,22 +69,32 @@ impl Default for Memory {
 }
 
 impl Memory {
-    // TODO(tumbar) Implement the custom page size proposal
-    const PAGE_SIZE: usize = 65536;
-
     pub fn zero() -> Memory {
         Memory {
             ptr: core::ptr::null_mut(),
             size: 0,
-            limits: MemType::zero(),
+            ty: MemType::zero(),
             allocator: None,
         }
     }
 
     pub fn new(ty: MemType, allocator: Rc<dyn WasmMemoryAllocator>) -> Result<Memory, AllocError> {
-        let size = (ty.min() as usize) * Self::PAGE_SIZE;
+        let size = if let Some(size) = (ty.min() as u64).checked_mul(ty.page_size() as u64) {
+            if size > usize::MAX as u64 {
+                // Make sure this platform can actually do this allocation
+                return Err(AllocError::AllocationFailed);
+            } else {
+                size as usize
+            }
+        } else {
+            return Err(AllocError::AllocationFailed);
+        };
+
         let ptr = allocator
-            .allocate(Layout::from_size_align(size, 16).unwrap())?
+            .allocate(
+                Layout::from_size_align(size, ty.page_alignment())
+                    .map_err(|_| AllocError::AllocationFailed)?,
+            )?
             .as_ptr();
 
         // Clear the pages
@@ -95,7 +105,7 @@ impl Memory {
         Ok(Memory {
             ptr,
             size,
-            limits: ty,
+            ty,
             allocator: Some(allocator),
         })
     }
@@ -197,43 +207,45 @@ impl Memory {
             return Err(MemoryError::OutOfMemory);
         };
 
-        if !self.limits.can_hold(total_pages) {
+        if !self.ty.can_hold(total_pages) {
             return Err(MemoryError::OutOfMemory);
         }
 
         let old_size = self.size;
-        let new_size = (Self::PAGE_SIZE * n as usize) + self.size;
+        let new_size = (self.ty.page_size() * n as usize) + self.size;
         if let Some(allocator) = &self.allocator
             && let Some(ptr) = NonNull::new(self.ptr)
         {
             self.ptr = allocator
                 .reallocate(
                     ptr,
-                    Layout::from_size_align(old_size, 16).unwrap(),
-                    Layout::from_size_align(new_size, 16).unwrap(),
+                    Layout::from_size_align(old_size, self.ty.page_alignment())
+                        .map_err(|_| MemoryError::AllocationFailed)?,
+                    Layout::from_size_align(new_size, self.ty.page_alignment())
+                        .map_err(|_| MemoryError::AllocationFailed)?,
                 )?
                 .as_ptr();
 
             // Clear the new memory
             let new_ptr = unsafe { self.ptr.add(old_size) };
             unsafe {
-                new_ptr.write_bytes(0, Self::PAGE_SIZE * n as usize);
+                new_ptr.write_bytes(0, self.ty.page_size() * n as usize);
             }
 
             self.size = new_size;
 
-            Ok((old_size / Self::PAGE_SIZE) as u32)
+            Ok((old_size / self.ty.page_size()) as u32)
         } else {
             Err(MemoryError::OutOfMemory)
         }
     }
 
     pub fn mem_type(&self) -> MemType {
-        self.limits
+        self.ty
     }
 
     pub fn size(&self) -> u32 {
-        (self.size / Self::PAGE_SIZE) as u32
+        (self.size / self.ty.page_size()) as u32
     }
 
     pub fn is_zero(&self) -> bool {
@@ -251,7 +263,7 @@ impl Drop for Memory {
             let allocator = self.allocator.take().unwrap();
             allocator.deallocate(
                 NonNull::new(self.ptr).unwrap(),
-                Layout::from_size_align(self.size, 16).unwrap(),
+                Layout::from_size_align(self.size, self.ty.page_alignment()).unwrap(),
             )
         }
     }
@@ -261,6 +273,7 @@ impl Drop for Memory {
 mod kani_proofs {
     use super::*;
     use crate::Allocator;
+    use crate::MemPageSize;
     extern crate std;
 
     use crate::test_support::RustSystemAllocator;
@@ -272,13 +285,13 @@ mod kani_proofs {
 
         let ptr = unsafe {
             alloc
-                .alloc(Layout::from_size_align(size, 16).unwrap())
+                .alloc(Layout::from_size_align(size, (MemPageSize::_65536).alignment()).unwrap())
                 .unwrap()
         };
         let mem = Memory {
             ptr,
             size,
-            limits: MemType::zero(),
+            ty: MemType::zero(),
             allocator: None,
         };
 
@@ -353,7 +366,12 @@ mod kani_proofs {
 
         // Prevent Drop from calling GlobalAllocator FFI
         core::mem::forget(mem);
-        unsafe { alloc.dealloc(ptr, Layout::from_size_align(size, 16).unwrap()) };
+        unsafe {
+            alloc.dealloc(
+                ptr,
+                Layout::from_size_align(size, (MemPageSize::_65536).alignment()).unwrap(),
+            )
+        };
     }
 
     #[kani::proof]
@@ -363,13 +381,13 @@ mod kani_proofs {
 
         let ptr = unsafe {
             alloc
-                .alloc(Layout::from_size_align(size, 16).unwrap())
+                .alloc(Layout::from_size_align(size, (MemPageSize::_65536).alignment()).unwrap())
                 .unwrap()
         };
         let mem = Memory {
             ptr,
             size,
-            limits: MemType::zero(),
+            ty: MemType::zero(),
             allocator: None,
         };
 
@@ -401,7 +419,12 @@ mod kani_proofs {
 
         // Prevent Drop from calling GlobalAllocator FFI
         core::mem::forget(mem);
-        unsafe { alloc.dealloc(ptr, Layout::from_size_align(size, 16).unwrap()) };
+        unsafe {
+            alloc.dealloc(
+                ptr,
+                Layout::from_size_align(size, (MemPageSize::_65536).alignment()).unwrap(),
+            )
+        };
     }
 
     /// The effective address is the exact sum of `base` and `offset`; it is

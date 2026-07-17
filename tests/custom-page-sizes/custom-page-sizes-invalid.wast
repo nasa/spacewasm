@@ -1,0 +1,146 @@
+;; Page size that is not a power of two.
+(assert_malformed
+  (module quote "(memory 0 (pagesize 3))")
+  "invalid custom page size"
+)
+
+(assert_malformed
+  (module quote "(memory 0 (pagesize 0))")
+  "invalid custom page size"
+)
+
+;; Power-of-two page sizes that are not 1 or 64KiB.
+(assert_invalid
+  (module (memory 0 (pagesize 2)))
+  "invalid custom page size"
+)
+(assert_invalid
+  (module (memory 0 (pagesize 4)))
+  "invalid custom page size"
+)
+(assert_invalid
+  (module (memory 0 (pagesize 8)))
+  "invalid custom page size"
+)
+(assert_invalid
+  (module (memory 0 (pagesize 16)))
+  "invalid custom page size"
+)
+(assert_invalid
+  (module (memory 0 (pagesize 32)))
+  "invalid custom page size"
+)
+(assert_invalid
+  (module (memory 0 (pagesize 64)))
+  "invalid custom page size"
+)
+(assert_invalid
+  (module (memory 0 (pagesize 128)))
+  "invalid custom page size"
+)
+(assert_invalid
+  (module (memory 0 (pagesize 256)))
+  "invalid custom page size"
+)
+(assert_invalid
+  (module (memory 0 (pagesize 512)))
+  "invalid custom page size"
+)
+(assert_invalid
+  (module (memory 0 (pagesize 1024)))
+  "invalid custom page size"
+)
+(assert_invalid
+  (module (memory 0 (pagesize 2048)))
+  "invalid custom page size"
+)
+(assert_invalid
+  (module (memory 0 (pagesize 4096)))
+  "invalid custom page size"
+)
+(assert_invalid
+  (module (memory 0 (pagesize 8192)))
+  "invalid custom page size"
+)
+(assert_invalid
+  (module (memory 0 (pagesize 16384)))
+  "invalid custom page size"
+)
+(assert_invalid
+  (module (memory 0 (pagesize 32768)))
+  "invalid custom page size"
+)
+
+;; Power-of-two page size that is larger than 64KiB.
+(assert_invalid
+  (module (memory 0 (pagesize 0x20000)))
+  "invalid custom page size"
+)
+
+;; A custom page size does not change the limits check: the maximum must not be
+;; smaller than the minimum. This holds for both valid page sizes.
+(assert_invalid
+  (module (memory 1 0 (pagesize 1)))
+  "size minimum must not be greater than maximum"
+)
+(assert_invalid
+  (module (memory 2 1 (pagesize 65536)))
+  "size minimum must not be greater than maximum"
+)
+
+;; The maximum limit (not only the minimum) must also fit within the range
+;; allowed for the configured page size.
+(assert_invalid
+  (module (memory 0 65537 (pagesize 65536)))
+  "memory size must be at most 4 GiB"
+)
+
+;; Power of two page size that cannot fit in a u64 to exercise checks against
+;; shift overflow.
+(assert_malformed
+  (module binary
+    "\00asm" "\01\00\00\00"
+    "\05\04\01"                ;; Memory section
+
+    ;; memory 0
+    "\08"                      ;; flags w/ custom page size
+    "\00"                      ;; minimum = 0
+    "\41"                      ;; pagesize = 2**65
+  )
+  "invalid custom page size"
+)
+
+;; Importing a memory with the wrong page size.
+
+(module $m
+  (memory (export "small-pages-memory") 0 (pagesize 1))
+)
+(register "m" $m)
+
+(assert_unlinkable
+  (module
+    (memory (import "m" "small-pages-memory") 0 (pagesize 65536))
+  )
+  "incompatible import type"
+)
+
+(module $m2
+  (memory (export "large-pages-memory") 0 (pagesize 65536))
+)
+(register "m2" $m2)
+
+(assert_unlinkable
+  (module
+    (memory (import "m2" "large-pages-memory") 0 (pagesize 1))
+  )
+  "incompatible import type"
+)
+
+;; Omitting the page size on an import defaults it to 64KiB, which must not match
+;; an exported memory that uses a page size of 1.
+(assert_unlinkable
+  (module
+    (memory (import "m" "small-pages-memory") 0)
+  )
+  "incompatible import type"
+)

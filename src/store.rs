@@ -161,14 +161,20 @@ impl<'store> InterpreterState<'store> {
         if let Some(start) = self.store.modules.last().unwrap().start {
             match start {
                 Ref::Module(i) => {
-                    self.invoke(
+                    if let Err(e) = self.invoke(
                         WasmRef {
                             module: ModuleRef((self.store.modules().len() - 1) as u8),
                             index: i,
                         },
                         &[],
-                    )
-                    .unwrap();
+                    ) {
+                        return match e {
+                            InvokeError::StackOverflow => {
+                                InterpreterResult::Trap(TrapReason::StackOverflow)
+                            }
+                            _ => unreachable!(),
+                        };
+                    }
                 }
                 Ref::Host { module, index } => {
                     // We don't need to run the interpreter for host functions
@@ -187,7 +193,14 @@ impl<'store> InterpreterState<'store> {
                     };
                 }
                 Ref::Extern { module, index } => {
-                    self.invoke(WasmRef { module, index }, &[]).unwrap();
+                    if let Err(e) = self.invoke(WasmRef { module, index }, &[]) {
+                        return match e {
+                            InvokeError::StackOverflow => {
+                                InterpreterResult::Trap(TrapReason::StackOverflow)
+                            }
+                            _ => unreachable!(),
+                        };
+                    }
                 }
             }
         } else {

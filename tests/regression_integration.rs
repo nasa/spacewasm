@@ -35,3 +35,8 @@ fn extern_tables() {
 fn extern_memory() {
     run_wast_test_file("regression/extern_memory");
 }
+
+#[test]
+fn start_stack_overflow() {
+    run_wast_test_file("regression/start_stack_overflow");
+}

@@ -55,7 +55,11 @@ mod tests {
             memory: Some(MemoryKind::Owned(
                 crate::Rc::new(
                     Memory::new(
-                        MemType::from(1, None),
+                        MemType {
+                            initial_pages: 1,
+                            max_pages: None,
+                            page_size: crate::MemPageSize::_65536,
+                        },
                         crate::Rc::new(TestAllocator)
                             .unwrap()
                             .into_wasm_memory_allocator(),
