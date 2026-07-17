@@ -35,7 +35,7 @@ const MAX_CONTROL_FRAMES: usize = 0x1_000;
 const MAX_STACK_DEPTH: usize = 0x400;
 const STACK_SIZE: usize = 0x100_000;
 
-/// Execute WASI-compatible WASM modules with spacewasm
+/// Execute WASI-compatible WASM modules with SpaceWasm
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args {

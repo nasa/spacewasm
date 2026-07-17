@@ -70,7 +70,7 @@ fn file_system() -> Result<(), Box<dyn std::error::Error>> {
 
     assertion
         .success()
-        .stdout("spacewasm is cool!\n".to_string());
+        .stdout("SpaceWasm is cool!\n".to_string());
 
     Ok(())
 }
