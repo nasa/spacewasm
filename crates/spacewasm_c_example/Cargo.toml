@@ -1,0 +1,20 @@
+[package]
+name = "spacewasm_c_example"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Reference C-linkable build of the spacewasm interpreter (cdylib + staticlib)"
+publish = false
+
+[lib]
+name = "spacewasm_c_example"
+path = "src/lib.rs"
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[dependencies]
+spacewasm = { path = "../.." }
+spacewasm_ffi = { path = "../spacewasm_ffi" }
+spacewasm_util = { path = "../spacewasm_util" }

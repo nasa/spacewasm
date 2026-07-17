@@ -261,7 +261,14 @@ pub fn no_traps(wasm: &[u8]) {
     // Borrow the compiled text straight from the builder (no copy needed).
     let text = code_builder.pages();
 
-    match state.initialize_module(module, text, 10000) {
+    let module_ref = state.push_module(module);
+    let start_result = match state.invoke_start(module_ref) {
+        StartInvocation::Finished => InterpreterResult::Finished,
+        StartInvocation::Trap(t) => InterpreterResult::Trap(t),
+        StartInvocation::Pause => InterpreterResult::Pause,
+        StartInvocation::Running => Interpreter::default().run(text, &mut state, 10000),
+    };
+    match start_result {
         InterpreterResult::Finished => {}
         InterpreterResult::OutOfFuel => {
             log::debug!("start routine out of fuel");

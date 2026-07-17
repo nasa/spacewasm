@@ -18,8 +18,8 @@ use spacewasm::{
     AllocError, Allocator, CodeBuilder, CompilerOptions, ConstantExprError, Engine, ExportDesc,
     GlobalValue, GlobalValueError, HostFunction, HostGlobal, HostModule, InnerVec, Interpreter,
     InterpreterResult, InterpreterRunner, Limit, Memory, MemoryError, MemoryStatistics, Module,
-    ModuleRef, ParseError, Ref, TrapReason, ValType, ValidationError, Value, WasmMemoryAllocator,
-    WasmRef, WasmStream, global_allocator, vec,
+    ModuleRef, ParseError, Ref, StartInvocation, TrapReason, ValType, ValidationError, Value,
+    WasmMemoryAllocator, WasmRef, WasmStream, global_allocator, vec,
 };
 use std::alloc::Layout;
 use std::cell::RefCell;
@@ -609,13 +609,19 @@ fn load_module(
         },
     )?;
 
-    // Initialize the module. `engine` and `code_builder` are disjoint fields,
-    // so the interpreter reads code straight from the builder's pages without a
-    // copy while `engine` is borrowed mutably.
-    match ctx
-        .engine
-        .initialize_module(module, ctx.code_builder.pages(), usize::MAX)
-    {
+    // Append the module and run its start function. `engine` and `code_builder`
+    // are disjoint fields, so the interpreter reads code straight from the
+    // builder's pages without a copy while `engine` is borrowed mutably.
+    let module_ref = ctx.engine.push_module(module);
+    let result = match ctx.engine.invoke_start(module_ref) {
+        StartInvocation::Finished => InterpreterResult::Finished,
+        StartInvocation::Trap(t) => InterpreterResult::Trap(t),
+        StartInvocation::Pause => InterpreterResult::Pause,
+        StartInvocation::Running => {
+            Interpreter::default().run(ctx.code_builder.pages(), &mut ctx.engine, usize::MAX)
+        }
+    };
+    match result {
         InterpreterResult::Finished => Ok(()),
         result => Err(ModuleLoadError::InitializeError(result)),
     }

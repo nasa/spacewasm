@@ -1,0 +1,23 @@
+[package]
+name = "spacewasm_ffi"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Reusable C-ABI (FFI) support layer for the spacewasm interpreter"
+publish = false
+
+[lib]
+name = "spacewasm_ffi"
+path = "src/lib.rs"
+
+[features]
+codegen = ["dep:cbindgen"]
+
+[dependencies]
+spacewasm = { path = "../.." }
+
+[build-dependencies]
+cbindgen = { version = "0.29", optional = true }

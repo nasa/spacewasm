@@ -1,0 +1,31 @@
+language = "C"
+include_guard = "SPACEWASM_H"
+tab_width = 4
+documentation_style = "c"
+cpp_compat = true
+# Render Rust `usize`/`isize` as `size_t`/`ptrdiff_t` rather than `uintptr_t`.
+usize_is_size_t = true
+header = """/*
+ * spacewasm.h — C API for the SpaceWasm WebAssembly interpreter.
+ *
+ * GENERATED FILE — do not edit by hand. Regenerated from the Rust source by
+ * `spacewasm_ffi`'s build.rs (cbindgen) when built with the `generate-header`
+ * feature. Edit the Rust declarations or `cbindgen.toml` instead.
+ *
+ */"""
+
+[export]
+include = ["MemoryStatistics"]
+exclude = ["JumpTarget"]
+
+[export.rename]
+"Builder" = "spacewasm_builder_t"
+"SpacewasmAllocator" = "spacewasm_allocator_t"
+"SpacewasmCaller" = "spacewasm_caller_t"
+"SpacewasmStore" = "spacewasm_store_t"
+"MemoryStatistics" = "spacewasm_memory_statistics_t"
+
+[parse]
+# Follow the re-export of `MemoryStatistics` into the core crate.
+parse_deps = true
+include = ["spacewasm"]

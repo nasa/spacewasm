@@ -9,7 +9,8 @@
 
 use spacewasm::{
     AllocError, Allocator, CodeBuilder, CompilerOptions, Engine, ExportDesc, InnerVec, Interpreter,
-    InterpreterResult, InterpreterRunner, MemoryStatistics, Module, ModuleRef, Ref, Vec as WasmVec,
+    InterpreterResult, InterpreterRunner, MemoryStatistics, Module, ModuleRef, Ref, StartInvocation,
+    Vec as WasmVec,
     WasmMemoryAllocator, WasmRef, WasmStream,
 };
 use spacewasm::{ValType, Value};
@@ -215,8 +216,14 @@ fn main() {
 
     // Initialize with instruction limit to prevent infinite loops in start functions
     // Catch panics (e.g., from strict-assertions) during initialization
+    let module_ref = state.push_module(module);
     let init_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        state.initialize_module(module, text, 10000)
+        match state.invoke_start(module_ref) {
+            StartInvocation::Finished => InterpreterResult::Finished,
+            StartInvocation::Trap(t) => InterpreterResult::Trap(t),
+            StartInvocation::Pause => InterpreterResult::Pause,
+            StartInvocation::Running => Interpreter::default().run(text, &mut state, 10000),
+        }
     }));
 
     let init_result = match init_result {
