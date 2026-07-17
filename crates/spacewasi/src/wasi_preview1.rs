@@ -11,7 +11,6 @@
 /// ---
 /// Portions of this file are derived from <https://github.com/bytecodealliance/wasmtime>
 /// and the wasi-common crate developed by the wasmtime community.
-
 use futures::executor::block_on;
 use spacewasm::{HostFunction, HostModule, Value, vec};
 use std::cell::RefCell;

@@ -11,10 +11,9 @@
 /// ---
 /// Portions of this file are derived from <https://github.com/bytecodealliance/wasmtime>
 /// and the wasi-common crate developed by the wasmtime community.
-/// 
+///
 /// Portions of this file are derived from <https://github.com/clap-rs/clap>:
 /// Copyright (c) 2026 Knapp, K. B., & The Clap Community.
-
 use spacewasm::{
     CodeBuilder, CompilerOptions, ExportDesc, InterpreterResult, InterpreterRunner, ModuleRef,
     PageAllocator, Ref, WasmRef,
