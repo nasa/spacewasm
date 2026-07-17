@@ -1,16 +1,16 @@
 [package]
-name = "spacewasm_ffi"
+name = "spacewasm_c_api"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "Reusable C-ABI (FFI) support layer for the spacewasm interpreter"
+description = "Reusable C-API support layer for the spacewasm interpreter"
 publish = false
 
 [lib]
-name = "spacewasm_ffi"
+name = "spacewasm_c_api"
 path = "src/lib.rs"
 
 [features]

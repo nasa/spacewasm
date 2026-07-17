@@ -475,20 +475,20 @@ dependencies = [
 ]
 
 [[package]]
-name = "spacewasm_c_example"
-version = "0.0.0"
-dependencies = [
- "spacewasm",
- "spacewasm_ffi",
- "spacewasm_util",
-]
-
-[[package]]
-name = "spacewasm_ffi"
+name = "spacewasm_c_api"
 version = "0.0.0"
 dependencies = [
  "cbindgen",
  "spacewasm",
+]
+
+[[package]]
+name = "spacewasm_c_example"
+version = "0.0.0"
+dependencies = [
+ "spacewasm",
+ "spacewasm_c_api",
+ "spacewasm_util",
 ]
 
 [[package]]

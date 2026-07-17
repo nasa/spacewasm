@@ -57,4 +57,4 @@ spacewasm::global_allocator!(HostAllocator, HostAllocator);
 
 // Re-export the `spacewasm_*` C entry points emitted by `spacewasm_ffi` so this
 // crate's `cdylib`/`staticlib` exports them and Rust consumers can name them.
-pub use spacewasm_ffi::capi::*;
+pub use spacewasm_c_api::capi::*;

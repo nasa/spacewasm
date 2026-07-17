@@ -16,5 +16,5 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 
 [dependencies]
 spacewasm = { path = "../.." }
-spacewasm_ffi = { path = "../spacewasm_ffi" }
+spacewasm_c_api = { path = "../spacewasm_c_api" }
 spacewasm_util = { path = "../spacewasm_util" }
