@@ -614,4 +614,9 @@ impl<'a, const MAX_CODE_PAGES: usize, const MAX_CONTROL_FRAMES: usize, const MAX
     instruction!(f64_convert_i64_s, F64_CONVERT_I64_S, (I64) -> (F64));
     instruction!(f64_convert_i64_u, F64_CONVERT_I64_U, (I64) -> (F64));
     instruction!(f64_promote_f32, F64_PROMOTE_F32, (F32) -> (F64));
+    instruction!(i32_extend8_s, I32_EXTEND8_S, (I32) -> (I32));
+    instruction!(i32_extend16_s, I32_EXTEND16_S, (I32) -> (I32));
+    instruction!(i64_extend8_s, I64_EXTEND8_S, (I64) -> (I64));
+    instruction!(i64_extend16_s, I64_EXTEND16_S, (I64) -> (I64));
+    instruction!(i64_extend32_s, I64_EXTEND32_S, (I64) -> (I64));
 }
