@@ -1186,7 +1186,10 @@ mod kani_proofs {
 
         assert_eq!(decoded_depth, depth, "Depth must decode correctly");
 
-        assert_eq!(decoded_offset.0, offset.0, "Offset must decode correctly with proper sign extension");
+        assert_eq!(
+            decoded_offset.0, offset.0,
+            "Offset must decode correctly with proper sign extension"
+        );
     }
 
     /// Verify JumpOffset::new() validation only accepts offsets in [-2^21, 2^21-1]
@@ -1208,13 +1211,22 @@ mod kani_proofs {
         let fits_in_22_bits = offset == ((offset << 10) >> 10);
 
         if fits_in_22_bits {
-            assert!(result.is_ok(), "Offset within 22-bit range should be accepted");
+            assert!(
+                result.is_ok(),
+                "Offset within 22-bit range should be accepted"
+            );
 
             if let Ok(jump_offset) = result {
-                assert_eq!(jump_offset.0, offset, "Accepted offset should match computed value");
+                assert_eq!(
+                    jump_offset.0, offset,
+                    "Accepted offset should match computed value"
+                );
             }
         } else {
-            assert!(result.is_err(), "Offset outside 22-bit range should be rejected");
+            assert!(
+                result.is_err(),
+                "Offset outside 22-bit range should be rejected"
+            );
         }
     }
 
@@ -1250,10 +1262,17 @@ mod kani_proofs {
 
         let result = JumpOffset::new(current_target, sentinel);
 
-        assert!(result.is_ok(), "Creating offset to SENTINEL should always succeed");
+        assert!(
+            result.is_ok(),
+            "Creating offset to SENTINEL should always succeed"
+        );
 
         if let Ok(offset) = result {
-            assert_eq!(offset, JumpOffset::sentinel(), "Offset to SENTINEL should be sentinel");
+            assert_eq!(
+                offset,
+                JumpOffset::sentinel(),
+                "Offset to SENTINEL should be sentinel"
+            );
             assert_eq!(offset.0, 0, "Sentinel offset should be 0");
         }
     }
