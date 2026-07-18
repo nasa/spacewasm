@@ -192,11 +192,6 @@ pub trait BaseVisitor {
 
     // Numeric instructions - conversions
     visit_fn!(i32_wrap_i64);
-    visit_fn!(i32_extend8_s);
-    visit_fn!(i32_extend16_s);
-    visit_fn!(i64_extend8_s);
-    visit_fn!(i64_extend16_s);
-    visit_fn!(i64_extend32_s);
     visit_fn!(i32_trunc_f32_s);
     visit_fn!(i32_trunc_f32_u);
     visit_fn!(i32_trunc_f64_s);

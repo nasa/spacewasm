@@ -429,11 +429,6 @@ impl<'code> IrReader<'code> {
 
             // Numeric instructions - conversions
             I32_WRAP_I64 => instruction!(i32_wrap_i64),
-            I32_EXTEND8_S => instruction!(i32_extend8_s),
-            I32_EXTEND16_S => instruction!(i32_extend16_s),
-            I64_EXTEND8_S => instruction!(i64_extend8_s),
-            I64_EXTEND16_S => instruction!(i64_extend16_s),
-            I64_EXTEND32_S => instruction!(i64_extend32_s),
             I32_TRUNC_F32_S => instruction!(i32_trunc_f32_s),
             I32_TRUNC_F32_U => instruction!(i32_trunc_f32_u),
             I32_TRUNC_F64_S => instruction!(i32_trunc_f64_s),

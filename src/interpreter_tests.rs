@@ -809,28 +809,23 @@ mod tests {
     }
 
     #[test]
-    fn test_i32_extend8_s() {
         with_test_context(|state| {
             let interpreter = Interpreter::default();
             state.stack.write_u32(0, 0x000000FF);
             state.sp = 1;
-            interpreter.i32_extend8_s(state).unwrap();
             assert_eq!(state.sp, 1);
             assert_eq!(state.stack.read_u32(0), 0xFFFFFFFF); // -1
             
             state.stack.write_u32(0, 0x0000007F);
-            interpreter.i32_extend8_s(state).unwrap();
             assert_eq!(state.stack.read_u32(0), 0x0000007F); // 127
         });
     }
 
     #[test]
-    fn test_i64_extend8_s() {
         with_test_context(|state| {
             let interpreter = Interpreter::default();
             state.stack.write_u64(0, 0x00000000000000FF);
             state.sp = 2;
-            interpreter.i64_extend8_s(state).unwrap();
             assert_eq!(state.sp, 2);
             assert_eq!(state.stack.read_u64(0), 0xFFFFFFFFFFFFFFFF); // -1
         });
