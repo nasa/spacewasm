@@ -142,13 +142,20 @@ impl Module {
 pub struct MemArg {
     pub align: u32,
     pub offset: u32,
+    pub memory_index: u32,
 }
 
 impl MemArg {
     pub fn read(wasm: &mut Reader) -> Result<Self, ValidationError> {
-        let align = wasm.read_u32()?;
+        let align_raw = wasm.read_u32()?;
+        let memory_index = if align_raw & 0x40 != 0 {
+            wasm.read_u32()?
+        } else {
+            0
+        };
+        let align = align_raw & !0x40;
         let offset = wasm.read_u32()?;
-        Ok(MemArg { align, offset })
+        Ok(MemArg { align, offset, memory_index })
     }
 }
 
@@ -261,21 +268,21 @@ impl<'wasm> Reader<'wasm> {
                     match sub_opcode {
                         8 => {
                             let data = DataIdx::read(self)?;
-                            self.expect_u8(0x00)?;
-                            visitor.memory_init(data, state)?;
+                            let mem = MemIdx::read(self)?;
+                            visitor.memory_init(data, mem, state)?;
                         }
                         9 => {
                             let data = DataIdx::read(self)?;
                             visitor.data_drop(data, state)?;
                         }
                         10 => {
-                            self.expect_u8(0x00)?;
-                            self.expect_u8(0x00)?;
-                            visitor.memory_copy(state)?;
+                            let dst = MemIdx::read(self)?;
+                            let src = MemIdx::read(self)?;
+                            visitor.memory_copy(dst, src, state)?;
                         }
                         11 => {
-                            self.expect_u8(0x00)?;
-                            visitor.memory_fill(state)?;
+                            let mem = MemIdx::read(self)?;
+                            visitor.memory_fill(mem, state)?;
                         }
                         _ => return Err(ValidationError::InvalidOpcode(0xFC)),
                     }
@@ -294,12 +301,12 @@ impl<'wasm> Reader<'wasm> {
 
                 // Memory instructions - size/grow
                 MEMORY_SIZE => {
-                    self.expect_u8(0x00)?;
-                    visitor.memory_size(state)?;
+                    let mem = MemIdx::read(self)?;
+                    visitor.memory_size(mem, state)?;
                 }
                 MEMORY_GROW => {
-                    self.expect_u8(0x00)?;
-                    visitor.memory_grow(state)?;
+                    let mem = MemIdx::read(self)?;
+                    visitor.memory_grow(mem, state)?;
                 }
 
                 // Numeric instructions - const

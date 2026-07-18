@@ -4,7 +4,7 @@
 mod tests {
     use crate::{
         AllocError, BaseVisitor, Interpreter, InterpreterResult, InterpreterState, IrVisitor,
-        MemArg, MemType, Memory, MemoryKind, Module, ModuleRef, Store, ValType,
+        MemArg, MemIdx, DataIdx, MemType, Memory, MemoryKind, Module, ModuleRef, Store, ValType,
     };
 
     extern crate std;
@@ -83,7 +83,7 @@ mod tests {
             InterpreterResult::Pause => panic!("pause during init"),
         }
 
-        state.memory = state.store.get_memory(ModuleRef(0)).clone();
+        state.memories = state.store.get_memories(ModuleRef(0)).clone();
         state.table = state.store.get_table(ModuleRef(0)).clone();
 
         f(&mut state);
@@ -329,7 +329,7 @@ mod tests {
             let interpreter = Interpreter::default();
 
             // Store a value in memory
-            state.memory.store_u32(100, 0x12345678).unwrap();
+            state.memories[0].store_u32(100, 0x12345678).unwrap();
 
             // Push address onto stack
             state.stack.write_u32(0, 100);
@@ -355,7 +355,7 @@ mod tests {
         with_test_context(|state| {
             let interpreter = Interpreter::default();
 
-            state.memory.store_u32(108, 0xDEADBEEF).unwrap();
+            state.memories[0].store_u32(108, 0xDEADBEEF).unwrap();
 
             state.stack.write_u32(0, 100);
             state.sp = 1;
@@ -379,7 +379,7 @@ mod tests {
         with_test_context(|state| {
             let interpreter = Interpreter::default();
 
-            state.memory.store_u64(100, 0x123456789ABCDEF0).unwrap();
+            state.memories[0].store_u64(100, 0x123456789ABCDEF0).unwrap();
 
             state.stack.write_u32(0, 100);
             state.sp = 1;
@@ -404,7 +404,7 @@ mod tests {
         with_test_context(|state| {
             let interpreter = Interpreter::default();
 
-            state.memory.store_u8(100, 0xFF).unwrap(); // -1 in i8
+            state.memories[0].store_u8(100, 0xFF).unwrap(); // -1 in i8
 
             state.stack.write_u32(0, 100);
             state.sp = 1;
@@ -428,7 +428,7 @@ mod tests {
         with_test_context(|state| {
             let interpreter = Interpreter::default();
 
-            state.memory.store_u8(100, 0xFF).unwrap();
+            state.memories[0].store_u8(100, 0xFF).unwrap();
 
             state.stack.write_u32(0, 100);
             state.sp = 1;
@@ -452,7 +452,7 @@ mod tests {
         with_test_context(|state| {
             let interpreter = Interpreter::default();
 
-            state.memory.store_u16(100, 0xFFFF).unwrap(); // -1 in i16
+            state.memories[0].store_u16(100, 0xFFFF).unwrap(); // -1 in i16
 
             state.stack.write_u32(0, 100);
             state.sp = 1;
@@ -476,7 +476,7 @@ mod tests {
         with_test_context(|state| {
             let interpreter = Interpreter::default();
 
-            state.memory.store_u16(100, 0xFFFF).unwrap();
+            state.memories[0].store_u16(100, 0xFFFF).unwrap();
 
             state.stack.write_u32(0, 100);
             state.sp = 1;
@@ -500,7 +500,7 @@ mod tests {
         with_test_context(|state| {
             let interpreter = Interpreter::default();
 
-            state.memory.store_u8(100, 0xFF).unwrap();
+            state.memories[0].store_u8(100, 0xFF).unwrap();
 
             state.stack.write_u32(0, 100);
             state.sp = 1;
@@ -525,7 +525,7 @@ mod tests {
         with_test_context(|state| {
             let interpreter = Interpreter::default();
 
-            state.memory.store_u32(100, 0xDEADBEEF).unwrap();
+            state.memories[0].store_u32(100, 0xDEADBEEF).unwrap();
 
             state.stack.write_u32(0, 100);
             state.sp = 1;
@@ -566,7 +566,7 @@ mod tests {
                 .unwrap();
 
             assert_eq!(state.sp, 0);
-            assert_eq!(state.memory.load_u32(100).unwrap(), 0x12345678);
+            assert_eq!(state.memories[0].load_u32(100).unwrap(), 0x12345678);
         });
     }
 
@@ -589,7 +589,7 @@ mod tests {
                 )
                 .unwrap();
 
-            assert_eq!(state.memory.load_u32(108).unwrap(), 0xDEADBEEF);
+            assert_eq!(state.memories[0].load_u32(108).unwrap(), 0xDEADBEEF);
         });
     }
 
@@ -613,7 +613,7 @@ mod tests {
                 .unwrap();
 
             assert_eq!(state.sp, 0);
-            assert_eq!(state.memory.load_u64(100).unwrap(), 0x123456789ABCDEF0);
+            assert_eq!(state.memories[0].load_u64(100).unwrap(), 0x123456789ABCDEF0);
         });
     }
 
@@ -637,7 +637,7 @@ mod tests {
                 .unwrap();
 
             assert_eq!(state.sp, 0);
-            assert_eq!(state.memory.load_u8(100).unwrap(), 0xFF);
+            assert_eq!(state.memories[0].load_u8(100).unwrap(), 0xFF);
         });
     }
 
@@ -661,7 +661,7 @@ mod tests {
                 .unwrap();
 
             assert_eq!(state.sp, 0);
-            assert_eq!(state.memory.load_u16(100).unwrap(), 0xFFFF);
+            assert_eq!(state.memories[0].load_u16(100).unwrap(), 0xFFFF);
         });
     }
 
@@ -685,7 +685,7 @@ mod tests {
                 .unwrap();
 
             assert_eq!(state.sp, 0);
-            assert_eq!(state.memory.load_u8(100).unwrap(), 0xFF);
+            assert_eq!(state.memories[0].load_u8(100).unwrap(), 0xFF);
         });
     }
 
@@ -709,7 +709,7 @@ mod tests {
                 .unwrap();
 
             assert_eq!(state.sp, 0);
-            assert_eq!(state.memory.load_u32(100).unwrap(), 0xDEADBEEF);
+            assert_eq!(state.memories[0].load_u32(100).unwrap(), 0xDEADBEEF);
         });
     }
 
@@ -845,7 +845,7 @@ mod tests {
             // grow memory first so it has space
             state.stack.write_u32(3, 1);
             state.sp = 4;
-            interpreter.memory_grow(state).unwrap();
+            interpreter.memory_grow(MemIdx(0), state).unwrap();
             
             // clear stack and setup for memory_fill
             state.stack.write_u32(0, 4);
@@ -853,7 +853,7 @@ mod tests {
             state.stack.write_u32(2, 2);
             state.sp = 3;
 
-            interpreter.memory_fill(state).unwrap();
+            interpreter.memory_fill(MemIdx(0), state).unwrap();
             assert_eq!(state.sp, 0);
 
             // Read back from memory
@@ -872,21 +872,21 @@ mod tests {
             // grow memory first
             state.stack.write_u32(0, 1);
             state.sp = 1;
-            interpreter.memory_grow(state).unwrap();
+            interpreter.memory_grow(MemIdx(0), state).unwrap();
 
             // fill memory at index 8
             state.stack.write_u32(0, 8); // dst
             state.stack.write_u32(1, 0xCD); // val
             state.stack.write_u32(2, 2); // len
             state.sp = 3;
-            interpreter.memory_fill(state).unwrap();
+            interpreter.memory_fill(MemIdx(0), state).unwrap();
 
             // copy from 8 to 0, len = 2
             state.stack.write_u32(0, 0); // dst
             state.stack.write_u32(1, 8); // src
             state.stack.write_u32(2, 2); // len
             state.sp = 3;
-            interpreter.memory_copy(state).unwrap();
+            interpreter.memory_copy(MemIdx(0), MemIdx(0), state).unwrap();
             assert_eq!(state.sp, 0);
 
             let memory = state.store.get_memory(state.module);
@@ -1163,7 +1163,7 @@ mod tests {
 
             state.sp = 0;
 
-            interpreter.memory_size(state).unwrap();
+            interpreter.memory_size(MemIdx(0), state).unwrap();
 
             assert_eq!(state.sp, 1);
             assert_eq!(state.stack.read_u32(0), 1); // 65536 / 65536 = 1 page

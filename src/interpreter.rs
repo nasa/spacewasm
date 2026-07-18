@@ -23,8 +23,8 @@ pub struct InterpreterState<'store> {
     /// The stack
     pub stack: Stack,
 
-    /// Linear memory from the active module
-    pub memory: Rc<Memory>,
+    /// Linear memories from the active module
+    pub memories: Rc<[Rc<Memory>]>,
 
     /// Table from the active module
     pub table: Rc<[TableElement]>,
@@ -76,7 +76,7 @@ impl<'store> InterpreterState<'store> {
             // Swap to the extern module's context
             let delta = f_ref.module.0.wrapping_sub(self.module.0);
             self.module = f_ref.module;
-            self.memory = self.store.get_memory(self.module).clone();
+            self.memories = self.store.get_memories(self.module).clone();
             self.table = self.store.get_table(self.module).clone();
             delta
         };
@@ -179,7 +179,7 @@ impl<'store> InterpreterState<'store> {
 
         // Swap to the extern module's context
         self.module = f_ref.module;
-        self.memory = self.store.get_memory(self.module).clone();
+        self.memories = self.store.get_memories(self.module).clone();
         self.table = self.store.get_table(self.module).clone();
         self.call_impl(0, f_ref.index)
             .map_err(|_| InvokeError::StackOverflow)?;
@@ -531,14 +531,14 @@ impl<'store> BaseVisitor for Interpreter<'store> {
 
     fn i32_load(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
         let addr = Memory::effective_address(state.stack.read_u32(state.sp - 1), m.offset)?;
-        let val = state.memory.load_u32(addr)?;
+        let val = state.memories[m.memory_index as usize].load_u32(addr)?;
         state.stack.write_u32(state.sp - 1, val);
         Ok(())
     }
 
     fn i64_load(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
         let addr = Memory::effective_address(state.stack.read_u32(state.sp - 1), m.offset)?;
-        let val = state.memory.load_u64(addr)?;
+        let val = state.memories[m.memory_index as usize].load_u64(addr)?;
         state.stack.write_u64(state.sp - 1, val);
         state.sp += 1;
         Ok(())
@@ -546,14 +546,14 @@ impl<'store> BaseVisitor for Interpreter<'store> {
 
     fn f32_load(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
         let addr = Memory::effective_address(state.stack.read_u32(state.sp - 1), m.offset)?;
-        let val = state.memory.load_u32(addr)?;
+        let val = state.memories[m.memory_index as usize].load_u32(addr)?;
         state.stack.write_u32(state.sp - 1, val);
         Ok(())
     }
 
     fn f64_load(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
         let addr = Memory::effective_address(state.stack.read_u32(state.sp - 1), m.offset)?;
-        let val = state.memory.load_u64(addr)?;
+        let val = state.memories[m.memory_index as usize].load_u64(addr)?;
         state.stack.write_u64(state.sp - 1, val);
         state.sp += 1;
         Ok(())
@@ -561,35 +561,35 @@ impl<'store> BaseVisitor for Interpreter<'store> {
 
     fn i32_load8_s(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
         let addr = Memory::effective_address(state.stack.read_u32(state.sp - 1), m.offset)?;
-        let val = state.memory.load_u8(addr)? as i8 as i32;
+        let val = state.memories[m.memory_index as usize].load_u8(addr)? as i8 as i32;
         state.stack.write_u32(state.sp - 1, val as u32);
         Ok(())
     }
 
     fn i32_load8_u(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
         let addr = Memory::effective_address(state.stack.read_u32(state.sp - 1), m.offset)?;
-        let val = state.memory.load_u8(addr)? as u32;
+        let val = state.memories[m.memory_index as usize].load_u8(addr)? as u32;
         state.stack.write_u32(state.sp - 1, val);
         Ok(())
     }
 
     fn i32_load16_s(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
         let addr = Memory::effective_address(state.stack.read_u32(state.sp - 1), m.offset)?;
-        let val = state.memory.load_u16(addr)? as i16 as i32;
+        let val = state.memories[m.memory_index as usize].load_u16(addr)? as i16 as i32;
         state.stack.write_u32(state.sp - 1, val as u32);
         Ok(())
     }
 
     fn i32_load16_u(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
         let addr = Memory::effective_address(state.stack.read_u32(state.sp - 1), m.offset)?;
-        let val = state.memory.load_u16(addr)? as u32;
+        let val = state.memories[m.memory_index as usize].load_u16(addr)? as u32;
         state.stack.write_u32(state.sp - 1, val);
         Ok(())
     }
 
     fn i64_load8_s(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
         let addr = Memory::effective_address(state.stack.read_u32(state.sp - 1), m.offset)?;
-        let val = state.memory.load_u8(addr)? as i8 as i64 as u64;
+        let val = state.memories[m.memory_index as usize].load_u8(addr)? as i8 as i64 as u64;
         state.stack.write_u64(state.sp - 1, val);
         state.sp += 1;
         Ok(())
@@ -597,7 +597,7 @@ impl<'store> BaseVisitor for Interpreter<'store> {
 
     fn i64_load8_u(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
         let addr = Memory::effective_address(state.stack.read_u32(state.sp - 1), m.offset)?;
-        let val = state.memory.load_u8(addr)? as u64;
+        let val = state.memories[m.memory_index as usize].load_u8(addr)? as u64;
         state.stack.write_u64(state.sp - 1, val);
         state.sp += 1;
         Ok(())
@@ -605,7 +605,7 @@ impl<'store> BaseVisitor for Interpreter<'store> {
 
     fn i64_load16_s(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
         let addr = Memory::effective_address(state.stack.read_u32(state.sp - 1), m.offset)?;
-        let val = state.memory.load_u16(addr)? as i16 as i64 as u64;
+        let val = state.memories[m.memory_index as usize].load_u16(addr)? as i16 as i64 as u64;
         state.stack.write_u64(state.sp - 1, val);
         state.sp += 1;
         Ok(())
@@ -613,7 +613,7 @@ impl<'store> BaseVisitor for Interpreter<'store> {
 
     fn i64_load16_u(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
         let addr = Memory::effective_address(state.stack.read_u32(state.sp - 1), m.offset)?;
-        let val = state.memory.load_u16(addr)? as u64;
+        let val = state.memories[m.memory_index as usize].load_u16(addr)? as u64;
         state.stack.write_u64(state.sp - 1, val);
         state.sp += 1;
         Ok(())
@@ -621,7 +621,7 @@ impl<'store> BaseVisitor for Interpreter<'store> {
 
     fn i64_load32_s(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
         let addr = Memory::effective_address(state.stack.read_u32(state.sp - 1), m.offset)?;
-        let val = state.memory.load_u32(addr)? as i32 as i64 as u64;
+        let val = state.memories[m.memory_index as usize].load_u32(addr)? as i32 as i64 as u64;
         state.stack.write_u64(state.sp - 1, val);
         state.sp += 1;
         Ok(())
@@ -629,7 +629,7 @@ impl<'store> BaseVisitor for Interpreter<'store> {
 
     fn i64_load32_u(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
         let addr = Memory::effective_address(state.stack.read_u32(state.sp - 1), m.offset)?;
-        let val = state.memory.load_u32(addr)? as u64;
+        let val = state.memories[m.memory_index as usize].load_u32(addr)? as u64;
         state.stack.write_u64(state.sp - 1, val);
         state.sp += 1;
         Ok(())
@@ -639,7 +639,7 @@ impl<'store> BaseVisitor for Interpreter<'store> {
         state.sp -= 2;
         let val = state.stack.read_u32(state.sp + 1);
         let addr = Memory::effective_address(state.stack.read_u32(state.sp), m.offset)?;
-        state.memory.store_u32(addr, val)?;
+        state.memories[m.memory_index as usize].store_u32(addr, val)?;
         Ok(())
     }
 
@@ -647,7 +647,7 @@ impl<'store> BaseVisitor for Interpreter<'store> {
         state.sp -= 3;
         let val = state.stack.read_u64(state.sp + 1);
         let addr = Memory::effective_address(state.stack.read_u32(state.sp), m.offset)?;
-        state.memory.store_u64(addr, val)?;
+        state.memories[m.memory_index as usize].store_u64(addr, val)?;
         Ok(())
     }
 
@@ -655,7 +655,7 @@ impl<'store> BaseVisitor for Interpreter<'store> {
         state.sp -= 2;
         let val = state.stack.read_u32(state.sp + 1);
         let addr = Memory::effective_address(state.stack.read_u32(state.sp), m.offset)?;
-        state.memory.store_u32(addr, val)?;
+        state.memories[m.memory_index as usize].store_u32(addr, val)?;
         Ok(())
     }
 
@@ -663,7 +663,7 @@ impl<'store> BaseVisitor for Interpreter<'store> {
         state.sp -= 3;
         let val = state.stack.read_u64(state.sp + 1);
         let addr = Memory::effective_address(state.stack.read_u32(state.sp), m.offset)?;
-        state.memory.store_u64(addr, val)?;
+        state.memories[m.memory_index as usize].store_u64(addr, val)?;
         Ok(())
     }
 
@@ -671,7 +671,7 @@ impl<'store> BaseVisitor for Interpreter<'store> {
         state.sp -= 2;
         let val = state.stack.read_u32(state.sp + 1) as u8;
         let addr = Memory::effective_address(state.stack.read_u32(state.sp), m.offset)?;
-        state.memory.store_u8(addr, val)?;
+        state.memories[m.memory_index as usize].store_u8(addr, val)?;
         Ok(())
     }
 
@@ -679,7 +679,7 @@ impl<'store> BaseVisitor for Interpreter<'store> {
         state.sp -= 2;
         let val = state.stack.read_u32(state.sp + 1) as u16;
         let addr = Memory::effective_address(state.stack.read_u32(state.sp), m.offset)?;
-        state.memory.store_u16(addr, val)?;
+        state.memories[m.memory_index as usize].store_u16(addr, val)?;
         Ok(())
     }
 
@@ -687,7 +687,7 @@ impl<'store> BaseVisitor for Interpreter<'store> {
         state.sp -= 3;
         let val = state.stack.read_u64(state.sp + 1) as u8;
         let addr = Memory::effective_address(state.stack.read_u32(state.sp), m.offset)?;
-        state.memory.store_u8(addr, val)?;
+        state.memories[m.memory_index as usize].store_u8(addr, val)?;
         Ok(())
     }
 
@@ -695,7 +695,7 @@ impl<'store> BaseVisitor for Interpreter<'store> {
         state.sp -= 3;
         let val = state.stack.read_u64(state.sp + 1) as u16;
         let addr = Memory::effective_address(state.stack.read_u32(state.sp), m.offset)?;
-        state.memory.store_u16(addr, val)?;
+        state.memories[m.memory_index as usize].store_u16(addr, val)?;
         Ok(())
     }
 
@@ -703,46 +703,33 @@ impl<'store> BaseVisitor for Interpreter<'store> {
         state.sp -= 3;
         let val = state.stack.read_u64(state.sp + 1) as u32;
         let addr = Memory::effective_address(state.stack.read_u32(state.sp), m.offset)?;
-        state.memory.store_u32(addr, val)?;
+        state.memories[m.memory_index as usize].store_u32(addr, val)?;
         Ok(())
     }
 
     fn memory_size(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        state.stack.write_u32(state.sp, state.memory.size());
+        state.stack.write_u32(state.sp, state.memories[m.0 as usize].size());
         state.sp += 1;
         Ok(())
     }
 
-    fn memory_grow(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+    fn memory_grow(&self, m: MemIdx, state: &mut Self::State) -> Result<(), Self::Error> {
         let n = state.stack.read_u32(state.sp - 1);
 
-        // To grow memory we need to mutate the inside of the Rc<Memory>
-        // This means we need unique access to it
-        // Theoretically there should only be two references to this memory:
-        // 1. In the owning module/host module
-        // 2. In the interpreter state
-
-        // We need to drop the reference from the interpreter state and then try to
-        // get mutable unqiue access to the Memory. If there is anything else holding
-        // on to the reference (i.e. a host module took a pointer, we will not be
-        // able to grow the memory)
-
-        // Drop the memory reference
-        state.clear_memory();
+        // Drop the memories reference
+        state.clear_memories();
 
         // Look up what _should_ be the final unique reference to this memory
-        let memory = state.store.get_memory_mut(state.module);
+        let memory = state.store.get_memory_mut(state.module, m.0 as usize);
         let result: Result<u32, MemoryError> = if memory.is_zero() {
             Err(MemoryError::OutOfMemory)
         } else if let Some(memory) = memory.get_mut() {
             memory.grow(n)
         } else {
-            // This is probably caused by a host function holding onto a memory reference
-            // We could panic here... I'd rather just error gracefully.
             return Err(InterpreterBreak::Trap(TrapReason::MemoryRefNotUnique));
         };
 
-        state.memory = memory.clone();
+        state.memories = state.store.get_memories(state.module);
 
         match result {
             Ok(old_size) => {
@@ -756,7 +743,7 @@ impl<'store> BaseVisitor for Interpreter<'store> {
         Ok(())
     }
 
-    fn memory_init(&self, data: DataIdx, state: &mut Self::State) -> Result<(), Self::Error> {
+    fn memory_init(&self, data: DataIdx, m: MemIdx, state: &mut Self::State) -> Result<(), Self::Error> {
         let n = state.stack.read_u32(state.sp - 1);
         let s = state.stack.read_u32(state.sp - 2);
         let d = state.stack.read_u32(state.sp - 3);
@@ -773,7 +760,7 @@ impl<'store> BaseVisitor for Interpreter<'store> {
             return Err(InterpreterBreak::Trap(TrapReason::MemoryOutOfBounds));
         }
         
-        if let Some(mem) = state.memory.get_mut() {
+        if let Some(mem) = state.memories[m.0 as usize].get_mut() {
             if mem.store(d as usize, &data_segment[s as usize..(s + n) as usize]).is_err() {
                 return Err(InterpreterBreak::Trap(TrapReason::MemoryOutOfBounds));
             }
@@ -793,29 +780,60 @@ impl<'store> BaseVisitor for Interpreter<'store> {
         Ok(())
     }
 
-    fn memory_copy(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+    fn memory_copy(&self, dst: MemIdx, src: MemIdx, state: &mut Self::State) -> Result<(), Self::Error> {
         let n = state.stack.read_u32(state.sp - 1);
         let s = state.stack.read_u32(state.sp - 2);
         let d = state.stack.read_u32(state.sp - 3);
         state.sp -= 3;
 
-        if let Some(mem) = state.memory.get_mut() {
-            if mem.copy(d as usize, s as usize, n as usize).is_err() {
+        // Since memory_copy can copy between different memories, we must handle multiple mutable borrows.
+        // If dst == src, we can just use `copy` on a single memory.
+        if dst.0 == src.0 {
+            if let Some(mem) = state.memories[dst.0 as usize].get_mut() {
+                if mem.copy(d as usize, s as usize, n as usize).is_err() {
+                    return Err(InterpreterBreak::Trap(TrapReason::MemoryOutOfBounds));
+                }
+            } else {
                 return Err(InterpreterBreak::Trap(TrapReason::MemoryOutOfBounds));
             }
         } else {
-            return Err(InterpreterBreak::Trap(TrapReason::MemoryOutOfBounds));
+            // Need to copy across memories...
+            // For now, let's just do a manual copy if possible, but we don't have multiple mutable refs!
+            // Memory is inside Rc<Memory>. We can't get two mut refs if they are different!
+            // Wait, we can't borrow two things mutably from `state.memories` slice if we just get_mut?
+            // Yes we can, they are different elements.
+            // But we actually only need immutable read from `src` and mutable write to `dst`!
+            let (src_mem_rc, dst_mem_rc) = if dst.0 < src.0 {
+                let (left, right) = state.memories.split_at(src.0 as usize);
+                (&right[0], &left[dst.0 as usize])
+            } else {
+                let (left, right) = state.memories.split_at(dst.0 as usize);
+                (&left[src.0 as usize], &right[0])
+            };
+            
+            // Actually, we can just read into a temporary buffer, then write!
+            let mut buf = vec![0u8; n as usize];
+            if src_mem_rc.load_bytes(s as usize, &mut buf).is_err() {
+                return Err(InterpreterBreak::Trap(TrapReason::MemoryOutOfBounds));
+            }
+            if let Some(dst_mem) = state.memories[dst.0 as usize].get_mut() {
+                if dst_mem.store(d as usize, &buf).is_err() {
+                    return Err(InterpreterBreak::Trap(TrapReason::MemoryOutOfBounds));
+                }
+            } else {
+                return Err(InterpreterBreak::Trap(TrapReason::MemoryOutOfBounds));
+            }
         }
         Ok(())
     }
 
-    fn memory_fill(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+    fn memory_fill(&self, m: MemIdx, state: &mut Self::State) -> Result<(), Self::Error> {
         let n = state.stack.read_u32(state.sp - 1);
         let val = state.stack.read_u32(state.sp - 2) as u8;
         let d = state.stack.read_u32(state.sp - 3);
         state.sp -= 3;
 
-        if let Some(mem) = state.memory.get_mut() {
+        if let Some(mem) = state.memories[m.0 as usize].get_mut() {
             if mem.fill(d as usize, val, n as usize).is_err() {
                 return Err(InterpreterBreak::Trap(TrapReason::MemoryOutOfBounds));
             }
@@ -1467,7 +1485,7 @@ impl<'store> IrVisitor for Interpreter<'store> {
             // Restore the old module context outside this frame
             let restore_module = state.module.0.wrapping_sub(call_frame.module_delta);
             state.module = ModuleRef(restore_module);
-            state.memory = state.store.get_memory(state.module).clone();
+            state.memories = state.store.get_memories(state.module).clone();
             state.table = state.store.get_table(state.module).clone();
         }
 

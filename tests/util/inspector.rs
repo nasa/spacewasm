@@ -90,12 +90,12 @@ impl<'a, S, E, T: BaseVisitor<State = S, Error = E>> BaseVisitor for Inspector<'
     visit_fn!(i64_store32, m: MemArg);
 
     // Memory instructions - size/grow
-    visit_fn!(memory_size);
-    visit_fn!(memory_grow);
-    visit_fn!(memory_init, data: DataIdx);
+    visit_fn!(memory_size, m: MemIdx);
+    visit_fn!(memory_grow, m: MemIdx);
+    visit_fn!(memory_init, data: DataIdx, m: MemIdx);
     visit_fn!(data_drop, data: DataIdx);
-    visit_fn!(memory_copy);
-    visit_fn!(memory_fill);
+    visit_fn!(memory_copy, dst: MemIdx, src: MemIdx);
+    visit_fn!(memory_fill, m: MemIdx);
 
     // Numeric instructions - const
     visit_fn!(i32_const, n: i32);

@@ -70,7 +70,7 @@ macro_rules! instruction {
     // An instruction with a MemArg operand
     ($name:ident, $opcode:expr, mem, $ty_align:tt, ($($in_ty:ident)*) -> ($($out_ty:ident)*)) => {
         fn $name(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
-            state.module().check_memory_defined()?;
+            state.module().check_memory_defined(MemIdx(m.memory_index))?;
             validate!(state, ($($in_ty)*) -> ($($out_ty)*));
             if m.align > alignment!($ty_align) {
                 return Err(ValidationError::AlignmentLargerThanType);
@@ -443,18 +443,20 @@ impl<'a, const MAX_CODE_PAGES: usize, const MAX_CONTROL_FRAMES: usize, const MAX
     instruction!(i64_store16, I64_STORE16, mem, 16, (I64 I32) -> ());
     instruction!(i64_store32, I64_STORE32, mem, 32, (I64 I32) -> ());
 
-    fn memory_size(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        state.module().check_memory_defined()?;
+    fn memory_size(&self, mem: MemIdx, state: &mut Self::State) -> Result<(), Self::Error> {
+        state.module().check_memory_defined(mem)?;
         validate!(state, () -> (I32));
         state.instr(MEMORY_SIZE)?;
+        state.write_32(mem.0)?;
         Ok(())
     }
 
-    fn memory_grow(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        state.module().check_memory_defined()?;
+    fn memory_grow(&self, mem: MemIdx, state: &mut Self::State) -> Result<(), Self::Error> {
+        state.module().check_memory_defined(mem)?;
         validate!(state, (I32) -> (I32));
         if self.options.allow_memory_grow {
             state.instr(MEMORY_GROW)?;
+            state.write_32(mem.0)?;
             Ok(())
         } else {
             Err(ValidationError::IllegalMemoryGrow)
@@ -480,14 +482,15 @@ impl<'a, const MAX_CODE_PAGES: usize, const MAX_CONTROL_FRAMES: usize, const MAX
         Ok(())
     }
 
-    fn memory_init(&self, data: DataIdx, state: &mut Self::State) -> Result<(), Self::Error> {
-        state.module().check_memory_defined()?;
+    fn memory_init(&self, data: DataIdx, mem: MemIdx, state: &mut Self::State) -> Result<(), Self::Error> {
+        state.module().check_memory_defined(mem)?;
         if data.0 as usize >= state.module().data.len() {
             return Err(ValidationError::DataIdxOutOfRange);
         }
         validate!(state, (I32 I32 I32) -> ());
         state.instr(MEMORY_INIT)?;
         state.write_32(data.0)?;
+        state.write_32(mem.0)?;
         Ok(())
     }
 
@@ -501,17 +504,21 @@ impl<'a, const MAX_CODE_PAGES: usize, const MAX_CONTROL_FRAMES: usize, const MAX
         Ok(())
     }
 
-    fn memory_copy(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        state.module().check_memory_defined()?;
+    fn memory_copy(&self, dst: MemIdx, src: MemIdx, state: &mut Self::State) -> Result<(), Self::Error> {
+        state.module().check_memory_defined(dst)?;
+        state.module().check_memory_defined(src)?;
         validate!(state, (I32 I32 I32) -> ());
         state.instr(MEMORY_COPY)?;
+        state.write_32(dst.0)?;
+        state.write_32(src.0)?;
         Ok(())
     }
 
-    fn memory_fill(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        state.module().check_memory_defined()?;
+    fn memory_fill(&self, mem: MemIdx, state: &mut Self::State) -> Result<(), Self::Error> {
+        state.module().check_memory_defined(mem)?;
         validate!(state, (I32 I32 I32) -> ());
         state.instr(MEMORY_FILL)?;
+        state.write_32(mem.0)?;
         Ok(())
     }
 

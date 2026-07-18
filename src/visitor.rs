@@ -67,8 +67,14 @@ pub trait BaseVisitor {
     visit_fn!(i64_store32, m: MemArg);
 
     // Memory instructions - size/grow
-    visit_fn!(memory_size);
-    visit_fn!(memory_grow);
+    visit_fn!(memory_size, m: MemIdx);
+    visit_fn!(memory_grow, m: MemIdx);
+
+    // Bulk memory operations
+    visit_fn!(memory_init, d: DataIdx, m: MemIdx);
+    visit_fn!(data_drop, d: DataIdx);
+    visit_fn!(memory_copy, dst: MemIdx, src: MemIdx);
+    visit_fn!(memory_fill, m: MemIdx);
 
     // Numeric instructions - const
     visit_fn!(i32_const, n: i32);

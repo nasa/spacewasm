@@ -559,7 +559,7 @@ fn clone_module(module: &Module) -> Module {
                 )))
             }
         },
-        memory: match &module.memory {
+        memory: match module.memories.get(0) {
             None => None,
             Some(MemoryKind::Import(r)) => Some(MemoryKind::Import(*r)),
             Some(MemoryKind::ImportHost(r)) => Some(MemoryKind::ImportHost(*r)),

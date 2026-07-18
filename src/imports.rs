@@ -313,7 +313,7 @@ impl Store {
     ) -> Result<Import, ValidationError> {
         for (mi, module) in self.host_modules().iter().enumerate() {
             if module.name == module_name {
-                for (i, symbol) in module.memory.iter().enumerate() {
+                for (i, symbol) in module.memories.iter().enumerate() {
                     if name == symbol.name {
                         let mem = &symbol.value;
                         return if mem.mem_type().matches(&expected_ty) {
@@ -342,7 +342,7 @@ impl Store {
                                 return Err(ValidationError::InvalidMemIndex);
                             }
 
-                            match &module.memory {
+                            match module.memories.get(0) {
                                 None => Err(ValidationError::MemoryNotDefined),
                                 Some(MemoryKind::Owned(memory)) => {
                                     if !memory.mem_type().matches(&expected_ty) {

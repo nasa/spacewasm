@@ -30,7 +30,7 @@ pub struct Module {
     pub types: Vec<FuncType>,
     pub functions: Vec<Func>,
     pub table: Option<TableKind>,
-    pub memory: Option<MemoryKind>,
+    pub memories: Vec<MemoryKind>,
     pub globals: Vec<Global>,
     pub imports: Vec<Import>,
     pub exports: Vec<Export>,
@@ -175,7 +175,7 @@ impl Module {
             types: Vec::zero(),
             functions: Vec::zero(),
             table: None,
-            memory: None,
+            memories: Vec::new(),
             globals: Vec::zero(),
             imports: Vec::zero(),
             exports: Vec::zero(),
@@ -283,22 +283,22 @@ impl Module {
                 for import in &self.imports {
                     match import {
                         crate::Import::Memory { module, .. } => {
-                            if self.memory.is_some() {
+                            if !self.memories.is_empty() {
                                 return Err(ValidationError::MultipleMemories);
                             }
 
                             // The import should have already validated with linkage
                             // We can make the assertion here
                             let Some(MemoryKind::Owned(_)) =
-                                &store.modules()[module.0 as usize].memory
+                                store.modules()[module.0 as usize].memories.get(0)
                             else {
                                 unreachable!()
                             };
 
-                            self.memory = Some(MemoryKind::Import(*module));
+                            self.memories.push(MemoryKind::Import(*module));
                         }
                         crate::Import::HostMemory { module, index } => {
-                            if self.memory.is_some() {
+                            if !self.memories.is_empty() {
                                 return Err(ValidationError::MultipleMemories);
                             }
 
@@ -307,7 +307,7 @@ impl Module {
                                 [*index as usize]
                                 .value;
 
-                            self.memory = Some(MemoryKind::ImportHost(HostRef {
+                            self.memories.push(MemoryKind::ImportHost(HostRef {
                                 module: *module,
                                 index: *index,
                             }))
@@ -354,7 +354,7 @@ impl Module {
                 self.table = TableSection::read(wasm)?;
             }
             Memory => {
-                self.memory = MemorySection::read(wasm, self, allocator)?;
+                self.memories.extend(MemorySection::read(wasm, self, allocator)?);
             }
             Global => {
                 self.globals = GlobalSection::read(wasm, store, self)?;
@@ -698,20 +698,15 @@ impl MemorySection {
         wasm: &mut Reader,
         module: &Module,
         allocator: Rc<dyn WasmMemoryAllocator>,
-    ) -> Result<Option<MemoryKind>, ValidationError> {
+    ) -> Result<Vec<MemoryKind>, ValidationError> {
         let len = wasm.read_u32()?;
-        if len > 1 {
-            Err(ValidationError::MultipleMemories)
-        } else if len == 0 {
-            Ok(None)
-        } else if module.memory.is_some() {
-            Err(ValidationError::MultipleMemories)
-        } else {
-            // We are allocating memory for this module
+        let mut memories = Vec::new();
+        for _ in 0..len {
             let ty = MemType::read(wasm)?;
-            let memory = Memory::new(ty, allocator)?;
-            Ok(Some(MemoryKind::Owned(Rc::new(memory)?)))
+            let memory = Memory::new(ty, allocator.clone())?;
+            memories.push(MemoryKind::Owned(Rc::new(memory)?));
         }
+        Ok(memories)
     }
 }
 
@@ -827,7 +822,7 @@ impl Export {
             ExportDesc::Mem(i) => {
                 if i.0 != 0 {
                     return Err(ValidationError::InvalidMemIndex);
-                } else if module.memory.is_none() {
+                } else if module.memories.is_empty() {
                     return Err(ValidationError::MemoryNotDefined);
                 }
             }
@@ -1003,13 +998,14 @@ impl CodeSection {
 #[derive(Clone)]
 pub struct Data {
     pub is_passive: bool,
+    pub memory_index: u32,
     pub offset: u32,
     pub init: Vec<u8>,
 }
 
 impl Module {
-    pub(crate) fn check_memory_defined(&self) -> Result<(), ValidationError> {
-        if self.memory.is_none() {
+    pub(crate) fn check_memory_defined(&self, mem: MemIdx) -> Result<(), ValidationError> {
+        if mem.0 as usize >= self.memories.len() {
             Err(ValidationError::MemoryNotDefined)
         } else {
             Ok(())
@@ -1025,14 +1021,13 @@ impl Data {
     ) -> Result<Self, ValidationError> {
         let flags = wasm.read_u32()?;
         
+        let mut memory_index = 0;
         let is_passive = match flags {
             0 => false,
             1 => true,
             2 => {
                 let mem = MemIdx::read(wasm)?;
-                if mem.0 != 0 {
-                    return Err(ValidationError::InvalidMemIndex);
-                }
+                memory_index = mem.0;
                 false
             }
             _ => return Err(ValidationError::InvalidMemIndex), // or a more suitable error
@@ -1058,7 +1053,7 @@ impl Data {
 
         let init = wasm.read_vec(|w| w.read_u8())?;
 
-        Ok(Data { is_passive, offset, init })
+        Ok(Data { is_passive, memory_index, offset, init })
     }
 }
 
@@ -1072,11 +1067,11 @@ impl DataSection {
         }
 
         // We need to mutate module to push data segments, but we also might need to write to memory.
-        let memory_opt = if let Some(memory) = &module.memory {
+        let memory_opt = if let Some(memory) = module.memories.get(0) {
             let memory = match memory {
                 MemoryKind::Owned(memory) => Some(memory),
                 MemoryKind::Import(i) => {
-                    let Some(MemoryKind::Owned(memory)) = &store.modules()[i.0 as usize].memory
+                    let Some(MemoryKind::Owned(memory)) = store.modules()[i.0 as usize].memories.get(0)
                     else {
                         unreachable!()
                     };

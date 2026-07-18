@@ -193,12 +193,12 @@ impl<'a, 'store, T: BaseVisitor<State = InterpreterState<'store>, Error = E>, E>
     trace_visit_fn!(i64_store32, m: MemArg);
 
     // Memory instructions - size/grow
-    trace_visit_fn!(memory_size);
-    trace_visit_fn!(memory_grow);
-    trace_visit_fn!(memory_init, data: DataIdx);
+    trace_visit_fn!(memory_size, m: MemIdx);
+    trace_visit_fn!(memory_grow, m: MemIdx);
+    trace_visit_fn!(memory_init, data: DataIdx, m: MemIdx);
     trace_visit_fn!(data_drop, data: DataIdx);
-    trace_visit_fn!(memory_copy);
-    trace_visit_fn!(memory_fill);
+    trace_visit_fn!(memory_copy, dst: MemIdx, src: MemIdx);
+    trace_visit_fn!(memory_fill, m: MemIdx);
 
     // Numeric instructions - const
     trace_visit_fn!(i32_const, n: i32);

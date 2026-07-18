@@ -101,10 +101,12 @@ impl<'code> IrReader<'code> {
             ($name:ident, MemArg) => {{
                 let align = imm;
                 let offset = self.read_u32(pc).unwrap();
+                let memory_index = self.read_u32(pc).unwrap();
                 visitor.$name(
                     MemArg {
                         align: align as u32,
                         offset,
+                        memory_index,
                     },
                     state,
                 )?;

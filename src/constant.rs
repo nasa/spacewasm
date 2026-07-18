@@ -79,12 +79,12 @@ impl<'a> BaseVisitor for ConstantCompiler<'a> {
     invalid_constant_fn!(i64_store32, m: MemArg);
 
     // Memory instructions - size/grow
-    invalid_constant_fn!(memory_size);
-    invalid_constant_fn!(memory_grow);
-    invalid_constant_fn!(memory_init, data: DataIdx);
+    invalid_constant_fn!(memory_size, m: MemIdx);
+    invalid_constant_fn!(memory_grow, m: MemIdx);
+    invalid_constant_fn!(memory_init, data: DataIdx, m: MemIdx);
     invalid_constant_fn!(data_drop, data: DataIdx);
-    invalid_constant_fn!(memory_copy);
-    invalid_constant_fn!(memory_fill);
+    invalid_constant_fn!(memory_copy, dst: MemIdx, src: MemIdx);
+    invalid_constant_fn!(memory_fill, m: MemIdx);
 
     // Numeric instructions - const
     fn i32_const(&self, n: i32, state: &mut Self::State) -> Result<(), Self::Error> {

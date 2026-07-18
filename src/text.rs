@@ -1087,6 +1087,8 @@ impl<'a, const MAX_CODE_PAGES: usize, const MAX_CONTROL_FRAMES: usize, const MAX
             self.instr_imm_8(op, m.align as u8)?;
             self.code.push((m.offset & 0xFFFF) as u16)?;
             self.code.push(((m.offset >> 16) & 0xFFFF) as u16)?;
+            self.code.push((m.memory_index & 0xFFFF) as u16)?;
+            self.code.push(((m.memory_index >> 16) & 0xFFFF) as u16)?;
             Ok(())
         }
     }

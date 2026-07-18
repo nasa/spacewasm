@@ -65,7 +65,7 @@ impl Store {
             sp: 0x0,
             fp: 0x0,
             stack: Stack::new(stack_size)?,
-            memory: self.zero_memory.clone(),
+            memories: Rc::new([]),
             table: self.zero_table.clone(),
             jumped: false,
             module: ModuleRef(0),
@@ -74,13 +74,13 @@ impl Store {
         })
     }
 
-    pub fn get_memory(&mut self, module_ref: ModuleRef) -> &Rc<Memory> {
-        match &self.modules[module_ref.0 as usize].memory {
+    pub fn get_memory(&mut self, module_ref: ModuleRef, mem_idx: usize) -> &Rc<Memory> {
+        match self.modules[module_ref.0 as usize].memories.get(mem_idx) {
             None => &self.zero_memory,
             Some(MemoryKind::Owned(mem)) => mem,
             Some(MemoryKind::Import(import_module_ref)) => {
                 let r = import_module_ref.0 as usize;
-                let Some(MemoryKind::Owned(mem)) = &self.modules[r].memory else {
+                let Some(MemoryKind::Owned(mem)) = self.modules[r].memories.get(0) else {
                     unreachable!()
                 };
 
@@ -113,11 +113,11 @@ impl Store {
         }
     }
 
-    pub fn get_memory_mut(&mut self, module_ref: ModuleRef) -> &mut Rc<Memory> {
-        match &self.modules[module_ref.0 as usize].memory {
+    pub fn get_memory_mut(&mut self, module_ref: ModuleRef, mem_idx: usize) -> &mut Rc<Memory> {
+        match self.modules[module_ref.0 as usize].memories.get(mem_idx) {
             None => &mut self.zero_memory,
             Some(MemoryKind::Owned(_)) => {
-                let Some(MemoryKind::Owned(mem)) = &mut self.modules[module_ref.0 as usize].memory
+                let Some(MemoryKind::Owned(mem)) = &mut self.modules[module_ref.0 as usize].memories[mem_idx]
                 else {
                     unreachable!()
                 };
@@ -125,7 +125,7 @@ impl Store {
             }
             Some(MemoryKind::Import(import_module_ref)) => {
                 let r = import_module_ref.0 as usize;
-                let Some(MemoryKind::Owned(mem)) = &mut self.modules[r].memory else {
+                let Some(MemoryKind::Owned(mem)) = self.modules[r].memories.get_mut(0) else {
                     unreachable!()
                 };
 
@@ -138,11 +138,18 @@ impl Store {
             }
         }
     }
+    pub fn get_memories(&mut self, module_ref: ModuleRef) -> Rc<[Rc<Memory>]> {
+        let mut memories = Vec::new();
+        for i in 0..self.modules[module_ref.0 as usize].memories.len() {
+            memories.push(self.get_memory(module_ref, i).clone());
+        }
+        Rc::from(memories.into_boxed_slice())
+    }
 }
 
 impl<'store> InterpreterState<'store> {
-    pub fn clear_memory(&mut self) {
-        self.memory = self.store.zero_memory.clone();
+    pub fn clear_memories(&mut self) {
+        self.memories = Rc::new([]);
     }
 
     pub fn clear_table(&mut self) {
