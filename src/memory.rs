@@ -240,6 +240,35 @@ impl Memory {
         }
     }
 
+    pub fn copy(&self, dst: usize, src: usize, len: usize) -> Result<(), MemoryError> {
+        let _ = Memory::effective_address(dst as u32, len as u32)?;
+        let _ = Memory::effective_address(src as u32, len as u32)?;
+
+        if dst + len > self.size || src + len > self.size {
+            return Err(MemoryError::OutOfBoundsAccess);
+        }
+
+        unsafe {
+            core::ptr::copy(self.ptr.add(src), self.ptr.add(dst), len);
+        }
+
+        Ok(())
+    }
+
+    pub fn fill(&self, dst: usize, val: u8, len: usize) -> Result<(), MemoryError> {
+        let _ = Memory::effective_address(dst as u32, len as u32)?;
+
+        if dst + len > self.size {
+            return Err(MemoryError::OutOfBoundsAccess);
+        }
+
+        unsafe {
+            core::ptr::write_bytes(self.ptr.add(dst), val, len);
+        }
+
+        Ok(())
+    }
+
     pub fn mem_type(&self) -> MemType {
         self.ty
     }

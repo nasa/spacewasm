@@ -81,6 +81,10 @@ impl<'a> BaseVisitor for ConstantCompiler<'a> {
     // Memory instructions - size/grow
     invalid_constant_fn!(memory_size);
     invalid_constant_fn!(memory_grow);
+    invalid_constant_fn!(memory_init, data: DataIdx);
+    invalid_constant_fn!(data_drop, data: DataIdx);
+    invalid_constant_fn!(memory_copy);
+    invalid_constant_fn!(memory_fill);
 
     // Numeric instructions - const
     fn i32_const(&self, n: i32, state: &mut Self::State) -> Result<(), Self::Error> {
@@ -232,6 +236,11 @@ impl<'a> BaseVisitor for ConstantCompiler<'a> {
 
     // Numeric instructions - conversions
     invalid_constant_fn!(i32_wrap_i64);
+    invalid_constant_fn!(i32_extend8_s);
+    invalid_constant_fn!(i32_extend16_s);
+    invalid_constant_fn!(i64_extend8_s);
+    invalid_constant_fn!(i64_extend16_s);
+    invalid_constant_fn!(i64_extend32_s);
     invalid_constant_fn!(i32_trunc_f32_s);
     invalid_constant_fn!(i32_trunc_f32_u);
     invalid_constant_fn!(i32_trunc_f64_s);

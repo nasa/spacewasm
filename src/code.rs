@@ -255,6 +255,32 @@ impl<'wasm> Reader<'wasm> {
                 I64_LOAD32_S => instruction!(i64_load32_s, MemArg),
                 I64_LOAD32_U => instruction!(i64_load32_u, MemArg),
 
+
+                0xFC => {
+                    let sub_opcode = self.read_u32()?;
+                    match sub_opcode {
+                        8 => {
+                            let data = DataIdx::read(self)?;
+                            self.expect_u8(0x00)?;
+                            visitor.memory_init(data, state)?;
+                        }
+                        9 => {
+                            let data = DataIdx::read(self)?;
+                            visitor.data_drop(data, state)?;
+                        }
+                        10 => {
+                            self.expect_u8(0x00)?;
+                            self.expect_u8(0x00)?;
+                            visitor.memory_copy(state)?;
+                        }
+                        11 => {
+                            self.expect_u8(0x00)?;
+                            visitor.memory_fill(state)?;
+                        }
+                        _ => return Err(ValidationError::InvalidOpcode(0xFC)),
+                    }
+                }
+
                 // Memory instructions - stores
                 I32_STORE => instruction!(i32_store, MemArg),
                 I64_STORE => instruction!(i64_store, MemArg),
@@ -410,6 +436,11 @@ impl<'wasm> Reader<'wasm> {
 
                 // Numeric instructions - conversions
                 I32_WRAP_I64 => instruction!(i32_wrap_i64),
+                I32_EXTEND8_S => instruction!(i32_extend8_s),
+                I32_EXTEND16_S => instruction!(i32_extend16_s),
+                I64_EXTEND8_S => instruction!(i64_extend8_s),
+                I64_EXTEND16_S => instruction!(i64_extend16_s),
+                I64_EXTEND32_S => instruction!(i64_extend32_s),
                 I32_TRUNC_F32_S => instruction!(i32_trunc_f32_s),
                 I32_TRUNC_F32_U => instruction!(i32_trunc_f32_u),
                 I32_TRUNC_F64_S => instruction!(i32_trunc_f64_s),

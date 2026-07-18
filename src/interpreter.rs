@@ -756,6 +756,75 @@ impl<'store> BaseVisitor for Interpreter<'store> {
         Ok(())
     }
 
+    fn memory_init(&self, data: DataIdx, state: &mut Self::State) -> Result<(), Self::Error> {
+        let n = state.stack.read_u32(state.sp - 1);
+        let s = state.stack.read_u32(state.sp - 2);
+        let d = state.stack.read_u32(state.sp - 3);
+        state.sp -= 3;
+
+        let module = &state.store.modules()[state.module.0 as usize];
+        
+        if data.0 as usize >= module.data.len() {
+            return Err(InterpreterBreak::Trap(TrapReason::MemoryOutOfBounds));
+        }
+        
+        let data_segment = &module.data[data.0 as usize].init;
+        if s.saturating_add(n) as usize > data_segment.len() {
+            return Err(InterpreterBreak::Trap(TrapReason::MemoryOutOfBounds));
+        }
+        
+        if let Some(mem) = state.memory.get_mut() {
+            if mem.store(d as usize, &data_segment[s as usize..(s + n) as usize]).is_err() {
+                return Err(InterpreterBreak::Trap(TrapReason::MemoryOutOfBounds));
+            }
+        } else {
+            return Err(InterpreterBreak::Trap(TrapReason::MemoryOutOfBounds));
+        }
+
+        Ok(())
+    }
+
+    fn data_drop(&self, data: DataIdx, state: &mut Self::State) -> Result<(), Self::Error> {
+        let module = &mut state.store.modules_mut()[state.module.0 as usize];
+        if data.0 as usize >= module.data.len() {
+            return Err(InterpreterBreak::Trap(TrapReason::MemoryOutOfBounds));
+        }
+        module.data[data.0 as usize].init.clear();
+        Ok(())
+    }
+
+    fn memory_copy(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        let n = state.stack.read_u32(state.sp - 1);
+        let s = state.stack.read_u32(state.sp - 2);
+        let d = state.stack.read_u32(state.sp - 3);
+        state.sp -= 3;
+
+        if let Some(mem) = state.memory.get_mut() {
+            if mem.copy(d as usize, s as usize, n as usize).is_err() {
+                return Err(InterpreterBreak::Trap(TrapReason::MemoryOutOfBounds));
+            }
+        } else {
+            return Err(InterpreterBreak::Trap(TrapReason::MemoryOutOfBounds));
+        }
+        Ok(())
+    }
+
+    fn memory_fill(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        let n = state.stack.read_u32(state.sp - 1);
+        let val = state.stack.read_u32(state.sp - 2) as u8;
+        let d = state.stack.read_u32(state.sp - 3);
+        state.sp -= 3;
+
+        if let Some(mem) = state.memory.get_mut() {
+            if mem.fill(d as usize, val, n as usize).is_err() {
+                return Err(InterpreterBreak::Trap(TrapReason::MemoryOutOfBounds));
+            }
+        } else {
+            return Err(InterpreterBreak::Trap(TrapReason::MemoryOutOfBounds));
+        }
+        Ok(())
+    }
+
     fn i32_const(&self, n: i32, state: &mut Self::State) -> Result<(), Self::Error> {
         state.stack.write_u32(state.sp, n as u32);
         state.sp += 1;
@@ -1108,6 +1177,37 @@ impl<'store> BaseVisitor for Interpreter<'store> {
         state.sp += 1;
         Ok(())
     }
+
+    fn i32_extend8_s(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        let i = state.stack.read_u32(state.sp - 1) as i8 as i32 as u32;
+        state.stack.write_u32(state.sp - 1, i);
+        Ok(())
+    }
+
+    fn i32_extend16_s(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        let i = state.stack.read_u32(state.sp - 1) as i16 as i32 as u32;
+        state.stack.write_u32(state.sp - 1, i);
+        Ok(())
+    }
+
+    fn i64_extend8_s(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        let i = state.stack.read_u64(state.sp - 2) as i8 as i64 as u64;
+        state.stack.write_u64(state.sp - 2, i);
+        Ok(())
+    }
+
+    fn i64_extend16_s(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        let i = state.stack.read_u64(state.sp - 2) as i16 as i64 as u64;
+        state.stack.write_u64(state.sp - 2, i);
+        Ok(())
+    }
+
+    fn i64_extend32_s(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        let i = state.stack.read_u64(state.sp - 2) as i32 as i64 as u64;
+        state.stack.write_u64(state.sp - 2, i);
+        Ok(())
+    }
+
 
     fn i64_extend_i32_u(&self, state: &mut Self::State) -> Result<(), Self::Error> {
         // Low word is already in place at [sp-1]

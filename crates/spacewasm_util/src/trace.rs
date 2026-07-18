@@ -1,6 +1,6 @@
 use spacewasm::{
-    BaseVisitor, HostModuleRef, InterpreterState, IrVisitor, JumpTarget, LabelTarget,
-    LocalVariable, MemArg, ModuleRef, TypeIdx, ValType,
+    BaseVisitor, DataIdx, FuncIdx, GlobalIdx, HostModuleRef, InterpreterState, IrVisitor, JumpTarget,
+    LabelIdx, LabelTarget, LocalIdx, LocalVariable, MemArg, ModuleRef, ResultType, TypeIdx, ValType,
 };
 
 /// A snapshot of interpreter state at a specific instruction
@@ -195,6 +195,10 @@ impl<'a, 'store, T: BaseVisitor<State = InterpreterState<'store>, Error = E>, E>
     // Memory instructions - size/grow
     trace_visit_fn!(memory_size);
     trace_visit_fn!(memory_grow);
+    trace_visit_fn!(memory_init, data: DataIdx);
+    trace_visit_fn!(data_drop, data: DataIdx);
+    trace_visit_fn!(memory_copy);
+    trace_visit_fn!(memory_fill);
 
     // Numeric instructions - const
     trace_visit_fn!(i32_const, n: i32);
@@ -318,6 +322,11 @@ impl<'a, 'store, T: BaseVisitor<State = InterpreterState<'store>, Error = E>, E>
 
     // Numeric instructions - conversions
     trace_visit_fn!(i32_wrap_i64);
+    trace_visit_fn!(i32_extend8_s);
+    trace_visit_fn!(i32_extend16_s);
+    trace_visit_fn!(i64_extend8_s);
+    trace_visit_fn!(i64_extend16_s);
+    trace_visit_fn!(i64_extend32_s);
     trace_visit_fn!(i32_trunc_f32_s);
     trace_visit_fn!(i32_trunc_f32_u);
     trace_visit_fn!(i32_trunc_f64_s);

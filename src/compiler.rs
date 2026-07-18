@@ -480,6 +480,42 @@ impl<'a, const MAX_CODE_PAGES: usize, const MAX_CONTROL_FRAMES: usize, const MAX
         Ok(())
     }
 
+    fn memory_init(&self, data: DataIdx, state: &mut Self::State) -> Result<(), Self::Error> {
+        state.module().check_memory_defined()?;
+        if data.0 as usize >= state.module().data.len() {
+            return Err(ValidationError::DataIdxOutOfRange);
+        }
+        validate!(state, (I32 I32 I32) -> ());
+        state.instr(MEMORY_INIT)?;
+        state.write_32(data.0)?;
+        Ok(())
+    }
+
+    fn data_drop(&self, data: DataIdx, state: &mut Self::State) -> Result<(), Self::Error> {
+        if data.0 as usize >= state.module().data.len() {
+            return Err(ValidationError::DataIdxOutOfRange);
+        }
+        validate!(state, () -> ());
+        state.instr(DATA_DROP)?;
+        state.write_32(data.0)?;
+        Ok(())
+    }
+
+    fn memory_copy(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        state.module().check_memory_defined()?;
+        validate!(state, (I32 I32 I32) -> ());
+        state.instr(MEMORY_COPY)?;
+        Ok(())
+    }
+
+    fn memory_fill(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        state.module().check_memory_defined()?;
+        validate!(state, (I32 I32 I32) -> ());
+        state.instr(MEMORY_FILL)?;
+        Ok(())
+    }
+
+
     fn f64_const(&self, z: f64, state: &mut Self::State) -> Result<(), Self::Error> {
         validate!(state, () -> (F64));
         state.instr(F64_CONST)?;
@@ -614,4 +650,9 @@ impl<'a, const MAX_CODE_PAGES: usize, const MAX_CONTROL_FRAMES: usize, const MAX
     instruction!(f64_convert_i64_s, F64_CONVERT_I64_S, (I64) -> (F64));
     instruction!(f64_convert_i64_u, F64_CONVERT_I64_U, (I64) -> (F64));
     instruction!(f64_promote_f32, F64_PROMOTE_F32, (F32) -> (F64));
+    instruction!(i32_extend8_s, I32_EXTEND8_S, (I32) -> (I32));
+    instruction!(i32_extend16_s, I32_EXTEND16_S, (I32) -> (I32));
+    instruction!(i64_extend8_s, I64_EXTEND8_S, (I64) -> (I64));
+    instruction!(i64_extend16_s, I64_EXTEND16_S, (I64) -> (I64));
+    instruction!(i64_extend32_s, I64_EXTEND32_S, (I64) -> (I64));
 }

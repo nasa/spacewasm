@@ -96,6 +96,7 @@ pub enum ValidationError {
     InstructionOutsideOfFunction,
     LocalIdxOutOfRange,
     FunctionIdxOutOfRange,
+    DataIdxOutOfRange,
     TypeIdxOutOfRange,
     FunctionTextOutOfRange,
     GlobalIdxOutOfRange,

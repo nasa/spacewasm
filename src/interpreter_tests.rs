@@ -809,6 +809,99 @@ mod tests {
     }
 
     #[test]
+    fn test_i32_extend8_s() {
+        with_test_context(|state| {
+            let interpreter = Interpreter::default();
+            state.stack.write_u32(0, 0x000000FF);
+            state.sp = 1;
+            interpreter.i32_extend8_s(state).unwrap();
+            assert_eq!(state.sp, 1);
+            assert_eq!(state.stack.read_u32(0), 0xFFFFFFFF); // -1
+            
+            state.stack.write_u32(0, 0x0000007F);
+            interpreter.i32_extend8_s(state).unwrap();
+            assert_eq!(state.stack.read_u32(0), 0x0000007F); // 127
+        });
+    }
+
+    #[test]
+    fn test_i64_extend8_s() {
+        with_test_context(|state| {
+            let interpreter = Interpreter::default();
+            state.stack.write_u64(0, 0x00000000000000FF);
+            state.sp = 2;
+            interpreter.i64_extend8_s(state).unwrap();
+            assert_eq!(state.sp, 2);
+            assert_eq!(state.stack.read_u64(0), 0xFFFFFFFFFFFFFFFF); // -1
+        });
+    }
+
+    #[test]
+    fn test_memory_fill() {
+        with_test_context(|state| {
+            let interpreter = Interpreter::default();
+
+            // Push dst, val, len
+            state.stack.write_u32(0, 4); // dst
+            state.stack.write_u32(1, 0xAB); // val
+            state.stack.write_u32(2, 2); // len
+            state.sp = 3;
+
+            // grow memory first so it has space
+            state.stack.write_u32(3, 1);
+            state.sp = 4;
+            interpreter.memory_grow(state).unwrap();
+            
+            // clear stack and setup for memory_fill
+            state.stack.write_u32(0, 4);
+            state.stack.write_u32(1, 0xAB);
+            state.stack.write_u32(2, 2);
+            state.sp = 3;
+
+            interpreter.memory_fill(state).unwrap();
+            assert_eq!(state.sp, 0);
+
+            // Read back from memory
+            let memory = state.store.get_memory(state.module);
+            assert_eq!(memory.load_u8(4).unwrap(), 0xAB);
+            assert_eq!(memory.load_u8(5).unwrap(), 0xAB);
+            assert_eq!(memory.load_u8(6).unwrap(), 0x00);
+        });
+    }
+
+    #[test]
+    fn test_memory_copy() {
+        with_test_context(|state| {
+            let interpreter = Interpreter::default();
+
+            // grow memory first
+            state.stack.write_u32(0, 1);
+            state.sp = 1;
+            interpreter.memory_grow(state).unwrap();
+
+            // fill memory at index 8
+            state.stack.write_u32(0, 8); // dst
+            state.stack.write_u32(1, 0xCD); // val
+            state.stack.write_u32(2, 2); // len
+            state.sp = 3;
+            interpreter.memory_fill(state).unwrap();
+
+            // copy from 8 to 0, len = 2
+            state.stack.write_u32(0, 0); // dst
+            state.stack.write_u32(1, 8); // src
+            state.stack.write_u32(2, 2); // len
+            state.sp = 3;
+            interpreter.memory_copy(state).unwrap();
+            assert_eq!(state.sp, 0);
+
+            let memory = state.store.get_memory(state.module);
+            assert_eq!(memory.load_u8(0).unwrap(), 0xCD);
+            assert_eq!(memory.load_u8(1).unwrap(), 0xCD);
+            assert_eq!(memory.load_u8(2).unwrap(), 0x00);
+        });
+    }
+
+    #[test]
     fn test_i32_trunc_f32_s() {
         with_test_context(|state| {
             let interpreter = Interpreter::default();

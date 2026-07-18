@@ -1,5 +1,5 @@
 use crate::{
-    FuncIdx, GlobalIdx, LabelIdx, LabelTarget, LocalIdx, MemArg, ResultType, TypeIdx, ValType,
+    FuncIdx, GlobalIdx, LabelIdx, LabelTarget, LocalIdx, MemArg, ResultType, TypeIdx, ValType, DataIdx,
 };
 
 /// A convenience macro for defining the visitor function for a decoded
@@ -33,6 +33,11 @@ pub trait BaseVisitor {
     visit_fn!(nop);
 
     // Control flow & parametric instructions are not handled by the base visitor
+
+    visit_fn!(memory_init, data: DataIdx);
+    visit_fn!(data_drop, data: DataIdx);
+    visit_fn!(memory_copy);
+    visit_fn!(memory_fill);
 
     // Memory instructions - loads
     visit_fn!(i32_load, m: MemArg);
@@ -187,6 +192,11 @@ pub trait BaseVisitor {
 
     // Numeric instructions - conversions
     visit_fn!(i32_wrap_i64);
+    visit_fn!(i32_extend8_s);
+    visit_fn!(i32_extend16_s);
+    visit_fn!(i64_extend8_s);
+    visit_fn!(i64_extend16_s);
+    visit_fn!(i64_extend32_s);
     visit_fn!(i32_trunc_f32_s);
     visit_fn!(i32_trunc_f32_u);
     visit_fn!(i32_trunc_f64_s);

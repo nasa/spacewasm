@@ -1,5 +1,5 @@
 use spacewasm::{
-    BaseVisitor, FuncIdx, GlobalIdx, HostModuleRef, IrVisitor, LabelIdx, LabelTarget, LocalIdx,
+    BaseVisitor, DataIdx, FuncIdx, GlobalIdx, HostModuleRef, IrVisitor, LabelIdx, LabelTarget, LocalIdx,
     LocalVariable, MemArg, ModuleRef, ResultType, TypeIdx, ValType, WasmVisitor,
 };
 use std::cell::RefCell;
@@ -92,6 +92,10 @@ impl<'a, S, E, T: BaseVisitor<State = S, Error = E>> BaseVisitor for Inspector<'
     // Memory instructions - size/grow
     visit_fn!(memory_size);
     visit_fn!(memory_grow);
+    visit_fn!(memory_init, data: DataIdx);
+    visit_fn!(data_drop, data: DataIdx);
+    visit_fn!(memory_copy);
+    visit_fn!(memory_fill);
 
     // Numeric instructions - const
     visit_fn!(i32_const, n: i32);
@@ -215,6 +219,11 @@ impl<'a, S, E, T: BaseVisitor<State = S, Error = E>> BaseVisitor for Inspector<'
 
     // Numeric instructions - conversions
     visit_fn!(i32_wrap_i64);
+    visit_fn!(i32_extend8_s);
+    visit_fn!(i32_extend16_s);
+    visit_fn!(i64_extend8_s);
+    visit_fn!(i64_extend16_s);
+    visit_fn!(i64_extend32_s);
     visit_fn!(i32_trunc_f32_s);
     visit_fn!(i32_trunc_f32_u);
     visit_fn!(i32_trunc_f64_s);

@@ -35,6 +35,7 @@ pub struct Module {
     pub imports: Vec<Import>,
     pub exports: Vec<Export>,
     pub start: Option<Ref>,
+    pub data: Vec<Data>,
 }
 
 pub trait CustomSectionHandler {
@@ -179,6 +180,7 @@ impl Module {
             imports: Vec::zero(),
             exports: Vec::zero(),
             start: None,
+            data: Vec::zero(),
         };
 
         let mut last_section: SectionKind = SectionKind::Custom;
@@ -597,6 +599,7 @@ read_impl_u32!(MemIdx);
 read_impl_u32!(GlobalIdx);
 read_impl_u32!(LocalIdx);
 read_impl_u32!(LabelIdx);
+read_impl_u32!(DataIdx);
 
 pub enum ImportDesc {
     Func(TypeIdx),
@@ -999,6 +1002,7 @@ impl CodeSection {
 
 #[derive(Clone)]
 pub struct Data {
+    pub is_passive: bool,
     pub offset: u32,
     pub init: Vec<u8>,
 }
@@ -1019,66 +1023,88 @@ impl Data {
         store: &Store,
         module: &Module,
     ) -> Result<Self, ValidationError> {
-        let mem = MemIdx::read(wasm)?;
-        if mem.0 != 0 {
-            return Err(ValidationError::InvalidMemIndex);
-        }
-
-        // Make sure we actually defined a linear memory for this module
-        module.check_memory_defined()?;
-
-        let offset = Expr::read_constant(wasm, store, module)?;
-        let init = wasm.read_vec(|w| w.read_u8())?;
-
-        let offset = match offset {
-            Value::I32(i) => {
-                if i < 0 {
-                    return Err(ValidationError::InvalidNegativeMemOffset);
+        let flags = wasm.read_u32()?;
+        
+        let is_passive = match flags {
+            0 => false,
+            1 => true,
+            2 => {
+                let mem = MemIdx::read(wasm)?;
+                if mem.0 != 0 {
+                    return Err(ValidationError::InvalidMemIndex);
                 }
-
-                i as u32
+                false
             }
-            Value::I64(_) => return Err(ValidationError::InvalidMemOffsetType),
-            Value::F32(_) => return Err(ValidationError::InvalidMemOffsetType),
-            Value::F64(_) => return Err(ValidationError::InvalidMemOffsetType),
+            _ => return Err(ValidationError::InvalidMemIndex), // or a more suitable error
         };
 
-        Ok(Data { offset, init })
+        let offset = if !is_passive {
+            // Make sure we actually defined a linear memory for this module
+            module.check_memory_defined()?;
+
+            let offset_expr = Expr::read_constant(wasm, store, module)?;
+            match offset_expr {
+                Value::I32(i) => {
+                    if i < 0 {
+                        return Err(ValidationError::InvalidNegativeMemOffset);
+                    }
+                    i as u32
+                }
+                _ => return Err(ValidationError::InvalidMemOffsetType),
+            }
+        } else {
+            0
+        };
+
+        let init = wasm.read_vec(|w| w.read_u8())?;
+
+        Ok(Data { is_passive, offset, init })
     }
 }
 
+
 pub struct DataSection;
 impl DataSection {
-    pub fn read(wasm: &mut Reader, store: &Store, module: &Module) -> Result<(), ValidationError> {
+    pub fn read(wasm: &mut Reader, store: &Store, module: &mut Module) -> Result<(), ValidationError> {
         let len = wasm.read_u32()?;
         if len == 0 {
             return Ok(());
         }
 
-        if let Some(memory) = &module.memory {
+        // We need to mutate module to push data segments, but we also might need to write to memory.
+        let memory_opt = if let Some(memory) = &module.memory {
             let memory = match memory {
-                MemoryKind::Owned(memory) => memory,
+                MemoryKind::Owned(memory) => Some(memory),
                 MemoryKind::Import(i) => {
                     let Some(MemoryKind::Owned(memory)) = &store.modules()[i.0 as usize].memory
                     else {
                         unreachable!()
                     };
-
-                    memory
+                    Some(memory)
                 }
                 MemoryKind::ImportHost(i) => {
-                    &store.host_modules()[i.module.0 as usize].memory[i.index as usize].value
+                    Some(&store.host_modules()[i.module.0 as usize].memory[i.index as usize].value)
                 }
             };
-
-            for _ in 0..len {
-                let data = Data::read(wasm, store, module)?;
-                memory.store(data.offset as usize, &data.init)?;
-            }
-
-            Ok(())
+            memory
         } else {
-            Err(ValidationError::MemoryNotDefined)
+            None
+        };
+
+        for _ in 0..len {
+            let data = Data::read(wasm, store, module)?;
+            
+            if !data.is_passive {
+                if let Some(memory) = memory_opt {
+                    memory.store(data.offset as usize, &data.init)?;
+                } else {
+                    return Err(ValidationError::MemoryNotDefined);
+                }
+            }
+            
+            module.data.push(data);
         }
+
+        Ok(())
     }
 }
