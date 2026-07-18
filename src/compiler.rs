@@ -82,6 +82,17 @@ macro_rules! instruction {
     };
 }
 
+macro_rules! instruction_fc {
+    ($name:ident, $sub_opcode:expr, ($($in_ty:ident)*) -> ($($out_ty:ident)*)) => {
+        fn $name(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+            validate!(state, ($($in_ty)*) -> ($($out_ty)*));
+            // We use 0xFC as the prefix instruction and the sub-opcode as the 8-bit immediate
+            state.instr_imm_8(0xFC, $sub_opcode)?;
+            Ok(())
+        }
+    };
+}
+
 impl<'a, const MAX_CODE_PAGES: usize, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize>
     WasmVisitor for Compiler<'a, MAX_CODE_PAGES, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>
 {
@@ -614,4 +625,14 @@ impl<'a, const MAX_CODE_PAGES: usize, const MAX_CONTROL_FRAMES: usize, const MAX
     instruction!(f64_convert_i64_s, F64_CONVERT_I64_S, (I64) -> (F64));
     instruction!(f64_convert_i64_u, F64_CONVERT_I64_U, (I64) -> (F64));
     instruction!(f64_promote_f32, F64_PROMOTE_F32, (F32) -> (F64));
+
+    // Non-trapping float-to-int conversions
+    instruction_fc!(i32_trunc_sat_f32_s, I32_TRUNC_SAT_F32_S, (F32) -> (I32));
+    instruction_fc!(i32_trunc_sat_f32_u, I32_TRUNC_SAT_F32_U, (F32) -> (I32));
+    instruction_fc!(i32_trunc_sat_f64_s, I32_TRUNC_SAT_F64_S, (F64) -> (I32));
+    instruction_fc!(i32_trunc_sat_f64_u, I32_TRUNC_SAT_F64_U, (F64) -> (I32));
+    instruction_fc!(i64_trunc_sat_f32_s, I64_TRUNC_SAT_F32_S, (F32) -> (I64));
+    instruction_fc!(i64_trunc_sat_f32_u, I64_TRUNC_SAT_F32_U, (F32) -> (I64));
+    instruction_fc!(i64_trunc_sat_f64_s, I64_TRUNC_SAT_F64_S, (F64) -> (I64));
+    instruction_fc!(i64_trunc_sat_f64_u, I64_TRUNC_SAT_F64_U, (F64) -> (I64));
 }

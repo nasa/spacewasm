@@ -252,6 +252,16 @@ impl<'a, ST: OutputStream, S, E, T: BaseVisitor<State = S, Error = E> + WasmVisi
     visit_fn!(i64_reinterpret_f64);
     visit_fn!(f32_reinterpret_i32);
     visit_fn!(f64_reinterpret_i64);
+
+    // Non-trapping float-to-int conversions
+    visit_fn!(i32_trunc_sat_f32_s);
+    visit_fn!(i32_trunc_sat_f32_u);
+    visit_fn!(i32_trunc_sat_f64_s);
+    visit_fn!(i32_trunc_sat_f64_u);
+    visit_fn!(i64_trunc_sat_f32_s);
+    visit_fn!(i64_trunc_sat_f32_u);
+    visit_fn!(i64_trunc_sat_f64_s);
+    visit_fn!(i64_trunc_sat_f64_u);
 }
 
 impl<'a, ST: OutputStream, S, E, T: BaseVisitor<State = S, Error = E> + IrVisitor> IrVisitor

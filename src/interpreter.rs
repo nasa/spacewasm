@@ -1252,6 +1252,59 @@ impl<'store> BaseVisitor for Interpreter<'store> {
         state.sp += 1;
         Ok(())
     }
+
+    // Non-trapping float-to-int conversions
+    fn i32_trunc_sat_f32_s(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        let f = state.stack.read_f32(state.sp - 1);
+        state.stack.write_u32(state.sp - 1, f as i32 as u32);
+        Ok(())
+    }
+
+    fn i32_trunc_sat_f32_u(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        let f = state.stack.read_f32(state.sp - 1);
+        state.stack.write_u32(state.sp - 1, f as u32);
+        Ok(())
+    }
+
+    fn i32_trunc_sat_f64_s(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        state.sp -= 1;
+        let f = state.stack.read_f64(state.sp - 1);
+        state.stack.write_u32(state.sp - 1, f as i32 as u32);
+        Ok(())
+    }
+
+    fn i32_trunc_sat_f64_u(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        state.sp -= 1;
+        let f = state.stack.read_f64(state.sp - 1);
+        state.stack.write_u32(state.sp - 1, f as u32);
+        Ok(())
+    }
+
+    fn i64_trunc_sat_f32_s(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        let f = state.stack.read_f32(state.sp - 1);
+        state.stack.write_u64(state.sp - 1, f as i64 as u64);
+        state.sp += 1;
+        Ok(())
+    }
+
+    fn i64_trunc_sat_f32_u(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        let f = state.stack.read_f32(state.sp - 1);
+        state.stack.write_u64(state.sp - 1, f as u64);
+        state.sp += 1;
+        Ok(())
+    }
+
+    fn i64_trunc_sat_f64_s(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        let f = state.stack.read_f64(state.sp - 2);
+        state.stack.write_u64(state.sp - 2, f as i64 as u64);
+        Ok(())
+    }
+
+    fn i64_trunc_sat_f64_u(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        let f = state.stack.read_f64(state.sp - 2);
+        state.stack.write_u64(state.sp - 2, f as u64);
+        Ok(())
+    }
 }
 
 impl<'store> IrVisitor for Interpreter<'store> {

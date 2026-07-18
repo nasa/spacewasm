@@ -199,3 +199,13 @@ pub(crate) const I32_REINTERPRET_F32: u8 = 0xBC;
 pub(crate) const I64_REINTERPRET_F64: u8 = 0xBD;
 pub(crate) const F32_REINTERPRET_I32: u8 = 0xBE;
 pub(crate) const F64_REINTERPRET_I64: u8 = 0xBF;
+
+// Non-trapping float-to-int conversions (0xFC prefixed)
+pub(crate) const I32_TRUNC_SAT_F32_S: u8 = 0x00;
+pub(crate) const I32_TRUNC_SAT_F32_U: u8 = 0x01;
+pub(crate) const I32_TRUNC_SAT_F64_S: u8 = 0x02;
+pub(crate) const I32_TRUNC_SAT_F64_U: u8 = 0x03;
+pub(crate) const I64_TRUNC_SAT_F32_S: u8 = 0x04;
+pub(crate) const I64_TRUNC_SAT_F32_U: u8 = 0x05;
+pub(crate) const I64_TRUNC_SAT_F64_S: u8 = 0x06;
+pub(crate) const I64_TRUNC_SAT_F64_U: u8 = 0x07;

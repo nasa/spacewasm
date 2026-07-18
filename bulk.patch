@@ -1,0 +1,515 @@
+diff --git a/crates/spacewasm_util/src/debug.rs b/crates/spacewasm_util/src/debug.rs
+index c30be82..e05d793 100644
+--- a/crates/spacewasm_util/src/debug.rs
++++ b/crates/spacewasm_util/src/debug.rs
+@@ -1,5 +1,5 @@
+ use spacewasm::{
+-    BaseVisitor, FuncIdx, GlobalIdx, HostModuleRef, IrVisitor, LabelIdx, LabelTarget, LocalIdx,
++    BaseVisitor, DataIdx, FuncIdx, GlobalIdx, HostModuleRef, IrVisitor, LabelIdx, LabelTarget, LocalIdx,
+     LocalVariable, MemArg, ModuleRef, ResultType, TypeIdx, ValType, WasmVisitor,
+ };
+ 
+@@ -72,6 +72,10 @@ impl<'a, ST: OutputStream, S, E, T: BaseVisitor<State = S, Error = E>> BaseVisit
+     // Memory instructions - size/grow
+     visit_fn!(memory_size);
+     visit_fn!(memory_grow);
++    visit_fn!(memory_init, data: DataIdx);
++    visit_fn!(data_drop, data: DataIdx);
++    visit_fn!(memory_copy);
++    visit_fn!(memory_fill);
+ 
+     // Numeric instructions - const
+     visit_fn!(i32_const, n: i32);
+diff --git a/crates/spacewasm_util/src/trace.rs b/crates/spacewasm_util/src/trace.rs
+index fbe2a79..3d7cf00 100644
+--- a/crates/spacewasm_util/src/trace.rs
++++ b/crates/spacewasm_util/src/trace.rs
+@@ -1,6 +1,6 @@
+ use spacewasm::{
+-    BaseVisitor, HostModuleRef, InterpreterState, IrVisitor, JumpTarget, LabelTarget,
+-    LocalVariable, MemArg, ModuleRef, TypeIdx, ValType,
++    BaseVisitor, DataIdx, FuncIdx, GlobalIdx, HostModuleRef, InterpreterState, IrVisitor, JumpTarget,
++    LabelIdx, LabelTarget, LocalIdx, LocalVariable, MemArg, ModuleRef, ResultType, TypeIdx, ValType,
+ };
+ 
+ /// A snapshot of interpreter state at a specific instruction
+@@ -195,6 +195,10 @@ impl<'a, 'store, T: BaseVisitor<State = InterpreterState<'store>, Error = E>, E>
+     // Memory instructions - size/grow
+     trace_visit_fn!(memory_size);
+     trace_visit_fn!(memory_grow);
++    trace_visit_fn!(memory_init, data: DataIdx);
++    trace_visit_fn!(data_drop, data: DataIdx);
++    trace_visit_fn!(memory_copy);
++    trace_visit_fn!(memory_fill);
+ 
+     // Numeric instructions - const
+     trace_visit_fn!(i32_const, n: i32);
+diff --git a/src/code.rs b/src/code.rs
+index c7d9b5a..6519f90 100644
+--- a/src/code.rs
++++ b/src/code.rs
+@@ -255,6 +255,32 @@ impl<'wasm> Reader<'wasm> {
+                 I64_LOAD32_S => instruction!(i64_load32_s, MemArg),
+                 I64_LOAD32_U => instruction!(i64_load32_u, MemArg),
+ 
++
++                0xFC => {
++                    let sub_opcode = self.read_u32()?;
++                    match sub_opcode {
++                        8 => {
++                            let data = DataIdx::read(self)?;
++                            self.expect_u8(0x00)?;
++                            visitor.memory_init(data, state)?;
++                        }
++                        9 => {
++                            let data = DataIdx::read(self)?;
++                            visitor.data_drop(data, state)?;
++                        }
++                        10 => {
++                            self.expect_u8(0x00)?;
++                            self.expect_u8(0x00)?;
++                            visitor.memory_copy(state)?;
++                        }
++                        11 => {
++                            self.expect_u8(0x00)?;
++                            visitor.memory_fill(state)?;
++                        }
++                        _ => return Err(ValidationError::InvalidOpcode(0xFC)),
++                    }
++                }
++
+                 // Memory instructions - stores
+                 I32_STORE => instruction!(i32_store, MemArg),
+                 I64_STORE => instruction!(i64_store, MemArg),
+diff --git a/src/compiler.rs b/src/compiler.rs
+index e4d9033..2d4490f 100644
+--- a/src/compiler.rs
++++ b/src/compiler.rs
+@@ -480,6 +480,42 @@ impl<'a, const MAX_CODE_PAGES: usize, const MAX_CONTROL_FRAMES: usize, const MAX
+         Ok(())
+     }
+ 
++    fn memory_init(&self, data: DataIdx, state: &mut Self::State) -> Result<(), Self::Error> {
++        state.module().check_memory_defined()?;
++        if data.0 as usize >= state.module().data.len() {
++            return Err(ValidationError::DataIdxOutOfRange);
++        }
++        validate!(state, (I32 I32 I32) -> ());
++        state.instr(MEMORY_INIT)?;
++        state.write_32(data.0)?;
++        Ok(())
++    }
++
++    fn data_drop(&self, data: DataIdx, state: &mut Self::State) -> Result<(), Self::Error> {
++        if data.0 as usize >= state.module().data.len() {
++            return Err(ValidationError::DataIdxOutOfRange);
++        }
++        validate!(state, () -> ());
++        state.instr(DATA_DROP)?;
++        state.write_32(data.0)?;
++        Ok(())
++    }
++
++    fn memory_copy(&self, state: &mut Self::State) -> Result<(), Self::Error> {
++        state.module().check_memory_defined()?;
++        validate!(state, (I32 I32 I32) -> ());
++        state.instr(MEMORY_COPY)?;
++        Ok(())
++    }
++
++    fn memory_fill(&self, state: &mut Self::State) -> Result<(), Self::Error> {
++        state.module().check_memory_defined()?;
++        validate!(state, (I32 I32 I32) -> ());
++        state.instr(MEMORY_FILL)?;
++        Ok(())
++    }
++
++
+     fn f64_const(&self, z: f64, state: &mut Self::State) -> Result<(), Self::Error> {
+         validate!(state, () -> (F64));
+         state.instr(F64_CONST)?;
+diff --git a/src/constant.rs b/src/constant.rs
+index d030514..12faff0 100644
+--- a/src/constant.rs
++++ b/src/constant.rs
+@@ -81,6 +81,10 @@ impl<'a> BaseVisitor for ConstantCompiler<'a> {
+     // Memory instructions - size/grow
+     invalid_constant_fn!(memory_size);
+     invalid_constant_fn!(memory_grow);
++    invalid_constant_fn!(memory_init, data: DataIdx);
++    invalid_constant_fn!(data_drop, data: DataIdx);
++    invalid_constant_fn!(memory_copy);
++    invalid_constant_fn!(memory_fill);
+ 
+     // Numeric instructions - const
+     fn i32_const(&self, n: i32, state: &mut Self::State) -> Result<(), Self::Error> {
+diff --git a/src/error.rs b/src/error.rs
+index e2071a5..71b7849 100644
+--- a/src/error.rs
++++ b/src/error.rs
+@@ -96,6 +96,7 @@ pub enum ValidationError {
+     InstructionOutsideOfFunction,
+     LocalIdxOutOfRange,
+     FunctionIdxOutOfRange,
++    DataIdxOutOfRange,
+     TypeIdxOutOfRange,
+     FunctionTextOutOfRange,
+     GlobalIdxOutOfRange,
+diff --git a/src/interpreter.rs b/src/interpreter.rs
+index 48c5efa..aea8486 100644
+--- a/src/interpreter.rs
++++ b/src/interpreter.rs
+@@ -756,6 +756,75 @@ impl<'store> BaseVisitor for Interpreter<'store> {
+         Ok(())
+     }
+ 
++    fn memory_init(&self, data: DataIdx, state: &mut Self::State) -> Result<(), Self::Error> {
++        let n = state.stack.read_u32(state.sp - 1);
++        let s = state.stack.read_u32(state.sp - 2);
++        let d = state.stack.read_u32(state.sp - 3);
++        state.sp -= 3;
++
++        let module = &state.store.modules()[state.module.0 as usize];
++        
++        if data.0 as usize >= module.data.len() {
++            return Err(InterpreterBreak::Trap(TrapReason::MemoryOutOfBounds));
++        }
++        
++        let data_segment = &module.data[data.0 as usize].init;
++        if s.saturating_add(n) as usize > data_segment.len() {
++            return Err(InterpreterBreak::Trap(TrapReason::MemoryOutOfBounds));
++        }
++        
++        if let Some(mem) = state.memory.get_mut() {
++            if mem.store(d as usize, &data_segment[s as usize..(s + n) as usize]).is_err() {
++                return Err(InterpreterBreak::Trap(TrapReason::MemoryOutOfBounds));
++            }
++        } else {
++            return Err(InterpreterBreak::Trap(TrapReason::MemoryOutOfBounds));
++        }
++
++        Ok(())
++    }
++
++    fn data_drop(&self, data: DataIdx, state: &mut Self::State) -> Result<(), Self::Error> {
++        let module = &mut state.store.modules_mut()[state.module.0 as usize];
++        if data.0 as usize >= module.data.len() {
++            return Err(InterpreterBreak::Trap(TrapReason::MemoryOutOfBounds));
++        }
++        module.data[data.0 as usize].init.clear();
++        Ok(())
++    }
++
++    fn memory_copy(&self, state: &mut Self::State) -> Result<(), Self::Error> {
++        let n = state.stack.read_u32(state.sp - 1);
++        let s = state.stack.read_u32(state.sp - 2);
++        let d = state.stack.read_u32(state.sp - 3);
++        state.sp -= 3;
++
++        if let Some(mem) = state.memory.get_mut() {
++            if mem.copy(d as usize, s as usize, n as usize).is_err() {
++                return Err(InterpreterBreak::Trap(TrapReason::MemoryOutOfBounds));
++            }
++        } else {
++            return Err(InterpreterBreak::Trap(TrapReason::MemoryOutOfBounds));
++        }
++        Ok(())
++    }
++
++    fn memory_fill(&self, state: &mut Self::State) -> Result<(), Self::Error> {
++        let n = state.stack.read_u32(state.sp - 1);
++        let val = state.stack.read_u32(state.sp - 2) as u8;
++        let d = state.stack.read_u32(state.sp - 3);
++        state.sp -= 3;
++
++        if let Some(mem) = state.memory.get_mut() {
++            if mem.fill(d as usize, val, n as usize).is_err() {
++                return Err(InterpreterBreak::Trap(TrapReason::MemoryOutOfBounds));
++            }
++        } else {
++            return Err(InterpreterBreak::Trap(TrapReason::MemoryOutOfBounds));
++        }
++        Ok(())
++    }
++
+     fn i32_const(&self, n: i32, state: &mut Self::State) -> Result<(), Self::Error> {
+         state.stack.write_u32(state.sp, n as u32);
+         state.sp += 1;
+diff --git a/src/ir_reader.rs b/src/ir_reader.rs
+index 5e81a60..1b54098 100644
+--- a/src/ir_reader.rs
++++ b/src/ir_reader.rs
+@@ -276,6 +276,16 @@ impl<'code> IrReader<'code> {
+             // Memory instructions - size/grow
+             MEMORY_SIZE => instruction!(memory_size),
+             MEMORY_GROW => instruction!(memory_grow),
++            MEMORY_INIT => {
++                let data = DataIdx(self.read_u32(pc)?);
++                visitor.memory_init(data, state)?;
++            }
++            DATA_DROP => {
++                let data = DataIdx(self.read_u32(pc)?);
++                visitor.data_drop(data, state)?;
++            }
++            MEMORY_COPY => instruction!(memory_copy),
++            MEMORY_FILL => instruction!(memory_fill),
+ 
+             // Numeric instructions - const
+             I32_CONST => {
+diff --git a/src/memory.rs b/src/memory.rs
+index 9ce2403..8159b53 100644
+--- a/src/memory.rs
++++ b/src/memory.rs
+@@ -240,6 +240,35 @@ impl Memory {
+         }
+     }
+ 
++    pub fn copy(&self, dst: usize, src: usize, len: usize) -> Result<(), MemoryError> {
++        let _ = Memory::effective_address(dst as u32, len as u32)?;
++        let _ = Memory::effective_address(src as u32, len as u32)?;
++
++        if dst + len > self.size || src + len > self.size {
++            return Err(MemoryError::OutOfBoundsAccess);
++        }
++
++        unsafe {
++            core::ptr::copy(self.ptr.add(src), self.ptr.add(dst), len);
++        }
++
++        Ok(())
++    }
++
++    pub fn fill(&self, dst: usize, val: u8, len: usize) -> Result<(), MemoryError> {
++        let _ = Memory::effective_address(dst as u32, len as u32)?;
++
++        if dst + len > self.size {
++            return Err(MemoryError::OutOfBoundsAccess);
++        }
++
++        unsafe {
++            core::ptr::write_bytes(self.ptr.add(dst), val, len);
++        }
++
++        Ok(())
++    }
++
+     pub fn mem_type(&self) -> MemType {
+         self.ty
+     }
+diff --git a/src/module.rs b/src/module.rs
+index c42485e..362a435 100644
+--- a/src/module.rs
++++ b/src/module.rs
+@@ -35,6 +35,7 @@ pub struct Module {
+     pub imports: Vec<Import>,
+     pub exports: Vec<Export>,
+     pub start: Option<Ref>,
++    pub data: Vec<Data>,
+ }
+ 
+ pub trait CustomSectionHandler {
+@@ -179,6 +180,7 @@ impl Module {
+             imports: Vec::zero(),
+             exports: Vec::zero(),
+             start: None,
++            data: Vec::zero(),
+         };
+ 
+         let mut last_section: SectionKind = SectionKind::Custom;
+@@ -597,6 +599,7 @@ read_impl_u32!(MemIdx);
+ read_impl_u32!(GlobalIdx);
+ read_impl_u32!(LocalIdx);
+ read_impl_u32!(LabelIdx);
++read_impl_u32!(DataIdx);
+ 
+ pub enum ImportDesc {
+     Func(TypeIdx),
+@@ -999,6 +1002,7 @@ impl CodeSection {
+ 
+ #[derive(Clone)]
+ pub struct Data {
++    pub is_passive: bool,
+     pub offset: u32,
+     pub init: Vec<u8>,
+ }
+@@ -1019,66 +1023,88 @@ impl Data {
+         store: &Store,
+         module: &Module,
+     ) -> Result<Self, ValidationError> {
+-        let mem = MemIdx::read(wasm)?;
+-        if mem.0 != 0 {
+-            return Err(ValidationError::InvalidMemIndex);
+-        }
+-
+-        // Make sure we actually defined a linear memory for this module
+-        module.check_memory_defined()?;
++        let flags = wasm.read_u32()?;
++        
++        let is_passive = match flags {
++            0 => false,
++            1 => true,
++            2 => {
++                let mem = MemIdx::read(wasm)?;
++                if mem.0 != 0 {
++                    return Err(ValidationError::InvalidMemIndex);
++                }
++                false
++            }
++            _ => return Err(ValidationError::InvalidMemIndex), // or a more suitable error
++        };
+ 
+-        let offset = Expr::read_constant(wasm, store, module)?;
+-        let init = wasm.read_vec(|w| w.read_u8())?;
++        let offset = if !is_passive {
++            // Make sure we actually defined a linear memory for this module
++            module.check_memory_defined()?;
+ 
+-        let offset = match offset {
+-            Value::I32(i) => {
+-                if i < 0 {
+-                    return Err(ValidationError::InvalidNegativeMemOffset);
++            let offset_expr = Expr::read_constant(wasm, store, module)?;
++            match offset_expr {
++                Value::I32(i) => {
++                    if i < 0 {
++                        return Err(ValidationError::InvalidNegativeMemOffset);
++                    }
++                    i as u32
+                 }
+-
+-                i as u32
++                _ => return Err(ValidationError::InvalidMemOffsetType),
+             }
+-            Value::I64(_) => return Err(ValidationError::InvalidMemOffsetType),
+-            Value::F32(_) => return Err(ValidationError::InvalidMemOffsetType),
+-            Value::F64(_) => return Err(ValidationError::InvalidMemOffsetType),
++        } else {
++            0
+         };
+ 
+-        Ok(Data { offset, init })
++        let init = wasm.read_vec(|w| w.read_u8())?;
++
++        Ok(Data { is_passive, offset, init })
+     }
+ }
+ 
++
+ pub struct DataSection;
+ impl DataSection {
+-    pub fn read(wasm: &mut Reader, store: &Store, module: &Module) -> Result<(), ValidationError> {
++    pub fn read(wasm: &mut Reader, store: &Store, module: &mut Module) -> Result<(), ValidationError> {
+         let len = wasm.read_u32()?;
+         if len == 0 {
+             return Ok(());
+         }
+ 
+-        if let Some(memory) = &module.memory {
++        // We need to mutate module to push data segments, but we also might need to write to memory.
++        let memory_opt = if let Some(memory) = &module.memory {
+             let memory = match memory {
+-                MemoryKind::Owned(memory) => memory,
++                MemoryKind::Owned(memory) => Some(memory),
+                 MemoryKind::Import(i) => {
+                     let Some(MemoryKind::Owned(memory)) = &store.modules()[i.0 as usize].memory
+                     else {
+                         unreachable!()
+                     };
+-
+-                    memory
++                    Some(memory)
+                 }
+                 MemoryKind::ImportHost(i) => {
+-                    &store.host_modules()[i.module.0 as usize].memory[i.index as usize].value
++                    Some(&store.host_modules()[i.module.0 as usize].memory[i.index as usize].value)
+                 }
+             };
++            memory
++        } else {
++            None
++        };
+ 
+-            for _ in 0..len {
+-                let data = Data::read(wasm, store, module)?;
+-                memory.store(data.offset as usize, &data.init)?;
++        for _ in 0..len {
++            let data = Data::read(wasm, store, module)?;
++            
++            if !data.is_passive {
++                if let Some(memory) = memory_opt {
++                    memory.store(data.offset as usize, &data.init)?;
++                } else {
++                    return Err(ValidationError::MemoryNotDefined);
++                }
+             }
+-
+-            Ok(())
+-        } else {
+-            Err(ValidationError::MemoryNotDefined)
++            
++            module.data.push(data);
+         }
++
++        Ok(())
+     }
+ }
+diff --git a/src/opcode.rs b/src/opcode.rs
+index ed1a13c..2112ad7 100644
+--- a/src/opcode.rs
++++ b/src/opcode.rs
+@@ -72,6 +72,10 @@ pub(crate) const I64_STORE16: u8 = 0x3D;
+ pub(crate) const I64_STORE32: u8 = 0x3E;
+ pub(crate) const MEMORY_SIZE: u8 = 0x3F;
+ pub(crate) const MEMORY_GROW: u8 = 0x40;
++pub(crate) const MEMORY_INIT: u8 = 0xDF;
++pub(crate) const DATA_DROP: u8 = 0xE0;
++pub(crate) const MEMORY_COPY: u8 = 0xE1;
++pub(crate) const MEMORY_FILL: u8 = 0xE2;
+ pub(crate) const I32_CONST: u8 = 0x41;
+ pub(crate) const I64_CONST: u8 = 0x42;
+ pub(crate) const F32_CONST: u8 = 0x43;
+diff --git a/src/visitor.rs b/src/visitor.rs
+index 5759862..972e2da 100644
+--- a/src/visitor.rs
++++ b/src/visitor.rs
+@@ -1,5 +1,5 @@
+ use crate::{
+-    FuncIdx, GlobalIdx, LabelIdx, LabelTarget, LocalIdx, MemArg, ResultType, TypeIdx, ValType,
++    FuncIdx, GlobalIdx, LabelIdx, LabelTarget, LocalIdx, MemArg, ResultType, TypeIdx, ValType, DataIdx,
+ };
+ 
+ /// A convenience macro for defining the visitor function for a decoded
+@@ -34,6 +34,11 @@ pub trait BaseVisitor {
+ 
+     // Control flow & parametric instructions are not handled by the base visitor
+ 
++    visit_fn!(memory_init, data: DataIdx);
++    visit_fn!(data_drop, data: DataIdx);
++    visit_fn!(memory_copy);
++    visit_fn!(memory_fill);
++
+     // Memory instructions - loads
+     visit_fn!(i32_load, m: MemArg);
+     visit_fn!(i64_load, m: MemArg);
+diff --git a/tests/util/inspector.rs b/tests/util/inspector.rs
+index 8db4513..fbe7e5f 100644
+--- a/tests/util/inspector.rs
++++ b/tests/util/inspector.rs
+@@ -1,5 +1,5 @@
+ use spacewasm::{
+-    BaseVisitor, FuncIdx, GlobalIdx, HostModuleRef, IrVisitor, LabelIdx, LabelTarget, LocalIdx,
++    BaseVisitor, DataIdx, FuncIdx, GlobalIdx, HostModuleRef, IrVisitor, LabelIdx, LabelTarget, LocalIdx,
+     LocalVariable, MemArg, ModuleRef, ResultType, TypeIdx, ValType, WasmVisitor,
+ };
+ use std::cell::RefCell;
+@@ -92,6 +92,10 @@ impl<'a, S, E, T: BaseVisitor<State = S, Error = E>> BaseVisitor for Inspector<'
+     // Memory instructions - size/grow
+     visit_fn!(memory_size);
+     visit_fn!(memory_grow);
++    visit_fn!(memory_init, data: DataIdx);
++    visit_fn!(data_drop, data: DataIdx);
++    visit_fn!(memory_copy);
++    visit_fn!(memory_fill);
+ 
+     // Numeric instructions - const
+     visit_fn!(i32_const, n: i32);

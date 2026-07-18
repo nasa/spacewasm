@@ -1228,4 +1228,43 @@ mod tests {
             assert_eq!(state.stack.read_u64(0), 1); // Wraps around
         });
     }
+
+    #[test]
+    fn test_nontrapping_float_to_int() {
+        let store = Store::default();
+        let interpreter = Interpreter::new();
+        let mut state = InterpreterState::new(&store);
+
+        // test i32_trunc_sat_f32_s
+        // NaN -> 0
+        state.stack.write_f32(0, f32::NAN);
+        state.sp = 1;
+        interpreter.i32_trunc_sat_f32_s(&mut state).unwrap();
+        assert_eq!(state.stack.read_u32(0), 0);
+
+        // > MAX -> MAX
+        state.stack.write_f32(0, 3000000000.0); // 3 billion
+        state.sp = 1;
+        interpreter.i32_trunc_sat_f32_s(&mut state).unwrap();
+        assert_eq!(state.stack.read_u32(0), i32::MAX as u32);
+
+        // < MIN -> MIN
+        state.stack.write_f32(0, -3000000000.0);
+        state.sp = 1;
+        interpreter.i32_trunc_sat_f32_s(&mut state).unwrap();
+        assert_eq!(state.stack.read_u32(0), i32::MIN as u32);
+
+        // Normal -> normal
+        state.stack.write_f32(0, 42.8);
+        state.sp = 1;
+        interpreter.i32_trunc_sat_f32_s(&mut state).unwrap();
+        assert_eq!(state.stack.read_u32(0), 42);
+        
+        // test i32_trunc_sat_f32_u
+        // < 0 -> 0
+        state.stack.write_f32(0, -10.5);
+        state.sp = 1;
+        interpreter.i32_trunc_sat_f32_u(&mut state).unwrap();
+        assert_eq!(state.stack.read_u32(0), 0);
+    }
 }

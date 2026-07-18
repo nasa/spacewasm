@@ -389,4 +389,14 @@ where
     trace_visit_fn!(global_set_host, module: HostModuleRef, index: u16);
     trace_visit_fn!(global_get_extern, module: ModuleRef, index: u16);
     trace_visit_fn!(global_set_extern, module: ModuleRef, index: u16);
+
+    // Non-trapping float-to-int conversions
+    trace_visit_fn!(i32_trunc_sat_f32_s);
+    trace_visit_fn!(i32_trunc_sat_f32_u);
+    trace_visit_fn!(i32_trunc_sat_f64_s);
+    trace_visit_fn!(i32_trunc_sat_f64_u);
+    trace_visit_fn!(i64_trunc_sat_f32_s);
+    trace_visit_fn!(i64_trunc_sat_f32_u);
+    trace_visit_fn!(i64_trunc_sat_f64_s);
+    trace_visit_fn!(i64_trunc_sat_f64_u);
 }

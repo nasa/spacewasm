@@ -197,6 +197,17 @@ pub trait BaseVisitor {
     visit_fn!(i64_trunc_f32_u);
     visit_fn!(i64_trunc_f64_s);
     visit_fn!(i64_trunc_f64_u);
+    
+    // Non-trapping float-to-int conversions
+    visit_fn!(i32_trunc_sat_f32_s);
+    visit_fn!(i32_trunc_sat_f32_u);
+    visit_fn!(i32_trunc_sat_f64_s);
+    visit_fn!(i32_trunc_sat_f64_u);
+    visit_fn!(i64_trunc_sat_f32_s);
+    visit_fn!(i64_trunc_sat_f32_u);
+    visit_fn!(i64_trunc_sat_f64_s);
+    visit_fn!(i64_trunc_sat_f64_u);
+
     visit_fn!(f32_convert_i32_s);
     visit_fn!(f32_convert_i32_u);
     visit_fn!(f32_convert_i64_s);

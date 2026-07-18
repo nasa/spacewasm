@@ -435,8 +435,34 @@ impl<'wasm> Reader<'wasm> {
                 F32_REINTERPRET_I32 => instruction!(f32_reinterpret_i32),
                 F64_REINTERPRET_I64 => instruction!(f64_reinterpret_i64),
 
+                0xFC => instr_fc(self, visitor, state)?,
+
                 op => Err(ValidationError::InvalidOpcode(op))?,
             }
         }
     }
+}
+
+fn instr_fc<'wasm, S, E, V>(
+    wasm: &mut Reader<'wasm>,
+    visitor: &V,
+    state: &mut S,
+) -> Result<(), ValidationError>
+where
+    V: WasmVisitor<State = S, Error = E>,
+    ValidationError: From<E>,
+{
+    use crate::opcode::*;
+    match wasm.read_u32()? {
+        I32_TRUNC_SAT_F32_S => visitor.i32_trunc_sat_f32_s(state)?,
+        I32_TRUNC_SAT_F32_U => visitor.i32_trunc_sat_f32_u(state)?,
+        I32_TRUNC_SAT_F64_S => visitor.i32_trunc_sat_f64_s(state)?,
+        I32_TRUNC_SAT_F64_U => visitor.i32_trunc_sat_f64_u(state)?,
+        I64_TRUNC_SAT_F32_S => visitor.i64_trunc_sat_f32_s(state)?,
+        I64_TRUNC_SAT_F32_U => visitor.i64_trunc_sat_f32_u(state)?,
+        I64_TRUNC_SAT_F64_S => visitor.i64_trunc_sat_f64_s(state)?,
+        I64_TRUNC_SAT_F64_U => visitor.i64_trunc_sat_f64_u(state)?,
+        op => return Err(ValidationError::InvalidOpcode(op as u8)),
+    }
+    Ok(())
 }
