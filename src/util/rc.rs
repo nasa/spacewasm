@@ -860,6 +860,24 @@ mod kani_proofs {
         );
     }
 
+    /// Make sure new_slice_with_default_in works as expected
+    #[kani::proof]
+    fn proof_rc_new_slice_with_default() {
+        let len: usize = kani::any();
+        kani::assume(len <= 2); // Keep state explosion away
+
+        let rc: Result<Rc<[u32], _>, _> = Rc::new_slice_with_default_in(RustSystemAllocator, len);
+        kani::assume(rc.is_ok());
+        let rc = rc.unwrap();
+
+        assert_eq!(rc.len(), len, "Slice length must match requested length");
+        assert_eq!(rc.inner().count(), 1, "Count must be 1");
+
+        if len > 0 {
+            assert_eq!(rc[0], 0u32, "First element must be default-initialized to 0");
+        }
+    }
+
     /// Verify Rc deref returns correct value and doesn't violate aliasing
     #[kani::proof]
     fn proof_rc_deref_correctness() {
