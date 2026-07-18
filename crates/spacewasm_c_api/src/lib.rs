@@ -1,17 +1,6 @@
-//! # spacewasm_ffi
+//! # spacewasm_c_api
 //!
-//! C-ABI support layer for the [`spacewasm`] interpreter: opaque handles, the
-//! self-referential `Store`/`InterpreterState` borrow, the host-function
-//! trampoline, value marshalling, a streaming Wasm input bridge, error-code
-//! mapping, and — in [`capi`] — the concrete `spacewasm_*` `extern "C"` entry
-//! points.
-//!
-//! The entry points' const-generic capacities come from [`config`] (chosen at
-//! build time via `SPACEWASM_*` environment variables). The global heap
-//! allocator is the one thing C cannot supply, so it is left to an integrator
-//! crate as a linker symbol (via [`spacewasm::global_allocator!`]). The guest
-//! linear-memory allocator, in contrast, is constructed at runtime from C
-//! callbacks via [`alloc`] and passed in per module load.
+//! C-ABI support layer for the [`spacewasm`] interpreter
 #![no_std]
 // The public C-ABI surface intentionally uses C naming conventions
 // (`spacewasm_value_t`, `SPACEWASM_OK`, …) so the generated header reads naturally.
@@ -27,12 +16,22 @@ pub mod status;
 pub mod stream;
 pub mod value;
 
+#[cfg(all(feature = "provide-panic-handler", not(test)))]
+mod panic;
+
+#[cfg(feature = "provide-global-allocator")]
+pub mod global_alloc;
+
 // Re-exports for C callers and downstream Rust consumers.
 pub use alloc::{
     SpacewasmAllocator, spacewasm_alloc_fn_t, spacewasm_dealloc_fn_t, spacewasm_realloc_fn_t,
 };
 pub use engine::{
     Builder, SpacewasmCaller, SpacewasmStore, spacewasm_host_fn_t, spacewasm_hostcall_result_t,
+};
+#[cfg(feature = "provide-global-allocator")]
+pub use global_alloc::{
+    spacewasm_global_alloc_fn_t, spacewasm_global_dealloc_fn_t, spacewasm_set_global_allocator,
 };
 pub use status::{spacewasm_run_status_t, spacewasm_status_t, spacewasm_trap_t};
 pub use stream::{spacewasm_read_fn_t, spacewasm_read_result_t};

@@ -16,7 +16,14 @@ header = """/*
 
 [export]
 include = ["MemoryStatistics"]
-exclude = ["JumpTarget"]
+# `__spacewasm_*` are the heap-allocator symbols the core crate imports; they are
+# provided internally, not part of the public C surface, so keep them out of the header.
+exclude = [
+    "JumpTarget",
+    "__spacewasm_alloc",
+    "__spacewasm_dealloc",
+    "__spacewasm_memory_statistics",
+]
 
 [export.rename]
 "Builder" = "spacewasm_builder_t"

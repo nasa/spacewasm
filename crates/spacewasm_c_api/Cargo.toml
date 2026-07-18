@@ -12,9 +12,18 @@ publish = false
 [lib]
 name = "spacewasm_c_api"
 path = "src/lib.rs"
+crate-type = ["staticlib", "rlib"]
 
 [features]
+default = ["provide-global-allocator", "provide-panic-handler"]
 codegen = ["dep:cbindgen"]
+
+# Emit global allocator symbols and allow C runtime registration
+provide-global-allocator = []
+
+# Provide the `#[panic_handler]`
+# Delegating to a C-defined `spacewasm_panic` symbol.
+provide-panic-handler = []
 
 [dependencies]
 spacewasm = { path = "../.." }

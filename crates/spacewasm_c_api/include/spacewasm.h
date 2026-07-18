@@ -326,6 +326,19 @@ typedef spacewasm_read_result_t (*spacewasm_read_fn_t)(void *userdata,
                                                        size_t cap,
                                                        size_t *out_len);
 
+/*
+ Allocate `size` bytes aligned to `align`. Return NULL on failure. Per page allocation.
+ */
+typedef uint8_t *(*spacewasm_global_alloc_fn_t)(void *userdata, size_t size, size_t align);
+
+/*
+ Free the `size`-byte allocation at `ptr` (alignment `align`). Per page deallocation.
+ */
+typedef void (*spacewasm_global_dealloc_fn_t)(void *userdata,
+                                              uint8_t *ptr,
+                                              size_t size,
+                                              size_t align);
+
 typedef struct spacewasm_memory_statistics_t {
     int32_t total_bytes;
     int32_t pad_bytes;
@@ -568,6 +581,46 @@ spacewasm_status_t spacewasm_mem_write(struct spacewasm_caller_t *caller,
  `caller` must be a live caller handle; `out_pages` valid.
  */
 spacewasm_status_t spacewasm_mem_size(struct spacewasm_caller_t *caller, uint32_t *out_pages);
+
+/*
+ Handle a spacewasm Rust panic. This function should not return
+
+ # Arguments
+
+ * `filename`: Filename where panic occurred (not null terminated)
+ * `filename_len`: Length of filename (could be 0)
+ * `line`: Line number where panic occured
+ * `msg`: Panic message if it could be extracted (not null terminated)
+ * `len`: Length of panic message (zero if empty)
+
+ returns: !
+ */
+extern void spacewasm_panic(const uint8_t *filename,
+                            size_t filename_len,
+                            uint32_t line,
+                            const uint8_t *msg,
+                            size_t len);
+
+/*
+ Stub for the exception-handling personality routine. The precompiled `core`
+ is built for unwinding and references `rust_eh_personality` even though we
+ compile with `panic = "abort"`, so a C consumer linking the staticlib would
+ otherwise see an undefined symbol. Under `panic = "abort"` it is never
+ actually invoked; providing it here keeps the archive self-contained.
+ */
+void rust_eh_personality(void);
+
+/*
+ Install the process-wide heap allocator backing the interpreter.
+ `alloc`/`dealloc` are called at *page* granularity.
+
+ # Safety
+ `alloc`/`dealloc` must remain valid for the lifetime of the process and
+ honor the requested size/alignment. `userdata` must outlive all allocations.
+ */
+int32_t spacewasm_set_global_allocator(spacewasm_global_alloc_fn_t alloc,
+                                       spacewasm_global_dealloc_fn_t dealloc,
+                                       void *userdata);
 
 #ifdef __cplusplus
 }  // extern "C"
