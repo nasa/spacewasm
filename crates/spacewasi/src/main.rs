@@ -15,8 +15,8 @@
 /// Portions of this file are derived from <https://github.com/clap-rs/clap>:
 /// Copyright (c) 2026 Knapp, K. B., & The Clap Community.
 use spacewasm::{
-    CodeBuilder, CompilerOptions, ExportDesc, InterpreterResult, InterpreterRunner, ModuleRef,
-    PageAllocator, Ref, WasmRef,
+    CodeBuilder, CompilerOptions, Engine, ExportDesc, Interpreter, InterpreterResult,
+    InterpreterRunner, ModuleRef, PageAllocator, Ref, StartInvocation, WasmRef,
 };
 mod wasi_preview1;
 use crate::wasi_preview1::make_wasi_preview1_module;
@@ -151,8 +151,8 @@ fn main() {
 
     let preview1_module = make_wasi_preview1_module(wasi_ctx_builder.build());
 
-    let mut code_builder = CodeBuilder::<MAX_PAGES>::default();
-    let mut store = spacewasm::Store::new(1, [preview1_module]).unwrap();
+    let mut code_builder = CodeBuilder::new(MAX_PAGES as u32).unwrap();
+    let mut engine = Engine::new(STACK_SIZE, 1, spacewasm::vec![preview1_module]).unwrap();
 
     let Ok(file) = std::fs::File::open(args.file) else {
         cmd.error(ErrorKind::InvalidValue, "wasm module path does not exist")
@@ -160,10 +160,10 @@ fn main() {
     };
     let mut file_stream = FileStream::new(file);
 
-    let Ok(module) = spacewasm::Module::new::<MAX_PAGES, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
+    let Ok(module) = spacewasm::Module::new::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
         "main",
         &mut file_stream,
-        &mut store,
+        &mut engine.store,
         &mut code_builder,
         spacewasm::Rc::new(RustSystemAllocator)
             .unwrap()
@@ -176,10 +176,18 @@ fn main() {
         std::process::exit(1);
     };
 
-    let (text, _) = code_builder.finish().unwrap();
-
-    let mut state = store.allocate(STACK_SIZE).unwrap();
-    match state.initialize_module(module, &text, usize::MAX) {
+    // Append the module and run its start function (if any). The interpreter
+    // reads code directly from the builder's pages.
+    let module_ref = engine.push_module(module);
+    let init_result = match engine.invoke_start(module_ref) {
+        StartInvocation::Finished => InterpreterResult::Finished,
+        StartInvocation::Trap(t) => InterpreterResult::Trap(t),
+        StartInvocation::Pause => InterpreterResult::Pause,
+        StartInvocation::Running => {
+            Interpreter::default().run(code_builder.pages(), &mut engine, usize::MAX)
+        }
+    };
+    match init_result {
         InterpreterResult::Finished => {}
         InterpreterResult::OutOfFuel => {
             eprintln!("insufficient fuel for initialization");
@@ -199,7 +207,7 @@ fn main() {
         }
     }
 
-    let module: &spacewasm::Module = state.store.modules().last().unwrap();
+    let module: &spacewasm::Module = engine.store.modules().last().unwrap();
 
     let fi = {
         let f = module.exports.iter().find(|f| &f.name == "_start").unwrap();
@@ -217,7 +225,7 @@ fn main() {
         std::process::exit(1);
     };
 
-    state
+    engine
         .invoke(
             WasmRef {
                 module: ModuleRef(0),
@@ -227,13 +235,13 @@ fn main() {
         )
         .unwrap();
 
-    let interpreter = spacewasm::Interpreter::default();
+    let interpreter = Interpreter::default();
 
     // TODO(cbwilson) Need to enable raw terminal mode somehow for TTY escape codes and control sequences
 
     let mut result = InterpreterResult::OutOfFuel;
     while result == InterpreterResult::OutOfFuel {
-        result = interpreter.run(&text, &mut state, usize::MAX)
+        result = interpreter.run(code_builder.pages(), &mut engine, usize::MAX)
     }
 
     let InterpreterResult::Finished = result else {

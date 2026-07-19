@@ -320,7 +320,7 @@ pub struct HostSymbol<const NAME_CAPACITY: usize, T> {
     pub value: T,
 }
 
-pub const HOST_MODULE_NAME_CAP: usize = 15;
+pub const HOST_MODULE_NAME_CAP: usize = 31;
 
 #[derive(Debug)]
 pub struct HostModule {
