@@ -1145,3 +1145,135 @@ impl<'a, const MAX_CODE_PAGES: usize, const MAX_CONTROL_FRAMES: usize, const MAX
         Ok(())
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+
+    /// Verify LabelTarget encoding/decoding correctness
+    #[kani::proof]
+    fn proof_label_target_roundtrip() {
+        let type_selector: u8 = kani::any();
+        let depth: u8 = kani::any();
+        let offset_raw: i32 = kani::any();
+
+        // Constrain offset to 22-bit signed range
+        kani::assume(offset_raw >= -(1 << 21) && offset_raw < (1 << 21));
+
+        let result_type = match type_selector % 5 {
+            0 => ResultType(None),
+            1 => ResultType(Some(ValType::I32)),
+            2 => ResultType(Some(ValType::I64)),
+            3 => ResultType(Some(ValType::F32)),
+            4 => ResultType(Some(ValType::F64)),
+            _ => unreachable!(),
+        };
+
+        let offset = JumpOffset(offset_raw);
+
+        let label = LabelTarget::new(result_type, depth, offset);
+
+        let decoded_arity = label.arity();
+        let decoded_depth = label.depth();
+        let decoded_offset = label.jump();
+
+        let expected_arity = match result_type.0 {
+            None => LabelArity::None,
+            Some(ValType::I32 | ValType::F32) => LabelArity::I32,
+            Some(ValType::I64 | ValType::F64) => LabelArity::I64,
+        };
+        assert_eq!(decoded_arity, expected_arity, "Arity must decode correctly");
+
+        assert_eq!(decoded_depth, depth, "Depth must decode correctly");
+
+        assert_eq!(
+            decoded_offset.0, offset.0,
+            "Offset must decode correctly with proper sign extension"
+        );
+    }
+
+    /// Verify JumpOffset::new() validation only accepts offsets in [-2^21, 2^21-1]
+    #[kani::proof]
+    fn proof_jump_offset_validation() {
+        let current: u32 = kani::any();
+        let to: u32 = kani::any();
+
+        kani::assume(current < (1 << 30));
+        kani::assume(to < (1 << 30));
+
+        let current_target = JumpTarget(current);
+        let to_target = JumpTarget(to);
+
+        let result = JumpOffset::new(current_target, to_target);
+
+        let offset = (to as i32).wrapping_sub(current as i32);
+
+        let fits_in_22_bits = offset == ((offset << 10) >> 10);
+
+        if fits_in_22_bits {
+            assert!(
+                result.is_ok(),
+                "Offset within 22-bit range should be accepted"
+            );
+
+            if let Ok(jump_offset) = result {
+                assert_eq!(
+                    jump_offset.0, offset,
+                    "Accepted offset should match computed value"
+                );
+            }
+        } else {
+            assert!(
+                result.is_err(),
+                "Offset outside 22-bit range should be rejected"
+            );
+        }
+    }
+
+    /// Verify JumpTarget + JumpOffset arithmetic works correctly
+    #[kani::proof]
+    fn proof_jump_target_addition() {
+        let pc: u32 = kani::any();
+        let offset_raw: i32 = kani::any();
+
+        kani::assume(pc < (1 << 30));
+        kani::assume(offset_raw >= -(1 << 21) && offset_raw < (1 << 21));
+
+        let target = JumpTarget(pc);
+        let offset = JumpOffset(offset_raw);
+
+        let result = target + offset;
+
+        let expected = ((pc as i32).wrapping_add(offset_raw)) as u32;
+        assert_eq!(
+            result.0, expected,
+            "JumpTarget + JumpOffset should compute correct address"
+        );
+    }
+
+    /// Verify that sentinel jump targets work correctly
+    #[kani::proof]
+    fn proof_jump_offset_sentinel() {
+        let current: u32 = kani::any();
+        kani::assume(current < (1 << 30));
+
+        let current_target = JumpTarget(current);
+        let sentinel = JumpTarget::SENTINEL;
+
+        let result = JumpOffset::new(current_target, sentinel);
+
+        assert!(
+            result.is_ok(),
+            "Creating offset to SENTINEL should always succeed"
+        );
+
+        if let Ok(offset) = result {
+            assert_eq!(
+                offset,
+                JumpOffset::sentinel(),
+                "Offset to SENTINEL should be sentinel"
+            );
+            assert_eq!(offset.0, 0, "Sentinel offset should be 0");
+        }
+    }
+}
