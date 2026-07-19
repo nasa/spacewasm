@@ -162,6 +162,17 @@ jobs:
       - name: Run clippy
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
+      - name: Check C header codegen is up to date
+        run: |
+          # Regenerate include/spacewasm.h from the Rust source. The build
+          # script writes the header in place when the `codegen` feature is on.
+          cargo build -p spacewasm_c_api --features codegen
+          # Fail if the regenerated header differs from what is tracked in git.
+          if ! git diff --exit-code -- crates/spacewasm_c_api/include/spacewasm.h; then
+            echo "::error::spacewasm.h is out of date. Run 'cargo build -p spacewasm_c_api --features codegen' and commit the result."
+            exit 1
+          fi
+
   build:
     name: Build (${{ matrix.os }})
     runs-on: ${{ matrix.runner }}
