@@ -98,7 +98,7 @@ impl<'store> InterpreterState<'store> {
         // We need to push the frame pointer and the return instruction pointer to the stack
         // We also encode the parameter size into the stack frame so that the return can unwind the stack
         let frame_length = (self.sp - self.fp as usize) as u32;
-        assert!(frame_length <= 0xFFFFF);
+        assert!(frame_length <= 0xFFFF);
         let frame = CallFrame {
             frame_length: frame_length as u16,
             module_delta,
