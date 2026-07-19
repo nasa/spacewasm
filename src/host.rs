@@ -1,7 +1,7 @@
 use crate::util::Vec;
 use crate::*;
-use ::core::ops::ControlFlow;
 use core::fmt::{Debug, Formatter};
+use ::core::ops::ControlFlow;
 
 pub struct GlobalValueError;
 
@@ -367,7 +367,7 @@ impl HostFunction {
         }
 
         Ok(HostFunction {
-            name: name.into(),
+            name,
             params,
             returns,
             f: Box::new(f).unwrap().into_host_function_dyn(),

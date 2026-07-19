@@ -150,7 +150,7 @@ impl Engine {
 
 pub struct Interpreter;
 
-impl<'store> Default for Interpreter {
+impl Default for Interpreter {
     fn default() -> Self {
         Self
     }
@@ -283,7 +283,7 @@ pub trait InterpreterRunner {
     ) -> InterpreterResult;
 }
 
-impl<'store, T: IrVisitor<State = Engine, Error = InterpreterBreak>> InterpreterRunner for T {
+impl<T: IrVisitor<State = Engine, Error = InterpreterBreak>> InterpreterRunner for T {
     fn run(
         &self,
         code: &[Box<TextPage>],
