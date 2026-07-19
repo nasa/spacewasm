@@ -78,6 +78,9 @@ impl From<&mut spacewasm_host_t> for &mut spacewasm::Vec<spacewasm::HostModule> 
 }
 
 /// Create a new host module vector of max_host_module size
+///
+/// # Safety
+/// `host` must be live
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn spacewasm_host_new(
     len: u32,
@@ -94,6 +97,9 @@ pub unsafe extern "C" fn spacewasm_host_new(
 
 /// Add a host module named `name` sized for `max_functions` functions and `max_globals` globals
 /// writing its index to `out_idx` (if non-null).
+///
+/// # Safety
+/// `host` must be live; all C strings valid and NUL-terminated.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn spacewasm_add_host_module(
     host: *mut spacewasm_host_t,

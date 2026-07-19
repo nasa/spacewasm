@@ -379,12 +379,18 @@ void spacewasm_allocator_destroy(struct spacewasm_allocator_t *allocator);
 
 /*
  Create a new host module vector of max_host_module size
+
+ # Safety
+ `host` must be live
  */
 spacewasm_status_t spacewasm_host_new(uint32_t len, struct spacewasm_host_t *dest);
 
 /*
  Add a host module named `name` sized for `max_functions` functions and `max_globals` globals
  writing its index to `out_idx` (if non-null).
+
+ # Safety
+ `host` must be live; all C strings valid and NUL-terminated.
  */
 spacewasm_status_t spacewasm_add_host_module(struct spacewasm_host_t *host,
                                              const char *name,

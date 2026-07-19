@@ -246,7 +246,7 @@ fn main() {
 
     let mut result = InterpreterResult::OutOfFuel;
     while result == InterpreterResult::OutOfFuel {
-        result = spacewasm::Interpreter.run(&text, &mut state, usize::MAX)
+        result = spacewasm::Interpreter.run(text, &mut state, usize::MAX)
     }
 
     let InterpreterResult::Finished = result else {
