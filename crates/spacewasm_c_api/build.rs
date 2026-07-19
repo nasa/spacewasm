@@ -1,16 +1,3 @@
-//! Build script for `spacewasm_ffi`. Two jobs:
-//!
-//! 1. Generate `config.rs` (included by `src/config.rs`) with the compile-time
-//!    interpreter capacities used by the `capi` entry points. Each value is
-//!    read from an environment variable, falling back to a sane default when
-//!    unset. C cannot supply const-generic parameters, so an integrator tunes
-//!    the build by setting these variables (e.g. in a `.cargo/config.toml`
-//!    `[env]` block or on the `cargo build` command line) rather than editing
-//!    Rust source.
-//!
-//! 2. When the `generate-header` feature is enabled, regenerate the committed
-//!    C header `include/spacewasm.h` from the Rust source with cbindgen.
-
 use std::env;
 use std::path::Path;
 
