@@ -27,7 +27,7 @@ pub use alloc::{
     SpacewasmAllocator, spacewasm_alloc_fn_t, spacewasm_dealloc_fn_t, spacewasm_realloc_fn_t,
 };
 pub use engine::{
-    Builder, SpacewasmCaller, SpacewasmStore, spacewasm_host_fn_t, spacewasm_hostcall_result_t,
+    SpacewasmCaller, SpacewasmStore, spacewasm_host_fn_t, spacewasm_hostcall_result_t,
 };
 #[cfg(feature = "provide-global-allocator")]
 pub use global_alloc::{

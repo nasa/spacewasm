@@ -1,60 +1,66 @@
-//! # spacewasm_c
+//! # spacewasm_c_example
 //!
-//! Reference integrator crate producing a C-linkable build of the [`spacewasm`]
-//! interpreter: it installs the global heap allocator and re-exports the
-//! `spacewasm_*` C entry points from [`spacewasm_ffi::capi`]. The guest
-//! linear-memory allocator is no longer a link-time hook — C constructs it at
-//! runtime via `spacewasm_allocator_new`. The interpreter capacities (code
-//! pages, control frames, stack depth) are chosen when `spacewasm_ffi` compiles,
-//! via its `config` module and the `SPACEWASM_*` environment variables. Uses the
-//! std-backed system allocator so it runs on a host for testing; a flight build
-//! would substitute a deterministic allocator and compile with
-//! `panic = "abort"`.
+//! A C-ABI test runner for [`spacewasm_c_api`].
 
-use core::sync::atomic::{AtomicI64, Ordering};
-use std::alloc::Layout;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
-use spacewasm::{AllocError, Allocator, MemoryStatistics};
-
-/// Host-build global allocator: forwards to the system allocator and tracks a
-/// running byte total for `spacewasm_memory_statistics`. A flight build would
-/// substitute a deterministic allocator here.
-struct HostAllocator;
-
-static ALLOCATED: AtomicI64 = AtomicI64::new(0);
-
-unsafe impl Allocator for HostAllocator {
-    unsafe fn alloc(&self, layout: Layout) -> Result<*mut u8, AllocError> {
-        if layout.size() == 0 {
-            return Ok(core::ptr::null_mut());
-        }
-        let ptr = unsafe { std::alloc::alloc(layout) };
-        if !ptr.is_null() {
-            ALLOCATED.fetch_add(layout.size() as i64, Ordering::Relaxed);
-        }
-        Ok(ptr)
-    }
-
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        if ptr.is_null() {
-            return;
-        }
-        unsafe { std::alloc::dealloc(ptr, layout) };
-        ALLOCATED.fetch_sub(layout.size() as i64, Ordering::Relaxed);
-    }
-
-    fn memory_statistics(&self) -> MemoryStatistics {
-        MemoryStatistics {
-            total_bytes: ALLOCATED.load(Ordering::Relaxed) as i32,
-            pad_bytes: 0,
+/// Return the first available C compiler command, or `None` to skip C tests.
+pub fn find_cc() -> Option<&'static str> {
+    for cc in ["cc", "clang", "gcc"] {
+        let ok = Command::new(cc)
+            .arg("--version")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        if ok {
+            return Some(cc);
         }
     }
+    None
 }
 
-// Install the global allocator. This resolves `__spacewasm_alloc`,
-// `__spacewasm_dealloc`, and `__spacewasm_memory_statistics`.
-spacewasm::global_allocator!(HostAllocator, HostAllocator);
+/// The directory holding the freshly built `libspacewasm_c_api.a`. Cargo places
+/// the test binary under `target/<profile>/deps/`; the staticlib is one level up
+/// in `target/<profile>/`.
+pub fn staticlib_dir() -> PathBuf {
+    let mut dir = std::env::current_exe().unwrap();
+    dir.pop(); // test binary name
+    if dir.ends_with("deps") {
+        dir.pop();
+    }
+    dir
+}
 
-// Re-export the `spacewasm_*` C entry points emitted by `spacewasm_ffi` so this
-// crate's `cdylib`/`staticlib` exports them and Rust consumers can name them.
-pub use spacewasm_c_api::capi::*;
+/// Path to the `spacewasm_c_api` crate's committed header directory.
+pub fn include_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../spacewasm_c_api/include")
+}
+
+/// Ensure `libspacewasm_c_api.a` is built (default features → allocator + panic
+/// handler + staticlib). Panics on build failure.
+pub fn build_staticlib() {
+    let status = Command::new(env!("CARGO"))
+        .args(["build", "-p", "spacewasm_c_api"])
+        .status()
+        .expect("failed to launch cargo");
+    assert!(
+        status.success(),
+        "failed to build spacewasm_c_api staticlib"
+    );
+}
+
+/// Compile a C source file against the staticlib + header, producing `out`.
+/// Returns whether compilation/linking succeeded.
+pub fn compile_c(cc: &str, src: &Path, out: &Path) -> bool {
+    let mut cmd = Command::new(cc);
+    cmd.arg(src)
+        .arg(format!("-I{}", include_dir().display()))
+        .arg(format!("-L{}", staticlib_dir().display()))
+        .arg("-lspacewasm_c_api")
+        .arg("-g")
+        .arg("-o")
+        .arg(out);
+
+    cmd.status().expect("failed to launch C compiler").success()
+}

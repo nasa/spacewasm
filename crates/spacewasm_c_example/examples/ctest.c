@@ -4,6 +4,11 @@
  * Loads a tiny module exporting `add(i32, i32) -> i32` by streaming it through
  * a read callback, invokes it, and checks the result. Built and run by
  * tests/c_abi.rs against the staticlib + header.
+ *
+ * Because spacewasm_c_api is a standalone no_std C library, this program also
+ * supplies the two things a pure-C consumer must: the `spacewasm_panic` hook the
+ * interpreter's panic handler delegates to, and the process-wide heap allocator
+ * installed at startup via `spacewasm_set_global_allocator`.
  */
 #include "spacewasm.h"
 
@@ -11,6 +16,43 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+/*
+ * Panic hook the interpreter calls on a fatal internal error. Must not return.
+ * A real integrator would log and reset/halt; here we print and abort. All
+ * strings are UTF-8 and not NUL-terminated, so print with an explicit length.
+ */
+void spacewasm_panic(const uint8_t *filename, size_t filename_len, uint32_t line,
+                     const uint8_t *msg, size_t len) {
+    fprintf(stderr, "spacewasm panic at %.*s:%u: %.*s\n", (int)filename_len,
+            (const char *)filename, line, (int)len, (const char *)msg);
+    abort();
+}
+
+/*
+ * Process-wide heap allocator, backing the interpreter's internal Rust
+ * allocations. spacewasm_c_api wraps these in a page allocator, so they run only
+ * for large page-sized blocks — not per small allocation. `align` is honored via
+ * aligned_alloc (size is rounded up to a multiple of align, as C requires).
+ */
+static uint8_t *heap_alloc(void *userdata, size_t size, size_t align) {
+    (void)userdata;
+    if (size == 0) {
+        return NULL;
+    }
+    if (align < sizeof(void *)) {
+        align = sizeof(void *);
+    }
+    size_t rounded = (size + align - 1) & ~(align - 1);
+    return (uint8_t *)aligned_alloc(align, rounded);
+}
+
+static void heap_dealloc(void *userdata, uint8_t *ptr, size_t size, size_t align) {
+    (void)userdata;
+    (void)size;
+    (void)align;
+    free(ptr);
+}
 
 /* (module (func (export "add") (param i32 i32) (result i32)
  *    local.get 0 local.get 1 i32.add)) */
@@ -47,40 +89,52 @@ static void mem_dealloc(void *userdata, uint8_t *ptr, size_t size, size_t align)
     free(ptr);
 }
 
-/* A simple cursor over ADD_WASM used as the streaming read source. */
+/* A simple cursor over ADD_WASM used as the streaming read source. The callback
+ * owns the buffer: it hands back a pointer into ADD_WASM and its length. Here
+ * `step` bytes are handed out per call to exercise multi-chunk streaming. */
 typedef struct {
     const uint8_t *data;
     size_t len;
     size_t pos;
+    size_t step;
 } cursor_t;
 
-static spacewasm_read_result_t cursor_read(void *userdata, uint8_t *buf, size_t cap,
-                                    size_t *out_len) {
+static spacewasm_read_result_t cursor_read(void *userdata, const uint8_t **out_buf,
+                                            size_t *out_len) {
     cursor_t *c = (cursor_t *)userdata;
     size_t remaining = c->len - c->pos;
     if (remaining == 0) {
         *out_len = 0;
         return SPACEWASM_READ_EOF;
     }
-    size_t n = remaining < cap ? remaining : cap;
-    memcpy(buf, c->data + c->pos, n);
+    size_t n = (c->step && remaining > c->step) ? c->step : remaining;
+    *out_buf = c->data + c->pos;
     c->pos += n;
     *out_len = n;
     return SPACEWASM_READ_OK;
 }
 
 int main(void) {
-    spacewasm_builder_t *builder = spacewasm_builder_new(1, 0);
-    if (!builder) {
-        fprintf(stderr, "builder_new failed\n");
+    /* Install the heap allocator before any allocating API call. */
+    if (spacewasm_set_global_allocator(heap_alloc, heap_dealloc, NULL) != 0) {
+        fprintf(stderr, "set_global_allocator failed\n");
         return 1;
     }
 
-    /* Finish the builder into a store (1024-byte guest stack, 256 code pages). */
-    spacewasm_store_t *store = NULL;
-    spacewasm_status_t st = spacewasm_builder_finish(builder, 1024, 256, &store);
+    /* No host modules for this example; create an empty host vector. */
+    spacewasm_host_t host;
+    spacewasm_status_t st = spacewasm_host_new(0, &host);
     if (st != SPACEWASM_OK) {
-        fprintf(stderr, "builder_finish: status=%d\n", (int)st);
+        fprintf(stderr, "host_new: status=%d\n", (int)st);
+        return 1;
+    }
+
+    /* Finish the host vector into a store (1024-byte guest stack, room for 1
+     * guest module, 256 code pages). This consumes `host`. */
+    spacewasm_store_t *store = NULL;
+    st = spacewasm_store_new(&host, 1024, 1, 256, &store);
+    if (st != SPACEWASM_OK) {
+        fprintf(stderr, "store_new: status=%d\n", (int)st);
         return 1;
     }
 
@@ -92,11 +146,11 @@ int main(void) {
         return 1;
     }
 
-    /* Load a guest module onto the store. */
-    cursor_t cursor = {ADD_WASM, sizeof(ADD_WASM), 0};
+    /* Load a guest module onto the store, streamed in 16-byte chunks. */
+    cursor_t cursor = {ADD_WASM, sizeof(ADD_WASM), 0, 16};
     uint32_t mod_idx = 0;
-    st = spacewasm_store_load_module(store, "main", cursor_read, &cursor,
-                                     /*chunk_size=*/16, alloc, &mod_idx);
+    st = spacewasm_store_load_module(store, "main", cursor_read, &cursor, alloc,
+                                     &mod_idx);
     /* The loaded module holds its own reference; the handle can go now. */
     spacewasm_allocator_destroy(alloc);
     if (st != SPACEWASM_OK) {

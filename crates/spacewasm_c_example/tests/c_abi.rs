@@ -1,86 +1,63 @@
-//! Compiles `examples/ctest.c` against the generated header and the built
-//! staticlib, then runs it. This proves the C ABI + header link and execute
-//! end-to-end. Skipped (passes trivially) if no C compiler is available.
+//! Compiles the C programs under `examples/` against the generated header and
+//! the freshly built `spacewasm_c_api` staticlib, then runs them. This proves
+//! the standalone C library links and executes end-to-end with only C-supplied
+//! hooks (`spacewasm_panic` + the registered heap allocator). Skipped (passes
+//! trivially) if no C compiler is available.
 
 use std::path::PathBuf;
 use std::process::Command;
 
-fn have_cc(cc: &str) -> bool {
-    Command::new(cc)
-        .arg("--version")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
-}
+use spacewasm_c_example::{build_staticlib, compile_c, find_cc};
 
-/// Locate the freshly built `libspacewasm_c.a`. Cargo places test/build output
-/// under target/<profile>/deps, with the staticlib at target/<profile>/.
-fn staticlib_dir() -> PathBuf {
-    // The test binary lives at target/<profile>/deps/<bin>; the staticlib is two
-    // levels up in target/<profile>/.
-    let mut dir = std::env::current_exe().unwrap();
-    dir.pop(); // remove test bin name
-    if dir.ends_with("deps") {
-        dir.pop();
-    }
-    dir
-}
-
-#[test]
-fn c_program_links_and_runs() {
-    let cc = if have_cc("cc") {
-        "cc"
-    } else if have_cc("clang") {
-        "clang"
-    } else if have_cc("gcc") {
-        "gcc"
-    } else {
-        eprintln!("no C compiler found; skipping C ABI link test");
+/// Compile `examples/<name>` against the staticlib, run it, and assert success.
+/// `expect` (if set) must appear in stdout.
+fn compile_and_run(name: &str, expect: Option<&str>) {
+    let Some(cc) = find_cc() else {
+        eprintln!("no C compiler found; skipping C ABI test for {name}");
         return;
     };
 
-    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = manifest.join("examples/ctest.c");
-    // The C header is generated into and shipped from the spacewasm_ffi crate.
-    let include = manifest.join("../spacewasm_ffi/include");
-    let libdir = staticlib_dir();
+    build_staticlib();
 
-    let out = std::env::temp_dir().join("spacewasm_ctest_bin");
+    let src = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("examples")
+        .join(name);
+    let out = std::env::temp_dir().join(format!("spacewasm_{}", name.replace('.', "_")));
 
-    // Compile and link against the staticlib.
-    let mut cmd = Command::new(cc);
-    cmd.arg(&src)
-        .arg(format!("-I{}", include.display()))
-        .arg(format!("-L{}", libdir.display()))
-        .arg("-lspacewasm_c_example")
-        .arg("-o")
-        .arg(&out);
-
-    // Platform system libraries the Rust staticlib depends on.
-    if cfg!(target_os = "macos") {
-        cmd.args(["-framework", "CoreFoundation", "-framework", "Security"]);
-    } else if cfg!(target_os = "linux") {
-        cmd.args(["-lpthread", "-ldl", "-lm"]);
-    }
-
-    let status = cmd.status().expect("failed to launch C compiler");
     assert!(
-        status.success(),
-        "C compile/link failed; is libspacewasm_c_example.a built? (run `cargo build -p spacewasm_c_example`)"
+        compile_c(cc, &src, &out),
+        "C compile/link failed for {name}; is libspacewasm_c_api.a built? \
+         (run `cargo build -p spacewasm_c_api`)"
     );
+
+    let program = out.to_string_lossy().to_string();
 
     let run = Command::new(&out)
         .output()
         .expect("failed to run C program");
+    let stdout = String::from_utf8_lossy(&run.stdout);
     assert!(
         run.status.success(),
-        "C program failed:\nstdout: {}\nstderr: {}",
-        String::from_utf8_lossy(&run.stdout),
+        "{name} ({program}) failed:\nstdout: {stdout}\nstderr: {}",
         String::from_utf8_lossy(&run.stderr),
     );
-    assert!(
-        String::from_utf8_lossy(&run.stdout).contains("add(20, 22) = 42"),
-        "unexpected output: {}",
-        String::from_utf8_lossy(&run.stdout),
-    );
+    if let Some(expect) = expect {
+        assert!(
+            stdout.contains(expect),
+            "{name} unexpected output: {stdout}"
+        );
+    }
+}
+
+/// The minimal example: load and invoke `add(20, 22)`.
+#[test]
+fn ctest_links_and_runs() {
+    compile_and_run("ctest.c", Some("add(20, 22) = 42"));
+}
+
+/// The full ported ABI suite: modules, streaming, host functions, error paths,
+/// statistics, and the no-leak lifecycle check.
+#[test]
+fn ctest_suite_passes() {
+    compile_and_run("ctest_suite.c", Some("C ABI tests passed"));
 }

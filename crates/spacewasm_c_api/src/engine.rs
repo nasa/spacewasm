@@ -6,12 +6,11 @@ const MAX_CONTROL_FRAMES: usize = 64;
 const MAX_STACK_DEPTH: usize = 256;
 
 use spacewasm::{
-    Box, CodeBuilder, CompilerOptions, Engine, ExportDesc, HostFunction, HostModule, HostName,
-    HostValList, Interpreter, InterpreterResult, InterpreterRunner, Memory, Module, ModuleRef, Rc,
-    Ref, StartInvocation, ValType, Value, Vec, WasmMemoryAllocator, WasmRef, WasmStream,
+    CodeBuilder, CompilerOptions, Engine, ExportDesc, HostModule, Interpreter, InterpreterResult,
+    InterpreterRunner, Memory, Module, ModuleRef, Rc, Ref, StartInvocation, ValType, Value, Vec,
+    WasmMemoryAllocator, WasmRef, WasmStream,
 };
 
-use crate::host::CHostFunction;
 use crate::status::{self, spacewasm_run_status_t, spacewasm_status_t, spacewasm_trap_t};
 use crate::value::spacewasm_value_t;
 
@@ -73,123 +72,6 @@ impl SpacewasmCaller {
     }
 }
 
-/// A host module under construction, with its function buffer sized up front.
-struct BuilderHostModule {
-    name: HostName<{ spacewasm::HOST_MODULE_NAME_CAP }>,
-    functions: Vec<HostFunction>,
-    max_functions: u32,
-}
-
-/// Accumulates host modules and their functions, then finishes into a
-/// [`SpacewasmStore`]. Consumed by [`Builder::finish`].
-pub struct Builder {
-    max_modules: usize,
-    host_modules: Vec<BuilderHostModule>,
-    max_host_modules: u32,
-}
-
-impl Builder {
-    /// Create a new builder. `max_modules` is the guest-module capacity (≤ 256);
-    /// `max_host_modules` bounds registered host modules.
-    pub fn new(max_modules: usize, max_host_modules: u32) -> Result<Builder, spacewasm_status_t> {
-        if max_modules > 256 {
-            return Err(status::SPACEWASM_ERR_BAD_ARG);
-        }
-        let host_modules = Vec::new(max_host_modules).map_err(status::alloc_status)?;
-        Ok(Builder {
-            max_modules,
-            host_modules,
-            max_host_modules,
-        })
-    }
-
-    /// Register a host module, returning its index. `max_functions` bounds how
-    /// many functions may be added to it.
-    pub fn add_host_module(
-        &mut self,
-        name: impl Into<HostName<{ spacewasm::HOST_MODULE_NAME_CAP }>>,
-        max_functions: u32,
-    ) -> Result<u32, spacewasm_status_t> {
-        if self.host_modules.len() as u32 >= self.max_host_modules {
-            return Err(status::SPACEWASM_ERR_CAPACITY);
-        }
-        let functions = Vec::new(max_functions).map_err(status::alloc_status)?;
-        let idx = self.host_modules.len() as u32;
-        self.host_modules.push(BuilderHostModule {
-            name: name.into(),
-            functions,
-            max_functions,
-        });
-        Ok(idx)
-    }
-
-    /// Register a C-backed host function on a previously-added module.
-    pub fn add_host_function(
-        &mut self,
-        module_idx: u32,
-        name: impl Into<HostName<{ spacewasm::HOST_FUNCTION_NAME_CAP }>>,
-        params: HostValList,
-        returns: HostValList,
-        f: spacewasm_host_fn_t,
-        userdata: *mut c_void,
-    ) -> Result<(), spacewasm_status_t> {
-        let module = self
-            .host_modules
-            .get_mut(module_idx as usize)
-            .ok_or(status::SPACEWASM_ERR_NOT_FOUND)?;
-
-        if module.functions.len() as u32 >= module.max_functions {
-            return Err(status::SPACEWASM_ERR_CAPACITY);
-        }
-
-        let f = f.ok_or(status::SPACEWASM_ERR_NULL_ARG)?;
-        let trampoline = CHostFunction::new(f, userdata);
-        let host_fn = HostFunction::try_new(name.into(), params, returns, move |state, args| {
-            trampoline.call(state, args)
-        })
-        .map_err(status::host_val_list_status)?;
-
-        module.functions.push(host_fn);
-        Ok(())
-    }
-
-    /// Consume the builder, build the real host modules, and allocate the core
-    /// [`Engine`] (with a `stack_size`-byte guest stack). `max_code_pages`
-    /// bounds the compiled-code pages the store may allocate across module
-    /// loads. Returns an empty [`SpacewasmStore`] ready to load guest modules
-    /// onto.
-    pub fn finish(
-        self,
-        stack_size: usize,
-        max_code_pages: u32,
-    ) -> Result<Box<SpacewasmStore>, spacewasm_status_t> {
-        // Build the real host modules from the accumulated builders.
-        let mut host_modules: Vec<HostModule> =
-            Vec::new(self.host_modules.len() as u32).map_err(status::alloc_status)?;
-        for bhm in self.host_modules {
-            host_modules.push(HostModule {
-                name: bhm.name,
-                globals: Vec::zero(),
-                functions: bhm.functions,
-                memory: Vec::zero(),
-                table: Vec::zero(),
-            });
-        }
-
-        let engine = Engine::new(stack_size, self.max_modules, host_modules)
-            .map_err(status::memory_status)?;
-
-        let code_builder = CodeBuilder::new(max_code_pages).map_err(status::alloc_status)?;
-
-        Box::new(SpacewasmStore {
-            engine,
-            code_builder,
-            phase: EngineState::Idle,
-        })
-        .map_err(status::alloc_status)
-    }
-}
-
 /// SpaceWasm store handle (`spacewasm_store_t`).
 ///
 /// Owns the core [`Engine`] (which owns the store and execution state) and the
@@ -203,6 +85,32 @@ pub struct SpacewasmStore {
 }
 
 impl SpacewasmStore {
+    /// Build an empty store from the accumulated host modules, allocating the
+    /// core [`Engine`] (with a `stack_size`-byte guest stack) and a
+    /// [`CodeBuilder`] bounded to `max_code_pages`. `max_modules` is the
+    /// guest-module capacity (≤ 256). The store is ready to load guest modules
+    /// onto with [`SpacewasmStore::load_module`].
+    pub fn new(
+        stack_size: usize,
+        max_modules: usize,
+        max_code_pages: u32,
+        host_modules: Vec<HostModule>,
+    ) -> Result<SpacewasmStore, spacewasm_status_t> {
+        if max_modules > 256 {
+            return Err(status::SPACEWASM_ERR_BAD_ARG);
+        }
+
+        let engine =
+            Engine::new(stack_size, max_modules, host_modules).map_err(status::memory_status)?;
+        let code_builder = CodeBuilder::new(max_code_pages).map_err(status::alloc_status)?;
+
+        Ok(SpacewasmStore {
+            engine,
+            code_builder,
+            phase: EngineState::Idle,
+        })
+    }
+
     pub fn load_module(
         &mut self,
         name: &str,
