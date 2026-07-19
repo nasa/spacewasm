@@ -183,9 +183,7 @@ fn main() {
         StartInvocation::Finished => InterpreterResult::Finished,
         StartInvocation::Trap(t) => InterpreterResult::Trap(t),
         StartInvocation::Pause => InterpreterResult::Pause,
-        StartInvocation::Running => {
-            Interpreter::default().run(code_builder.pages(), &mut engine, usize::MAX)
-        }
+        StartInvocation::Running => Interpreter.run(code_builder.pages(), &mut engine, usize::MAX),
     };
     match init_result {
         InterpreterResult::Finished => {}
@@ -235,13 +233,11 @@ fn main() {
         )
         .unwrap();
 
-    let interpreter = Interpreter::default();
-
     // TODO(cbwilson) Need to enable raw terminal mode somehow for TTY escape codes and control sequences
 
     let mut result = InterpreterResult::OutOfFuel;
     while result == InterpreterResult::OutOfFuel {
-        result = interpreter.run(code_builder.pages(), &mut engine, usize::MAX)
+        result = Interpreter.run(code_builder.pages(), &mut engine, usize::MAX)
     }
 
     let InterpreterResult::Finished = result else {

@@ -262,15 +262,8 @@ impl SpacewasmStore {
         self.drive(fuel)
     }
 
-    /// Drive the seeded interpreter for up to `fuel` instructions and translate
-    /// the outcome. On a terminal result the store resets to
-    /// [`EngineState::Idle`]; otherwise the current phase (`Running` or
-    /// `RunningStart`) is preserved so the caller can resume. Shared by [`run`]
-    /// and [`run_start`].
     fn drive(&mut self, fuel: usize) -> (spacewasm_run_status_t, spacewasm_trap_t) {
-        // `code_builder` and `engine` are disjoint fields, so this borrows
-        // cleanly; the interpreter reads code straight from the builder's pages.
-        let interpreter = Interpreter::default();
+        let interpreter = Interpreter;
         let result = interpreter.run(self.code_builder.pages(), &mut self.engine, fuel);
 
         let (rs, trap) = status::run_status(&result);

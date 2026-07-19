@@ -221,7 +221,7 @@ fn main() {
             StartInvocation::Finished => InterpreterResult::Finished,
             StartInvocation::Trap(t) => InterpreterResult::Trap(t),
             StartInvocation::Pause => InterpreterResult::Pause,
-            StartInvocation::Running => Interpreter::default().run(text, &mut state, 10000),
+            StartInvocation::Running => Interpreter.run(text, &mut state, 10000),
         }
     }));
 
@@ -338,8 +338,7 @@ fn main() {
         state.reset();
         state.invoke(wasm_ref, &values).unwrap();
 
-        let interpreter = Interpreter::default();
-        let tracer = StateTracer::new(&interpreter, limit);
+        let tracer = StateTracer::new(&Interpreter, limit);
 
         // Catch panics to dump trace before crashing
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {

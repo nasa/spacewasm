@@ -155,7 +155,7 @@ fn main() {
         StartInvocation::Trap(t) => panic!("trap during initialization {t:?}"),
         StartInvocation::Pause => panic!("pause during init"),
         StartInvocation::Running => {
-            match spacewasm::Interpreter::default().run(text, &mut state, usize::MAX) {
+            match spacewasm::Interpreter.run(text, &mut state, usize::MAX) {
                 InterpreterResult::Finished => {}
                 InterpreterResult::OutOfFuel => panic!("insufficient fuel for initialization"),
                 InterpreterResult::Trap(t) => panic!("trap during initialization {t:?}"),
@@ -239,8 +239,6 @@ fn main() {
         )
         .unwrap();
 
-    let interpreter = spacewasm::Interpreter::default();
-
     // let dbg = Inspector {
     //     v: &interpreter,
     //     out: *out,
@@ -248,7 +246,7 @@ fn main() {
 
     let mut result = InterpreterResult::OutOfFuel;
     while result == InterpreterResult::OutOfFuel {
-        result = interpreter.run(&text, &mut state, usize::MAX)
+        result = spacewasm::Interpreter.run(&text, &mut state, usize::MAX)
     }
 
     let InterpreterResult::Finished = result else {

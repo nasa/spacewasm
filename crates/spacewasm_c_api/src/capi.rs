@@ -79,7 +79,10 @@ impl From<&mut spacewasm_host_t> for &mut spacewasm::Vec<spacewasm::HostModule> 
 
 /// Create a new host module vector of max_host_module size
 #[unsafe(no_mangle)]
-pub extern "C" fn spacewasm_host_new(len: u32, dest: *mut spacewasm_host_t) -> spacewasm_status_t {
+pub unsafe extern "C" fn spacewasm_host_new(
+    len: u32,
+    dest: *mut spacewasm_host_t,
+) -> spacewasm_status_t {
     let v = check!(spacewasm::Vec::<spacewasm::HostModule>::new(len).map_err(status::alloc_status));
     // Safety, dest must be a valid pointer
     unsafe {
@@ -92,7 +95,7 @@ pub extern "C" fn spacewasm_host_new(len: u32, dest: *mut spacewasm_host_t) -> s
 /// Add a host module named `name` sized for `max_functions` functions and `max_globals` globals
 /// writing its index to `out_idx` (if non-null).
 #[unsafe(no_mangle)]
-pub extern "C" fn spacewasm_add_host_module(
+pub unsafe extern "C" fn spacewasm_add_host_module(
     host: *mut spacewasm_host_t,
     name: *const c_char,
     max_functions: u32,
@@ -120,9 +123,9 @@ pub extern "C" fn spacewasm_add_host_module(
             .ok_or(spacewasm_status_t::SPACEWASM_ERR_CAPACITY)
     );
 
-    unsafe {
-        out_idx.write((host.len() - 1) as u32);
-    };
+    if let Some(out_idx) = unsafe { out_idx.as_mut() } {
+        *out_idx = (host.len() - 1) as u32;
+    }
 
     spacewasm_status_t::SPACEWASM_OK
 }
@@ -159,7 +162,7 @@ pub unsafe extern "C" fn spacewasm_add_host_function(
     let f = check!(f.ok_or(status::SPACEWASM_ERR_NULL_ARG));
 
     let trampoline = CHostFunction::new(f, userdata);
-    let host_fn = match HostFunction::try_new(name.into(), params, returns, move |state, args| {
+    let host_fn = match HostFunction::try_new(name, params, returns, move |state, args| {
         trampoline.call(state, args)
     })
     .map_err(status::host_val_list_status)

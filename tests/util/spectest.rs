@@ -618,7 +618,7 @@ fn load_module(
         StartInvocation::Trap(t) => InterpreterResult::Trap(t),
         StartInvocation::Pause => InterpreterResult::Pause,
         StartInvocation::Running => {
-            Interpreter::default().run(ctx.code_builder.pages(), &mut ctx.engine, usize::MAX)
+            Interpreter.run(ctx.code_builder.pages(), &mut ctx.engine, usize::MAX)
         }
     };
     match result {
@@ -699,10 +699,8 @@ fn invoke_function(
 
     state.invoke(f_ref, &params).unwrap();
 
-    let interpreter = Interpreter::default();
-
-    let test_runner = Inspector {
-        v: &interpreter,
+    let test_runner: Inspector<'_, _, _, _> = Inspector {
+        v: &Interpreter,
         out: test_log.clone(),
     };
 

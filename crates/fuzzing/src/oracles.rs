@@ -266,7 +266,7 @@ pub fn no_traps(wasm: &[u8]) {
         StartInvocation::Finished => InterpreterResult::Finished,
         StartInvocation::Trap(t) => InterpreterResult::Trap(t),
         StartInvocation::Pause => InterpreterResult::Pause,
-        StartInvocation::Running => Interpreter::default().run(text, &mut state, 10000),
+        StartInvocation::Running => Interpreter.run(text, &mut state, 10000),
     };
     match start_result {
         InterpreterResult::Finished => {}
@@ -366,7 +366,7 @@ pub fn no_traps(wasm: &[u8]) {
         state.invoke(wasm_ref, &params).unwrap();
 
         // Run the interpreter with limited instructions
-        let interpreter = Interpreter::default();
+        let interpreter = Interpreter;
         let result = interpreter.run(text, &mut state, 10000);
 
         // Check for traps - this is the key assertion

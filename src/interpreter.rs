@@ -150,12 +150,6 @@ impl Engine {
 
 pub struct Interpreter;
 
-impl Default for Interpreter {
-    fn default() -> Self {
-        Self
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrapReason {
     /// Triggered by unreachable instruction
