@@ -1,4 +1,1 @@
-include!(concat!(
-    env!("SPACEWASM_CONFIG_DIR"),
-    "/spacewasm_config.rs"
-));
+include!(env!("SPACEWASM_CONFIG"));

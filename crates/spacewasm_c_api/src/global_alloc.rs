@@ -5,11 +5,8 @@ use core::ffi::c_void;
 use core::ptr;
 use core::sync::atomic::{AtomicPtr, Ordering};
 
+use crate::config::{GLOBAL_ALLOCATOR_MAX_PAGES, GLOBAL_ALLOCATOR_PAGE_SIZE};
 use spacewasm::{AllocError, Allocator, MemoryStatistics, PageAllocator};
-
-// TODO(tumbar) Make this configurable.
-const MAX_PAGES: usize = 16;
-const PAGE_SIZE: usize = 8192;
 
 /// Allocate `size` bytes aligned to `align`. Return NULL on failure. Per page allocation.
 pub type spacewasm_global_alloc_fn_t =
@@ -96,8 +93,8 @@ unsafe impl Allocator for CPageBackend {
 static BACKEND: CPageBackend = CPageBackend::new();
 
 spacewasm::global_allocator!(
-    PageAllocator<'static, MAX_PAGES>,
-    PageAllocator::new(&BACKEND, PAGE_SIZE)
+    PageAllocator<'static, GLOBAL_ALLOCATOR_MAX_PAGES>,
+    PageAllocator::new(&BACKEND, GLOBAL_ALLOCATOR_PAGE_SIZE)
 );
 
 /// Install the process-wide heap allocator backing the interpreter.

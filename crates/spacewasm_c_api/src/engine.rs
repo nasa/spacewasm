@@ -2,15 +2,13 @@
 
 use core::ffi::c_void;
 
-const MAX_CONTROL_FRAMES: usize = 64;
-const MAX_STACK_DEPTH: usize = 256;
-
 use spacewasm::{
     CodeBuilder, CompilerOptions, Engine, ExportDesc, HostModule, Interpreter, InterpreterResult,
     InterpreterRunner, Memory, Module, ModuleRef, Rc, Ref, StartInvocation, ValType, Value, Vec,
     WasmMemoryAllocator, WasmRef, WasmStream,
 };
 
+use crate::config::{MAX_CONTROL_FRAMES, MAX_STACK_DEPTH};
 use crate::status::{self, spacewasm_run_status_t, spacewasm_status_t, spacewasm_trap_t};
 use crate::value::spacewasm_value_t;
 
