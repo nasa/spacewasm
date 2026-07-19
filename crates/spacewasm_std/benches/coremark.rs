@@ -83,7 +83,7 @@ fn main() {
         StartInvocation::Trap(t) => panic!("trap during initialization {t:?}"),
         StartInvocation::Pause => panic!("pause during init"),
         StartInvocation::Running => {
-            match spacewasm::Interpreter::default().run(text, &mut state, usize::MAX) {
+            match spacewasm::Interpreter.run(text, &mut state, usize::MAX) {
                 InterpreterResult::Finished => {}
                 InterpreterResult::OutOfFuel => panic!("insufficient fuel for initialization"),
                 InterpreterResult::Trap(t) => panic!("trap during initialization {t:?}"),
@@ -117,10 +117,9 @@ fn main() {
     let bench_start = Instant::now();
 
     eprintln!("Starting execution...");
-    let interpreter = spacewasm::Interpreter::default();
     let mut result = InterpreterResult::OutOfFuel;
     while result == InterpreterResult::OutOfFuel {
-        result = interpreter.run(text, &mut state, usize::MAX)
+        result = spacewasm::Interpreter.run(text, &mut state, usize::MAX)
     }
     let elapsed = bench_start.elapsed();
 
