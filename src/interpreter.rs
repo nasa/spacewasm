@@ -66,7 +66,7 @@ impl Engine {
         // We need to push the frame pointer and the return instruction pointer to the stack
         // We also encode the parameter size into the stack frame so that the return can unwind the stack
         let frame_length = (self.sp - self.fp as usize) as u32;
-        assert!(frame_length <= 0xFFFFF);
+        assert!(frame_length <= 0xFFFF);
         let frame = CallFrame {
             frame_length: frame_length as u16,
             module_delta,
@@ -1673,3 +1673,87 @@ impl IrVisitor for Interpreter {
 #[cfg(test)]
 #[path = "interpreter_tests.rs"]
 mod interpreter_tests;
+
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+
+    /// Verify CallFrame transmute correctness
+    #[kani::proof]
+    fn proof_callframe_transmute_roundtrip() {
+        let frame_length: u16 = kani::any();
+        let module_delta: u8 = kani::any();
+        let parameter_size: u8 = kani::any();
+
+        let frame = CallFrame {
+            frame_length,
+            module_delta,
+            parameter_size,
+        };
+
+        let bits = frame.into_bits();
+
+        let decoded = CallFrame::from_bits(bits);
+
+        assert_eq!(
+            decoded.frame_length, frame_length,
+            "frame_length must round-trip correctly"
+        );
+        assert_eq!(
+            decoded.module_delta, module_delta,
+            "module_delta must round-trip correctly"
+        );
+        assert_eq!(
+            decoded.parameter_size, parameter_size,
+            "parameter_size must round-trip correctly"
+        );
+    }
+
+    /// Verify CallFrame transmute produces deterministic results
+    #[kani::proof]
+    fn proof_callframe_deterministic() {
+        let frame_length: u16 = kani::any();
+        let module_delta: u8 = kani::any();
+        let parameter_size: u8 = kani::any();
+
+        let frame1 = CallFrame {
+            frame_length,
+            module_delta,
+            parameter_size,
+        };
+
+        let frame2 = CallFrame {
+            frame_length,
+            module_delta,
+            parameter_size,
+        };
+
+        let bits1 = frame1.into_bits();
+        let bits2 = frame2.into_bits();
+
+        assert_eq!(bits1, bits2, "Same inputs must produce same bit pattern");
+    }
+
+    /// Verify CallFrame layout should pack into 32 bits
+    #[kani::proof]
+    fn proof_callframe_layout() {
+        assert_eq!(
+            core::mem::size_of::<CallFrame>(),
+            4,
+            "CallFrame must be exactly 4 bytes"
+        );
+
+        let frame = CallFrame {
+            frame_length: 0x1234,
+            module_delta: 0x56,
+            parameter_size: 0x78,
+        };
+
+        let bits = frame.into_bits();
+        let decoded = CallFrame::from_bits(bits);
+
+        assert_eq!(decoded.frame_length, 0x1234);
+        assert_eq!(decoded.module_delta, 0x56);
+        assert_eq!(decoded.parameter_size, 0x78);
+    }
+}
