@@ -1,7 +1,7 @@
 use crate::util::Vec;
 use crate::*;
-use core::fmt::{Debug, Formatter};
 use ::core::ops::ControlFlow;
+use core::fmt::{Debug, Formatter};
 
 pub struct GlobalValueError;
 

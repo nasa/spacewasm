@@ -39,11 +39,19 @@ pub fn include_dir() -> PathBuf {
 
 /// Ensure `libspacewasm_c_api.a` is built (default features → allocator + panic
 /// handler + staticlib). Panics on build failure.
+///
+/// The build must land in the same `target/<profile>/` directory that
+/// [`staticlib_dir`] hands to the linker. A test binary compiled with
+/// `--release` runs from `target/release/deps/`, so a plain (debug) `cargo
+/// build` would drop the staticlib in `target/debug/` and the `-L` search would
+/// miss it. Mirror the profile by inspecting the directory name.
 pub fn build_staticlib() {
-    let status = Command::new(env!("CARGO"))
-        .args(["build", "-p", "spacewasm_c_api"])
-        .status()
-        .expect("failed to launch cargo");
+    let mut cmd = Command::new(env!("CARGO"));
+    cmd.args(["build", "-p", "spacewasm_c_api"]);
+    if staticlib_dir().file_name().is_some_and(|n| n == "release") {
+        cmd.arg("--release");
+    }
+    let status = cmd.status().expect("failed to launch cargo");
     assert!(
         status.success(),
         "failed to build spacewasm_c_api staticlib"
