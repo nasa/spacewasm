@@ -38,11 +38,7 @@ pub type spacewasm_read_fn_t = Option<
 /// allocates nothing of its own — important under a strict-LIFO page allocator,
 /// where a scratch buffer freed mid-load would strand its page.
 pub struct CallbackStream {
-    read: unsafe extern "C" fn(
-        *mut c_void,
-        *mut *const u8,
-        *mut usize,
-    ) -> spacewasm_read_result_t,
+    read: unsafe extern "C" fn(*mut c_void, *mut *const u8, *mut usize) -> spacewasm_read_result_t,
     userdata: *mut c_void,
     errored: bool,
 }

@@ -4,7 +4,8 @@
 mod tests {
     use crate::{
         AllocError, BaseVisitor, Engine, Interpreter, InterpreterResult, InterpreterRunner,
-        IrVisitor, MemArg, MemType, Memory, MemoryKind, Module, ModuleRef, StartInvocation, ValType,
+        IrVisitor, MemArg, MemType, Memory, MemoryKind, Module, ModuleRef, StartInvocation,
+        ValType,
     };
 
     extern crate std;

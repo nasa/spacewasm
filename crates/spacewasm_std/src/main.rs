@@ -20,7 +20,8 @@ fn main() {
     let path = std::env::args().nth(1).unwrap();
 
     let start = Instant::now();
-    let mut code_builder = CodeBuilder::new(MAX_CODE_PAGES).expect("failed to allocate code builder");
+    let mut code_builder =
+        CodeBuilder::new(MAX_CODE_PAGES).expect("failed to allocate code builder");
 
     let fprime_core = HostModule {
         name: "fprime_core".into(),
@@ -132,20 +133,18 @@ fn main() {
 
     let file = std::fs::File::open(path).expect("failed to open file");
     let mut file_stream = FileStream::new(file);
-    let (module, stats) = spacewasm::Module::new_with_statistics::<
-        MAX_CONTROL_FRAMES,
-        MAX_STACK_DEPTH,
-    >(
-        "main",
-        &mut file_stream,
-        &mut state.store,
-        &mut code_builder,
-        spacewasm::Rc::new(RustSystemAllocator)
-            .unwrap()
-            .into_wasm_memory_allocator(),
-        CompilerOptions::default(),
-    )
-    .expect("failed to parse wasm module");
+    let (module, stats) =
+        spacewasm::Module::new_with_statistics::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
+            "main",
+            &mut file_stream,
+            &mut state.store,
+            &mut code_builder,
+            spacewasm::Rc::new(RustSystemAllocator)
+                .unwrap()
+                .into_wasm_memory_allocator(),
+            CompilerOptions::default(),
+        )
+        .expect("failed to parse wasm module");
 
     let text = code_builder.pages();
     let final_page_offset = code_builder.offset();

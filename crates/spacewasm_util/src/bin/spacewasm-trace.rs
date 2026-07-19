@@ -9,9 +9,8 @@
 
 use spacewasm::{
     AllocError, Allocator, CodeBuilder, CompilerOptions, Engine, ExportDesc, InnerVec, Interpreter,
-    InterpreterResult, InterpreterRunner, MemoryStatistics, Module, ModuleRef, Ref, StartInvocation,
-    Vec as WasmVec,
-    WasmMemoryAllocator, WasmRef, WasmStream,
+    InterpreterResult, InterpreterRunner, MemoryStatistics, Module, ModuleRef, Ref,
+    StartInvocation, Vec as WasmVec, WasmMemoryAllocator, WasmRef, WasmStream,
 };
 use spacewasm::{ValType, Value};
 use spacewasm_util::StateTracer;

@@ -951,10 +951,7 @@ impl ElementSection {
 pub struct CodeSection;
 
 impl CodeSection {
-    pub fn read<
-        const MAX_CONTROL_FRAMES: usize,
-        const MAX_STACK_DEPTH: usize,
-    >(
+    pub fn read<const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize>(
         wasm: &mut Reader,
         builder: &mut CodeBuilder,
         store: &Store,
