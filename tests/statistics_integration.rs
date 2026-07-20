@@ -11,7 +11,7 @@ use core::ptr::NonNull;
 use core::sync::atomic::{AtomicI32, Ordering};
 
 use spacewasm::{
-    Allocator, AllocError, CodeBuilder, CompilerOptions, Engine, InnerVec, MemoryStatistics,
+    AllocError, Allocator, CodeBuilder, CompilerOptions, Engine, InnerVec, MemoryStatistics,
     Module, SectionKind, WasmMemoryAllocator, WasmStream, global_allocator, vec,
 };
 
@@ -237,16 +237,15 @@ fn new_with_statistics_matches_plain_new() {
     let mut engine_b = Engine::new(1024, 8, vec![]).unwrap();
     let mut cb_b = CodeBuilder::new(MAX_CODE_PAGES).unwrap();
     let mut stream_b = ByteStream::new(STAT_WASM);
-    let (with_stats, _stats) =
-        Module::new_with_statistics::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
-            "with-stats",
-            &mut stream_b,
-            &mut engine_b.store,
-            &mut cb_b,
-            allocator(),
-            options(),
-        )
-        .unwrap();
+    let (with_stats, _stats) = Module::new_with_statistics::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
+        "with-stats",
+        &mut stream_b,
+        &mut engine_b.store,
+        &mut cb_b,
+        allocator(),
+        options(),
+    )
+    .unwrap();
 
     assert_eq!(plain.functions.len(), with_stats.functions.len());
     assert_eq!(plain.types.len(), with_stats.types.len());

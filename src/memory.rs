@@ -280,9 +280,7 @@ mod tests {
     struct TestAllocator;
     impl WasmMemoryAllocator for TestAllocator {
         fn allocate(&self, layout: Layout) -> Result<NonNull<u8>, AllocError> {
-            unsafe {
-                NonNull::new(std::alloc::alloc(layout)).ok_or(AllocError::AllocationFailed)
-            }
+            unsafe { NonNull::new(std::alloc::alloc(layout)).ok_or(AllocError::AllocationFailed) }
         }
 
         fn reallocate(

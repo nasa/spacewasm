@@ -506,8 +506,14 @@ mod tests {
 
     #[test]
     fn raw_value_to_value_by_type() {
-        assert_eq!(RawValue::from_i32(-7).to_value(ValType::I32), Value::I32(-7));
-        assert_eq!(RawValue::from_i64(-7).to_value(ValType::I64), Value::I64(-7));
+        assert_eq!(
+            RawValue::from_i32(-7).to_value(ValType::I32),
+            Value::I32(-7)
+        );
+        assert_eq!(
+            RawValue::from_i64(-7).to_value(ValType::I64),
+            Value::I64(-7)
+        );
         assert_eq!(
             RawValue::from_f32(2.0).to_value(ValType::F32),
             Value::F32(2.0)
@@ -526,13 +532,40 @@ mod tests {
 
         // A larger-or-equal minimum with no requirement maximum always matches.
         assert!(Limit { min: 2, max: None }.matches(&Limit { min: 1, max: None }));
-        assert!(Limit { min: 1, max: Some(5) }.matches(&Limit { min: 1, max: None }));
+        assert!(
+            Limit {
+                min: 1,
+                max: Some(5)
+            }
+            .matches(&Limit { min: 1, max: None })
+        );
 
         // Both bounded: the candidate max must fit within the requirement max.
-        assert!(Limit { min: 1, max: Some(3) }.matches(&Limit { min: 1, max: Some(4) }));
-        assert!(!Limit { min: 1, max: Some(5) }.matches(&Limit { min: 1, max: Some(4) }));
+        assert!(
+            Limit {
+                min: 1,
+                max: Some(3)
+            }
+            .matches(&Limit {
+                min: 1,
+                max: Some(4)
+            })
+        );
+        assert!(
+            !Limit {
+                min: 1,
+                max: Some(5)
+            }
+            .matches(&Limit {
+                min: 1,
+                max: Some(4)
+            })
+        );
 
         // A bounded requirement rejects an unbounded candidate.
-        assert!(!Limit { min: 1, max: None }.matches(&Limit { min: 1, max: Some(4) }));
+        assert!(!Limit { min: 1, max: None }.matches(&Limit {
+            min: 1,
+            max: Some(4)
+        }));
     }
 }
