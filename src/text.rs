@@ -226,26 +226,45 @@ pub struct GlobalVariable {
     pub mutable: bool,
 }
 
+#[derive(Debug, Copy, Clone)]
+pub struct CompilerOptions {
+    /// Allow compiling memory.grow instructions into IR
+    pub allow_memory_grow: bool,
+
+    /// Maximum number of iterations to resolve during a control flow backpatch.
+    /// This effectively limits a potentially long loop though can reject valid programs.
+    ///
+    /// Set this to 0 for unlimited iterations
+    pub max_backpatch_iterations: u32,
+
+    /// The maximum number of code pages allowed across all modules
+    pub max_code_pages: u32,
+}
+
 /// Low-level builder for paged IR code.
 ///
 /// Manages allocation of pages and writing 16-bit words to the current position.
-/// The `max_code_pages` argument to [`CodeBuilder::new`] limits the maximum
-/// number of pages that can be allocated.
 pub struct CodeBuilder {
     pages: Vec<Box<TextPage>>,
     offset: usize,
+    options: CompilerOptions,
 }
 
 impl CodeBuilder {
-    pub fn new(max_code_pages: u32) -> Result<CodeBuilder, AllocError> {
-        if max_code_pages >= (1 << 24) {
+    pub fn new(options: CompilerOptions) -> Result<CodeBuilder, AllocError> {
+        if options.max_code_pages >= (1 << 24) {
             panic!("SpaceWasm supports up to 24-bit code pages");
         }
 
         Ok(CodeBuilder {
-            pages: Vec::new(max_code_pages)?,
+            pages: Vec::new(options.max_code_pages)?,
             offset: 0,
+            options,
         })
+    }
+
+    pub(crate) fn options(&self) -> &CompilerOptions {
+        &self.options
     }
 
     fn backpatch(
@@ -275,7 +294,9 @@ impl CodeBuilder {
             next = address + lt.jump();
 
             n += 1;
-            if n > 0xFFFF {
+            if self.options().max_backpatch_iterations != 0
+                && n > self.options().max_backpatch_iterations
+            {
                 return Err(ValidationError::PossibleBackpatchCycle);
             }
         }
@@ -465,6 +486,10 @@ impl<'a, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize>
         let _ = builder.push_control(BlockKind::Block, return_type, return_type);
 
         builder
+    }
+
+    pub fn options(&self) -> &CompilerOptions {
+        self.code.options()
     }
 
     pub fn store(&self) -> &'a Store {

@@ -176,7 +176,12 @@ pub fn validate(wasm: &[u8]) {
         }
     };
 
-    let mut code_builder = CodeBuilder::new(MAX_CODE_PAGES).unwrap();
+    let mut code_builder = CodeBuilder::new(CompilerOptions {
+        allow_memory_grow: true,
+        max_backpatch_iterations: 0,
+        max_code_pages: MAX_CODE_PAGES,
+    })
+    .unwrap();
     let mut stream = ByteStream::new(wasm);
 
     let allocator = spacewasm::Rc::new(FuzzAllocator {
@@ -193,9 +198,6 @@ pub fn validate(wasm: &[u8]) {
         &mut store,
         &mut code_builder,
         allocator.clone(),
-        CompilerOptions {
-            allow_memory_grow: true,
-        },
     );
 
     match result {
@@ -229,7 +231,12 @@ pub fn no_traps(wasm: &[u8]) {
     };
 
     // Compile module with reduced code pages
-    let mut code_builder = CodeBuilder::new(MAX_CODE_PAGES).unwrap();
+    let mut code_builder = CodeBuilder::new(CompilerOptions {
+        allow_memory_grow: true,
+        max_backpatch_iterations: 0,
+        max_code_pages: MAX_CODE_PAGES,
+    })
+    .unwrap();
     let mut stream = ByteStream::new(wasm);
 
     let allocator = Rc::new(FuzzAllocator {
@@ -245,9 +252,6 @@ pub fn no_traps(wasm: &[u8]) {
         &mut state.store,
         &mut code_builder,
         allocator.clone(),
-        CompilerOptions {
-            allow_memory_grow: true,
-        },
     ) {
         Ok(m) => m,
         Err(e) => {

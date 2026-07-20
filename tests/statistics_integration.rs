@@ -157,12 +157,21 @@ const MAX_CONTROL_FRAMES: usize = 128;
 const MAX_STACK_DEPTH: usize = 256;
 const MAX_CODE_PAGES: u32 = 256;
 
+/// Compiler options used to build the code builders in these tests.
+fn options() -> CompilerOptions {
+    CompilerOptions {
+        allow_memory_grow: false,
+        max_backpatch_iterations: 0,
+        max_code_pages: MAX_CODE_PAGES,
+    }
+}
+
 #[test]
 fn new_with_statistics_reports_per_section_usage() {
     let _guard = ALLOC_LOCK.lock().unwrap();
 
     let mut engine = Engine::new(1024, 8, vec![]).unwrap();
-    let mut code_builder = CodeBuilder::new(MAX_CODE_PAGES).unwrap();
+    let mut code_builder = CodeBuilder::new(options()).unwrap();
     let mut stream = ByteStream::new(STAT_WASM);
 
     let allocator = spacewasm::Rc::new(TrackingAllocator)
@@ -175,9 +184,6 @@ fn new_with_statistics_reports_per_section_usage() {
         &mut engine.store,
         &mut code_builder,
         allocator,
-        CompilerOptions {
-            allow_memory_grow: false,
-        },
     )
     .expect("module should decode");
 
@@ -230,12 +236,9 @@ fn new_with_statistics_matches_plain_new() {
             .unwrap()
             .into_wasm_memory_allocator()
     };
-    let options = || CompilerOptions {
-        allow_memory_grow: false,
-    };
 
     let mut engine_a = Engine::new(1024, 8, vec![]).unwrap();
-    let mut cb_a = CodeBuilder::new(MAX_CODE_PAGES).unwrap();
+    let mut cb_a = CodeBuilder::new(options()).unwrap();
     let mut stream_a = ByteStream::new(STAT_WASM);
     let plain = Module::new::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
         "plain",
@@ -243,12 +246,11 @@ fn new_with_statistics_matches_plain_new() {
         &mut engine_a.store,
         &mut cb_a,
         allocator(),
-        options(),
     )
     .unwrap();
 
     let mut engine_b = Engine::new(1024, 8, vec![]).unwrap();
-    let mut cb_b = CodeBuilder::new(MAX_CODE_PAGES).unwrap();
+    let mut cb_b = CodeBuilder::new(options()).unwrap();
     let mut stream_b = ByteStream::new(STAT_WASM);
     let (with_stats, _stats) = Module::new_with_statistics::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
         "with-stats",
@@ -256,7 +258,6 @@ fn new_with_statistics_matches_plain_new() {
         &mut engine_b.store,
         &mut cb_b,
         allocator(),
-        options(),
     )
     .unwrap();
 

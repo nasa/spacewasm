@@ -114,6 +114,15 @@ static spacewasm_value_t i32_val(int32_t x) {
     return v;
 }
 
+/* Default compiler options bounding a store to `max_code_pages` code pages. */
+static spacewasm_compiler_options_t opts(uint32_t max_code_pages) {
+    spacewasm_compiler_options_t o;
+    o.allow_memory_grow = false;
+    o.max_backpatch_iterations = 0;
+    o.max_code_pages = max_code_pages;
+    return o;
+}
+
 /* A cursor over a byte slice, handing out `step` bytes per read call. The
  * callback owns the buffer, so it points `out_buf` into the slice directly. */
 typedef struct {
@@ -178,7 +187,7 @@ static int test_add_module_invoke(void) {
     CHECK(spacewasm_host_new(0, &host) == SPACEWASM_OK, "host_new");
 
     spacewasm_store_t* store = NULL;
-    CHECK(spacewasm_store_new(&host, 1024, 1, 256, &store) == SPACEWASM_OK, "store_new");
+    CHECK(spacewasm_store_new(&host, 1024, 1, opts(256), &store) == SPACEWASM_OK, "store_new");
 
     spacewasm_allocator_t* alloc =
         spacewasm_allocator_new(mem_alloc, mem_realloc, mem_dealloc, NULL);
@@ -228,7 +237,7 @@ static int test_two_modules_on_one_store(void) {
     spacewasm_host_t host;
     CHECK(spacewasm_host_new(0, &host) == SPACEWASM_OK, "host_new");
     spacewasm_store_t* store = NULL;
-    CHECK(spacewasm_store_new(&host, 1024, 2, 256, &store) == SPACEWASM_OK, "store_new");
+    CHECK(spacewasm_store_new(&host, 1024, 2, opts(256), &store) == SPACEWASM_OK, "store_new");
 
     spacewasm_allocator_t* alloc =
         spacewasm_allocator_new(mem_alloc, mem_realloc, mem_dealloc, NULL);
@@ -260,7 +269,7 @@ static int test_streaming_load(void) {
     spacewasm_host_t host;
     CHECK(spacewasm_host_new(0, &host) == SPACEWASM_OK, "host_new");
     spacewasm_store_t* store = NULL;
-    CHECK(spacewasm_store_new(&host, 1024, 1, 256, &store) == SPACEWASM_OK, "store_new");
+    CHECK(spacewasm_store_new(&host, 1024, 1, opts(256), &store) == SPACEWASM_OK, "store_new");
 
     spacewasm_allocator_t* alloc =
         spacewasm_allocator_new(mem_alloc, mem_realloc, mem_dealloc, NULL);
@@ -285,7 +294,7 @@ static int test_streaming_read_error(void) {
     spacewasm_host_t host;
     CHECK(spacewasm_host_new(0, &host) == SPACEWASM_OK, "host_new");
     spacewasm_store_t* store = NULL;
-    CHECK(spacewasm_store_new(&host, 1024, 1, 256, &store) == SPACEWASM_OK, "store_new");
+    CHECK(spacewasm_store_new(&host, 1024, 1, opts(256), &store) == SPACEWASM_OK, "store_new");
 
     spacewasm_allocator_t* alloc =
         spacewasm_allocator_new(mem_alloc, mem_realloc, mem_dealloc, NULL);
@@ -324,7 +333,7 @@ static int test_host_function_and_memory(void) {
           "add_host_function");
 
     spacewasm_store_t* store = NULL;
-    CHECK(spacewasm_store_new(&host, 1024, 1, 256, &store) == SPACEWASM_OK, "store_new");
+    CHECK(spacewasm_store_new(&host, 1024, 1, opts(256), &store) == SPACEWASM_OK, "store_new");
 
     spacewasm_allocator_t* alloc =
         spacewasm_allocator_new(mem_alloc, mem_realloc, mem_dealloc, NULL);
@@ -355,7 +364,7 @@ static int test_error_paths(void) {
     spacewasm_host_t host;
     CHECK(spacewasm_host_new(0, &host) == SPACEWASM_OK, "host_new");
     spacewasm_store_t* store = NULL;
-    CHECK(spacewasm_store_new(&host, 1024, 257, 256, &store) == SPACEWASM_ERR_BAD_ARG,
+    CHECK(spacewasm_store_new(&host, 1024, 257, opts(256), &store) == SPACEWASM_ERR_BAD_ARG,
           "oversized max_modules");
 
     /* Bad signature char -> ERR_BAD_SIGNATURE, no panic. */
@@ -369,7 +378,7 @@ static int test_error_paths(void) {
 
     /* Malformed wasm -> parse error; the store is still created fine. */
     CHECK(spacewasm_host_new(0, &host) == SPACEWASM_OK, "host_new");
-    CHECK(spacewasm_store_new(&host, 1024, 1, 256, &store) == SPACEWASM_OK, "store_new");
+    CHECK(spacewasm_store_new(&host, 1024, 1, opts(256), &store) == SPACEWASM_OK, "store_new");
     const uint8_t junk[] = {0, 1, 2, 3, 4, 5, 6, 7};
     uint32_t mod_idx = 0;
     spacewasm_allocator_t* alloc =
@@ -389,7 +398,7 @@ static int test_null_arg_handling(void) {
     spacewasm_host_t host;
     CHECK(spacewasm_host_new(0, &host) == SPACEWASM_OK, "host_new");
     spacewasm_store_t* store = NULL;
-    CHECK(spacewasm_store_new(&host, 1024, 1, 256, &store) == SPACEWASM_OK, "store_new");
+    CHECK(spacewasm_store_new(&host, 1024, 1, opts(256), &store) == SPACEWASM_OK, "store_new");
     spacewasm_allocator_t* alloc =
         spacewasm_allocator_new(mem_alloc, mem_realloc, mem_dealloc, NULL);
     CHECK(alloc, "allocator_new");
@@ -424,7 +433,7 @@ static int run_add_once(void) {
         return 1;
     }
     spacewasm_store_t* store = NULL;
-    if (spacewasm_store_new(&host, 1024, 1, 256, &store) != SPACEWASM_OK) {
+    if (spacewasm_store_new(&host, 1024, 1, opts(256), &store) != SPACEWASM_OK) {
         return 1;
     }
 

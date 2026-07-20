@@ -9,7 +9,9 @@ use std::sync::Mutex;
 
 use crate::SpacewasmAllocator;
 use crate::capi::*;
-use crate::engine::{SpacewasmCaller, SpacewasmStore, spacewasm_hostcall_result_t};
+use crate::engine::{
+    SpacewasmCaller, SpacewasmStore, spacewasm_compiler_options_t, spacewasm_hostcall_result_t,
+};
 use crate::status::{self, spacewasm_run_status_t, spacewasm_status_t, spacewasm_trap_t};
 use crate::stream::spacewasm_read_result_t;
 use crate::value::{spacewasm_valtype_t, spacewasm_value_payload_t, spacewasm_value_t};
@@ -210,6 +212,15 @@ static TRAP_START_WASM: &[u8] = &[
 
 // ---- shared driving helpers -------------------------------------------------
 
+/// Default compiler options bounding a test store to `max_code_pages` pages.
+fn opts(max_code_pages: u32) -> spacewasm_compiler_options_t {
+    spacewasm_compiler_options_t {
+        allow_memory_grow: false,
+        max_backpatch_iterations: 0,
+        max_code_pages,
+    }
+}
+
 /// Create an empty (no host modules) store with the given capacities.
 fn new_store(stack_size: usize, max_modules: u32, max_code_pages: u32) -> *mut SpacewasmStore {
     let mut host = core::mem::MaybeUninit::<spacewasm_host_t>::uninit();
@@ -222,7 +233,7 @@ fn new_store(stack_size: usize, max_modules: u32, max_code_pages: u32) -> *mut S
             host.as_mut_ptr(),
             stack_size,
             max_modules,
-            max_code_pages,
+            opts(max_code_pages),
             &mut store,
         )
     };
@@ -475,7 +486,7 @@ fn host_function_and_memory() {
 
     let mut store: *mut SpacewasmStore = core::ptr::null_mut();
     assert_eq!(
-        unsafe { spacewasm_store_new(host.as_mut_ptr(), 1024, 1, 256, &mut store) },
+        unsafe { spacewasm_store_new(host.as_mut_ptr(), 1024, 1, opts(256), &mut store) },
         status::SPACEWASM_OK,
         "store_new"
     );
@@ -526,7 +537,7 @@ fn error_paths() {
     );
     let mut store: *mut SpacewasmStore = core::ptr::null_mut();
     assert_eq!(
-        unsafe { spacewasm_store_new(host.as_mut_ptr(), 1024, 257, 256, &mut store) },
+        unsafe { spacewasm_store_new(host.as_mut_ptr(), 1024, 257, opts(256), &mut store) },
         status::SPACEWASM_ERR_BAD_ARG,
         "oversized max_modules"
     );
@@ -564,7 +575,7 @@ fn error_paths() {
         status::SPACEWASM_OK
     );
     assert_eq!(
-        unsafe { spacewasm_store_new(host.as_mut_ptr(), 1024, 1, 256, &mut store) },
+        unsafe { spacewasm_store_new(host.as_mut_ptr(), 1024, 1, opts(256), &mut store) },
         status::SPACEWASM_OK,
         "store_new"
     );
@@ -1143,7 +1154,7 @@ fn host_memory_accessors() {
 
     let mut store: *mut SpacewasmStore = core::ptr::null_mut();
     assert_eq!(
-        unsafe { spacewasm_store_new(host.as_mut_ptr(), 1024, 1, 256, &mut store) },
+        unsafe { spacewasm_store_new(host.as_mut_ptr(), 1024, 1, opts(256), &mut store) },
         status::SPACEWASM_OK
     );
 
@@ -1187,7 +1198,7 @@ fn store_with_null_host() {
     // A NULL host makes a store with no host modules.
     let mut store: *mut SpacewasmStore = core::ptr::null_mut();
     assert_eq!(
-        unsafe { spacewasm_store_new(core::ptr::null_mut(), 1024, 1, 256, &mut store) },
+        unsafe { spacewasm_store_new(core::ptr::null_mut(), 1024, 1, opts(256), &mut store) },
         status::SPACEWASM_OK
     );
     assert!(!store.is_null());
@@ -1281,7 +1292,9 @@ fn store_new_null_out_and_host_destroy() {
         status::SPACEWASM_OK
     );
     assert_eq!(
-        unsafe { spacewasm_store_new(host.as_mut_ptr(), 1024, 1, 256, core::ptr::null_mut()) },
+        unsafe {
+            spacewasm_store_new(host.as_mut_ptr(), 1024, 1, opts(256), core::ptr::null_mut())
+        },
         status::SPACEWASM_ERR_NULL_ARG,
         "null out_store"
     );

@@ -12,6 +12,35 @@ use crate::config::{MAX_CONTROL_FRAMES, MAX_STACK_DEPTH};
 use crate::status::{self, spacewasm_run_status_t, spacewasm_status_t, spacewasm_trap_t};
 use crate::value::spacewasm_value_t;
 
+/// FFI-safe mirror of [`spacewasm::CompilerOptions`], controlling how guest
+/// modules loaded onto a store are compiled. Passed to [`spacewasm_store_new`].
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct spacewasm_compiler_options_t {
+    /// Allow compiling `memory.grow` instructions. When `false`, a module using
+    /// `memory.grow` is rejected at load time.
+    pub allow_memory_grow: bool,
+
+    /// Maximum number of iterations to resolve during a control-flow backpatch.
+    /// Bounds compile time on pathological modules at the cost of rejecting some
+    /// valid programs. Set to 0 for unlimited iterations.
+    pub max_backpatch_iterations: u32,
+
+    /// Maximum number of compiled code pages allowed across all modules loaded
+    /// onto the store.
+    pub max_code_pages: u32,
+}
+
+impl From<spacewasm_compiler_options_t> for CompilerOptions {
+    fn from(o: spacewasm_compiler_options_t) -> Self {
+        CompilerOptions {
+            allow_memory_grow: o.allow_memory_grow,
+            max_backpatch_iterations: o.max_backpatch_iterations,
+            max_code_pages: o.max_code_pages,
+        }
+    }
+}
+
 /// Execution phase of a [`SpacewasmStore`]. Guards the `invoke`/`run`
 /// preconditions so misuse from C returns an error instead of panicking across
 /// the FFI boundary.
@@ -85,13 +114,13 @@ pub struct SpacewasmStore {
 impl SpacewasmStore {
     /// Build an empty store from the accumulated host modules, allocating the
     /// core [`Engine`] (with a `stack_size`-byte guest stack) and a
-    /// [`CodeBuilder`] bounded to `max_code_pages`. `max_modules` is the
+    /// [`CodeBuilder`] bounded to `options`. `max_modules` is the
     /// guest-module capacity (≤ 256). The store is ready to load guest modules
     /// onto with [`SpacewasmStore::load_module`].
     pub fn new(
         stack_size: usize,
         max_modules: usize,
-        max_code_pages: u32,
+        options: CompilerOptions,
         host_modules: Vec<HostModule>,
     ) -> Result<SpacewasmStore, spacewasm_status_t> {
         if max_modules > 256 {
@@ -100,7 +129,7 @@ impl SpacewasmStore {
 
         let engine =
             Engine::new(stack_size, max_modules, host_modules).map_err(status::memory_status)?;
-        let code_builder = CodeBuilder::new(max_code_pages).map_err(status::alloc_status)?;
+        let code_builder = CodeBuilder::new(options).map_err(status::alloc_status)?;
 
         Ok(SpacewasmStore {
             engine,
@@ -125,7 +154,6 @@ impl SpacewasmStore {
             &mut self.engine.store,
             &mut self.code_builder,
             allocator,
-            CompilerOptions::default(),
         )
         .map_err(|e| status::parse_status(&e))?;
 

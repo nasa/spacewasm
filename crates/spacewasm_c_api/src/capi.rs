@@ -9,7 +9,9 @@ use crate::abi;
 use crate::alloc::{
     self, SpacewasmAllocator, spacewasm_alloc_fn_t, spacewasm_dealloc_fn_t, spacewasm_realloc_fn_t,
 };
-use crate::engine::{SpacewasmCaller, SpacewasmStore, spacewasm_host_fn_t};
+use crate::engine::{
+    SpacewasmCaller, SpacewasmStore, spacewasm_compiler_options_t, spacewasm_host_fn_t,
+};
 use crate::host;
 use crate::host::CHostFunction;
 use crate::status::{self, spacewasm_run_status_t, spacewasm_status_t, spacewasm_trap_t};
@@ -215,8 +217,9 @@ pub unsafe extern "C" fn spacewasm_store_load_module(
 
 /// Consume the host module vector `host` and finish it into a store handle,
 /// written to `out_store`. The store is sized with a `stack_size`-byte guest
-/// stack, room for `max_modules` guest modules (≤ 256), and `max_code_pages`
-/// compiled code pages. No guest module is loaded yet; use
+/// stack, room for `max_modules` guest modules (≤ 256), and compiles guest
+/// modules according to `options` (code-page budget, `memory.grow` support,
+/// backpatch bound). No guest module is loaded yet; use
 /// [`spacewasm_store_load_module`] to load one or more.
 ///
 /// `host` may be null to create a store with no host modules. The host vector
@@ -231,7 +234,7 @@ pub unsafe extern "C" fn spacewasm_store_new(
     host: *mut spacewasm_host_t,
     stack_size: usize,
     max_modules: u32,
-    max_code_pages: u32,
+    options: spacewasm_compiler_options_t,
     out_store: *mut *mut SpacewasmStore,
 ) -> spacewasm_status_t {
     if out_store.is_null() {
@@ -249,7 +252,7 @@ pub unsafe extern "C" fn spacewasm_store_new(
     let store = check!(SpacewasmStore::new(
         stack_size,
         max_modules as usize,
-        max_code_pages,
+        options.into(),
         host_modules,
     ));
 
