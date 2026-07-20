@@ -51,6 +51,37 @@ pub fn build_staticlib() {
     if staticlib_dir().file_name().is_some_and(|n| n == "release") {
         cmd.arg("--release");
     }
+
+    if let Some(target_dir) = staticlib_dir().parent() {
+        cmd.arg("--target-dir").arg(target_dir);
+    }
+
+    for var in ["RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS"] {
+        let Ok(flags) = std::env::var(var) else {
+            continue;
+        };
+        // `CARGO_ENCODED_RUSTFLAGS` uses `\x1f` separators; `RUSTFLAGS` uses
+        // whitespace. `-C instrument-coverage` may appear as a `-C`/value pair
+        // (whitespace form) or fused as `-Cinstrument-coverage`.
+        let sep = if var == "CARGO_ENCODED_RUSTFLAGS" {
+            '\x1f'
+        } else {
+            ' '
+        };
+        let mut kept: Vec<&str> = Vec::new();
+        let mut tokens = flags.split(sep).filter(|t| !t.is_empty()).peekable();
+        while let Some(tok) = tokens.next() {
+            if tok == "-C" && tokens.peek() == Some(&"instrument-coverage") {
+                tokens.next(); // drop the paired value
+                continue;
+            }
+            if tok == "-Cinstrument-coverage" || tok == "--cfg=coverage" {
+                continue;
+            }
+            kept.push(tok);
+        }
+        cmd.env(var, kept.join(&sep.to_string()));
+    }
     let status = cmd.status().expect("failed to launch cargo");
     assert!(
         status.success(),

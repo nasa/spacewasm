@@ -1,13 +1,5 @@
 /*
  * ctest_suite.c — the spacewasm C API exercised end-to-end from C.
- *
- * Ported from the former Rust-driven `tests/c_api.rs`. Because spacewasm_c_api
- * is a standalone `no_std` staticlib (it cannot be linked into a `std` Rust
- * crate), its behavior is validated from C instead. Covers: single/dual module
- * loading and invocation, streaming (including a read error), host functions
- * with guest-memory access, error and null-argument paths, allocator
- * statistics, and a no-leak lifecycle check.
- *
  * Built and run by tests/c_abi.rs. Returns 0 iff every case passes.
  */
 #include "spacewasm.h"
