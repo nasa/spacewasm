@@ -11,21 +11,6 @@ pub struct Store {
 }
 
 impl Store {
-    pub fn new<const HOST_MODULE_N: usize>(
-        max_modules: usize,
-        host_modules: [HostModule; HOST_MODULE_N],
-    ) -> Result<Self, AllocError> {
-        if max_modules > 256 {
-            return Err(AllocError::OutOfMemory);
-        }
-        Ok(Store {
-            modules: Vec::new(max_modules as u32)?,
-            host_modules: Vec::from_array(host_modules)?,
-            zero_memory: Rc::new(Memory::zero())?,
-            zero_table: Rc::new_slice_with_default(0)?,
-        })
-    }
-
     /// Construct a store from a runtime-built collection of host modules,
     /// rather than a const-sized array. Useful for embedders (e.g. the C FFI
     /// layer) that accumulate host modules dynamically. Returns
@@ -38,6 +23,7 @@ impl Store {
         if max_modules > 256 {
             return Err(AllocError::OutOfMemory);
         }
+
         Ok(Store {
             modules: Vec::new(max_modules as u32)?,
             host_modules,

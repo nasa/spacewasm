@@ -269,6 +269,141 @@ impl Drop for Memory {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::MemPageSize;
+    extern crate std;
+
+    /// Test allocator backed by the system heap, mirroring the one used in
+    /// `interpreter_tests`.
+    struct TestAllocator;
+    impl WasmMemoryAllocator for TestAllocator {
+        fn allocate(&self, layout: Layout) -> Result<NonNull<u8>, AllocError> {
+            unsafe {
+                NonNull::new(std::alloc::alloc(layout)).ok_or(AllocError::AllocationFailed)
+            }
+        }
+
+        fn reallocate(
+            &self,
+            ptr: NonNull<u8>,
+            old_layout: Layout,
+            layout: Layout,
+        ) -> Result<NonNull<u8>, AllocError> {
+            unsafe {
+                let new_ptr = std::alloc::realloc(ptr.as_ptr(), old_layout, layout.size());
+                NonNull::new(new_ptr).ok_or(AllocError::AllocationFailed)
+            }
+        }
+
+        fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
+            unsafe { std::alloc::dealloc(ptr.as_ptr(), layout) }
+        }
+    }
+
+    fn allocator() -> Rc<dyn WasmMemoryAllocator> {
+        Rc::new(TestAllocator).unwrap().into_wasm_memory_allocator()
+    }
+
+    fn mem_type(min: u32, max: Option<u32>) -> MemType {
+        MemType {
+            initial_pages: min,
+            max_pages: max,
+            page_size: MemPageSize::_65536,
+        }
+    }
+
+    #[test]
+    fn zero_memory_is_zero() {
+        let mem = Memory::zero();
+        assert!(mem.is_zero());
+        assert_eq!(mem.size(), 0);
+    }
+
+    #[test]
+    fn new_allocates_and_reports_size() {
+        let mem = Memory::new(mem_type(2, Some(4)), allocator()).unwrap();
+        assert!(!mem.is_zero());
+        assert_eq!(mem.size(), 2);
+        assert_eq!(mem.mem_type().min(), 2);
+        // The freshly allocated pages are zeroed.
+        assert!(mem.get_slice().iter().all(|&b| b == 0));
+        assert_eq!(mem.get_slice().len(), 2 * MemPageSize::_65536.size());
+    }
+
+    #[test]
+    fn grow_extends_and_zeroes() {
+        let mut mem = Memory::new(mem_type(1, Some(4)), allocator()).unwrap();
+        // Write a marker into the first page.
+        mem.store_u32(0, 0xAABB_CCDD).unwrap();
+
+        let old_pages = mem.grow(2).unwrap();
+        assert_eq!(old_pages, 1);
+        assert_eq!(mem.size(), 3);
+
+        // Existing data survives the grow...
+        assert_eq!(mem.load_u32(0).unwrap(), 0xAABB_CCDD);
+        // ...and the newly added region is zeroed.
+        let first_new_byte = 1 * MemPageSize::_65536.size();
+        assert_eq!(mem.load_u8(first_new_byte).unwrap(), 0);
+    }
+
+    #[test]
+    fn grow_past_max_fails() {
+        let mut mem = Memory::new(mem_type(1, Some(2)), allocator()).unwrap();
+        // Growing to 3 pages exceeds the declared maximum of 2.
+        assert_eq!(mem.grow(2), Err(MemoryError::OutOfMemory));
+        // The memory is left untouched.
+        assert_eq!(mem.size(), 1);
+    }
+
+    #[test]
+    fn grow_overflow_page_count_fails() {
+        let mut mem = Memory::new(mem_type(1, None), allocator()).unwrap();
+        // `size() + n` overflows u32.
+        assert_eq!(mem.grow(u32::MAX), Err(MemoryError::OutOfMemory));
+    }
+
+    #[test]
+    fn grow_zero_memory_fails() {
+        // A zero (unallocated) memory has no backing allocator to reallocate.
+        let mut mem = Memory::zero();
+        assert_eq!(mem.grow(1), Err(MemoryError::OutOfMemory));
+    }
+
+    #[test]
+    fn load_store_out_of_bounds() {
+        let mem = Memory::new(mem_type(1, None), allocator()).unwrap();
+        let size = MemPageSize::_65536.size();
+        assert_eq!(mem.load_u32(size - 3), Err(MemoryError::OutOfBounds));
+        assert_eq!(mem.store_u64(size - 4, 0), Err(MemoryError::OutOfBounds));
+        assert_eq!(mem.load(size - 1, 4), Err(MemoryError::OutOfBounds));
+    }
+
+    #[test]
+    fn effective_address_rejects_overflow_on_32bit() {
+        // On 64-bit `usize`, base+offset always fits; the sum is exact.
+        assert_eq!(Memory::effective_address(10, 20).unwrap(), 30);
+    }
+
+    #[test]
+    fn memory_error_from_alloc_error() {
+        assert_eq!(
+            MemoryError::from(AllocError::AllocationFailed),
+            MemoryError::AllocationFailed
+        );
+        assert_eq!(
+            MemoryError::from(AllocError::OutOfMemory),
+            MemoryError::OutOfMemory
+        );
+        assert_eq!(
+            MemoryError::from(AllocError::PageTooSmall),
+            MemoryError::PageTooSmall
+        );
+    }
+}
+
 #[cfg(kani)]
 mod kani_proofs {
     use super::*;

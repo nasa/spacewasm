@@ -451,3 +451,88 @@ impl GlobalType {
         Ok(GlobalType { ty, mutable })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn raw_value_roundtrip_word() {
+        // The 32-bit accessors only touch the low word; the high bits stay clear.
+        let mut v = RawValue::from_32(0xDEAD_BEEF);
+        assert_eq!(v.read_32(), 0xDEAD_BEEF);
+        assert_eq!(v.read_i32(), 0xDEAD_BEEFu32 as i32);
+
+        v.write_32(1);
+        assert_eq!(v.read_32(), 1);
+
+        v.write_i32(-1);
+        assert_eq!(v.read_i32(), -1);
+        assert_eq!(v.read_32(), u32::MAX);
+    }
+
+    #[test]
+    fn raw_value_roundtrip_dword() {
+        let mut v = RawValue::from_64(0x0123_4567_89AB_CDEF);
+        assert_eq!(v.read_64(), 0x0123_4567_89AB_CDEF);
+        assert_eq!(v.read_i64(), 0x0123_4567_89AB_CDEF);
+
+        v.write_64(u64::MAX);
+        assert_eq!(v.read_64(), u64::MAX);
+        assert_eq!(v.read_i64(), -1);
+
+        v.write_i64(-2);
+        assert_eq!(v.read_i64(), -2);
+    }
+
+    #[test]
+    fn raw_value_roundtrip_float() {
+        let mut v = RawValue::from_f32(3.5);
+        assert_eq!(v.read_f32(), 3.5);
+        v.write_f32(-1.25);
+        assert_eq!(v.read_f32(), -1.25);
+
+        let mut v = RawValue::from_f64(3.5);
+        assert_eq!(v.read_f64(), 3.5);
+        v.write_f64(-1.25);
+        assert_eq!(v.read_f64(), -1.25);
+    }
+
+    #[test]
+    fn raw_value_from_signed_constructors() {
+        assert_eq!(RawValue::from_i32(-1).read_32(), u32::MAX);
+        assert_eq!(RawValue::from_i64(-1).read_64(), u64::MAX);
+    }
+
+    #[test]
+    fn raw_value_to_value_by_type() {
+        assert_eq!(RawValue::from_i32(-7).to_value(ValType::I32), Value::I32(-7));
+        assert_eq!(RawValue::from_i64(-7).to_value(ValType::I64), Value::I64(-7));
+        assert_eq!(
+            RawValue::from_f32(2.0).to_value(ValType::F32),
+            Value::F32(2.0)
+        );
+        assert_eq!(
+            RawValue::from_f64(2.0).to_value(ValType::F64),
+            Value::F64(2.0)
+        );
+    }
+
+    #[test]
+    fn limit_matches_rules() {
+        // `a.matches(b)` asks whether limit `a` satisfies requirement `b`; it
+        // requires `a.min >= b.min`. A smaller minimum fails immediately.
+        assert!(!Limit { min: 1, max: None }.matches(&Limit { min: 2, max: None }));
+
+        // A larger-or-equal minimum with no requirement maximum always matches.
+        assert!(Limit { min: 2, max: None }.matches(&Limit { min: 1, max: None }));
+        assert!(Limit { min: 1, max: Some(5) }.matches(&Limit { min: 1, max: None }));
+
+        // Both bounded: the candidate max must fit within the requirement max.
+        assert!(Limit { min: 1, max: Some(3) }.matches(&Limit { min: 1, max: Some(4) }));
+        assert!(!Limit { min: 1, max: Some(5) }.matches(&Limit { min: 1, max: Some(4) }));
+
+        // A bounded requirement rejects an unbounded candidate.
+        assert!(!Limit { min: 1, max: None }.matches(&Limit { min: 1, max: Some(4) }));
+    }
+}
