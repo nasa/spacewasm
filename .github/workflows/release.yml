@@ -64,7 +64,8 @@ jobs:
         # Published after spacewasm since it depends on the exact matching
         # release. cargo waits for the dependency to be available in the index.
         # --allow-dirty: the injected version is an uncommitted working-tree change.
-        run: cargo publish -p spacewasm_c_api --allow-dirty
+        # --no-verify: Work around 'unwinding panics are not supported without std'
+        run: cargo publish -p spacewasm_c_api --allow-dirty --no-verify
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
