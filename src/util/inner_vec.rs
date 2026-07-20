@@ -1,5 +1,7 @@
 use core::ops::{Deref, DerefMut};
 
+use crate::AllocError;
+
 pub struct InnerVec<T: Sized> {
     pub ptr: *mut T,
     pub capacity: u32,
@@ -33,16 +35,24 @@ impl<T: Sized> InnerVec<T> {
         self.capacity as usize
     }
 
+    pub fn try_push(&mut self, value: T) -> Result<(), AllocError> {
+        if self.len < self.capacity {
+            unsafe {
+                core::ptr::write(self.ptr.add(self.len as usize), value);
+            }
+
+            self.len += 1;
+            Ok(())
+        } else {
+            Err(AllocError::OutOfMemory)
+        }
+    }
+
     /// Push a new item to the vector
     /// If the capacity is exceeded, this will panic
     pub fn push(&mut self, value: T) {
-        assert!(self.len < self.capacity);
-
-        unsafe {
-            core::ptr::write(self.ptr.add(self.len as usize), value);
-        }
-
-        self.len += 1;
+        self.try_push(value)
+            .expect("attempting to push beyond Vec capacity");
     }
 
     pub fn pop(&mut self) -> Option<T> {

@@ -157,7 +157,7 @@ mod fuzz_alloc {
     spacewasm::global_allocator!(SystemAllocator, SystemAllocator);
 }
 
-const MAX_CODE_PAGES: usize = 128;
+const MAX_CODE_PAGES: u32 = 128;
 const MAX_CONTROL_FRAMES: usize = 128;
 const MAX_STACK_DEPTH: usize = 256;
 
@@ -176,7 +176,7 @@ pub fn validate(wasm: &[u8]) {
         }
     };
 
-    let mut code_builder = CodeBuilder::<MAX_CODE_PAGES>::default();
+    let mut code_builder = CodeBuilder::new(MAX_CODE_PAGES).unwrap();
     let mut stream = ByteStream::new(wasm);
 
     let allocator = spacewasm::Rc::new(FuzzAllocator {
@@ -187,7 +187,7 @@ pub fn validate(wasm: &[u8]) {
     .into_wasm_memory_allocator();
 
     // Attempt to decode and validate the module
-    let result = Module::new::<MAX_CODE_PAGES, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
+    let result = Module::new::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
         "",
         &mut stream,
         &mut store,
@@ -219,17 +219,17 @@ pub fn validate(wasm: &[u8]) {
 pub fn no_traps(wasm: &[u8]) {
     log_wasm(wasm);
 
-    // Create store with reduced size for better parallel fuzzing
-    let mut store = match Store::new(16, []) {
+    // Create engine with reduced store size for better parallel fuzzing
+    let mut state = match Engine::new(512, 16, Vec::zero()) {
         Ok(s) => s,
         Err(e) => {
-            log::debug!("store creation failed: {e:?}");
+            log::debug!("engine creation failed: {e:?}");
             return;
         }
     };
 
     // Compile module with reduced code pages
-    let mut code_builder = CodeBuilder::<MAX_CODE_PAGES>::default();
+    let mut code_builder = CodeBuilder::new(MAX_CODE_PAGES).unwrap();
     let mut stream = ByteStream::new(wasm);
 
     let allocator = Rc::new(FuzzAllocator {
@@ -239,10 +239,10 @@ pub fn no_traps(wasm: &[u8]) {
     .unwrap()
     .into_wasm_memory_allocator();
 
-    let module = match Module::new::<MAX_CODE_PAGES, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
+    let module = match Module::new::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
         "",
         &mut stream,
-        &mut store,
+        &mut state.store,
         &mut code_builder,
         allocator.clone(),
         CompilerOptions {
@@ -258,22 +258,17 @@ pub fn no_traps(wasm: &[u8]) {
 
     log::debug!("module compiled successfully");
 
-    // Finish compilation to get the compiled text
-    let Ok((text, _)) = code_builder.finish() else {
-        log::debug!("code builder finish failed");
-        return;
-    };
+    // Borrow the compiled text straight from the builder (no copy needed).
+    let text = code_builder.pages();
 
-    // Instantiate
-    let mut state = match store.allocate(512) {
-        Ok(s) => s,
-        Err(e) => {
-            log::debug!("state allocation failed: {e:?}");
-            return;
-        }
+    let module_ref = state.push_module(module);
+    let start_result = match state.invoke_start(module_ref) {
+        StartInvocation::Finished => InterpreterResult::Finished,
+        StartInvocation::Trap(t) => InterpreterResult::Trap(t),
+        StartInvocation::Pause => InterpreterResult::Pause,
+        StartInvocation::Running => Interpreter.run(text, &mut state, 10000),
     };
-
-    match state.initialize_module(module, &text, 10000) {
+    match start_result {
         InterpreterResult::Finished => {}
         InterpreterResult::OutOfFuel => {
             log::debug!("start routine out of fuel");
@@ -371,8 +366,8 @@ pub fn no_traps(wasm: &[u8]) {
         state.invoke(wasm_ref, &params).unwrap();
 
         // Run the interpreter with limited instructions
-        let interpreter = Interpreter::default();
-        let result = interpreter.run(&text, &mut state, 10000);
+        let interpreter = Interpreter;
+        let result = interpreter.run(text, &mut state, 10000);
 
         // Check for traps - this is the key assertion
         match result {

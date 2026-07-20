@@ -1,0 +1,19 @@
+[package]
+name = "spacewasm_c_example"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "C-ABI test runner: builds the spacewasm_c_api staticlib and compiles/runs C tests against it"
+publish = false
+
+[lib]
+name = "spacewasm_c_example"
+path = "src/lib.rs"
+
+# Intentionally NO dependency on `spacewasm_c_api`: it is a standalone `no_std`
+# staticlib whose baked-in `#[panic_handler]` cannot be linked into a `std` crate.
+# This runner drives it purely as a C library — it builds the staticlib with
+# `cargo` and compiles/links C test programs against the archive + header.

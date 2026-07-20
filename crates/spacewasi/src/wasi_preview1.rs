@@ -23,7 +23,7 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
     let wasi_ctx_two = Rc::new(RefCell::new(wasi_ctx));
 
     HostModule {
-        name: "wasi_snapshot_preview1",
+        name: "wasi_snapshot_preview1".into(),
         globals: vec![],
         functions: vec![
             HostFunction::new("args_get", "ii".into(), "i".into(), {

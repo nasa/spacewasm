@@ -229,32 +229,23 @@ pub struct GlobalVariable {
 /// Low-level builder for paged IR code.
 ///
 /// Manages allocation of pages and writing 16-bit words to the current position.
-/// The `N` generic parameter limits the maximum number of pages that can be allocated.
-#[derive(Clone)]
-pub struct CodeBuilder<const MAX_CODE_PAGES: usize> {
-    pages: StaticVec<Box<TextPage>, MAX_CODE_PAGES>,
+/// The `max_code_pages` argument to [`CodeBuilder::new`] limits the maximum
+/// number of pages that can be allocated.
+pub struct CodeBuilder {
+    pages: Vec<Box<TextPage>>,
     offset: usize,
 }
 
-impl<const MAX_CODE_PAGES: usize> Default for CodeBuilder<MAX_CODE_PAGES> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<const MAX_CODE_PAGES: usize> CodeBuilder<MAX_CODE_PAGES> {
-    pub fn new() -> CodeBuilder<MAX_CODE_PAGES> {
-        const {
-            assert!(
-                MAX_CODE_PAGES < (1 << 24),
-                "SpaceWasm supports up to 24-bit code pages"
-            );
+impl CodeBuilder {
+    pub fn new(max_code_pages: u32) -> Result<CodeBuilder, AllocError> {
+        if max_code_pages >= (1 << 24) {
+            panic!("SpaceWasm supports up to 24-bit code pages");
         }
 
-        CodeBuilder {
-            pages: Default::default(),
+        Ok(CodeBuilder {
+            pages: Vec::new(max_code_pages)?,
             offset: 0,
-        }
+        })
     }
 
     fn backpatch(
@@ -292,15 +283,18 @@ impl<const MAX_CODE_PAGES: usize> CodeBuilder<MAX_CODE_PAGES> {
         Ok(())
     }
 
-    /// Move all the text pages into a heap vector with the used size.
-    /// This consumes the builder and returns the pages and the used size.
-    pub fn finish(self) -> Result<(Vec<Box<TextPage>>, usize), AllocError> {
-        let mut v = Vec::new(self.pages.len() as u32)?;
-        for i in self.pages {
-            v.push(i);
-        }
+    /// Borrow the accumulated text pages for execution.
+    ///
+    /// The interpreter reads code directly from this slice, so no copy of the
+    /// pages is needed to run the compiled module.
+    pub fn pages(&self) -> &[Box<TextPage>] {
+        &self.pages
+    }
 
-        Ok((v, self.offset))
+    /// The write offset within the final (partially-filled) page, i.e. the
+    /// number of 16-bit words used on the last page.
+    pub fn offset(&self) -> usize {
+        self.offset
     }
 
     /// Get the current program counter (address of the next word to be written)
@@ -327,7 +321,7 @@ impl<const MAX_CODE_PAGES: usize> CodeBuilder<MAX_CODE_PAGES> {
 
     /// Allocate a new page and reset the offset to the start of that page.
     fn add_page(&mut self) -> Result<(), AllocError> {
-        self.pages.push(Box::new(TextPage::default())?)?;
+        self.pages.try_push(Box::new(TextPage::default())?)?;
         self.offset = 0;
         Ok(())
     }
@@ -399,13 +393,8 @@ impl<const MAX_CODE_PAGES: usize> CodeBuilder<MAX_CODE_PAGES> {
 /// - Managing a stack of control frames for nested blocks
 ///
 /// The `N` generic parameter limits the maximum number of code pages.
-pub struct TextBuilder<
-    'a,
-    const MAX_CODE_PAGES: usize,
-    const MAX_CONTROL_FRAMES: usize,
-    const MAX_STACK_DEPTH: usize,
-> {
-    code: &'a mut CodeBuilder<MAX_CODE_PAGES>,
+pub struct TextBuilder<'a, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize> {
+    code: &'a mut CodeBuilder,
     store: &'a Store,
     module: &'a Module,
     func: &'a Func,
@@ -450,11 +439,11 @@ impl From<OperandType> for u8 {
     }
 }
 
-impl<'a, const MAX_CODE_PAGES: usize, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize>
-    TextBuilder<'a, MAX_CODE_PAGES, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>
+impl<'a, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize>
+    TextBuilder<'a, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>
 {
     pub fn new(
-        code: &'a mut CodeBuilder<MAX_CODE_PAGES>,
+        code: &'a mut CodeBuilder,
         store: &'a Store,
         module: &'a Module,
         func: &'a Func,

@@ -3,8 +3,9 @@
 #[allow(clippy::excessive_precision)]
 mod tests {
     use crate::{
-        AllocError, BaseVisitor, Interpreter, InterpreterResult, InterpreterState, IrVisitor,
-        MemArg, MemType, Memory, MemoryKind, Module, ModuleRef, Store, ValType,
+        AllocError, BaseVisitor, Engine, Interpreter, InterpreterResult, InterpreterRunner,
+        IrVisitor, MemArg, MemType, Memory, MemoryKind, Module, ModuleRef, StartInvocation,
+        ValType,
     };
 
     extern crate std;
@@ -42,9 +43,9 @@ mod tests {
 
     fn with_test_context<F>(f: F)
     where
-        F: for<'a> FnOnce(&mut InterpreterState<'a>),
+        F: FnOnce(&mut Engine),
     {
-        let mut store = Store::new(1, []).unwrap();
+        let mut engine = Engine::new(1024, 1, crate::Vec::zero()).unwrap();
 
         // Create a minimal valid module
         let module = Module {
@@ -74,19 +75,24 @@ mod tests {
             exports: crate::Vec::zero(),
         };
 
-        let mut state = store.allocate(1024).unwrap();
-        match state.initialize_module(module, &[], usize::MAX) {
-            InterpreterResult::Finished => {}
-            InterpreterResult::OutOfFuel => panic!("insufficient fuel for initialization"),
-            InterpreterResult::Trap(t) => panic!("trap during initialization {t:?}"),
-            InterpreterResult::ReaderError(e) => panic!("ir reader error {e:?}"),
-            InterpreterResult::Pause => panic!("pause during init"),
+        let module_ref = engine.push_module(module);
+        match engine.invoke_start(module_ref) {
+            StartInvocation::Finished => {}
+            StartInvocation::Trap(t) => panic!("trap during initialization {t:?}"),
+            StartInvocation::Pause => panic!("pause during init"),
+            StartInvocation::Running => match Interpreter.run(&[], &mut engine, usize::MAX) {
+                InterpreterResult::Finished => {}
+                InterpreterResult::OutOfFuel => panic!("insufficient fuel for initialization"),
+                InterpreterResult::Trap(t) => panic!("trap during initialization {t:?}"),
+                InterpreterResult::ReaderError(e) => panic!("ir reader error {e:?}"),
+                InterpreterResult::Pause => panic!("pause during init"),
+            },
         }
 
-        state.memory = state.store.get_memory(ModuleRef(0)).clone();
-        state.table = state.store.get_table(ModuleRef(0)).clone();
+        engine.memory = engine.store.get_memory(ModuleRef(0)).clone();
+        engine.table = engine.store.get_table(ModuleRef(0)).clone();
 
-        f(&mut state);
+        f(&mut engine);
     }
 
     // Helper macro for testing operations
@@ -96,12 +102,10 @@ mod tests {
             #[test]
             fn $test_name() {
                 with_test_context(|state| {
-                    let interpreter = Interpreter::default();
-
                     state.stack.write_u32(0, $input);
                     state.sp = 1;
 
-                    interpreter.$op(state).unwrap();
+                    Interpreter.$op(state).unwrap();
 
                     assert_eq!(state.sp, 1);
                     assert_eq!(state.stack.read_u32(0), $expected);
@@ -114,13 +118,11 @@ mod tests {
             #[test]
             fn $test_name() {
                 with_test_context(|state| {
-                    let interpreter = Interpreter::default();
-
                     state.stack.write_u32(0, $a);
                     state.stack.write_u32(1, $b);
                     state.sp = 2;
 
-                    interpreter.$op(state).unwrap();
+                    Interpreter.$op(state).unwrap();
 
                     assert_eq!(state.sp, 1);
                     assert_eq!(state.stack.read_u32(0), $expected);
@@ -133,13 +135,11 @@ mod tests {
             #[test]
             fn $test_name() {
                 with_test_context(|state| {
-                    let interpreter = Interpreter::default();
-
                     let input_val = $input as u64;
                     state.stack.write_u64(0, input_val);
                     state.sp = 2;
 
-                    interpreter.$op(state).unwrap();
+                    Interpreter.$op(state).unwrap();
 
                     assert_eq!(state.sp, 2);
                     let result = state.stack.read_u64(0);
@@ -153,13 +153,11 @@ mod tests {
             #[test]
             fn $test_name() {
                 with_test_context(|state| {
-                    let interpreter = Interpreter::default();
-
                     let input_val = $input as u64;
                     state.stack.write_u64(0, input_val);
                     state.sp = 2;
 
-                    interpreter.$op(state).unwrap();
+                    Interpreter.$op(state).unwrap();
 
                     assert_eq!(state.sp, 1);
                     let result = state.stack.read_u32(0);
@@ -173,15 +171,13 @@ mod tests {
             #[test]
             fn $test_name() {
                 with_test_context(|state| {
-                    let interpreter = Interpreter::default();
-
                     let a_val = $a as u64;
                     let b_val = $b as u64;
                     state.stack.write_u64(0, a_val);
                     state.stack.write_u64(2, b_val);
                     state.sp = 4;
 
-                    interpreter.$op(state).unwrap();
+                    Interpreter.$op(state).unwrap();
 
                     assert_eq!(state.sp, 2);
                     let result = state.stack.read_u64(0);
@@ -195,12 +191,10 @@ mod tests {
             #[test]
             fn $test_name() {
                 with_test_context(|state| {
-                    let interpreter = Interpreter::default();
-
                     state.stack.write_f32(0, $input);
                     state.sp = 1;
 
-                    interpreter.$op(state).unwrap();
+                    Interpreter.$op(state).unwrap();
 
                     assert_eq!(state.sp, 1);
                     let result = state.stack.read_f32(0);
@@ -214,13 +208,11 @@ mod tests {
             #[test]
             fn $test_name() {
                 with_test_context(|state| {
-                    let interpreter = Interpreter::default();
-
                     state.stack.write_f32(0, $a);
                     state.stack.write_f32(1, $b);
                     state.sp = 2;
 
-                    interpreter.$op(state).unwrap();
+                    Interpreter.$op(state).unwrap();
 
                     assert_eq!(state.sp, 1);
                     let result = state.stack.read_f32(0);
@@ -234,12 +226,10 @@ mod tests {
             #[test]
             fn $test_name() {
                 with_test_context(|state| {
-                    let interpreter = Interpreter::default();
-
                     state.stack.write_f64(0, $input);
                     state.sp = 2;
 
-                    interpreter.$op(state).unwrap();
+                    Interpreter.$op(state).unwrap();
 
                     assert_eq!(state.sp, 2);
                     let result = state.stack.read_f64(0);
@@ -253,13 +243,11 @@ mod tests {
             #[test]
             fn $test_name() {
                 with_test_context(|state| {
-                    let interpreter = Interpreter::default();
-
                     state.stack.write_f64(0, $a);
                     state.stack.write_f64(2, $b);
                     state.sp = 4;
 
-                    interpreter.$op(state).unwrap();
+                    Interpreter.$op(state).unwrap();
 
                     assert_eq!(state.sp, 2);
                     let result = state.stack.read_f64(0);
@@ -273,13 +261,11 @@ mod tests {
     #[test]
     fn test_i32_const() {
         with_test_context(|state| {
-            let interpreter = Interpreter::default();
-
-            interpreter.i32_const(42, state).unwrap();
+            Interpreter.i32_const(42, state).unwrap();
             assert_eq!(state.sp, 1);
             assert_eq!(state.stack.read_u32(0), 42);
 
-            interpreter.i32_const(-1, state).unwrap();
+            Interpreter.i32_const(-1, state).unwrap();
             assert_eq!(state.sp, 2);
             assert_eq!(state.stack.read_u32(1) as i32, -1);
         });
@@ -288,13 +274,11 @@ mod tests {
     #[test]
     fn test_i64_const() {
         with_test_context(|state| {
-            let interpreter = Interpreter::default();
-
-            interpreter.i64_const(0x123456789ABCDEF0i64, state).unwrap();
+            Interpreter.i64_const(0x123456789ABCDEF0i64, state).unwrap();
             assert_eq!(state.sp, 2);
             assert_eq!(state.stack.read_u64(0), 0x123456789ABCDEF0u64);
 
-            interpreter.i64_const(-1, state).unwrap();
+            Interpreter.i64_const(-1, state).unwrap();
             assert_eq!(state.sp, 4);
             assert_eq!(state.stack.read_u64(2) as i64, -1);
         });
@@ -303,9 +287,7 @@ mod tests {
     #[test]
     fn test_f32_const() {
         with_test_context(|state| {
-            let interpreter = Interpreter::default();
-
-            interpreter.f32_const(3.14f32, state).unwrap();
+            Interpreter.f32_const(3.14f32, state).unwrap();
             assert_eq!(state.sp, 1);
             assert!((state.stack.read_f32(0) - 3.14f32).abs() < 0.0001);
         });
@@ -314,9 +296,7 @@ mod tests {
     #[test]
     fn test_f64_const() {
         with_test_context(|state| {
-            let interpreter = Interpreter::default();
-
-            interpreter.f64_const(3.14159265358979, state).unwrap();
+            Interpreter.f64_const(3.14159265358979, state).unwrap();
             assert_eq!(state.sp, 2);
             assert!((state.stack.read_f64(0) - 3.14159265358979).abs() < 0.0001);
         });
@@ -326,8 +306,6 @@ mod tests {
     #[test]
     fn test_i32_load() {
         with_test_context(|state| {
-            let interpreter = Interpreter::default();
-
             // Store a value in memory
             state.memory.store_u32(100, 0x12345678).unwrap();
 
@@ -335,7 +313,7 @@ mod tests {
             state.stack.write_u32(0, 100);
             state.sp = 1;
 
-            interpreter
+            Interpreter
                 .i32_load(
                     MemArg {
                         align: 2,
@@ -353,14 +331,12 @@ mod tests {
     #[test]
     fn test_i32_load_with_offset() {
         with_test_context(|state| {
-            let interpreter = Interpreter::default();
-
             state.memory.store_u32(108, 0xDEADBEEF).unwrap();
 
             state.stack.write_u32(0, 100);
             state.sp = 1;
 
-            interpreter
+            Interpreter
                 .i32_load(
                     MemArg {
                         align: 2,
@@ -377,14 +353,12 @@ mod tests {
     #[test]
     fn test_i64_load() {
         with_test_context(|state| {
-            let interpreter = Interpreter::default();
-
             state.memory.store_u64(100, 0x123456789ABCDEF0).unwrap();
 
             state.stack.write_u32(0, 100);
             state.sp = 1;
 
-            interpreter
+            Interpreter
                 .i64_load(
                     MemArg {
                         align: 3,
@@ -402,14 +376,12 @@ mod tests {
     #[test]
     fn test_i32_load8_s() {
         with_test_context(|state| {
-            let interpreter = Interpreter::default();
-
             state.memory.store_u8(100, 0xFF).unwrap(); // -1 in i8
 
             state.stack.write_u32(0, 100);
             state.sp = 1;
 
-            interpreter
+            Interpreter
                 .i32_load8_s(
                     MemArg {
                         align: 0,
@@ -426,14 +398,12 @@ mod tests {
     #[test]
     fn test_i32_load8_u() {
         with_test_context(|state| {
-            let interpreter = Interpreter::default();
-
             state.memory.store_u8(100, 0xFF).unwrap();
 
             state.stack.write_u32(0, 100);
             state.sp = 1;
 
-            interpreter
+            Interpreter
                 .i32_load8_u(
                     MemArg {
                         align: 0,
@@ -450,14 +420,12 @@ mod tests {
     #[test]
     fn test_i32_load16_s() {
         with_test_context(|state| {
-            let interpreter = Interpreter::default();
-
             state.memory.store_u16(100, 0xFFFF).unwrap(); // -1 in i16
 
             state.stack.write_u32(0, 100);
             state.sp = 1;
 
-            interpreter
+            Interpreter
                 .i32_load16_s(
                     MemArg {
                         align: 1,
@@ -474,14 +442,12 @@ mod tests {
     #[test]
     fn test_i32_load16_u() {
         with_test_context(|state| {
-            let interpreter = Interpreter::default();
-
             state.memory.store_u16(100, 0xFFFF).unwrap();
 
             state.stack.write_u32(0, 100);
             state.sp = 1;
 
-            interpreter
+            Interpreter
                 .i32_load16_u(
                     MemArg {
                         align: 1,
@@ -498,14 +464,12 @@ mod tests {
     #[test]
     fn test_i64_load8_s() {
         with_test_context(|state| {
-            let interpreter = Interpreter::default();
-
             state.memory.store_u8(100, 0xFF).unwrap();
 
             state.stack.write_u32(0, 100);
             state.sp = 1;
 
-            interpreter
+            Interpreter
                 .i64_load8_s(
                     MemArg {
                         align: 0,
@@ -523,14 +487,12 @@ mod tests {
     #[test]
     fn test_i64_load32_u() {
         with_test_context(|state| {
-            let interpreter = Interpreter::default();
-
             state.memory.store_u32(100, 0xDEADBEEF).unwrap();
 
             state.stack.write_u32(0, 100);
             state.sp = 1;
 
-            interpreter
+            Interpreter
                 .i64_load32_u(
                     MemArg {
                         align: 2,
@@ -549,13 +511,11 @@ mod tests {
     #[test]
     fn test_i32_store() {
         with_test_context(|state| {
-            let interpreter = Interpreter::default();
-
             state.stack.write_u32(0, 100); // address
             state.stack.write_u32(1, 0x12345678); // value
             state.sp = 2;
 
-            interpreter
+            Interpreter
                 .i32_store(
                     MemArg {
                         align: 2,
@@ -573,13 +533,11 @@ mod tests {
     #[test]
     fn test_i32_store_with_offset() {
         with_test_context(|state| {
-            let interpreter = Interpreter::default();
-
             state.stack.write_u32(0, 100);
             state.stack.write_u32(1, 0xDEADBEEF);
             state.sp = 2;
 
-            interpreter
+            Interpreter
                 .i32_store(
                     MemArg {
                         align: 2,
@@ -596,13 +554,11 @@ mod tests {
     #[test]
     fn test_i64_store() {
         with_test_context(|state| {
-            let interpreter = Interpreter::default();
-
             state.stack.write_u32(0, 100); // address
             state.stack.write_u64(1, 0x123456789ABCDEF0); // value
             state.sp = 3;
 
-            interpreter
+            Interpreter
                 .i64_store(
                     MemArg {
                         align: 3,
@@ -620,13 +576,11 @@ mod tests {
     #[test]
     fn test_i32_store8() {
         with_test_context(|state| {
-            let interpreter = Interpreter::default();
-
             state.stack.write_u32(0, 100);
             state.stack.write_u32(1, 0x123456FF);
             state.sp = 2;
 
-            interpreter
+            Interpreter
                 .i32_store8(
                     MemArg {
                         align: 0,
@@ -644,13 +598,11 @@ mod tests {
     #[test]
     fn test_i32_store16() {
         with_test_context(|state| {
-            let interpreter = Interpreter::default();
-
             state.stack.write_u32(0, 100);
             state.stack.write_u32(1, 0x1234FFFF);
             state.sp = 2;
 
-            interpreter
+            Interpreter
                 .i32_store16(
                     MemArg {
                         align: 1,
@@ -668,13 +620,11 @@ mod tests {
     #[test]
     fn test_i64_store8() {
         with_test_context(|state| {
-            let interpreter = Interpreter::default();
-
             state.stack.write_u32(0, 100);
             state.stack.write_u64(1, 0x123456789ABCDEFF);
             state.sp = 3;
 
-            interpreter
+            Interpreter
                 .i64_store8(
                     MemArg {
                         align: 0,
@@ -692,13 +642,11 @@ mod tests {
     #[test]
     fn test_i64_store32() {
         with_test_context(|state| {
-            let interpreter = Interpreter::default();
-
             state.stack.write_u32(0, 100);
             state.stack.write_u64(1, 0x12345678DEADBEEF);
             state.sp = 3;
 
-            interpreter
+            Interpreter
                 .i64_store32(
                     MemArg {
                         align: 2,
@@ -796,12 +744,10 @@ mod tests {
     #[test]
     fn test_i32_wrap_i64() {
         with_test_context(|state| {
-            let interpreter = Interpreter::default();
-
             state.stack.write_u64(0, 0x123456789ABCDEF0);
             state.sp = 2;
 
-            interpreter.i32_wrap_i64(state).unwrap();
+            Interpreter.i32_wrap_i64(state).unwrap();
 
             assert_eq!(state.sp, 1);
             assert_eq!(state.stack.read_u32(0), 0x9ABCDEF0);
@@ -811,12 +757,10 @@ mod tests {
     #[test]
     fn test_i32_trunc_f32_s() {
         with_test_context(|state| {
-            let interpreter = Interpreter::default();
-
             state.stack.write_f32(0, 3.99);
             state.sp = 1;
 
-            interpreter.i32_trunc_f32_s(state).unwrap();
+            Interpreter.i32_trunc_f32_s(state).unwrap();
 
             assert_eq!(state.sp, 1);
             assert_eq!(state.stack.read_u32(0) as i32, 3);
@@ -826,12 +770,10 @@ mod tests {
     #[test]
     fn test_i32_trunc_f32_u() {
         with_test_context(|state| {
-            let interpreter = Interpreter::default();
-
             state.stack.write_f32(0, 3.99);
             state.sp = 1;
 
-            interpreter.i32_trunc_f32_u(state).unwrap();
+            Interpreter.i32_trunc_f32_u(state).unwrap();
 
             assert_eq!(state.sp, 1);
             assert_eq!(state.stack.read_u32(0), 3);
@@ -841,12 +783,10 @@ mod tests {
     #[test]
     fn test_i32_trunc_f64_s() {
         with_test_context(|state| {
-            let interpreter = Interpreter::default();
-
             state.stack.write_f64(0, 3.99);
             state.sp = 2;
 
-            interpreter.i32_trunc_f64_s(state).unwrap();
+            Interpreter.i32_trunc_f64_s(state).unwrap();
 
             assert_eq!(state.sp, 1);
             assert_eq!(state.stack.read_u32(0) as i32, 3);
@@ -856,12 +796,10 @@ mod tests {
     #[test]
     fn test_i64_extend_i32_s() {
         with_test_context(|state| {
-            let interpreter = Interpreter::default();
-
             state.stack.write_u32(0, (-1i32) as u32);
             state.sp = 1;
 
-            interpreter.i64_extend_i32_s(state).unwrap();
+            Interpreter.i64_extend_i32_s(state).unwrap();
 
             assert_eq!(state.sp, 2);
             assert_eq!(state.stack.read_u64(0) as i64, -1);
@@ -871,12 +809,10 @@ mod tests {
     #[test]
     fn test_i64_extend_i32_u() {
         with_test_context(|state| {
-            let interpreter = Interpreter::default();
-
             state.stack.write_u32(0, 0xFFFFFFFF);
             state.sp = 1;
 
-            interpreter.i64_extend_i32_u(state).unwrap();
+            Interpreter.i64_extend_i32_u(state).unwrap();
 
             assert_eq!(state.sp, 2);
             assert_eq!(state.stack.read_u64(0), 0xFFFFFFFF);
@@ -886,12 +822,10 @@ mod tests {
     #[test]
     fn test_i64_trunc_f32_s() {
         with_test_context(|state| {
-            let interpreter = Interpreter::default();
-
             state.stack.write_f32(0, 123.99);
             state.sp = 1;
 
-            interpreter.i64_trunc_f32_s(state).unwrap();
+            Interpreter.i64_trunc_f32_s(state).unwrap();
 
             assert_eq!(state.sp, 2);
             assert_eq!(state.stack.read_u64(0) as i64, 123);
@@ -901,12 +835,10 @@ mod tests {
     #[test]
     fn test_i64_trunc_f64_s() {
         with_test_context(|state| {
-            let interpreter = Interpreter::default();
-
             state.stack.write_f64(0, 123.99);
             state.sp = 2;
 
-            interpreter.i64_trunc_f64_s(state).unwrap();
+            Interpreter.i64_trunc_f64_s(state).unwrap();
 
             assert_eq!(state.sp, 2);
             assert_eq!(state.stack.read_u64(0) as i64, 123);
@@ -916,12 +848,10 @@ mod tests {
     #[test]
     fn test_f32_convert_i32_s() {
         with_test_context(|state| {
-            let interpreter = Interpreter::default();
-
             state.stack.write_u32(0, (-42i32) as u32);
             state.sp = 1;
 
-            interpreter.f32_convert_i32_s(state).unwrap();
+            Interpreter.f32_convert_i32_s(state).unwrap();
 
             assert_eq!(state.sp, 1);
             assert!((state.stack.read_f32(0) - (-42.0f32)).abs() < 0.0001);
@@ -931,12 +861,10 @@ mod tests {
     #[test]
     fn test_f32_convert_i32_u() {
         with_test_context(|state| {
-            let interpreter = Interpreter::default();
-
             state.stack.write_u32(0, 42);
             state.sp = 1;
 
-            interpreter.f32_convert_i32_u(state).unwrap();
+            Interpreter.f32_convert_i32_u(state).unwrap();
 
             assert_eq!(state.sp, 1);
             assert!((state.stack.read_f32(0) - 42.0f32).abs() < 0.0001);
@@ -946,12 +874,10 @@ mod tests {
     #[test]
     fn test_f32_convert_i64_s() {
         with_test_context(|state| {
-            let interpreter = Interpreter::default();
-
             state.stack.write_u64(0, (-42i64) as u64);
             state.sp = 2;
 
-            interpreter.f32_convert_i64_s(state).unwrap();
+            Interpreter.f32_convert_i64_s(state).unwrap();
 
             assert_eq!(state.sp, 1);
             assert!((state.stack.read_f32(0) - (-42.0f32)).abs() < 0.0001);
@@ -961,12 +887,10 @@ mod tests {
     #[test]
     fn test_f32_demote_f64() {
         with_test_context(|state| {
-            let interpreter = Interpreter::default();
-
             state.stack.write_f64(0, 3.141592653589793);
             state.sp = 2;
 
-            interpreter.f32_demote_f64(state).unwrap();
+            Interpreter.f32_demote_f64(state).unwrap();
 
             assert_eq!(state.sp, 1);
             assert!((state.stack.read_f32(0) - 3.14159265f32).abs() < 0.0001);
@@ -976,12 +900,10 @@ mod tests {
     #[test]
     fn test_f64_convert_i32_s() {
         with_test_context(|state| {
-            let interpreter = Interpreter::default();
-
             state.stack.write_u32(0, (-42i32) as u32);
             state.sp = 1;
 
-            interpreter.f64_convert_i32_s(state).unwrap();
+            Interpreter.f64_convert_i32_s(state).unwrap();
 
             assert_eq!(state.sp, 2);
             assert!((state.stack.read_f64(0) - (-42.0)).abs() < 0.0001);
@@ -991,12 +913,10 @@ mod tests {
     #[test]
     fn test_f64_convert_i64_s() {
         with_test_context(|state| {
-            let interpreter = Interpreter::default();
-
             state.stack.write_u64(0, (-42i64) as u64);
             state.sp = 2;
 
-            interpreter.f64_convert_i64_s(state).unwrap();
+            Interpreter.f64_convert_i64_s(state).unwrap();
 
             assert_eq!(state.sp, 2);
             assert!((state.stack.read_f64(0) - (-42.0)).abs() < 0.0001);
@@ -1006,12 +926,10 @@ mod tests {
     #[test]
     fn test_f64_promote_f32() {
         with_test_context(|state| {
-            let interpreter = Interpreter::default();
-
             state.stack.write_f32(0, 3.14159f32);
             state.sp = 1;
 
-            interpreter.f64_promote_f32(state).unwrap();
+            Interpreter.f64_promote_f32(state).unwrap();
 
             assert_eq!(state.sp, 2);
             assert!((state.stack.read_f64(0) - 3.14159).abs() < 0.001);
@@ -1022,12 +940,10 @@ mod tests {
     #[test]
     fn test_drop() {
         with_test_context(|state| {
-            let interpreter = Interpreter::default();
-
             state.stack.write_u32(0, 42);
             state.sp = 1;
 
-            interpreter.drop(ValType::I32, state).unwrap();
+            Interpreter.drop(ValType::I32, state).unwrap();
 
             assert_eq!(state.sp, 0);
         });
@@ -1036,14 +952,12 @@ mod tests {
     #[test]
     fn test_select_true() {
         with_test_context(|state| {
-            let interpreter = Interpreter::default();
-
             state.stack.write_u32(0, 10); // val1
             state.stack.write_u32(1, 20); // val2
             state.stack.write_u32(2, 1); // condition (true)
             state.sp = 3;
 
-            interpreter.select(ValType::I32, state).unwrap();
+            Interpreter.select(ValType::I32, state).unwrap();
 
             assert_eq!(state.sp, 1);
             assert_eq!(state.stack.read_u32(0), 10);
@@ -1053,14 +967,12 @@ mod tests {
     #[test]
     fn test_select_false() {
         with_test_context(|state| {
-            let interpreter = Interpreter::default();
-
             state.stack.write_u32(0, 10); // val1
             state.stack.write_u32(1, 20); // val2
             state.stack.write_u32(2, 0); // condition (false)
             state.sp = 3;
 
-            interpreter.select(ValType::I32, state).unwrap();
+            Interpreter.select(ValType::I32, state).unwrap();
 
             assert_eq!(state.sp, 1);
             assert_eq!(state.stack.read_u32(0), 20);
@@ -1071,11 +983,9 @@ mod tests {
     #[test]
     fn test_memory_size() {
         with_test_context(|state| {
-            let interpreter = Interpreter::default();
-
             state.sp = 0;
 
-            interpreter.memory_size(state).unwrap();
+            Interpreter.memory_size(state).unwrap();
 
             assert_eq!(state.sp, 1);
             assert_eq!(state.stack.read_u32(0), 1); // 65536 / 65536 = 1 page
@@ -1086,13 +996,11 @@ mod tests {
     #[test]
     fn test_f32_eq() {
         with_test_context(|state| {
-            let interpreter = Interpreter::default();
-
             state.stack.write_f32(0, 3.14);
             state.stack.write_f32(1, 3.14);
             state.sp = 2;
 
-            interpreter.f32_eq(state).unwrap();
+            Interpreter.f32_eq(state).unwrap();
 
             assert_eq!(state.sp, 1);
             assert_eq!(state.stack.read_u32(0), 1);
@@ -1102,13 +1010,11 @@ mod tests {
     #[test]
     fn test_f32_ne() {
         with_test_context(|state| {
-            let interpreter = Interpreter::default();
-
             state.stack.write_f32(0, 3.14);
             state.stack.write_f32(1, 2.71);
             state.sp = 2;
 
-            interpreter.f32_ne(state).unwrap();
+            Interpreter.f32_ne(state).unwrap();
 
             assert_eq!(state.sp, 1);
             assert_eq!(state.stack.read_u32(0), 1);
@@ -1118,13 +1024,11 @@ mod tests {
     #[test]
     fn test_f32_lt() {
         with_test_context(|state| {
-            let interpreter = Interpreter::default();
-
             state.stack.write_f32(0, 2.0);
             state.stack.write_f32(1, 3.0);
             state.sp = 2;
 
-            interpreter.f32_lt(state).unwrap();
+            Interpreter.f32_lt(state).unwrap();
 
             assert_eq!(state.sp, 1);
             assert_eq!(state.stack.read_u32(0), 1);
@@ -1134,13 +1038,11 @@ mod tests {
     #[test]
     fn test_f64_eq() {
         with_test_context(|state| {
-            let interpreter = Interpreter::default();
-
             state.stack.write_f64(0, 3.14159);
             state.stack.write_f64(2, 3.14159);
             state.sp = 4;
 
-            interpreter.f64_eq(state).unwrap();
+            Interpreter.f64_eq(state).unwrap();
 
             assert_eq!(state.sp, 1);
             assert_eq!(state.stack.read_u32(0), 1);
@@ -1151,13 +1053,11 @@ mod tests {
     #[test]
     fn test_i64_eq_true() {
         with_test_context(|state| {
-            let interpreter = Interpreter::default();
-
             state.stack.write_u64(0, 0x123456789ABCDEF0);
             state.stack.write_u64(2, 0x123456789ABCDEF0);
             state.sp = 4;
 
-            interpreter.i64_eq(state).unwrap();
+            Interpreter.i64_eq(state).unwrap();
 
             assert_eq!(state.sp, 1);
             assert_eq!(state.stack.read_u32(0), 1);
@@ -1167,13 +1067,11 @@ mod tests {
     #[test]
     fn test_i64_ne_true() {
         with_test_context(|state| {
-            let interpreter = Interpreter::default();
-
             state.stack.write_u64(0, 0x123456789ABCDEF0);
             state.stack.write_u64(2, 0xFEDCBA9876543210);
             state.sp = 4;
 
-            interpreter.i64_ne(state).unwrap();
+            Interpreter.i64_ne(state).unwrap();
 
             assert_eq!(state.sp, 1);
             assert_eq!(state.stack.read_u32(0), 1);
@@ -1183,13 +1081,11 @@ mod tests {
     #[test]
     fn test_i64_lt_s_true() {
         with_test_context(|state| {
-            let interpreter = Interpreter::default();
-
             state.stack.write_u64(0, (-5i64) as u64);
             state.stack.write_u64(2, 5);
             state.sp = 4;
 
-            interpreter.i64_lt_s(state).unwrap();
+            Interpreter.i64_lt_s(state).unwrap();
 
             assert_eq!(state.sp, 1);
             assert_eq!(state.stack.read_u32(0), 1);
@@ -1200,13 +1096,11 @@ mod tests {
     #[test]
     fn test_i32_add_wrapping() {
         with_test_context(|state| {
-            let interpreter = Interpreter::default();
-
             state.stack.write_u32(0, 0xFFFFFFFF);
             state.stack.write_u32(1, 2);
             state.sp = 2;
 
-            interpreter.i32_add(state).unwrap();
+            Interpreter.i32_add(state).unwrap();
 
             assert_eq!(state.sp, 1);
             assert_eq!(state.stack.read_u32(0), 1); // Wraps around
@@ -1216,13 +1110,11 @@ mod tests {
     #[test]
     fn test_i64_add_wrapping() {
         with_test_context(|state| {
-            let interpreter = Interpreter::default();
-
             state.stack.write_u64(0, 0xFFFFFFFFFFFFFFFF);
             state.stack.write_u64(2, 2);
             state.sp = 4;
 
-            interpreter.i64_add(state).unwrap();
+            Interpreter.i64_add(state).unwrap();
 
             assert_eq!(state.sp, 2);
             assert_eq!(state.stack.read_u64(0), 1); // Wraps around

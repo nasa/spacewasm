@@ -1,7 +1,7 @@
 use spacewasm::{
     CodeBuilder, CompilerOptions, ExportDesc, HostFunction, HostFunctionBreak, HostModule,
-    InterpreterResult, InterpreterRunner, ModuleRef, PageAllocator, Ref, SectionKind, ValType,
-    Value, WasmRef, vec,
+    InterpreterResult, InterpreterRunner, ModuleRef, PageAllocator, Ref, SectionKind,
+    StartInvocation, ValType, Value, WasmRef, vec,
 };
 use spacewasm_util::{FileStream, RustSystemAllocator};
 use std::ops::ControlFlow;
@@ -12,7 +12,7 @@ spacewasm::global_allocator!(
     PageAllocator::new(&RustSystemAllocator {}, 8192)
 );
 
-const MAX_CODE_PAGES: usize = 256;
+const MAX_CODE_PAGES: u32 = 256;
 const MAX_CONTROL_FRAMES: usize = 64;
 const MAX_STACK_DEPTH: usize = 256;
 
@@ -20,10 +20,11 @@ fn main() {
     let path = std::env::args().nth(1).unwrap();
 
     let start = Instant::now();
-    let mut code_builder = CodeBuilder::<MAX_CODE_PAGES>::default();
+    let mut code_builder =
+        CodeBuilder::new(MAX_CODE_PAGES).expect("failed to allocate code builder");
 
     let fprime_core = HostModule {
-        name: "fprime_core",
+        name: "fprime_core".into(),
         globals: vec![],
         functions: vec![
             HostFunction::new("panic", "iii".into(), "".into(), |state, a| {
@@ -106,7 +107,7 @@ fn main() {
         table: spacewasm::Vec::zero(),
     };
     let env = HostModule {
-        name: "env",
+        name: "env".into(),
         globals: vec![],
         functions: vec![HostFunction::new(
             "clock_ms",
@@ -123,35 +124,45 @@ fn main() {
         table: spacewasm::Vec::zero(),
     };
 
-    let mut store = spacewasm::Store::new(1, [fprime_core, env]).unwrap();
+    let mut state = spacewasm::Engine::new(
+        1024,
+        1,
+        spacewasm::Vec::from_array([fprime_core, env]).unwrap(),
+    )
+    .unwrap();
 
     let file = std::fs::File::open(path).expect("failed to open file");
     let mut file_stream = FileStream::new(file);
-    let (module, stats) = spacewasm::Module::new_with_statistics::<
-        MAX_CODE_PAGES,
-        MAX_CONTROL_FRAMES,
-        MAX_STACK_DEPTH,
-    >(
-        "main",
-        &mut file_stream,
-        &mut store,
-        &mut code_builder,
-        spacewasm::Rc::new(RustSystemAllocator)
-            .unwrap()
-            .into_wasm_memory_allocator(),
-        CompilerOptions::default(),
-    )
-    .expect("failed to parse wasm module");
+    let (module, stats) =
+        spacewasm::Module::new_with_statistics::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
+            "main",
+            &mut file_stream,
+            &mut state.store,
+            &mut code_builder,
+            spacewasm::Rc::new(RustSystemAllocator)
+                .unwrap()
+                .into_wasm_memory_allocator(),
+            CompilerOptions::default(),
+        )
+        .expect("failed to parse wasm module");
 
-    let (text, final_page_offset) = code_builder.finish().unwrap();
+    let text = code_builder.pages();
+    let final_page_offset = code_builder.offset();
 
-    let mut state = store.allocate(1024).unwrap();
-    match state.initialize_module(module, &text, usize::MAX) {
-        InterpreterResult::Finished => {}
-        InterpreterResult::OutOfFuel => panic!("insufficient fuel for initialization"),
-        InterpreterResult::Trap(t) => panic!("trap during initialization {t:?}"),
-        InterpreterResult::ReaderError(e) => panic!("ir reader error {e:?}"),
-        InterpreterResult::Pause => panic!("pause during init"),
+    let module_ref = state.push_module(module);
+    match state.invoke_start(module_ref) {
+        StartInvocation::Finished => {}
+        StartInvocation::Trap(t) => panic!("trap during initialization {t:?}"),
+        StartInvocation::Pause => panic!("pause during init"),
+        StartInvocation::Running => {
+            match spacewasm::Interpreter.run(text, &mut state, usize::MAX) {
+                InterpreterResult::Finished => {}
+                InterpreterResult::OutOfFuel => panic!("insufficient fuel for initialization"),
+                InterpreterResult::Trap(t) => panic!("trap during initialization {t:?}"),
+                InterpreterResult::ReaderError(e) => panic!("ir reader error {e:?}"),
+                InterpreterResult::Pause => panic!("pause during init"),
+            }
+        }
     }
 
     let module = state.store.modules().last().unwrap();
@@ -228,8 +239,6 @@ fn main() {
         )
         .unwrap();
 
-    let interpreter = spacewasm::Interpreter::default();
-
     // let dbg = Inspector {
     //     v: &interpreter,
     //     out: *out,
@@ -237,7 +246,7 @@ fn main() {
 
     let mut result = InterpreterResult::OutOfFuel;
     while result == InterpreterResult::OutOfFuel {
-        result = interpreter.run(&text, &mut state, usize::MAX)
+        result = spacewasm::Interpreter.run(text, &mut state, usize::MAX)
     }
 
     let InterpreterResult::Finished = result else {
