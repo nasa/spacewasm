@@ -1,11 +1,4 @@
 //! A C-constructible guest linear-memory allocator.
-//!
-//! The core interpreter takes an `Rc<dyn WasmMemoryAllocator>` when loading a
-//! module. C cannot name that type, so [`SpacewasmAllocator`] wraps one behind
-//! an opaque handle that C builds from three callbacks (alloc / realloc /
-//! dealloc, plus an opaque `userdata`) and destroys when done. The handle is
-//! passed to [`spacewasm_store_load_module`](crate::capi::spacewasm_store_load_module)
-//! per module load.
 
 use core::alloc::Layout;
 use core::ffi::c_void;

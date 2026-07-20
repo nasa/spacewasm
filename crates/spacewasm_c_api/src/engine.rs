@@ -1,4 +1,4 @@
-//! The store handle and its builder.
+//! The store handle
 
 use core::ffi::c_void;
 

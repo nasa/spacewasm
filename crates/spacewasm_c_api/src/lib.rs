@@ -2,8 +2,6 @@
 //!
 //! C-ABI support layer for the [`spacewasm`] interpreter
 #![no_std]
-// The public C-ABI surface intentionally uses C naming conventions
-// (`spacewasm_value_t`, `SPACEWASM_OK`, …) so the generated header reads naturally.
 #![allow(non_camel_case_types)]
 
 pub mod abi;
@@ -21,6 +19,11 @@ mod panic;
 
 #[cfg(feature = "provide-global-allocator")]
 pub mod global_alloc;
+
+// The suite drives the runtime-registered global allocator, so it depends on
+// the `provide-global-allocator` feature (on by default).
+#[cfg(all(test, feature = "provide-global-allocator"))]
+mod tests;
 
 // Re-exports for C callers and downstream Rust consumers.
 pub use alloc::{

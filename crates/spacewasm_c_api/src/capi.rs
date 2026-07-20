@@ -1,5 +1,4 @@
-//! The concrete `extern "C"` entry points (`spacewasm_*`) that make up the C
-//! ABI.
+//! The concrete `extern "C"` entry points (`spacewasm_*`) that make up the ABI.
 
 use core::ffi::c_char;
 use core::ffi::c_void;

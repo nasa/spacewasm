@@ -338,9 +338,17 @@ jobs:
 
       - name: Generate coverage
         run: |
-          # Only measure coverage for the main spacewasm library (src/)
-          cargo llvm-cov --package spacewasm --lcov --output-path lcov.info
-          cargo llvm-cov --package spacewasm --json --output-path coverage.json
+          # Cover the main library and the C-API layer. spacewasm_c_api's Rust
+          # `#[cfg(test)]` suite drives the `spacewasm_*` entry points directly,
+          # so its coverage is attributed like any other crate.
+          cargo llvm-cov \
+            --package spacewasm \
+            --package spacewasm_c_api \
+            --lcov --output-path lcov.info
+          cargo llvm-cov \
+            --package spacewasm \
+            --package spacewasm_c_api \
+            --json --output-path coverage.json
 
       - name: Extract coverage percentage
         id: coverage
@@ -358,7 +366,10 @@ jobs:
           if [ "${{ github.event_name }}" == "pull_request" ]; then
             git fetch origin main:main
             git checkout main
-            cargo llvm-cov --package spacewasm --json --output-path baseline-coverage.json 2>&1 || true
+            cargo llvm-cov \
+              --package spacewasm \
+              --package spacewasm_c_api \
+              --json --output-path baseline-coverage.json 2>&1 || true
             git checkout -
 
             if [ -f baseline-coverage.json ]; then
