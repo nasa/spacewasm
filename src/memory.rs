@@ -343,7 +343,7 @@ mod tests {
         // Existing data survives the grow...
         assert_eq!(mem.load_u32(0).unwrap(), 0xAABB_CCDD);
         // ...and the newly added region is zeroed.
-        let first_new_byte = 1 * MemPageSize::_65536.size();
+        let first_new_byte = MemPageSize::_65536.size();
         assert_eq!(mem.load_u8(first_new_byte).unwrap(), 0);
     }
 
