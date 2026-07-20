@@ -281,7 +281,12 @@ impl TestContext {
     fn new() -> Self {
         TestContext {
             engine: new_engine(),
-            code_builder: CodeBuilder::new(MAX_CODE_PAGES).unwrap(),
+            code_builder: CodeBuilder::new(CompilerOptions {
+                allow_memory_grow: true,
+                max_backpatch_iterations: 0,
+                max_code_pages: MAX_CODE_PAGES,
+            })
+            .unwrap(),
             instance_names: std::collections::HashMap::new(),
         }
     }
@@ -604,9 +609,6 @@ fn load_module(
         spacewasm::Rc::new(RustSystemAllocator)
             .unwrap()
             .into_wasm_memory_allocator(),
-        CompilerOptions {
-            allow_memory_grow: true,
-        },
     )?;
 
     // Append the module and run its start function. `engine` and `code_builder`

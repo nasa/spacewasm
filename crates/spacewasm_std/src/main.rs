@@ -20,8 +20,12 @@ fn main() {
     let path = std::env::args().nth(1).unwrap();
 
     let start = Instant::now();
-    let mut code_builder =
-        CodeBuilder::new(MAX_CODE_PAGES).expect("failed to allocate code builder");
+    let mut code_builder = CodeBuilder::new(CompilerOptions {
+        allow_memory_grow: false,
+        max_backpatch_iterations: 0,
+        max_code_pages: MAX_CODE_PAGES,
+    })
+    .expect("failed to allocate code builder");
 
     let fprime_core = HostModule {
         name: "fprime_core".into(),
@@ -142,7 +146,6 @@ fn main() {
             spacewasm::Rc::new(RustSystemAllocator)
                 .unwrap()
                 .into_wasm_memory_allocator(),
-            CompilerOptions::default(),
         )
         .expect("failed to parse wasm module");
 

@@ -127,7 +127,12 @@ int main(void) {
     /* Finish the host vector into a store (1024-byte guest stack, room for 1
      * guest module, 256 code pages). This consumes `host`. */
     spacewasm_store_t *store = NULL;
-    st = spacewasm_store_new(&host, 1024, 1, 256, &store);
+    spacewasm_compiler_options_t options = {
+        .allow_memory_grow = false,
+        .max_backpatch_iterations = 0,
+        .max_code_pages = 256,
+    };
+    st = spacewasm_store_new(&host, 1024, 1, options, &store);
     if (st != SPACEWASM_OK) {
         fprintf(stderr, "store_new: status=%d\n", (int)st);
         return 1;

@@ -25,12 +25,11 @@ impl Expr {
         store: &Store,
         module: &Module,
         ctx: &Func,
-        compiler_options: CompilerOptions,
     ) -> Result<(Self, u16), ValidationError> {
         let e = Expr(builder.pc());
         let tb = &mut TextBuilder::new(builder, store, module, ctx);
         wasm.read_code(
-            &Compiler::<'_, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>::new(compiler_options),
+            &Compiler::<'_, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>::default(),
             tb,
         )?;
 
@@ -77,7 +76,6 @@ impl Module {
         store: &Store,
         builder: &mut CodeBuilder,
         i: usize,
-        compiler_options: CompilerOptions,
     ) -> Result<(), ValidationError> {
         let size = wasm.read_u32()?;
         let start = wasm.offset();
@@ -108,14 +106,8 @@ impl Module {
         }
 
         f.local_size = size_in_words as u16;
-        (f.expr, f.stack_usage) = Expr::read::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
-            wasm,
-            builder,
-            store,
-            self,
-            &f,
-            compiler_options,
-        )?;
+        (f.expr, f.stack_usage) =
+            Expr::read::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(wasm, builder, store, self, &f)?;
 
         let _ = core::mem::replace(&mut self.functions[i], f);
 

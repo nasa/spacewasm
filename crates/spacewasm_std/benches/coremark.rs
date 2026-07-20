@@ -49,7 +49,12 @@ fn main() {
     };
 
     let mut state = Engine::new(1024, 2, WasmVec::from_array([env]).unwrap()).unwrap();
-    let mut code_builder = CodeBuilder::new(MAX_CODE_PAGES).unwrap();
+    let mut code_builder = CodeBuilder::new(CompilerOptions {
+        allow_memory_grow: false,
+        max_backpatch_iterations: 0,
+        max_code_pages: MAX_CODE_PAGES,
+    })
+    .unwrap();
 
     // Try multiple paths to find the wasm file
     let wasm_paths = [
@@ -71,7 +76,6 @@ fn main() {
         spacewasm::Rc::new(RustSystemAllocator)
             .unwrap()
             .into_wasm_memory_allocator(),
-        CompilerOptions::default(),
     )
     .expect("failed to parse wasm module");
 

@@ -190,7 +190,12 @@ fn main() {
     });
 
     // Compile module
-    let mut code_builder = CodeBuilder::new(MAX_CODE_PAGES).unwrap();
+    let mut code_builder = CodeBuilder::new(CompilerOptions {
+        allow_memory_grow: true,
+        max_backpatch_iterations: 0,
+        max_code_pages: MAX_CODE_PAGES,
+    })
+    .unwrap();
     let mut stream = ByteStream::new(wasm_bytes);
 
     let module = Module::new::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
@@ -201,9 +206,6 @@ fn main() {
         spacewasm::Rc::new(SystemAllocator)
             .unwrap()
             .into_wasm_memory_allocator(),
-        CompilerOptions {
-            allow_memory_grow: true,
-        },
     )
     .unwrap_or_else(|e| {
         eprintln!("Failed to compile module: {:?}", e);

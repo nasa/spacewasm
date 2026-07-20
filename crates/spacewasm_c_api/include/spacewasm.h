@@ -326,6 +326,29 @@ typedef spacewasm_read_result_t (*spacewasm_read_fn_t)(void *userdata,
                                                        size_t *out_len);
 
 /*
+ FFI-safe mirror of [`spacewasm::CompilerOptions`], controlling how guest
+ modules loaded onto a store are compiled. Passed to [`spacewasm_store_new`].
+ */
+typedef struct spacewasm_compiler_options_t {
+    /*
+     Allow compiling `memory.grow` instructions. When `false`, a module using
+     `memory.grow` is rejected at load time.
+     */
+    bool allow_memory_grow;
+    /*
+     Maximum number of iterations to resolve during a control-flow backpatch.
+     Bounds compile time on pathological modules at the cost of rejecting some
+     valid programs. Set to 0 for unlimited iterations.
+     */
+    uint32_t max_backpatch_iterations;
+    /*
+     Maximum number of compiled code pages allowed across all modules loaded
+     onto the store.
+     */
+    uint32_t max_code_pages;
+} spacewasm_compiler_options_t;
+
+/*
  Allocate `size` bytes aligned to `align`. Return NULL on failure. Per page allocation.
  */
 typedef uint8_t *(*spacewasm_global_alloc_fn_t)(void *userdata, size_t size, size_t align);
@@ -438,8 +461,9 @@ spacewasm_status_t spacewasm_store_load_module(struct spacewasm_store_t *store,
 /*
  Consume the host module vector `host` and finish it into a store handle,
  written to `out_store`. The store is sized with a `stack_size`-byte guest
- stack, room for `max_modules` guest modules (≤ 256), and `max_code_pages`
- compiled code pages. No guest module is loaded yet; use
+ stack, room for `max_modules` guest modules (≤ 256), and compiles guest
+ modules according to `options` (code-page budget, `memory.grow` support,
+ backpatch bound). No guest module is loaded yet; use
  [`spacewasm_store_load_module`] to load one or more.
 
  `host` may be null to create a store with no host modules. The host vector
@@ -453,7 +477,7 @@ spacewasm_status_t spacewasm_store_load_module(struct spacewasm_store_t *store,
 spacewasm_status_t spacewasm_store_new(struct spacewasm_host_t *host,
                                        size_t stack_size,
                                        uint32_t max_modules,
-                                       uint32_t max_code_pages,
+                                       struct spacewasm_compiler_options_t options,
                                        struct spacewasm_store_t **out_store);
 
 /*

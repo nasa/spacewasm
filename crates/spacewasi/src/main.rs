@@ -151,7 +151,12 @@ fn main() {
 
     let preview1_module = make_wasi_preview1_module(wasi_ctx_builder.build());
 
-    let mut code_builder = CodeBuilder::new(MAX_PAGES as u32).unwrap();
+    let mut code_builder = CodeBuilder::new(CompilerOptions {
+        allow_memory_grow: true,
+        max_backpatch_iterations: 0,
+        max_code_pages: MAX_PAGES as u32,
+    })
+    .unwrap();
     let mut engine = Engine::new(STACK_SIZE, 1, spacewasm::vec![preview1_module]).unwrap();
 
     let Ok(file) = std::fs::File::open(args.file) else {
@@ -168,9 +173,6 @@ fn main() {
         spacewasm::Rc::new(RustSystemAllocator)
             .unwrap()
             .into_wasm_memory_allocator(),
-        CompilerOptions {
-            allow_memory_grow: true,
-        },
     ) else {
         eprintln!("failed to parse WASM module");
         std::process::exit(1);
