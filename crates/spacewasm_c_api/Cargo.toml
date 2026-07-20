@@ -6,8 +6,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "Reusable C-API support layer for the spacewasm interpreter"
-publish = false
+description = "C API layer for the spacewasm interpreter"
 
 [lib]
 name = "spacewasm_c_api"
@@ -28,7 +27,7 @@ provide-global-allocator = []
 provide-panic-handler = []
 
 [dependencies]
-spacewasm = { path = "../.." }
+spacewasm = { path = "../..", version = "=0.0.0" }
 
 [build-dependencies]
 cbindgen = { version = "0.29", optional = true }
