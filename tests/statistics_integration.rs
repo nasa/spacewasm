@@ -16,6 +16,15 @@ use spacewasm::{
 };
 
 extern crate std;
+use std::sync::Mutex;
+
+// `LIVE_BYTES` is a single process-wide counter shared by every test in this
+// binary. Tests in a binary run concurrently by default, so a second test
+// allocating/freeing through the global allocator would corrupt the
+// before/after deltas the statistics test samples per section (observed as a
+// spurious negative delta on CI). Serialize the tests that touch the global
+// allocator so each one measures in isolation.
+static ALLOC_LOCK: Mutex<()> = Mutex::new(());
 
 // ---------------------------------------------------------------------------
 // Tracking global allocator
@@ -150,6 +159,8 @@ const MAX_CODE_PAGES: u32 = 256;
 
 #[test]
 fn new_with_statistics_reports_per_section_usage() {
+    let _guard = ALLOC_LOCK.lock().unwrap();
+
     let mut engine = Engine::new(1024, 8, vec![]).unwrap();
     let mut code_builder = CodeBuilder::new(MAX_CODE_PAGES).unwrap();
     let mut stream = ByteStream::new(STAT_WASM);
@@ -210,6 +221,8 @@ fn new_with_statistics_reports_per_section_usage() {
 
 #[test]
 fn new_with_statistics_matches_plain_new() {
+    let _guard = ALLOC_LOCK.lock().unwrap();
+
     // Decoding the same bytes with and without statistics must produce an
     // equivalent module; the statistics variant only adds sampling.
     let allocator = || {
