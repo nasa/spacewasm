@@ -862,6 +862,13 @@ fn check_decode_error(err: ParseError, text: String) {
         (ValidationError::MemoryImportTooLarge, "incompatible import type") => {}
         (ValidationError::InvalidPageSize(_), "invalid custom page size") => {}
         (ValidationError::AllocError(AllocError::AllocationFailed), "allocation failed") => {}
+        (ValidationError::MalformedFunction(_), "malformed function type") => {}
+        (ValidationError::MalformedElemType(_), "malformed element type") => {}
+        (ValidationError::MalformedLimit(_), "malformed limits flag") => {}
+        (ValidationError::MalformedMemType(_), "malformed memory type") => {}
+        (ValidationError::MalformedImportExportDesc(_), "malformed import kind") => {}
+        (ValidationError::MalformedImportExportDesc(_), "malformed export kind") => {}
+        (ValidationError::InvalidSectionOrdering(_, _), "unexpected section order") => {}
         err => {
             panic!("Could not match validation error text '{text}' with error {err:?}")
         }

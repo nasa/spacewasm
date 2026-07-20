@@ -168,7 +168,7 @@ const MAX_STACK_DEPTH: usize = 256;
 pub fn validate(wasm: &[u8]) {
     log_wasm(wasm);
 
-    let mut store = match Store::new(256, []) {
+    let mut store = match Store::from_host_modules(256, Vec::zero()) {
         Ok(s) => s,
         Err(e) => {
             log::debug!("store creation failed: {e:?}");
