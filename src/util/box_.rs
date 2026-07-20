@@ -2,7 +2,6 @@
 // (https://github.com/rust-lang/rust), licensed under Apache-2.0. These
 // portions have been modified for SpaceWasm.
 
-use crate::StaticAllocator;
 use crate::alloc::{AllocError, Allocator, GlobalAllocator};
 use crate::util::Vec;
 use core::alloc::Layout;
@@ -57,17 +56,6 @@ impl<T: Sized> Box<T, GlobalAllocator> {
     /// Create a new box using the global allocator
     pub fn new(value: T) -> Result<Box<T>, AllocError> {
         Box::new_in(GlobalAllocator, value)
-    }
-}
-
-impl<'a, T: Sized, const N: usize> Box<T, StaticAllocator<'a, N>> {
-    /// Create a new box with static memory
-    pub fn new_static(
-        alloc: StaticAllocator<'a, N>,
-        value: T,
-    ) -> Result<Box<T, StaticAllocator<'a, N>>, AllocError> {
-        const { assert!(N == size_of::<T>()) }
-        Self::new_in(alloc, value)
     }
 }
 

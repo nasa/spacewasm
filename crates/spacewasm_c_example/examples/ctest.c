@@ -4,11 +4,6 @@
  * Loads a tiny module exporting `add(i32, i32) -> i32` by streaming it through
  * a read callback, invokes it, and checks the result. Built and run by
  * tests/c_abi.rs against the staticlib + header.
- *
- * Because spacewasm_c_api is a standalone no_std C library, this program also
- * supplies the two things a pure-C consumer must: the `spacewasm_panic` hook the
- * interpreter's panic handler delegates to, and the process-wide heap allocator
- * installed at startup via `spacewasm_set_global_allocator`.
  */
 #include "spacewasm.h"
 
