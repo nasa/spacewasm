@@ -1,0 +1,19 @@
+[package]
+name = "spacewasm_bench"
+
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+publish = false
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+
+[dependencies]
+spacewasm = { path = "../.." }
+embedded-alloc = "0.7.0"
+cortex-m = "0.7.7"
+cortex-m-rt = "0.7.5"
