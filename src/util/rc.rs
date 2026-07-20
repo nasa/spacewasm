@@ -200,7 +200,7 @@ impl<T: ?Sized, A: Allocator> Rc<T, A> {
         #[derive(Copy, Clone)]
         struct FatPtr {
             data: *const (),
-            meta: usize,
+            meta: *const (),
         }
 
         #[repr(C)]
