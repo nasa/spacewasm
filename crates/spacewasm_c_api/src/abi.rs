@@ -155,14 +155,19 @@ pub unsafe fn store_invoke(
         return status::SPACEWASM_ERR_BAD_ARG;
     }
 
-    // Marshal parameters.
-    let slice = unsafe { core::slice::from_raw_parts(params, n) };
     let mut buf: [Value; 64] = [Value::I32(0); 64];
     if n > buf.len() {
         return status::SPACEWASM_ERR_CAPACITY;
     }
-    for (i, v) in slice.iter().enumerate() {
-        buf[i] = v.to_value();
+
+    // Marshal parameters. `from_raw_parts` requires a non-null pointer even for
+    // a zero-length slice, so only build the slice when there are entries (the
+    // contract permits a null `params` when `n == 0`).
+    if n != 0 {
+        let slice = unsafe { core::slice::from_raw_parts(params, n) };
+        for (i, v) in slice.iter().enumerate() {
+            buf[i] = v.to_value();
+        }
     }
 
     match store.invoke(module_idx, func_index as u16, &buf[..n]) {
