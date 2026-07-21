@@ -195,8 +195,7 @@ impl Engine {
             .store
             .modules()
             .get(module_ref.0 as usize)
-            .map(|m| m.start)
-            .flatten()
+            .and_then(|m| m.start)
         else {
             return StartInvocation::Finished;
         };
