@@ -238,8 +238,8 @@ impl Page {
         if final_offset <= self.size {
             assert!(!self.has_deallocated);
             self.cache = Some(AllocCache {
-                restore_ptr: (self.ptr as usize) + self.allocated,
-                alloc_ptr: start_address,
+                restore_ptr: start_address,
+                alloc_ptr: aligned_start,
             });
 
             self.wasted += alignment_offset;
