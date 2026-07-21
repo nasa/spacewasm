@@ -190,7 +190,7 @@ pub unsafe extern "C" fn spacewasm_add_host_function(
 /// Load a guest module named `name` onto an existing store by streaming its
 /// bytes through the `read` callback. The callback owns the buffer backing each
 /// chunk (see [`spacewasm_read_fn_t`]). This does not run the module's start
-/// function; use [`spacewasm_store_module_needs_start`] and
+/// function; use [`spacewasm_store_module_get_start`] and
 /// [`spacewasm_store_run_start`] for that. `allocator` supplies the guest linear
 /// memory (see [`spacewasm_allocator_new`]). Writes the new module's index to
 /// `out_module_idx` (if non-null). May be called repeatedly to load several
@@ -291,37 +291,22 @@ pub unsafe extern "C" fn spacewasm_store_find_export_func(
     unsafe { abi::store_find_export_func(store, module_idx, name, out_index) }
 }
 
-/// Report whether module `module_idx` declares a start function that should be
-/// run (via [`spacewasm_store_run_start`]) before the module is used, writing
-/// the answer to `out_needs_start`.
+/// Invoke the start function of a module.
+///
+/// If there is no start function, return [`spacewasm_run_status_t::SPACEWASM_RUN_FINISHED`]
+/// If there is a start function, return [`spacewasm_run_status_t::SPACEWASM_RUN_OUT_OF_FUEL`]
+///
+/// If there are any bad arguments or the start function is a host function that traps,
+/// return [`spacewasm_run_status_t::SPACEWASM_RUN_TRAP`]
 ///
 /// # Safety
-/// `store` must be live; `out_needs_start` valid.
+/// `store` must be live
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn spacewasm_store_module_needs_start(
+pub unsafe extern "C" fn spacewasm_store_module_invoke_start(
     store: *mut SpacewasmStore,
     module_idx: u32,
-    out_needs_start: *mut bool,
-) -> spacewasm_status_t {
-    unsafe { abi::store_module_needs_start(store, module_idx, out_needs_start) }
-}
-
-/// Run the start function of module `module_idx` (if any) for up to `fuel`
-/// instructions, writing any trap to `out_trap`. Returns whether the start
-/// function finished, trapped, paused, or ran out of fuel. A module with no
-/// start function returns [`spacewasm_run_status_t::SPACEWASM_RUN_FINISHED`]
-/// immediately. If it runs out of fuel, call again to resume.
-///
-/// # Safety
-/// `store` must be live; `out_trap` null or valid.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn spacewasm_store_run_start(
-    store: *mut SpacewasmStore,
-    module_idx: u32,
-    fuel: usize,
-    out_trap: *mut spacewasm_trap_t,
 ) -> spacewasm_run_status_t {
-    unsafe { abi::store_run_start(store, module_idx, fuel, out_trap) }
+    unsafe { abi::store_invoke_start(store, module_idx) }
 }
 
 /// Set up a call to exported function `func_index` of module `module_idx` with
@@ -354,21 +339,6 @@ pub unsafe extern "C" fn spacewasm_store_run(
 ) -> spacewasm_run_status_t {
     unsafe { abi::store_run(store, fuel, out_trap) }
 }
-
-/// Run the pending invocation to completion, slicing execution into
-/// `fuel_per_slice` chunks (0 for unbounded), writing any trap to `out_trap`.
-///
-/// # Safety
-/// `store` must be live; `out_trap` null or valid.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn spacewasm_store_run_to_completion(
-    store: *mut SpacewasmStore,
-    fuel_per_slice: usize,
-    out_trap: *mut spacewasm_trap_t,
-) -> spacewasm_run_status_t {
-    unsafe { abi::store_run_to_completion(store, fuel_per_slice, out_trap) }
-}
-
 /// Fetch the result of the last completed call, coerced to `expected`, into
 /// `out`.
 ///

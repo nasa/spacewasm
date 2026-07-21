@@ -97,43 +97,16 @@ pub unsafe fn store_find_export_func(
 }
 
 /// # Safety
-/// `store` must be live; `out_needs_start` a valid `bool` pointer.
-pub unsafe fn store_module_needs_start(
+/// `store` must be live
+pub unsafe fn store_invoke_start(
     store: *mut SpacewasmStore,
     module_idx: u32,
-    out_needs_start: *mut bool,
-) -> spacewasm_status_t {
-    let Some(store) = (unsafe { store.as_ref() }) else {
-        return status::SPACEWASM_ERR_NULL_ARG;
-    };
-    if out_needs_start.is_null() {
-        return status::SPACEWASM_ERR_NULL_ARG;
-    }
-    match store.module_needs_start(module_idx) {
-        Ok(needs) => {
-            unsafe { *out_needs_start = needs };
-            status::SPACEWASM_OK
-        }
-        Err(e) => e,
-    }
-}
-
-/// # Safety
-/// `store` must be live; `out_trap` null or a valid `spacewasm_trap_t` pointer.
-pub unsafe fn store_run_start(
-    store: *mut SpacewasmStore,
-    module_idx: u32,
-    fuel: usize,
-    out_trap: *mut spacewasm_trap_t,
 ) -> spacewasm_run_status_t {
     let Some(store) = (unsafe { store.as_mut() }) else {
         return spacewasm_run_status_t::SPACEWASM_RUN_TRAP;
     };
-    let (rs, trap) = store.run_start(module_idx, fuel);
-    if !out_trap.is_null() {
-        unsafe { *out_trap = trap };
-    }
-    rs
+
+    store.invoke_start(module_idx)
 }
 
 /// # Safety
