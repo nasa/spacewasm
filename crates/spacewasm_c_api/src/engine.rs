@@ -51,9 +51,6 @@ pub enum EngineState {
     /// A function has been invoked; `run` may be called to drive it. Must reach
     /// `Finished`/`Trap` before the next invoke.
     Running,
-    /// A module's Wasm start function has been seeded; `run_start` may be called
-    /// to drive it. Must reach `Finished`/`Trap` before invoking anything else.
-    RunningStart,
 }
 
 /// Callback signature for a host function implemented in C. `caller` is an
@@ -170,57 +167,24 @@ impl SpacewasmStore {
         Ok(self.engine.needs_start(ModuleRef(module_idx as u8)))
     }
 
-    /// Run the start function of module `module_idx`, if it declares one, for up
-    /// to `fuel` instructions. The store must be [`EngineState::Idle`] on the
-    /// first call. A Wasm start function that does not finish within `fuel`
-    /// leaves the store in [`EngineState::RunningStart`]; call again to resume.
-    /// On `Finished`/`Trap` the store returns to [`EngineState::Idle`].
-    pub fn run_start(
-        &mut self,
-        module_idx: u32,
-        fuel: usize,
-    ) -> (spacewasm_run_status_t, spacewasm_trap_t) {
+    pub fn invoke_start(&mut self, module_idx: u32) -> spacewasm_run_status_t {
+        if self.phase != EngineState::Idle {
+            return spacewasm_run_status_t::SPACEWASM_RUN_TRAP;
+        }
+
         if module_idx as usize >= self.engine.store.modules().len() {
-            return (
-                spacewasm_run_status_t::SPACEWASM_RUN_TRAP,
-                status::SPACEWASM_TRAP_NONE,
-            );
+            return spacewasm_run_status_t::SPACEWASM_RUN_TRAP;
         }
 
-        // Seed the start invocation on the first call; a subsequent call while
-        // already `RunningStart` just resumes the interpreter loop below.
-        if self.phase == EngineState::Idle {
-            match self.engine.invoke_start(ModuleRef(module_idx as u8)) {
-                StartInvocation::Finished => {
-                    return (
-                        spacewasm_run_status_t::SPACEWASM_RUN_FINISHED,
-                        status::SPACEWASM_TRAP_NONE,
-                    );
-                }
-                StartInvocation::Trap(t) => {
-                    return (
-                        spacewasm_run_status_t::SPACEWASM_RUN_TRAP,
-                        status::trap_reason_code(t),
-                    );
-                }
-                StartInvocation::Pause => {
-                    return (
-                        spacewasm_run_status_t::SPACEWASM_RUN_PAUSE,
-                        status::SPACEWASM_TRAP_NONE,
-                    );
-                }
-                StartInvocation::Running => {
-                    self.phase = EngineState::RunningStart;
-                }
+        match self.engine.invoke_start(ModuleRef(module_idx as u8)) {
+            StartInvocation::Finished => spacewasm_run_status_t::SPACEWASM_RUN_FINISHED,
+            StartInvocation::Trap(_) => spacewasm_run_status_t::SPACEWASM_RUN_TRAP,
+            StartInvocation::Pause => spacewasm_run_status_t::SPACEWASM_RUN_PAUSE,
+            StartInvocation::Running => {
+                self.phase = EngineState::Running;
+                spacewasm_run_status_t::SPACEWASM_RUN_OUT_OF_FUEL
             }
-        } else if self.phase != EngineState::RunningStart {
-            return (
-                spacewasm_run_status_t::SPACEWASM_RUN_TRAP,
-                status::SPACEWASM_TRAP_NONE,
-            );
         }
-
-        self.drive(fuel)
     }
 
     /// Resolve an exported function by name in module `module_idx` to an index

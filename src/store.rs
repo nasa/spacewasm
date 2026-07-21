@@ -191,7 +191,12 @@ impl Engine {
     /// The interpreter must be idle (no invocation in flight), matching the
     /// preconditions of [`Engine::invoke`].
     pub fn invoke_start(&mut self, module_ref: ModuleRef) -> StartInvocation {
-        let Some(start) = self.store.modules()[module_ref.0 as usize].start else {
+        let Some(start) = self
+            .store
+            .modules()
+            .get(module_ref.0 as usize)
+            .and_then(|m| m.start)
+        else {
             return StartInvocation::Finished;
         };
 

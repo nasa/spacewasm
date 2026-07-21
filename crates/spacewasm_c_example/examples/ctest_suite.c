@@ -166,18 +166,30 @@ static spacewasm_status_t load_module_onto(spacewasm_allocator_t* alloc, spacewa
     if (st != SPACEWASM_OK) {
         return st;
     }
-    bool needs_start = false;
-    st = spacewasm_store_module_needs_start(store, *out_idx, &needs_start);
-    if (st != SPACEWASM_OK) {
-        return st;
+
+    spacewasm_run_status_t rs = spacewasm_store_module_invoke_start(store, *out_idx);
+    spacewasm_trap_t trap = SPACEWASM_TRAP_NONE;
+    while (rs == SPACEWASM_RUN_OUT_OF_FUEL) {
+        rs = spacewasm_store_run(store, 1000, &trap);
     }
-    if (needs_start) {
-        spacewasm_trap_t trap = SPACEWASM_TRAP_NONE;
-        if (spacewasm_store_run_start(store, *out_idx, 0, &trap) != SPACEWASM_RUN_FINISHED) {
-            return SPACEWASM_ERR_WRONG_STATE;
-        }
+
+    if (rs != SPACEWASM_RUN_FINISHED) {
+        st = SPACEWASM_ERR_WRONG_STATE;
+    } else {
+        st = SPACEWASM_OK;
     }
-    return SPACEWASM_OK;
+
+    return st;
+}
+
+static spacewasm_run_status_t run_to_completion(spacewasm_store_t* store,
+                                                spacewasm_trap_t* out_trap) {
+    spacewasm_run_status_t rs = SPACEWASM_RUN_OUT_OF_FUEL;
+    while (rs == SPACEWASM_RUN_OUT_OF_FUEL) {
+        rs = spacewasm_store_run(store, 1000, out_trap);
+    }
+
+    return rs;
 }
 
 /* ---- test cases ---------------------------------------------------------- */
@@ -203,7 +215,7 @@ static int test_add_module_invoke(void) {
     spacewasm_value_t params[2] = {i32_val(20), i32_val(22)};
     CHECK(spacewasm_store_invoke(store, 0, idx, params, 2) == SPACEWASM_OK, "invoke");
     spacewasm_trap_t trap = SPACEWASM_TRAP_NONE;
-    CHECK(spacewasm_store_run_to_completion(store, 0, &trap) == SPACEWASM_RUN_FINISHED, "run");
+    CHECK(run_to_completion(store, &trap) == SPACEWASM_RUN_FINISHED, "run");
 
     spacewasm_value_t out = i32_val(0);
     CHECK(spacewasm_store_get_result(store, SPACEWASM_I32, &out) == SPACEWASM_OK, "result");
@@ -222,7 +234,7 @@ static int invoke_add(spacewasm_store_t* store, uint32_t mod, uint32_t func, int
         return 1;
     }
     spacewasm_trap_t trap = SPACEWASM_TRAP_NONE;
-    if (spacewasm_store_run_to_completion(store, 0, &trap) != SPACEWASM_RUN_FINISHED) {
+    if (run_to_completion(store, &trap) != SPACEWASM_RUN_FINISHED) {
         return 1;
     }
     spacewasm_value_t out = i32_val(0);
@@ -243,11 +255,9 @@ static int test_two_modules_on_one_store(void) {
         spacewasm_allocator_new(mem_alloc, mem_realloc, mem_dealloc, NULL);
 
     uint32_t a = 0, b = 0;
-    CHECK(load_module_onto(alloc, store, "a", ADD_WASM, sizeof(ADD_WASM), 0, &a) ==
-              SPACEWASM_OK,
+    CHECK(load_module_onto(alloc, store, "a", ADD_WASM, sizeof(ADD_WASM), 0, &a) == SPACEWASM_OK,
           "load a");
-    CHECK(load_module_onto(alloc, store, "b", ADD_WASM, sizeof(ADD_WASM), 0, &b) ==
-              SPACEWASM_OK,
+    CHECK(load_module_onto(alloc, store, "b", ADD_WASM, sizeof(ADD_WASM), 0, &b) == SPACEWASM_OK,
           "load b");
     CHECK(a == 0 && b == 1, "indices a=%u b=%u", a, b);
 
@@ -348,8 +358,7 @@ static int test_host_function_and_memory(void) {
     spacewasm_value_t params[1] = {i32_val(41)};
     CHECK(spacewasm_store_invoke(store, 0, idx, params, 1) == SPACEWASM_OK, "invoke");
     spacewasm_trap_t trap = SPACEWASM_TRAP_NONE;
-    CHECK(spacewasm_store_run_to_completion(store, 0, &trap) == SPACEWASM_RUN_FINISHED,
-          "run (trap=%d)", (int)trap);
+    CHECK(run_to_completion(store, &trap) == SPACEWASM_RUN_FINISHED, "run (trap=%d)", (int)trap);
     spacewasm_value_t out = i32_val(0);
     CHECK(spacewasm_store_get_result(store, SPACEWASM_I32, &out) == SPACEWASM_OK, "result");
     CHECK(out.u.i32_ == 42, "add_one(41)=%d", out.u.i32_);

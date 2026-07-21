@@ -266,19 +266,39 @@ fn load_module_onto(
         return Err(st);
     }
 
-    let mut needs_start = false;
-    let st = unsafe { spacewasm_store_module_needs_start(store, idx, &mut needs_start) };
-    if st != status::SPACEWASM_OK {
-        return Err(st);
+    let run = unsafe { spacewasm_store_module_invoke_start(store, idx) };
+
+    // The error codes don't really matter, just spin the start function
+    match run {
+        spacewasm_run_status_t::SPACEWASM_RUN_FINISHED => Ok(idx),
+        spacewasm_run_status_t::SPACEWASM_RUN_OUT_OF_FUEL => {
+            // We must spin the start function
+            loop {
+                let mut trap = spacewasm_trap_t::SPACEWASM_TRAP_NONE;
+                let run = unsafe { spacewasm_store_run(store, 10000, &mut trap) };
+                if run == spacewasm_run_status_t::SPACEWASM_RUN_FINISHED {
+                    break Ok(idx);
+                } else if run != spacewasm_run_status_t::SPACEWASM_RUN_OUT_OF_FUEL {
+                    break Err(status::SPACEWASM_ERR_WRONG_STATE);
+                }
+            }
+        }
+        spacewasm_run_status_t::SPACEWASM_RUN_PAUSE => Err(status::SPACEWASM_ERR_WRONG_STATE),
+        spacewasm_run_status_t::SPACEWASM_RUN_TRAP => Err(status::SPACEWASM_ERR_WRONG_STATE),
+        spacewasm_run_status_t::SPACEWASM_RUN_READER_ERROR => Err(status::SPACEWASM_ERR_STREAM),
     }
-    if needs_start {
-        let mut trap = spacewasm_trap_t::SPACEWASM_TRAP_NONE;
-        let run = unsafe { spacewasm_store_run_start(store, idx, 0, &mut trap) };
-        if run != spacewasm_run_status_t::SPACEWASM_RUN_FINISHED {
-            return Err(status::SPACEWASM_ERR_WRONG_STATE);
+}
+
+fn run_to_completion(
+    store: *mut SpacewasmStore,
+    trap: &mut spacewasm_trap_t,
+) -> spacewasm_run_status_t {
+    loop {
+        let run = unsafe { spacewasm_store_run(store, 10000, trap) };
+        if run != spacewasm_run_status_t::SPACEWASM_RUN_OUT_OF_FUEL {
+            break run;
         }
     }
-    Ok(idx)
 }
 
 /// Invoke a 2-arg i32 function and run it to completion, returning its result.
@@ -295,7 +315,7 @@ fn invoke_add(
         return Err(st);
     }
     let mut trap = spacewasm_trap_t::SPACEWASM_TRAP_NONE;
-    let run = unsafe { spacewasm_store_run_to_completion(store, 0, &mut trap) };
+    let run = run_to_completion(store, &mut trap);
     assert_eq!(
         run,
         spacewasm_run_status_t::SPACEWASM_RUN_FINISHED,
@@ -506,7 +526,7 @@ fn host_function_and_memory() {
     );
     let mut trap = spacewasm_trap_t::SPACEWASM_TRAP_NONE;
     assert_eq!(
-        unsafe { spacewasm_store_run_to_completion(store, 0, &mut trap) },
+        run_to_completion(store, &mut trap),
         spacewasm_run_status_t::SPACEWASM_RUN_FINISHED,
         "run (trap={trap:?})"
     );
@@ -896,7 +916,7 @@ fn trap_is_reported() {
     );
     let mut trap = spacewasm_trap_t::SPACEWASM_TRAP_NONE;
     assert_eq!(
-        unsafe { spacewasm_store_run_to_completion(store, 0, &mut trap) },
+        run_to_completion(store, &mut trap),
         spacewasm_run_status_t::SPACEWASM_RUN_TRAP,
         "should trap"
     );
@@ -939,23 +959,14 @@ fn module_with_start_runs() {
         "load"
     );
 
-    let mut needs_start = false;
     assert_eq!(
-        unsafe { spacewasm_store_module_needs_start(store, idx, &mut needs_start) },
-        status::SPACEWASM_OK
+        unsafe { spacewasm_store_module_invoke_start(store, idx) },
+        spacewasm_run_status_t::SPACEWASM_RUN_OUT_OF_FUEL
     );
-    assert!(needs_start, "module declares a start function");
 
     // Drive the start function in small fuel slices to also exercise the
-    // `RunningStart` resume path (`run_start` treats `fuel` as a hard bound, so
-    // a small budget forces at least one out-of-fuel slice).
     let mut trap = spacewasm_trap_t::SPACEWASM_TRAP_NONE;
-    let start_status = loop {
-        let rs = unsafe { spacewasm_store_run_start(store, idx, 1, &mut trap) };
-        if rs != spacewasm_run_status_t::SPACEWASM_RUN_OUT_OF_FUEL {
-            break rs;
-        }
-    };
+    let start_status = run_to_completion(store, &mut trap);
     assert_eq!(
         start_status,
         spacewasm_run_status_t::SPACEWASM_RUN_FINISHED,
@@ -973,7 +984,7 @@ fn module_with_start_runs() {
         status::SPACEWASM_OK
     );
     assert_eq!(
-        unsafe { spacewasm_store_run_to_completion(store, 0, &mut trap) },
+        run_to_completion(store, &mut trap),
         spacewasm_run_status_t::SPACEWASM_RUN_FINISHED
     );
     let mut out = i32_val(0);
@@ -999,12 +1010,11 @@ fn no_start_module_reports_false() {
     let alloc = new_guest_allocator();
     let idx = load_module_onto(alloc, store, c"main", ADD_WASM, 0).expect("load");
 
-    let mut needs_start = true;
+    // No start function should return finished
     assert_eq!(
-        unsafe { spacewasm_store_module_needs_start(store, idx, &mut needs_start) },
-        status::SPACEWASM_OK
+        unsafe { spacewasm_store_module_invoke_start(store, idx) },
+        spacewasm_run_status_t::SPACEWASM_RUN_FINISHED
     );
-    assert!(!needs_start, "ADD_WASM has no start function");
 
     unsafe {
         spacewasm_store_destroy(store);
@@ -1173,7 +1183,7 @@ fn host_memory_accessors() {
     );
     let mut trap = spacewasm_trap_t::SPACEWASM_TRAP_NONE;
     assert_eq!(
-        unsafe { spacewasm_store_run_to_completion(store, 0, &mut trap) },
+        run_to_completion(store, &mut trap),
         spacewasm_run_status_t::SPACEWASM_RUN_FINISHED,
         "run (trap={trap:?})"
     );
@@ -1435,14 +1445,14 @@ fn start_function_traps() {
         status::SPACEWASM_OK
     );
 
+    assert_eq!(
+        unsafe { spacewasm_store_module_invoke_start(store, idx) },
+        spacewasm_run_status_t::SPACEWASM_RUN_OUT_OF_FUEL
+    );
+
     let mut trap = spacewasm_trap_t::SPACEWASM_TRAP_NONE;
-    let status_ = loop {
-        let rs = unsafe { spacewasm_store_run_start(store, idx, 16, &mut trap) };
-        if rs != spacewasm_run_status_t::SPACEWASM_RUN_OUT_OF_FUEL {
-            break rs;
-        }
-    };
-    assert_eq!(status_, spacewasm_run_status_t::SPACEWASM_RUN_TRAP);
+    let status = run_to_completion(store, &mut trap);
+    assert_eq!(status, spacewasm_run_status_t::SPACEWASM_RUN_TRAP);
     assert_eq!(trap, spacewasm_trap_t::SPACEWASM_TRAP_UNREACHABLE);
 
     unsafe {
@@ -1460,17 +1470,16 @@ fn engine_rejects_out_of_range_module() {
     let alloc = new_guest_allocator();
     let _ = load_module_onto(alloc, store, c"main", ADD_WASM, 0).expect("load");
 
-    // module_needs_start on an out-of-range module is NOT_FOUND.
-    let mut needs = false;
+    // module_needs_start on an out-of-range module is trap.
     assert_eq!(
-        unsafe { spacewasm_store_module_needs_start(store, 99, &mut needs) },
-        status::SPACEWASM_ERR_NOT_FOUND
+        unsafe { spacewasm_store_module_invoke_start(store, 99) },
+        spacewasm_run_status_t::SPACEWASM_RUN_TRAP
     );
 
     // run_start on an out-of-range module traps (no such module to seed).
     let mut trap = spacewasm_trap_t::SPACEWASM_TRAP_NONE;
     assert_eq!(
-        unsafe { spacewasm_store_run_start(store, 99, 0, &mut trap) },
+        unsafe { spacewasm_store_run(store, 0, &mut trap) },
         spacewasm_run_status_t::SPACEWASM_RUN_TRAP
     );
 
