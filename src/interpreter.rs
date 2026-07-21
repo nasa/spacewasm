@@ -7,38 +7,6 @@ impl LocalVariable {
     }
 }
 
-pub struct InterpreterState<'store> {
-    /// Current program counter
-    pub pc: JumpTarget,
-
-    /// Flag tracking if the current instruction jumps to another PC
-    pub jumped: bool,
-
-    /// Frame pointer. Base address of local variables in the current stack frame
-    pub fp: u32,
-
-    /// Stack pointer
-    pub sp: usize,
-
-    /// The stack
-    pub stack: Stack,
-
-    /// Linear memory from the active module
-    pub memory: Rc<Memory>,
-
-    /// Table from the active module
-    pub table: Rc<[TableElement]>,
-
-    /// Current module we are executing code for
-    pub module: ModuleRef,
-
-    /// The WebAssembly Store
-    pub store: &'store mut Store,
-
-    /// The interpreter result when finished executing
-    pub result: Option<RawValue>,
-}
-
 struct CallFrame {
     frame_length: u16,
     module_delta: u8,
@@ -67,7 +35,7 @@ pub enum InvokeError {
     StackOverflow,
 }
 
-impl<'store> InterpreterState<'store> {
+impl Engine {
     fn call_impl_enter_module(&mut self, f_ref: WasmRef) -> Result<(), InterpreterBreak> {
         // If we are calling across module we need to swap out the current memory
         let module_delta = if f_ref.module == self.module {
@@ -98,7 +66,7 @@ impl<'store> InterpreterState<'store> {
         // We need to push the frame pointer and the return instruction pointer to the stack
         // We also encode the parameter size into the stack frame so that the return can unwind the stack
         let frame_length = (self.sp - self.fp as usize) as u32;
-        assert!(frame_length <= 0xFFFFF);
+        assert!(frame_length <= 0xFFFF);
         let frame = CallFrame {
             frame_length: frame_length as u16,
             module_delta,
@@ -122,16 +90,6 @@ impl<'store> InterpreterState<'store> {
         self.jumped = true;
 
         Ok(())
-    }
-
-    pub fn reset(&mut self) {
-        self.pc = JumpTarget::SENTINEL;
-        self.sp = 0;
-        self.fp = 0;
-        self.jumped = false;
-        self.result = None;
-        self.clear_memory();
-        self.clear_table();
     }
 
     /// Invoke a function with some parameters.
@@ -190,13 +148,7 @@ impl<'store> InterpreterState<'store> {
     }
 }
 
-pub struct Interpreter<'store>(core::marker::PhantomData<&'store ()>);
-
-impl<'store> Default for Interpreter<'store> {
-    fn default() -> Self {
-        Interpreter(core::marker::PhantomData)
-    }
-}
+pub struct Interpreter;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrapReason {
@@ -256,7 +208,7 @@ pub enum InterpreterResult {
     ReaderError(IrReaderError),
 }
 
-impl<'store> Interpreter<'store> {
+impl Interpreter {
     /// This function performs an unconditional branch to a resolved label target.
     ///
     /// Label targets use a relative offset from their location in the IR. The program
@@ -276,7 +228,7 @@ impl<'store> Interpreter<'store> {
         &self,
         label_pc_offset: JumpOffset,
         addr: LabelTarget,
-        state: &mut InterpreterState<'store>,
+        state: &mut Engine,
     ) -> Result<(), InterpreterBreak> {
         if addr.is_sentinel() {
             return self.return_(addr.arity() as u8, state);
@@ -316,18 +268,16 @@ impl<'store> Interpreter<'store> {
 ///
 /// For all types that implement [IrVisitor<State = InterpreterState, Error = InstructionError>],
 /// this trait will be implemented to execute instructions given the state and store.
-pub trait InterpreterRunner<'store> {
+pub trait InterpreterRunner {
     fn run(
         &self,
         code: &[Box<TextPage>],
-        state: &mut InterpreterState<'store>,
+        state: &mut Engine,
         n_instructions: usize,
     ) -> InterpreterResult;
 }
 
-impl<'store, T: IrVisitor<State = InterpreterState<'store>, Error = InterpreterBreak>>
-    InterpreterRunner<'store> for T
-{
+impl<T: IrVisitor<State = Engine, Error = InterpreterBreak>> InterpreterRunner for T {
     fn run(
         &self,
         code: &[Box<TextPage>],
@@ -517,9 +467,9 @@ macro_rules! instruction {
     };
 }
 
-impl<'store> BaseVisitor for Interpreter<'store> {
+impl BaseVisitor for Interpreter {
     type Error = InterpreterBreak;
-    type State = InterpreterState<'store>;
+    type State = Engine;
 
     fn unreachable(&self, _: &mut Self::State) -> Result<(), Self::Error> {
         Err(InterpreterBreak::Trap(TrapReason::Unreachable))
@@ -1254,7 +1204,7 @@ impl<'store> BaseVisitor for Interpreter<'store> {
     }
 }
 
-impl<'store> IrVisitor for Interpreter<'store> {
+impl IrVisitor for Interpreter {
     fn drop(&self, ty: ValType, state: &mut Self::State) -> Result<(), Self::Error> {
         state.sp -= match ty {
             ValType::I32 | ValType::F32 => 1,
@@ -1717,3 +1667,87 @@ impl<'store> IrVisitor for Interpreter<'store> {
 #[cfg(test)]
 #[path = "interpreter_tests.rs"]
 mod interpreter_tests;
+
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+
+    /// Verify CallFrame transmute correctness
+    #[kani::proof]
+    fn proof_callframe_transmute_roundtrip() {
+        let frame_length: u16 = kani::any();
+        let module_delta: u8 = kani::any();
+        let parameter_size: u8 = kani::any();
+
+        let frame = CallFrame {
+            frame_length,
+            module_delta,
+            parameter_size,
+        };
+
+        let bits = frame.into_bits();
+
+        let decoded = CallFrame::from_bits(bits);
+
+        assert_eq!(
+            decoded.frame_length, frame_length,
+            "frame_length must round-trip correctly"
+        );
+        assert_eq!(
+            decoded.module_delta, module_delta,
+            "module_delta must round-trip correctly"
+        );
+        assert_eq!(
+            decoded.parameter_size, parameter_size,
+            "parameter_size must round-trip correctly"
+        );
+    }
+
+    /// Verify CallFrame transmute produces deterministic results
+    #[kani::proof]
+    fn proof_callframe_deterministic() {
+        let frame_length: u16 = kani::any();
+        let module_delta: u8 = kani::any();
+        let parameter_size: u8 = kani::any();
+
+        let frame1 = CallFrame {
+            frame_length,
+            module_delta,
+            parameter_size,
+        };
+
+        let frame2 = CallFrame {
+            frame_length,
+            module_delta,
+            parameter_size,
+        };
+
+        let bits1 = frame1.into_bits();
+        let bits2 = frame2.into_bits();
+
+        assert_eq!(bits1, bits2, "Same inputs must produce same bit pattern");
+    }
+
+    /// Verify CallFrame layout should pack into 32 bits
+    #[kani::proof]
+    fn proof_callframe_layout() {
+        assert_eq!(
+            core::mem::size_of::<CallFrame>(),
+            4,
+            "CallFrame must be exactly 4 bytes"
+        );
+
+        let frame = CallFrame {
+            frame_length: 0x1234,
+            module_delta: 0x56,
+            parameter_size: 0x78,
+        };
+
+        let bits = frame.into_bits();
+        let decoded = CallFrame::from_bits(bits);
+
+        assert_eq!(decoded.frame_length, 0x1234);
+        assert_eq!(decoded.module_delta, 0x56);
+        assert_eq!(decoded.parameter_size, 0x78);
+    }
+}

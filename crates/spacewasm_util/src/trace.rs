@@ -1,6 +1,6 @@
 use spacewasm::{
-    BaseVisitor, HostModuleRef, InterpreterState, IrVisitor, JumpTarget, LabelTarget,
-    LocalVariable, MemArg, ModuleRef, TypeIdx, ValType,
+    BaseVisitor, Engine, HostModuleRef, IrVisitor, JumpTarget, LabelTarget, LocalVariable, MemArg,
+    ModuleRef, TypeIdx, ValType,
 };
 
 /// A snapshot of interpreter state at a specific instruction
@@ -103,14 +103,12 @@ macro_rules! trace_visit_fn {
 }
 
 /// State tracer that wraps an IrVisitor and records pc/sp/fp history
-pub struct StateTracer<'a, 'store, T: BaseVisitor<State = InterpreterState<'store>, Error = E>, E> {
+pub struct StateTracer<'a, T: BaseVisitor<State = Engine, Error = E>, E> {
     pub v: &'a T,
     pub history: core::cell::RefCell<StateHistory>,
 }
 
-impl<'a, 'store, T: BaseVisitor<State = InterpreterState<'store>, Error = E>, E>
-    StateTracer<'a, 'store, T, E>
-{
+impl<'a, T: BaseVisitor<State = Engine, Error = E>, E> StateTracer<'a, T, E> {
     pub fn new(v: &'a T, capacity: usize) -> Self {
         Self {
             v,
@@ -118,7 +116,7 @@ impl<'a, 'store, T: BaseVisitor<State = InterpreterState<'store>, Error = E>, E>
         }
     }
 
-    fn record_state(&self, state: &InterpreterState<'store>, instruction: &'static str) {
+    fn record_state(&self, state: &Engine, instruction: &'static str) {
         self.history.borrow_mut().record(StateSnapshot {
             pc: state.pc,
             sp: state.sp,
@@ -130,7 +128,7 @@ impl<'a, 'store, T: BaseVisitor<State = InterpreterState<'store>, Error = E>, E>
 
     fn record_state_with_metadata(
         &self,
-        state: &InterpreterState<'store>,
+        state: &Engine,
         instruction: &'static str,
         meta_name: &'static str,
         meta_value: usize,
@@ -155,11 +153,9 @@ impl<'a, 'store, T: BaseVisitor<State = InterpreterState<'store>, Error = E>, E>
     }
 }
 
-impl<'a, 'store, T: BaseVisitor<State = InterpreterState<'store>, Error = E>, E> BaseVisitor
-    for StateTracer<'a, 'store, T, E>
-{
+impl<'a, T: BaseVisitor<State = Engine, Error = E>, E> BaseVisitor for StateTracer<'a, T, E> {
     type Error = E;
-    type State = InterpreterState<'store>;
+    type State = Engine;
 
     // Control instructions
     trace_visit_fn!(unreachable);
@@ -340,9 +336,9 @@ impl<'a, 'store, T: BaseVisitor<State = InterpreterState<'store>, Error = E>, E>
     trace_visit_fn!(f64_promote_f32);
 }
 
-impl<'a, 'store, T, E> IrVisitor for StateTracer<'a, 'store, T, E>
+impl<'a, T, E> IrVisitor for StateTracer<'a, T, E>
 where
-    T: BaseVisitor<State = InterpreterState<'store>, Error = E> + IrVisitor,
+    T: BaseVisitor<State = Engine, Error = E> + IrVisitor,
 {
     // Parametric instructions
     trace_visit_fn!(drop, ty: ValType);

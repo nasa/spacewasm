@@ -1,33 +1,9 @@
 use crate::*;
 use ::core::marker::PhantomData;
 
-#[derive(Debug, Default, Copy, Clone)]
-pub struct CompilerOptions {
-    /// Allow compiling memory.grow instructions into IR
-    pub allow_memory_grow: bool,
-}
-
-pub struct Compiler<
-    'a,
-    const MAX_CODE_PAGES: usize,
-    const MAX_CONTROL_FRAMES: usize,
-    const MAX_STACK_DEPTH: usize,
-> {
+#[derive(Default)]
+pub struct Compiler<'a, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize> {
     _marker: PhantomData<&'a ()>,
-    options: CompilerOptions,
-}
-
-impl<'a, const MAX_CODE_PAGES: usize, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize>
-    Compiler<'a, MAX_CODE_PAGES, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>
-{
-    pub fn new(
-        options: CompilerOptions,
-    ) -> Compiler<'a, MAX_CODE_PAGES, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH> {
-        Compiler {
-            _marker: Default::default(),
-            options,
-        }
-    }
 }
 
 macro_rules! validate {
@@ -82,8 +58,8 @@ macro_rules! instruction {
     };
 }
 
-impl<'a, const MAX_CODE_PAGES: usize, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize>
-    WasmVisitor for Compiler<'a, MAX_CODE_PAGES, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>
+impl<'a, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize> WasmVisitor
+    for Compiler<'a, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>
 {
     fn drop(&self, state: &mut Self::State) -> Result<(), Self::Error> {
         let ty = state.pop_stack_t()?;
@@ -400,11 +376,11 @@ impl<'a, const MAX_CODE_PAGES: usize, const MAX_CONTROL_FRAMES: usize, const MAX
     }
 }
 
-impl<'a, const MAX_CODE_PAGES: usize, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize>
-    BaseVisitor for Compiler<'a, MAX_CODE_PAGES, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>
+impl<'a, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize> BaseVisitor
+    for Compiler<'a, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>
 {
     type Error = ValidationError;
-    type State = TextBuilder<'a, MAX_CODE_PAGES, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>;
+    type State = TextBuilder<'a, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>;
 
     fn unreachable(&self, state: &mut Self::State) -> Result<(), Self::Error> {
         state.instr_imm_8(UNREACHABLE, 0)?;
@@ -453,7 +429,7 @@ impl<'a, const MAX_CODE_PAGES: usize, const MAX_CONTROL_FRAMES: usize, const MAX
     fn memory_grow(&self, state: &mut Self::State) -> Result<(), Self::Error> {
         state.module().check_memory_defined()?;
         validate!(state, (I32) -> (I32));
-        if self.options.allow_memory_grow {
+        if state.options().allow_memory_grow {
             state.instr(MEMORY_GROW)?;
             Ok(())
         } else {

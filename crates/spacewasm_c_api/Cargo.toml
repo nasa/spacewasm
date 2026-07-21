@@ -1,0 +1,33 @@
+[package]
+name = "spacewasm_c_api"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "C API layer for the spacewasm interpreter"
+
+[lib]
+name = "spacewasm_c_api"
+path = "src/lib.rs"
+crate-type = ["staticlib", "rlib"]
+test = true
+doctest = false
+
+[features]
+default = ["provide-global-allocator", "provide-panic-handler"]
+codegen = ["dep:cbindgen"]
+
+# Emit global allocator symbols and allow C runtime registration
+provide-global-allocator = []
+
+# Provide the `#[panic_handler]`
+# Delegating to a C-defined `spacewasm_panic` symbol.
+provide-panic-handler = []
+
+[dependencies]
+spacewasm = { path = "../..", version = "=0.0.0" }
+
+[build-dependencies]
+cbindgen = { version = "0.29", optional = true }

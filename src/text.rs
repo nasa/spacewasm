@@ -226,35 +226,45 @@ pub struct GlobalVariable {
     pub mutable: bool,
 }
 
+#[derive(Debug, Copy, Clone)]
+pub struct CompilerOptions {
+    /// Allow compiling memory.grow instructions into IR
+    pub allow_memory_grow: bool,
+
+    /// Maximum number of iterations to resolve during a control flow backpatch.
+    /// This effectively limits a potentially long loop though can reject valid programs.
+    ///
+    /// Set this to 0 for unlimited iterations
+    pub max_backpatch_iterations: u32,
+
+    /// The maximum number of code pages allowed across all modules
+    pub max_code_pages: u32,
+}
+
 /// Low-level builder for paged IR code.
 ///
 /// Manages allocation of pages and writing 16-bit words to the current position.
-/// The `N` generic parameter limits the maximum number of pages that can be allocated.
-#[derive(Clone)]
-pub struct CodeBuilder<const MAX_CODE_PAGES: usize> {
-    pages: StaticVec<Box<TextPage>, MAX_CODE_PAGES>,
+pub struct CodeBuilder {
+    pages: Vec<Box<TextPage>>,
     offset: usize,
+    options: CompilerOptions,
 }
 
-impl<const MAX_CODE_PAGES: usize> Default for CodeBuilder<MAX_CODE_PAGES> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<const MAX_CODE_PAGES: usize> CodeBuilder<MAX_CODE_PAGES> {
-    pub fn new() -> CodeBuilder<MAX_CODE_PAGES> {
-        const {
-            assert!(
-                MAX_CODE_PAGES < (1 << 24),
-                "SpaceWasm supports up to 24-bit code pages"
-            );
+impl CodeBuilder {
+    pub fn new(options: CompilerOptions) -> Result<CodeBuilder, AllocError> {
+        if options.max_code_pages >= (1 << 24) {
+            panic!("SpaceWasm supports up to 24-bit code pages");
         }
 
-        CodeBuilder {
-            pages: Default::default(),
+        Ok(CodeBuilder {
+            pages: Vec::new(options.max_code_pages)?,
             offset: 0,
-        }
+            options,
+        })
+    }
+
+    pub(crate) fn options(&self) -> &CompilerOptions {
+        &self.options
     }
 
     fn backpatch(
@@ -284,7 +294,9 @@ impl<const MAX_CODE_PAGES: usize> CodeBuilder<MAX_CODE_PAGES> {
             next = address + lt.jump();
 
             n += 1;
-            if n > 0xFFFF {
+            if self.options().max_backpatch_iterations != 0
+                && n > self.options().max_backpatch_iterations
+            {
                 return Err(ValidationError::PossibleBackpatchCycle);
             }
         }
@@ -292,15 +304,18 @@ impl<const MAX_CODE_PAGES: usize> CodeBuilder<MAX_CODE_PAGES> {
         Ok(())
     }
 
-    /// Move all the text pages into a heap vector with the used size.
-    /// This consumes the builder and returns the pages and the used size.
-    pub fn finish(self) -> Result<(Vec<Box<TextPage>>, usize), AllocError> {
-        let mut v = Vec::new(self.pages.len() as u32)?;
-        for i in self.pages {
-            v.push(i);
-        }
+    /// Borrow the accumulated text pages for execution.
+    ///
+    /// The interpreter reads code directly from this slice, so no copy of the
+    /// pages is needed to run the compiled module.
+    pub fn pages(&self) -> &[Box<TextPage>] {
+        &self.pages
+    }
 
-        Ok((v, self.offset))
+    /// The write offset within the final (partially-filled) page, i.e. the
+    /// number of 16-bit words used on the last page.
+    pub fn offset(&self) -> usize {
+        self.offset
     }
 
     /// Get the current program counter (address of the next word to be written)
@@ -327,7 +342,7 @@ impl<const MAX_CODE_PAGES: usize> CodeBuilder<MAX_CODE_PAGES> {
 
     /// Allocate a new page and reset the offset to the start of that page.
     fn add_page(&mut self) -> Result<(), AllocError> {
-        self.pages.push(Box::new(TextPage::default())?)?;
+        self.pages.try_push(Box::new(TextPage::default())?)?;
         self.offset = 0;
         Ok(())
     }
@@ -399,13 +414,8 @@ impl<const MAX_CODE_PAGES: usize> CodeBuilder<MAX_CODE_PAGES> {
 /// - Managing a stack of control frames for nested blocks
 ///
 /// The `N` generic parameter limits the maximum number of code pages.
-pub struct TextBuilder<
-    'a,
-    const MAX_CODE_PAGES: usize,
-    const MAX_CONTROL_FRAMES: usize,
-    const MAX_STACK_DEPTH: usize,
-> {
-    code: &'a mut CodeBuilder<MAX_CODE_PAGES>,
+pub struct TextBuilder<'a, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize> {
+    code: &'a mut CodeBuilder,
     store: &'a Store,
     module: &'a Module,
     func: &'a Func,
@@ -450,11 +460,11 @@ impl From<OperandType> for u8 {
     }
 }
 
-impl<'a, const MAX_CODE_PAGES: usize, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize>
-    TextBuilder<'a, MAX_CODE_PAGES, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>
+impl<'a, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize>
+    TextBuilder<'a, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>
 {
     pub fn new(
-        code: &'a mut CodeBuilder<MAX_CODE_PAGES>,
+        code: &'a mut CodeBuilder,
         store: &'a Store,
         module: &'a Module,
         func: &'a Func,
@@ -476,6 +486,10 @@ impl<'a, const MAX_CODE_PAGES: usize, const MAX_CONTROL_FRAMES: usize, const MAX
         let _ = builder.push_control(BlockKind::Block, return_type, return_type);
 
         builder
+    }
+
+    pub fn options(&self) -> &CompilerOptions {
+        self.code.options()
     }
 
     pub fn store(&self) -> &'a Store {
@@ -1143,5 +1157,137 @@ impl<'a, const MAX_CODE_PAGES: usize, const MAX_CONTROL_FRAMES: usize, const MAX
         self.code.push((i >> 32) as u16)?;
         self.code.push((i >> 48) as u16)?;
         Ok(())
+    }
+}
+
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+
+    /// Verify LabelTarget encoding/decoding correctness
+    #[kani::proof]
+    fn proof_label_target_roundtrip() {
+        let type_selector: u8 = kani::any();
+        let depth: u8 = kani::any();
+        let offset_raw: i32 = kani::any();
+
+        // Constrain offset to 22-bit signed range
+        kani::assume(offset_raw >= -(1 << 21) && offset_raw < (1 << 21));
+
+        let result_type = match type_selector % 5 {
+            0 => ResultType(None),
+            1 => ResultType(Some(ValType::I32)),
+            2 => ResultType(Some(ValType::I64)),
+            3 => ResultType(Some(ValType::F32)),
+            4 => ResultType(Some(ValType::F64)),
+            _ => unreachable!(),
+        };
+
+        let offset = JumpOffset(offset_raw);
+
+        let label = LabelTarget::new(result_type, depth, offset);
+
+        let decoded_arity = label.arity();
+        let decoded_depth = label.depth();
+        let decoded_offset = label.jump();
+
+        let expected_arity = match result_type.0 {
+            None => LabelArity::None,
+            Some(ValType::I32 | ValType::F32) => LabelArity::I32,
+            Some(ValType::I64 | ValType::F64) => LabelArity::I64,
+        };
+        assert_eq!(decoded_arity, expected_arity, "Arity must decode correctly");
+
+        assert_eq!(decoded_depth, depth, "Depth must decode correctly");
+
+        assert_eq!(
+            decoded_offset.0, offset.0,
+            "Offset must decode correctly with proper sign extension"
+        );
+    }
+
+    /// Verify JumpOffset::new() validation only accepts offsets in [-2^21, 2^21-1]
+    #[kani::proof]
+    fn proof_jump_offset_validation() {
+        let current: u32 = kani::any();
+        let to: u32 = kani::any();
+
+        kani::assume(current < (1 << 30));
+        kani::assume(to < (1 << 30));
+
+        let current_target = JumpTarget(current);
+        let to_target = JumpTarget(to);
+
+        let result = JumpOffset::new(current_target, to_target);
+
+        let offset = (to as i32).wrapping_sub(current as i32);
+
+        let fits_in_22_bits = offset == ((offset << 10) >> 10);
+
+        if fits_in_22_bits {
+            assert!(
+                result.is_ok(),
+                "Offset within 22-bit range should be accepted"
+            );
+
+            if let Ok(jump_offset) = result {
+                assert_eq!(
+                    jump_offset.0, offset,
+                    "Accepted offset should match computed value"
+                );
+            }
+        } else {
+            assert!(
+                result.is_err(),
+                "Offset outside 22-bit range should be rejected"
+            );
+        }
+    }
+
+    /// Verify JumpTarget + JumpOffset arithmetic works correctly
+    #[kani::proof]
+    fn proof_jump_target_addition() {
+        let pc: u32 = kani::any();
+        let offset_raw: i32 = kani::any();
+
+        kani::assume(pc < (1 << 30));
+        kani::assume(offset_raw >= -(1 << 21) && offset_raw < (1 << 21));
+
+        let target = JumpTarget(pc);
+        let offset = JumpOffset(offset_raw);
+
+        let result = target + offset;
+
+        let expected = ((pc as i32).wrapping_add(offset_raw)) as u32;
+        assert_eq!(
+            result.0, expected,
+            "JumpTarget + JumpOffset should compute correct address"
+        );
+    }
+
+    /// Verify that sentinel jump targets work correctly
+    #[kani::proof]
+    fn proof_jump_offset_sentinel() {
+        let current: u32 = kani::any();
+        kani::assume(current < (1 << 30));
+
+        let current_target = JumpTarget(current);
+        let sentinel = JumpTarget::SENTINEL;
+
+        let result = JumpOffset::new(current_target, sentinel);
+
+        assert!(
+            result.is_ok(),
+            "Creating offset to SENTINEL should always succeed"
+        );
+
+        if let Ok(offset) = result {
+            assert_eq!(
+                offset,
+                JumpOffset::sentinel(),
+                "Offset to SENTINEL should be sentinel"
+            );
+            assert_eq!(offset.0, 0, "Sentinel offset should be 0");
+        }
     }
 }

@@ -2,7 +2,6 @@
 // (https://github.com/rust-lang/rust), licensed under Apache-2.0. These
 // portions have been modified for SpaceWasm.
 
-use crate::StaticAllocator;
 use crate::alloc::{AllocError, Allocator, GlobalAllocator};
 use crate::util::Vec;
 use core::alloc::Layout;
@@ -60,17 +59,6 @@ impl<T: Sized> Box<T, GlobalAllocator> {
     }
 }
 
-impl<'a, T: Sized, const N: usize> Box<T, StaticAllocator<'a, N>> {
-    /// Create a new box with static memory
-    pub fn new_static(
-        alloc: StaticAllocator<'a, N>,
-        value: T,
-    ) -> Result<Box<T, StaticAllocator<'a, N>>, AllocError> {
-        const { assert!(N == size_of::<T>()) }
-        Self::new_in(alloc, value)
-    }
-}
-
 impl<T: Sized, A: Allocator> Box<T, A> {
     /// Create a new box with a custom allocator
     pub fn new_in(alloc: A, value: T) -> Result<Box<T, A>, AllocError> {
@@ -93,8 +81,31 @@ impl<T: Sized, A: Allocator> Box<T, A> {
     }
 }
 
+impl<T: Sized, A: Allocator> Box<T, A> {
+    /// Consume the box, returning the contained value and freeing the backing
+    /// allocation. This is the inverse of [`Box::new_in`].
+    pub fn into_inner(b: Self) -> T {
+        let (ptr, alloc) = b.into_raw_with_allocator();
+        // SAFETY: `ptr` came from a live box; read the value out, then free the
+        // (now logically-empty) allocation without running the value's drop.
+        let value = unsafe { ptr::read(ptr) };
+        if size_of::<T>() != 0 {
+            let layout = Layout::new::<T>();
+            unsafe { alloc.dealloc(ptr as *mut u8, layout) };
+        }
+        value
+    }
+}
+
 impl<T: ?Sized, A: Allocator> Box<T, A> {
-    pub(crate) unsafe fn from_raw(alloc: A, ptr: *mut T) -> Box<T, A> {
+    /// Reconstruct a box from a raw pointer and allocator previously obtained
+    /// from [`Box::leak`] / `into_raw_with_allocator`.
+    ///
+    /// # Safety
+    /// `ptr` must have come from a `Box<T, A>` allocated with `alloc`, and must
+    /// not be used again after this call. Reconstructing a box twice from the
+    /// same pointer is undefined behavior (double free).
+    pub unsafe fn from_raw(alloc: A, ptr: *mut T) -> Box<T, A> {
         Box { ptr, alloc }
     }
 

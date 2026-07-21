@@ -48,6 +48,12 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 spacewasm = { path = ".", features = ["strict-assertions"] }
 
+# The C library is a `no_std` staticlib/cdylib and cannot unwind (no `std` in the
+# link). `panic = "abort"` applies workspace-wide; cargo auto-overrides it back to
+# unwind for `cargo test`, so integration tests are unaffected.
+[profile.dev]
+panic = "abort"
+
 [profile.release]
 opt-level = 3
 lto = "thin"
@@ -60,6 +66,3 @@ panic = "abort"
 opt-level = 3
 lto = "thin"
 codegen-units = 1
-
-[profile.dev]
-panic = "abort"

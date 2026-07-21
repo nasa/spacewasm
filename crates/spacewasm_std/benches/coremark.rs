@@ -1,6 +1,7 @@
 use spacewasm::{
-    CodeBuilder, CompilerOptions, ExportDesc, HostFunction, HostModule, InterpreterResult,
-    InterpreterRunner, ModuleRef, PageAllocator, RawValue, Ref, Store, Value, WasmRef,
+    CodeBuilder, CompilerOptions, Engine, ExportDesc, HostFunction, HostModule, InterpreterResult,
+    InterpreterRunner, ModuleRef, PageAllocator, RawValue, Ref, StartInvocation, Value,
+    Vec as WasmVec, WasmRef,
 };
 use spacewasm_util::{FileStream, RustSystemAllocator};
 use std::ops::ControlFlow;
@@ -11,7 +12,7 @@ spacewasm::global_allocator!(
     PageAllocator::new(&RustSystemAllocator {}, 8192)
 );
 
-const MAX_CODE_PAGES: usize = 32;
+const MAX_CODE_PAGES: u32 = 32;
 const MAX_CONTROL_FRAMES: usize = 64;
 const MAX_STACK_DEPTH: usize = 256;
 
@@ -28,7 +29,7 @@ fn main() {
     static CLOCK_CALL_COUNT: AtomicUsize = AtomicUsize::new(0);
 
     let env = HostModule {
-        name: "env",
+        name: "env".into(),
         globals: spacewasm::vec![],
         functions: spacewasm::vec![HostFunction::new(
             "clock_ms",
@@ -47,8 +48,13 @@ fn main() {
         table: spacewasm::Vec::zero(),
     };
 
-    let mut store = Store::new(2, [env]).unwrap();
-    let mut code_builder = CodeBuilder::<MAX_CODE_PAGES>::default();
+    let mut state = Engine::new(1024, 2, WasmVec::from_array([env]).unwrap()).unwrap();
+    let mut code_builder = CodeBuilder::new(CompilerOptions {
+        allow_memory_grow: false,
+        max_backpatch_iterations: 0,
+        max_code_pages: MAX_CODE_PAGES,
+    })
+    .unwrap();
 
     // Try multiple paths to find the wasm file
     let wasm_paths = [
@@ -62,27 +68,33 @@ fn main() {
         .find_map(|path| std::fs::File::open(path).ok())
         .expect("failed to open coremark-minimal.wasm in any expected location");
 
-    let module = spacewasm::Module::new::<MAX_CODE_PAGES, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
+    let module = spacewasm::Module::new::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
         "coremark",
         &mut FileStream::new(file),
-        &mut store,
+        &mut state.store,
         &mut code_builder,
         spacewasm::Rc::new(RustSystemAllocator)
             .unwrap()
             .into_wasm_memory_allocator(),
-        CompilerOptions::default(),
     )
     .expect("failed to parse wasm module");
 
-    let (text, _final_page_offset) = code_builder.finish().unwrap();
+    let text = code_builder.pages();
 
-    let mut state = store.allocate(1024).unwrap();
-    match state.initialize_module(module, &text, usize::MAX) {
-        InterpreterResult::Finished => {}
-        InterpreterResult::OutOfFuel => panic!("insufficient fuel for initialization"),
-        InterpreterResult::Trap(t) => panic!("trap during initialization {t:?}"),
-        InterpreterResult::ReaderError(e) => panic!("ir reader error {e:?}"),
-        InterpreterResult::Pause => panic!("pause during init"),
+    let module_ref = state.push_module(module);
+    match state.invoke_start(module_ref) {
+        StartInvocation::Finished => {}
+        StartInvocation::Trap(t) => panic!("trap during initialization {t:?}"),
+        StartInvocation::Pause => panic!("pause during init"),
+        StartInvocation::Running => {
+            match spacewasm::Interpreter.run(text, &mut state, usize::MAX) {
+                InterpreterResult::Finished => {}
+                InterpreterResult::OutOfFuel => panic!("insufficient fuel for initialization"),
+                InterpreterResult::Trap(t) => panic!("trap during initialization {t:?}"),
+                InterpreterResult::ReaderError(e) => panic!("ir reader error {e:?}"),
+                InterpreterResult::Pause => panic!("pause during init"),
+            }
+        }
     }
 
     let module = state.store.modules().last().unwrap();
@@ -109,10 +121,9 @@ fn main() {
     let bench_start = Instant::now();
 
     eprintln!("Starting execution...");
-    let interpreter = spacewasm::Interpreter::default();
     let mut result = InterpreterResult::OutOfFuel;
     while result == InterpreterResult::OutOfFuel {
-        result = interpreter.run(&text, &mut state, usize::MAX)
+        result = spacewasm::Interpreter.run(text, &mut state, usize::MAX)
     }
     let elapsed = bench_start.elapsed();
 

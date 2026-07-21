@@ -348,6 +348,32 @@ mod tests {
     }
 
     #[test]
+    fn test_full_reclaim_after_non_lifo_frees() {
+        let stack_alloc = RustSystemAllocator;
+        let page_alloc = PageAllocator::<4>::new(&stack_alloc, 512);
+
+        unsafe {
+            let layout = Layout::from_size_align(64, 8).unwrap();
+            for _ in 0..10 {
+                let a = page_alloc.alloc(layout).unwrap();
+                let b = page_alloc.alloc(layout).unwrap();
+                let c = page_alloc.alloc(layout).unwrap();
+
+                // Free out of order: middle, first, last.
+                page_alloc.dealloc(b, layout);
+                page_alloc.dealloc(a, layout);
+                page_alloc.dealloc(c, layout);
+
+                // Once every allocation is freed the page is dropped, so the
+                // tracked live bytes return to zero each round.
+                let stats = page_alloc.stats();
+                assert_eq!(stats.pages, 0, "page must be reclaimed when empty");
+                assert_eq!(stats.total_bytes, 0, "no bytes should remain live");
+            }
+        }
+    }
+
+    #[test]
     fn test_page_too_small() {
         let stack_alloc = RustSystemAllocator;
         let page_alloc = PageAllocator::<4>::new(&stack_alloc, 64);

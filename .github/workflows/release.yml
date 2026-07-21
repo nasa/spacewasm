@@ -24,11 +24,22 @@ jobs:
           echo "Releasing version: $tag_version"
           # Replace the 0.0.0 placeholder under [workspace.package] with the tag version.
           sed -i 's/^version = "0\.0\.0"$/version = "'"$tag_version"'"/' Cargo.toml
-          # Fail if the placeholder was not found / not replaced.
-          crate_version=$(cargo metadata --no-deps --format-version 1 \
-            | jq -r '.packages[] | select(.name == "spacewasm") | .version')
-          if [ "$crate_version" != "$tag_version" ]; then
-            echo "::error::Failed to inject version. Expected $tag_version but Cargo.toml resolves to $crate_version. Is the 0.0.0 placeholder still present?"
+          # Pin spacewasm_c_api's dependency on spacewasm to the exact tag version.
+          # Its manifest carries a `version = "=0.0.0"` placeholder for this.
+          sed -i 's/version = "=0\.0\.0"/version = "='"$tag_version"'"/' crates/spacewasm_c_api/Cargo.toml
+          # Fail if any placeholder was not found / not replaced.
+          for pkg in spacewasm spacewasm_c_api; do
+            crate_version=$(cargo metadata --no-deps --format-version 1 \
+              | jq -r '.packages[] | select(.name == "'"$pkg"'") | .version')
+            if [ "$crate_version" != "$tag_version" ]; then
+              echo "::error::Failed to inject version for $pkg. Expected $tag_version but Cargo.toml resolves to $crate_version. Is the 0.0.0 placeholder still present?"
+              exit 1
+            fi
+          done
+          dep_version=$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "spacewasm_c_api") | .dependencies[] | select(.name == "spacewasm") | .req')
+          if [ "$dep_version" != "=$tag_version" ]; then
+            echo "::error::spacewasm_c_api's spacewasm dependency resolves to '$dep_version', expected '=$tag_version'. Is the =0.0.0 placeholder still present?"
             exit 1
           fi
 
@@ -46,6 +57,15 @@ jobs:
       - name: Publish spacewasm to crates.io
         # --allow-dirty: the injected version is an uncommitted working-tree change.
         run: cargo publish -p spacewasm --allow-dirty
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      - name: Publish spacewasm_c_api to crates.io
+        # Published after spacewasm since it depends on the exact matching
+        # release. cargo waits for the dependency to be available in the index.
+        # --allow-dirty: the injected version is an uncommitted working-tree change.
+        # --no-verify: Work around 'unwinding panics are not supported without std'
+        run: cargo publish -p spacewasm_c_api --allow-dirty --no-verify
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
