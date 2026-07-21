@@ -48,7 +48,7 @@ pub enum spacewasm_status_t {
 
 pub use spacewasm_status_t::*;
 
-/// Outcome of a call to `spacewasm_engine_run` / `spacewasm_engine_run_to_completion`.
+/// Outcome of a call to `spacewasm_store_run`.
 #[repr(i32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum spacewasm_run_status_t {

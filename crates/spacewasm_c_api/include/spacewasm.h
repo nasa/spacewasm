@@ -132,7 +132,7 @@ typedef int32_t spacewasm_read_result_t;
 #endif // __cplusplus
 
 /*
- Outcome of a call to `spacewasm_engine_run` / `spacewasm_engine_run_to_completion`.
+ Outcome of a call to `spacewasm_store_run`.
  */
 enum spacewasm_run_status_t
 #if defined(__cplusplus) || __STDC_VERSION__ >= 202311L

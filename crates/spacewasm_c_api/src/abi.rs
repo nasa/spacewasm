@@ -166,35 +166,6 @@ pub unsafe fn store_run(
     rs
 }
 
-/// Run repeatedly with `fuel_per_slice` until the interpreter stops requesting
-/// more fuel (i.e. it finishes, traps, pauses, or errors).
-///
-/// # Safety
-/// See [`store_run`].
-pub unsafe fn store_run_to_completion(
-    store: *mut SpacewasmStore,
-    fuel_per_slice: usize,
-    out_trap: *mut spacewasm_trap_t,
-) -> spacewasm_run_status_t {
-    let Some(store) = (unsafe { store.as_mut() }) else {
-        return spacewasm_run_status_t::SPACEWASM_RUN_TRAP;
-    };
-    let fuel = if fuel_per_slice == 0 {
-        usize::MAX
-    } else {
-        fuel_per_slice
-    };
-    loop {
-        let (rs, trap) = store.run(fuel);
-        if rs != spacewasm_run_status_t::SPACEWASM_RUN_OUT_OF_FUEL {
-            if !out_trap.is_null() {
-                unsafe { *out_trap = trap };
-            }
-            return rs;
-        }
-    }
-}
-
 /// # Safety
 /// `store` must be live; `out` a valid `spacewasm_value_t` pointer.
 pub unsafe fn store_get_result(
