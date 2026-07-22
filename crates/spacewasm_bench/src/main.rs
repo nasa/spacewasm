@@ -5,6 +5,7 @@ extern crate cortex_m;
 use cortex_m_rt::entry;
 
 mod alloc;
+use alloc::*;
 mod bytes;
 
 use spacewasm::{
@@ -18,7 +19,7 @@ use crate::bytes::ByteStream;
 
 spacewasm::global_allocator!(
     PageAllocator<16>,
-    PageAllocator::new(&alloc::BareMetalAllocator {}, 8192)
+    PageAllocator::new(&BareMetalAllocator {}, 8192)
 );
 
 const MAX_CODE_PAGES: u32 = 32;
@@ -27,12 +28,16 @@ const MAX_STACK_DEPTH: usize = 256;
 
 #[entry]
 fn main() -> ! {
+    let a = 879;
+    let b = 213;
+    let _c = a * b;
     let env = HostModule {
         name: "env".into(),
         globals: spacewasm::vec![],
         functions: spacewasm::vec![HostFunction::new(
             "clock_ms",
             "".into(),
+
             "I".into(),
             |_, _| {
                 // let ms = std::time::SystemTime::now()
@@ -62,7 +67,7 @@ fn main() -> ! {
         &mut ByteStream::new(bytes),
         &mut state.store,
         &mut code_builder,
-        spacewasm::Rc::new(alloc::BareMetalAllocator)
+        spacewasm::Rc::new(BareMetalAllocator)
             .unwrap()
             .into_wasm_memory_allocator(),
     )

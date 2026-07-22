@@ -1,19 +1,4 @@
-use core::{
-    alloc::{GlobalAlloc, Layout},
-    ptr::NonNull,
-};
-
-use talc::{source::Claim, *};
-
 use spacewasm::{AllocError, Allocator, MemoryStatistics, WasmMemoryAllocator};
-
-#[global_allocator]
-static TALC: TalcLock<spinning_top::RawSpinlock, Claim> = TalcLock::new(unsafe {
-    static mut INITIAL_HEAP: [u8; min_first_heap_size::<DefaultBinning>() + 1_000_000] =
-        [0; min_first_heap_size::<DefaultBinning>() + 1_000_000];
-
-    Claim::array(&raw mut INITIAL_HEAP)
-});
 
 pub struct BareMetalAllocator;
 unsafe impl Allocator for BareMetalAllocator {
