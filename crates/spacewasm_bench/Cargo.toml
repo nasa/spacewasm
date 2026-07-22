@@ -13,7 +13,12 @@ panic = "abort"
 panic = "abort"
 
 [dependencies]
+# spacewasm_util = { path = "../spacewasm_util" }
 spacewasm = { path = "../.." }
-embedded-alloc = "0.7.0"
-cortex-m = "0.7.7"
-cortex-m-rt = "0.7.5"
+# embedded-alloc = "0.7.0"
+spinning_top = "0.3.0"
+talc = "5.0.4"
+cortex-m = { version = "0.7.6", features = ["critical-section-single-core"] }
+cortex-m-rt = "0.7"
+# riscv = "0.16.1"
+# riscv-rt = "0.18.0"

@@ -1,26 +1,28 @@
+use core::{
+    alloc::{GlobalAlloc, Layout},
+    ptr::NonNull,
+};
 
-use core::{alloc::{GlobalAlloc, Layout}, ptr::NonNull};
+use talc::{source::Claim, *};
 
-use embedded_alloc::LlffHeap as Heap;
 use spacewasm::{AllocError, Allocator, MemoryStatistics, WasmMemoryAllocator};
 
 #[global_allocator]
-static HEAP: Heap = Heap::empty();
+static TALC: TalcLock<spinning_top::RawSpinlock, Claim> = TalcLock::new(unsafe {
+    static mut INITIAL_HEAP: [u8; min_first_heap_size::<DefaultBinning>() + 1_000_000] =
+        [0; min_first_heap_size::<DefaultBinning>() + 1_000_000];
 
-pub fn init_alloc() {
-    unsafe {
-        embedded_alloc::init!(HEAP, 1024);
-    }
-}
+    Claim::array(&raw mut INITIAL_HEAP)
+});
 
 pub struct BareMetalAllocator;
 unsafe impl Allocator for BareMetalAllocator {
     unsafe fn alloc(&self, layout: Layout) -> Result<*mut u8, AllocError> {
-        unsafe { Ok(HEAP.alloc(layout)) }
+        unsafe { Ok(TALC.alloc(layout)) }
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        unsafe { HEAP.dealloc(ptr, layout) }
+        unsafe { TALC.dealloc(ptr, layout) }
     }
 
     fn memory_statistics(&self) -> MemoryStatistics {
@@ -30,7 +32,7 @@ unsafe impl Allocator for BareMetalAllocator {
 
 impl WasmMemoryAllocator for BareMetalAllocator {
     fn allocate(&self, layout: Layout) -> Result<NonNull<u8>, AllocError> {
-        unsafe { NonNull::new(HEAP.alloc(layout)).ok_or(AllocError::AllocationFailed) }
+        unsafe { NonNull::new(TALC.alloc(layout)).ok_or(AllocError::AllocationFailed) }
     }
 
     fn reallocate(
@@ -40,12 +42,12 @@ impl WasmMemoryAllocator for BareMetalAllocator {
         layout: Layout,
     ) -> Result<NonNull<u8>, AllocError> {
         unsafe {
-            NonNull::new(HEAP.realloc(ptr.as_ptr(), old_layout, layout.size()))
+            NonNull::new(TALC.realloc(ptr.as_ptr(), old_layout, layout.size()))
                 .ok_or(AllocError::AllocationFailed)
         }
     }
 
     fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
-        unsafe { HEAP.dealloc(ptr.as_ptr(), layout) }
+        unsafe { TALC.dealloc(ptr.as_ptr(), layout) }
     }
 }

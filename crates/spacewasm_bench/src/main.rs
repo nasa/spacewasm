@@ -2,70 +2,88 @@
 #![no_main]
 
 extern crate cortex_m;
+use cortex_m_rt::entry;
 
-mod bytes;
 mod alloc;
+mod bytes;
 
 use spacewasm::{
-    CodeBuilder, CompilerOptions, ExportDesc, HostFunction, HostModule, InterpreterResult,
-    InterpreterRunner, ModuleRef, PageAllocator, Ref, Store, Value, WasmRef,
+    CodeBuilder, CompilerOptions, Engine, ExportDesc, HostFunction, HostModule, InterpreterResult,
+    InterpreterRunner, ModuleRef, PageAllocator, Ref, StartInvocation, Value, WasmRef,
 };
 
 use core::ops::ControlFlow;
+
+use crate::bytes::ByteStream;
+
 spacewasm::global_allocator!(
     PageAllocator<16>,
     PageAllocator::new(&alloc::BareMetalAllocator {}, 8192)
 );
 
-const MAX_CODE_PAGES: usize = 32;
+const MAX_CODE_PAGES: u32 = 32;
 const MAX_CONTROL_FRAMES: usize = 64;
 const MAX_STACK_DEPTH: usize = 256;
 
-
-
-fn main() {
-    alloc::init_alloc();
+#[entry]
+fn main() -> ! {
     let env = HostModule {
-        name: "env",
+        name: "env".into(),
         globals: spacewasm::vec![],
         functions: spacewasm::vec![HostFunction::new(
             "clock_ms",
             "".into(),
             "I".into(),
             |_, _| {
-                ControlFlow::Continue(Some(Value::I64(0)))
+                // let ms = std::time::SystemTime::now()
+                //     .duration_since(std::time::UNIX_EPOCH)
+                //     .unwrap()
+                //     .as_millis() as i64;
+                let ms = 0;
+                ControlFlow::Continue(Some(Value::I64(ms * 1000)))
             },
         )],
         memory: spacewasm::Vec::zero(),
         table: spacewasm::Vec::zero(),
     };
 
-    let mut store = Store::new(2, [env]).unwrap();
-    let mut code_builder = CodeBuilder::<MAX_CODE_PAGES>::default();
+    let mut state = Engine::new(1024, 2, spacewasm::Vec::from_array([env]).unwrap()).unwrap();
+    let mut code_builder = CodeBuilder::new(CompilerOptions {
+        allow_memory_grow: false,
+        max_backpatch_iterations: 0,
+        max_code_pages: MAX_CODE_PAGES,
+    })
+    .unwrap();
 
-    let bytes = include_bytes!("hello_universe.wasm");
+    let bytes = include_bytes!("coremark-minimal.wasm");
 
-    let module = spacewasm::Module::new::<MAX_CODE_PAGES, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
+    let module = spacewasm::Module::new::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
         "coremark",
-        &mut bytes::ByteStream::new(bytes),
-        &mut store,
+        &mut ByteStream::new(bytes),
+        &mut state.store,
         &mut code_builder,
         spacewasm::Rc::new(alloc::BareMetalAllocator)
             .unwrap()
             .into_wasm_memory_allocator(),
-        CompilerOptions::default(),
     )
     .expect("failed to parse wasm module");
 
-    let (text, _final_page_offset) = code_builder.finish().unwrap();
+    let text = code_builder.pages();
 
-    let mut state = store.allocate(1024).unwrap();
-    match state.initialize_module(module, &text, usize::MAX) {
-        InterpreterResult::Finished => {}
-        InterpreterResult::OutOfFuel => panic!("insufficient fuel for initialization"),
-        InterpreterResult::Trap(t) => panic!("trap during initialization {t:?}"),
-        InterpreterResult::ReaderError(e) => panic!("ir reader error {e:?}"),
-        InterpreterResult::Pause => panic!("pause during init"),
+    let module_ref = state.push_module(module);
+    match state.invoke_start(module_ref) {
+        StartInvocation::Finished => {}
+        StartInvocation::Trap(t) => panic!("trap during initialization {t:?}"),
+        StartInvocation::Pause => panic!("pause during init"),
+        StartInvocation::Running => {
+            match spacewasm::Interpreter.run(text, &mut state, usize::MAX) {
+                InterpreterResult::Finished => {}
+                InterpreterResult::OutOfFuel => panic!("insufficient fuel for initialization"),
+                InterpreterResult::Trap(t) => panic!("trap during initialization {t:?}"),
+                InterpreterResult::ReaderError(e) => panic!("ir reader error {e:?}"),
+                InterpreterResult::Pause => panic!("pause during init"),
+            }
+        }
     }
 
     let module = state.store.modules().last().unwrap();
@@ -89,30 +107,22 @@ fn main() {
 
     state.invoke(func, &[]).unwrap();
 
-    let interpreter = spacewasm::Interpreter::default();
     let mut result = InterpreterResult::OutOfFuel;
     while result == InterpreterResult::OutOfFuel {
-        result = interpreter.run(&text, &mut state, usize::MAX)
+        result = spacewasm::Interpreter.run(&text, &mut state, usize::MAX);
     }
 
     match result {
         InterpreterResult::Finished => {}
         _ => {}
     }
+    // println!("done!!");
+    loop {}
 }
 use core::panic::PanicInfo;
-
-
-// Entry point of the OS, called by the bootloader.
-// Initializes the kernel and starts the main loop.
-#[unsafe(no_mangle)]
-pub extern "C" fn _start() -> ! {
-  main();
-  loop {}
-}
 // Panic handler: called when a panic occurs.
 // Since this is a bare-metal environment, it enters an infinite loop.
 #[panic_handler]
 fn panic(_info: &PanicInfo) -> ! {
-  loop {}
+    loop {}
 }
