@@ -336,6 +336,10 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-bin: false
 
+      - name: Remove SVGs before coverage analysis
+        # Baffling issue with codecov breaking after I added the icon
+        run: rm -rf docs/logo.svg
+
       - name: Generate coverage
         run: |
           # Cover the main library and the C-API layer. spacewasm_c_api's Rust
