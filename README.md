@@ -1,4 +1,9 @@
 <h1 align="center">SpaceWasm</h2>
+
+<p align="center">
+<img src="docs/logo.svg" width="150" height="150">
+</p>
+
 <p align="center">
   <a href="https://github.com/nasa/spacewasm/actions/workflows/ci.yml"><img src="https://github.com/nasa/spacewasm/actions/workflows/ci.yml/badge.svg" /></a>
   <a href="https://codecov.io/gh/nasa/spacewasm"><img src="https://codecov.io/gh/nasa/spacewasm/graph/badge.svg?token=3EddiLtM36"/></a>
