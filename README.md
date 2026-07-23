@@ -10,6 +10,10 @@
   <a href="#license"><img src="https://img.shields.io/badge/license-Apache%202.0-blue" alt="license" /></a>
 </p>
 
+<p align="center">
+  English | <a href="README.zh-CN.md">简体中文</a> | <a href="README.ja.md">日本語</a>
+</p>
+
 SpaceWasm is an implementation of the [Wasm 1.0](https://webassembly.github.io/spec/versions/core/WebAssembly-1.0.pdf)
 specification meant to interpret Wasm binary on-board spacecraft. It is developed at [NASA JPL](https://www.jpl.nasa.gov).
 
