@@ -30,6 +30,12 @@ impl<T: Sized + Clone, const N: usize> Clone for StaticVec<T, N> {
 impl<T: Sized, const N: usize> StaticVec<T, N> {
     pub(crate) fn truncate(&mut self, new_len: usize) {
         assert!(new_len <= self.len as usize);
+        // Drop the discarded suffix [new_len..len) before shrinking, otherwise
+        // elements owning heap memory would leak. Mirrors the `Drop` impl.
+        for i in new_len..(self.len as usize) {
+            // SAFETY: elements [new_len..len) are initialized.
+            unsafe { self.data[i].assume_init_drop() };
+        }
         self.len = new_len as u32;
     }
 }
@@ -370,6 +376,33 @@ mod tests {
         assert_eq!(iter.next(), Some(20));
         assert_eq!(iter.next(), Some(30));
         assert_eq!(iter.next(), None);
+    }
+
+    #[test]
+    fn test_truncate_drops_suffix() {
+        use core::cell::Cell;
+
+        struct DropCounter<'a>(&'a Cell<u32>);
+        impl Drop for DropCounter<'_> {
+            fn drop(&mut self) {
+                self.0.set(self.0.get() + 1);
+            }
+        }
+
+        let drops = Cell::new(0);
+        let mut vec: StaticVec<DropCounter, 4> = StaticVec::new();
+        vec.push(DropCounter(&drops)).unwrap();
+        vec.push(DropCounter(&drops)).unwrap();
+        vec.push(DropCounter(&drops)).unwrap();
+
+        // Truncating from 3 to 1 must drop the two discarded elements.
+        vec.truncate(1);
+        assert_eq!(drops.get(), 2, "truncate should drop the discarded suffix");
+        assert_eq!(vec.len(), 1);
+
+        // Dropping the vec drops the one remaining element.
+        drop(vec);
+        assert_eq!(drops.get(), 3, "remaining element should drop with the vec");
     }
 
     #[test]
