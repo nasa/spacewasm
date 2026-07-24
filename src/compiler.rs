@@ -279,6 +279,10 @@ impl<'a, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize> WasmVisi
             state.push_stack(*r)?;
         }
 
+        if x.0 > u16::MAX as u32 {
+            return Err(ValidationError::IdxTooLarge);
+        }
+
         state.instr(CALL_INDIRECT)?;
         state.write_16(x.0 as u16)?;
         Ok(())
