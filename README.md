@@ -48,13 +48,13 @@ This software comes with two major components:
 SpaceWasm does not execute direct WebAssembly bytecode. Wasm bytecode is meant to be small and structured in a way to
 validate easily. These properties however make it slow to execute in-place. During the decoding process of Wasm
 instructions, SpaceWasm converts bytecode into another intermediate representation (IR) which includes properties better
-suited for interpretation. Read more about the IR in the [specification](src/SPEC.md).
+suited for interpretation. Read more about the IR in the [specification](docs/ir.md).
 
 ## Requirements
 
 The requirements of SpaceWasm are levied from similar work produced by [DLR](https://github.com/DLR-FT/wasm-interpreter).
 
-See [requirements](./REQUIREMENTS.md).
+See [requirements](./docs/REQUIREMENTS.md).
 
 ## Embedding
 
