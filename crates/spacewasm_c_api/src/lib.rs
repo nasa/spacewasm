@@ -4,7 +4,6 @@
 #![no_std]
 #![allow(non_camel_case_types)]
 
-pub mod abi;
 pub mod alloc;
 pub mod capi;
 pub mod config;
