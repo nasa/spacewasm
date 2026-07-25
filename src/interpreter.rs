@@ -269,6 +269,15 @@ impl Interpreter {
 /// For all types that implement [IrVisitor<State = InterpreterState, Error = InstructionError>],
 /// this trait will be implemented to execute instructions given the state and store.
 pub trait InterpreterRunner {
+    /// Resume the interpreter after a host pause.
+    /// Optionally pushes a value to the operand stack as a host function return value.
+    fn resume(
+        &self,
+        state: &mut Engine,
+        resume_value: Option<Value>,
+    ) -> Result<(), InterpreterBreak>;
+
+    /// Run the interpreter for a fixed number of cycles or until a trap/host pause
     fn run(
         &self,
         code: &[Box<TextPage>],
@@ -321,6 +330,22 @@ impl<T: IrVisitor<State = Engine, Error = InterpreterBreak>> InterpreterRunner f
         }
 
         InterpreterResult::OutOfFuel
+    }
+
+    fn resume(
+        &self,
+        state: &mut Engine,
+        resume_value: Option<Value>,
+    ) -> Result<(), InterpreterBreak> {
+        // Unwrap is safe here because we should not call resume() unless the interpreter requested a pause
+        match (state.host_pause_result.take().unwrap(), resume_value) {
+            (ResultType(Some(ValType::F32)), Some(Value::F32(z))) => self.f32_const(z, state),
+            (ResultType(Some(ValType::F64)), Some(Value::F64(z))) => self.f64_const(z, state),
+            (ResultType(Some(ValType::I32)), Some(Value::I32(n))) => self.i32_const(n, state),
+            (ResultType(Some(ValType::I64)), Some(Value::I64(n))) => self.i64_const(n, state),
+            (ResultType(None), None) => Ok(()),
+            _ => panic!("expected host function to return a value"),
+        }
     }
 }
 
@@ -1414,7 +1439,17 @@ impl IrVisitor for Interpreter {
 
                 Ok(())
             }
-            ControlFlow::Break(b) => Err(b.into()),
+            ControlFlow::Break(HostFunctionBreak::Pause) => {
+                let other = state.host_pause_result.replace(f.returns().into());
+                if other.is_some() {
+                    panic!("Unexpected paused engine state");
+                }
+
+                Err(InterpreterBreak::Pause)
+            }
+            ControlFlow::Break(HostFunctionBreak::Trap) => {
+                Err(InterpreterBreak::Trap(TrapReason::Host))
+            }
         }
     }
 

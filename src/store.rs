@@ -151,6 +151,7 @@ impl Engine {
             module: ModuleRef(0),
             store,
             result: None,
+            host_pause_result: None,
         })
     }
 

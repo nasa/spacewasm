@@ -181,6 +181,18 @@ pub struct HostValList {
     len: u8,
 }
 
+impl From<HostValList> for ResultType {
+    fn from(value: HostValList) -> Self {
+        if value.len == 0 {
+            ResultType(None)
+        } else if value.len == 1 {
+            ResultType(Some(value.data[0]))
+        } else {
+            panic!("Multi-value list cannot be converted to result type");
+        }
+    }
+}
+
 impl HostValList {
     fn map_char(c: char) -> Result<ValType, HostValListError> {
         match c {

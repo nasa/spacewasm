@@ -1,4 +1,4 @@
-use crate::{JumpTarget, Memory, ModuleRef, RawValue, Rc, Stack, Store, TableElement};
+use crate::{JumpTarget, Memory, ModuleRef, RawValue, Rc, ResultType, Stack, Store, TableElement};
 
 /// The Wasm engine holds the state of the interpreter and the WebAssembly store
 pub struct Engine {
@@ -28,6 +28,10 @@ pub struct Engine {
 
     /// The WebAssembly Store
     pub store: Store,
+
+    /// A host function requested a pause.
+    /// This field will track the result type expected from an interpreter resume.
+    pub host_pause_result: Option<ResultType>,
 
     /// The interpreter result when finished executing
     pub result: Option<RawValue>,
