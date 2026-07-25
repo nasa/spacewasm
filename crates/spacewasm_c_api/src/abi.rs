@@ -71,6 +71,32 @@ pub unsafe fn store_load_module(
 
 /// # Safety
 /// `store` must be live; `name` a valid C string; `out_index` valid.
+pub unsafe fn store_find_module(
+    store: *mut SpacewasmStore,
+    name: *const c_char,
+    out_index: *mut u32,
+) -> spacewasm_status_t {
+    let Some(store) = (unsafe { store.as_ref() }) else {
+        return status::SPACEWASM_ERR_NULL_ARG;
+    };
+    if out_index.is_null() {
+        return status::SPACEWASM_ERR_NULL_ARG;
+    }
+    let name = match unsafe { cstr(name) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    match store.find_module(name) {
+        Ok(idx) => {
+            unsafe { *out_index = idx as u32 };
+            status::SPACEWASM_OK
+        }
+        Err(e) => e,
+    }
+}
+
+/// # Safety
+/// `store` must be live; `name` a valid C string; `out_index` valid.
 pub unsafe fn store_find_export_func(
     store: *mut SpacewasmStore,
     module_idx: u32,

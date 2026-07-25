@@ -276,6 +276,19 @@ pub unsafe extern "C" fn spacewasm_host_destroy(host: *mut spacewasm_host_t) {
     core::mem::drop(modules);
 }
 
+/// Find a module with a given name in the store.
+///
+/// # Safety
+/// `store` must be live; `name` valid; `out_index` valid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn spacewasm_store_find_module(
+    store: *mut SpacewasmStore,
+    name: *const c_char,
+    out_index: *mut u32,
+) -> spacewasm_status_t {
+    unsafe { abi::store_find_module(store, name, out_index) }
+}
+
 /// Look up the exported function named `name` in module `module_idx` and write
 /// its index to `out_index`.
 ///

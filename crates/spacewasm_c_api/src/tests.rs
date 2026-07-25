@@ -399,6 +399,27 @@ fn two_modules_on_one_store() {
     let b = load_module_onto(alloc, store, c"b", ADD_WASM, 0).expect("load b");
     assert_eq!((a, b), (0, 1), "module indices");
 
+    let mut mod_a = 0u32;
+    let mut mod_b = 0u32;
+    let mut mod_c = 0u32;
+    unsafe {
+        assert_eq!(
+            spacewasm_store_find_module(store, c"a".as_ptr(), &mut mod_a),
+            status::SPACEWASM_OK,
+        );
+        assert_eq!(
+            spacewasm_store_find_module(store, c"b".as_ptr(), &mut mod_b),
+            status::SPACEWASM_OK,
+        );
+        assert_eq!(
+            spacewasm_store_find_module(store, c"c".as_ptr(), &mut mod_c),
+            status::SPACEWASM_ERR_NOT_FOUND,
+        );
+    }
+
+    assert_eq!(mod_a, 0);
+    assert_eq!(mod_b, 1);
+
     let mut func_a = 0u32;
     let mut func_b = 0u32;
     unsafe {
