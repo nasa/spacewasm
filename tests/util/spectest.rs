@@ -260,27 +260,30 @@ const MAX_CODE_PAGES: u32 = 256;
 const MAX_CONTROL_FRAMES: usize = 128;
 const MAX_STACK_DEPTH: usize = 256;
 
+/// Builds the set of host modules an engine is instantiated with. A factory
+/// (rather than a `Vec`) is required because the engine is rebuilt on every
+/// [`TestContext::save_store`], and [`HostModule`] is not `Clone`.
+type HostModuleFactory = fn() -> spacewasm::Vec<HostModule>;
+
 struct TestContext {
     engine: Engine,
     code_builder: CodeBuilder,
     /// Maps instance names (like "$Mf") to module indices
     /// This is separate from the module's name field which is used for linking/imports
     instance_names: std::collections::HashMap<String, usize>,
+    /// Produces the host modules exposed to the test's modules. Stored so the
+    /// store can be rebuilt with the same host modules in `save_store`.
+    host_modules: HostModuleFactory,
 }
 
-fn new_engine() -> Engine {
-    Engine::new(
-        1024,
-        256,
-        vec![test_host_module(), regression_host_module()],
-    )
-    .unwrap()
+fn new_engine(host_modules: HostModuleFactory) -> Engine {
+    Engine::new(1024, 256, host_modules()).unwrap()
 }
 
 impl TestContext {
-    fn new() -> Self {
+    fn new(host_modules: HostModuleFactory) -> Self {
         TestContext {
-            engine: new_engine(),
+            engine: new_engine(host_modules),
             code_builder: CodeBuilder::new(CompilerOptions {
                 allow_memory_grow: true,
                 max_backpatch_iterations: 0,
@@ -288,6 +291,7 @@ impl TestContext {
             })
             .unwrap(),
             instance_names: std::collections::HashMap::new(),
+            host_modules,
         }
     }
 
@@ -315,7 +319,7 @@ impl TestContext {
     /// Save the current store state
     /// Used to restore state after failed module loads that mutate the store (memory/tables)
     fn save_store(&self) -> Engine {
-        let mut cloned = new_engine();
+        let mut cloned = new_engine(self.host_modules);
 
         // Clone all modules into the new store
         for module in self.engine.store.modules().iter() {
@@ -914,7 +918,9 @@ impl Drop for TempDir {
     }
 }
 
-fn test_host_module() -> HostModule {
+/// The standard `spectest` host module required by most of the spec test
+/// suite (print functions, well-known globals, a memory and a table).
+pub fn spectest_host_module() -> HostModule {
     HostModule {
         name: "spectest".into(),
         globals: vec![
@@ -1008,7 +1014,8 @@ fn test_host_module() -> HostModule {
     }
 }
 
-fn regression_host_module() -> HostModule {
+/// Extra host module used only by the regression integration tests.
+pub fn regression_host_module() -> HostModule {
     HostModule {
         name: "regression".into(),
         globals: vec![
@@ -1284,6 +1291,7 @@ fn run_wast_command(
 fn run_wast_test_file_inner(
     test_dir: PathBuf,
     test_name: &str,
+    host_modules: HostModuleFactory,
     wast_line: Arc<Mutex<Option<u32>>>,
     subtest_log: SubtestLogType,
 ) {
@@ -1295,7 +1303,7 @@ fn run_wast_test_file_inner(
     let test_file: TestFile = serde_json::from_str(&json_content)
         .unwrap_or_else(|e| panic!("Failed to parse JSON file {}: {}", json_path.display(), e));
 
-    let mut ctx = TestContext::new();
+    let mut ctx = TestContext::new(host_modules);
 
     for command in test_file.commands {
         let test_log = Rc::new(RefCell::new(LimitedVec::<String>::new()));
@@ -1320,7 +1328,11 @@ fn run_wast_test_file_inner(
     }
 }
 
-pub fn run_wast_test_file(test_name: &str) {
+/// Run a spec test file with a caller-provided set of host modules. Use this
+/// for suites that depend on host modules beyond the standard `spectest` one
+/// (for example the regression tests, which also need
+/// [`regression_host_module`]).
+pub fn run_wast_test_file(test_name: &str, host_modules: HostModuleFactory) {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let source_wast_path = PathBuf::from(manifest_dir)
         .join("tests")
@@ -1361,6 +1373,7 @@ pub fn run_wast_test_file(test_name: &str) {
         run_wast_test_file_inner(
             temp_path.to_path_buf(),
             &test_filename,
+            host_modules,
             wast_line.clone(),
             subtest_log.clone(),
         )

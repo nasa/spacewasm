@@ -1,377 +1,382 @@
 mod util;
-use util::run_wast_test_file;
+use spacewasm::vec;
+use util::{run_wast_test_file, spectest_host_module};
+
+fn run(test_name: &str) {
+    run_wast_test_file(test_name, || vec![spectest_host_module()]);
+}
 
 #[test]
 fn address() {
-    run_wast_test_file("core/address");
+    run("core/address");
 }
 
 #[test]
 fn call() {
-    run_wast_test_file("core/call");
+    run("core/call");
 }
 
 #[test]
 fn exports() {
-    run_wast_test_file("core/exports");
+    run("core/exports");
 }
 
 #[test]
 fn float_literals() {
-    run_wast_test_file("core/float_literals");
+    run("core/float_literals");
 }
 
 #[test]
 fn if_() {
-    run_wast_test_file("core/if");
+    run("core/if");
 }
 
 #[test]
 fn local_get() {
-    run_wast_test_file("core/local_get");
+    run("core/local_get");
 }
 
 #[test]
 fn names() {
-    run_wast_test_file("core/names");
+    run("core/names");
 }
 
 #[test]
 fn table() {
-    run_wast_test_file("core/table");
+    run("core/table");
 }
 
 #[test]
 fn utf8_import_module() {
-    run_wast_test_file("core/utf8-import-module");
+    run("core/utf8-import-module");
 }
 
 #[test]
 fn align() {
-    run_wast_test_file("core/align");
+    run("core/align");
 }
 
 #[test]
 fn call_indirect() {
-    run_wast_test_file("core/call_indirect");
+    run("core/call_indirect");
 }
 
 #[test]
 fn f32() {
-    run_wast_test_file("core/f32");
+    run("core/f32");
 }
 
 #[test]
 fn float_memory() {
-    run_wast_test_file("core/float_memory");
+    run("core/float_memory");
 }
 
 #[test]
 fn imports() {
-    run_wast_test_file("core/imports");
+    run("core/imports");
 }
 
 #[test]
 fn local_set() {
-    run_wast_test_file("core/local_set");
+    run("core/local_set");
 }
 
 #[test]
 fn nop() {
-    run_wast_test_file("core/nop");
+    run("core/nop");
 }
 
 #[test]
 fn token() {
-    run_wast_test_file("core/token");
+    run("core/token");
 }
 
 #[test]
 fn utf8_invalid_encoding() {
-    run_wast_test_file("core/utf8-invalid-encoding");
+    run("core/utf8-invalid-encoding");
 }
 
 #[test]
 fn binary() {
-    run_wast_test_file("core/binary");
+    run("core/binary");
 }
 
 #[test]
 fn comments() {
-    run_wast_test_file("core/comments");
+    run("core/comments");
 }
 
 #[test]
 fn f32_bitwise() {
-    run_wast_test_file("core/f32_bitwise");
+    run("core/f32_bitwise");
 }
 
 #[test]
 fn float_misc() {
-    run_wast_test_file("core/float_misc");
+    run("core/float_misc");
 }
 
 #[test]
 fn inline_module() {
-    run_wast_test_file("core/inline-module");
+    run("core/inline-module");
 }
 
 #[test]
 fn local_tee() {
-    run_wast_test_file("core/local_tee");
+    run("core/local_tee");
 }
 
 #[test]
 fn return_() {
-    run_wast_test_file("core/return");
+    run("core/return");
 }
 
 #[test]
 fn traps() {
-    run_wast_test_file("core/traps");
+    run("core/traps");
 }
 
 #[test]
 fn binary_leb128() {
-    run_wast_test_file("core/binary-leb128");
+    run("core/binary-leb128");
 }
 
 #[test]
 fn const_() {
-    run_wast_test_file("core/const");
+    run("core/const");
 }
 
 #[test]
 fn f32_cmp() {
-    run_wast_test_file("core/f32_cmp");
+    run("core/f32_cmp");
 }
 
 #[test]
 fn forward() {
-    run_wast_test_file("core/forward");
+    run("core/forward");
 }
 
 #[test]
 fn int_exprs() {
-    run_wast_test_file("core/int_exprs");
+    run("core/int_exprs");
 }
 
 #[test]
 fn loop_() {
-    run_wast_test_file("core/loop");
+    run("core/loop");
 }
 
 #[test]
 fn select() {
-    run_wast_test_file("core/select");
+    run("core/select");
 }
 
 #[test]
 fn type_() {
-    run_wast_test_file("core/type");
+    run("core/type");
 }
 
 #[test]
 fn block() {
-    run_wast_test_file("core/block");
+    run("core/block");
 }
 
 #[test]
 fn conversions() {
-    run_wast_test_file("core/conversions");
+    run("core/conversions");
 }
 
 #[test]
 fn f64() {
-    run_wast_test_file("core/f64");
+    run("core/f64");
 }
 
 #[test]
 fn func() {
-    run_wast_test_file("core/func");
+    run("core/func");
 }
 
 #[test]
 fn int_literals() {
-    run_wast_test_file("core/int_literals");
+    run("core/int_literals");
 }
 
 #[test]
 fn memory() {
-    run_wast_test_file("core/memory");
+    run("core/memory");
 }
 
 #[test]
 fn skip_stack_guard_page() {
-    run_wast_test_file("core/skip-stack-guard-page");
+    run("core/skip-stack-guard-page");
 }
 
 #[test]
 fn unreachable() {
-    run_wast_test_file("core/unreachable");
+    run("core/unreachable");
 }
 
 #[test]
 fn br() {
-    run_wast_test_file("core/br");
+    run("core/br");
 }
 
 #[test]
 fn custom() {
-    run_wast_test_file("core/custom");
+    run("core/custom");
 }
 
 #[test]
 fn f64_bitwise() {
-    run_wast_test_file("core/f64_bitwise");
+    run("core/f64_bitwise");
 }
 
 #[test]
 fn func_ptrs() {
-    run_wast_test_file("core/func_ptrs");
+    run("core/func_ptrs");
 }
 
 #[test]
 fn labels() {
-    run_wast_test_file("core/labels");
+    run("core/labels");
 }
 
 #[test]
 fn memory_grow() {
-    run_wast_test_file("core/memory_grow");
+    run("core/memory_grow");
 }
 
 #[test]
 fn stack() {
-    run_wast_test_file("core/stack");
+    run("core/stack");
 }
 
 #[test]
 fn unreached_invalid() {
-    run_wast_test_file("core/unreached-invalid");
+    run("core/unreached-invalid");
 }
 
 #[test]
 fn br_if() {
-    run_wast_test_file("core/br_if");
+    run("core/br_if");
 }
 
 #[test]
 fn data() {
-    run_wast_test_file("core/data");
+    run("core/data");
 }
 
 #[test]
 fn f64_cmp() {
-    run_wast_test_file("core/f64_cmp");
+    run("core/f64_cmp");
 }
 
 #[test]
 fn global() {
-    run_wast_test_file("core/global");
+    run("core/global");
 }
 
 #[test]
 fn left_to_right() {
-    run_wast_test_file("core/left-to-right");
+    run("core/left-to-right");
 }
 
 #[test]
 fn memory_redundancy() {
-    run_wast_test_file("core/memory_redundancy");
+    run("core/memory_redundancy");
 }
 
 #[test]
 fn start() {
-    run_wast_test_file("core/start");
+    run("core/start");
 }
 
 #[test]
 fn unwind() {
-    run_wast_test_file("core/unwind");
+    run("core/unwind");
 }
 
 #[test]
 fn br_table() {
-    run_wast_test_file("core/br_table");
+    run("core/br_table");
 }
 
 #[test]
 fn elem() {
-    run_wast_test_file("core/elem");
+    run("core/elem");
 }
 
 #[test]
 fn fac() {
-    run_wast_test_file("core/fac");
+    run("core/fac");
 }
 
 #[test]
 fn i32() {
-    run_wast_test_file("core/i32");
+    run("core/i32");
 }
 
 #[test]
 fn linking() {
-    run_wast_test_file("core/linking");
+    run("core/linking");
 }
 
 #[test]
 fn memory_size() {
-    run_wast_test_file("core/memory_size");
+    run("core/memory_size");
 }
 
 #[test]
 fn store() {
-    run_wast_test_file("core/store");
+    run("core/store");
 }
 
 #[test]
 fn utf8_custom_section_id() {
-    run_wast_test_file("core/utf8-custom-section-id");
+    run("core/utf8-custom-section-id");
 }
 
 #[test]
 fn break_drop() {
-    run_wast_test_file("core/break-drop");
+    run("core/break-drop");
 }
 
 #[test]
 fn endianness() {
-    run_wast_test_file("core/endianness");
+    run("core/endianness");
 }
 
 #[test]
 fn float_exprs() {
-    run_wast_test_file("core/float_exprs");
+    run("core/float_exprs");
 }
 
 #[test]
 fn i64() {
-    run_wast_test_file("core/i64");
+    run("core/i64");
 }
 
 #[test]
 fn load() {
-    run_wast_test_file("core/load");
+    run("core/load");
 }
 
 #[test]
 fn memory_trap() {
-    run_wast_test_file("core/memory_trap");
+    run("core/memory_trap");
 }
 
 #[test]
 fn switch() {
-    run_wast_test_file("core/switch");
+    run("core/switch");
 }
 
 #[test]
 fn utf8_import_field() {
-    run_wast_test_file("core/utf8-import-field");
+    run("core/utf8-import-field");
 }
 
 #[test]
 fn test() {
-    run_wast_test_file("core/test");
+    run("core/test");
 }
