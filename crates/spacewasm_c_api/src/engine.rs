@@ -187,6 +187,16 @@ impl SpacewasmStore {
         }
     }
 
+    pub fn find_module(&self, name: &str) -> Result<u32, spacewasm_status_t> {
+        self.engine
+            .store
+            .modules()
+            .iter()
+            .enumerate()
+            .find_map(|(i, m)| if m.name == name { Some(i as u32) } else { None })
+            .ok_or(status::SPACEWASM_ERR_NOT_FOUND)
+    }
+
     /// Resolve an exported function by name in module `module_idx` to an index
     /// usable with [`SpacewasmStore::invoke`].
     pub fn find_export_func(&self, module_idx: u32, name: &str) -> Result<u16, spacewasm_status_t> {

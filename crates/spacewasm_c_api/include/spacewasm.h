@@ -489,6 +489,16 @@ spacewasm_status_t spacewasm_store_new(struct spacewasm_host_t *host,
 void spacewasm_host_destroy(struct spacewasm_host_t *host);
 
 /*
+ Find a module with a given name in the store.
+
+ # Safety
+ `store` must be live; `name` valid; `out_index` valid.
+ */
+spacewasm_status_t spacewasm_store_find_module(struct spacewasm_store_t *store,
+                                               const char *name,
+                                               uint32_t *out_index);
+
+/*
  Look up the exported function named `name` in module `module_idx` and write
  its index to `out_index`.
 
