@@ -88,7 +88,7 @@ pub unsafe fn store_find_module(
     };
     match store.find_module(name) {
         Ok(idx) => {
-            unsafe { *out_index = idx as u32 };
+            unsafe { *out_index = idx };
             status::SPACEWASM_OK
         }
         Err(e) => e,
