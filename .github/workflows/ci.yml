@@ -205,6 +205,10 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    env:
+      # How many times each side is measured. The reported figure is the
+      # median, so a single unlucky run no longer decides the result.
+      BENCH_SAMPLES: 5
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -229,43 +233,103 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-bin: false
 
+      - name: Build benchmark binaries
+        run: |
+          set -euo pipefail
+
+          # Stage the bench binary next to the wasm it loads, so a side can be
+          # re-run later without checking its revision back out.
+          stage() {
+            local dest="$1"
+            local exe
+            exe=$(cargo bench -p spacewasm_std --bench coremark --no-run --message-format=json \
+              | jq -r 'select(.reason == "compiler-artifact")
+                       | select(.target.kind | index("bench"))
+                       | select(.target.name == "coremark")
+                       | .executable' \
+              | tail -n 1)
+            mkdir -p "$dest/benches"
+            cp "$exe" "$dest/coremark"
+            cp crates/spacewasm_std/benches/coremark-minimal.wasm "$dest/benches/"
+          }
+
+          stage "$RUNNER_TEMP/pr"
+
+          # The baseline is best effort: a PR should still get a score of its
+          # own if main cannot be built here.
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            head=$(git rev-parse HEAD)
+            if git fetch --no-tags origin main && git checkout --detach FETCH_HEAD; then
+              stage "$RUNNER_TEMP/base" || echo "::warning::could not build the baseline benchmark"
+              git checkout --detach "$head"
+            else
+              echo "::warning::could not check out main to build a baseline"
+            fi
+          fi
+
       - name: Run CoreMark benchmark
         id: benchmark
         run: |
-          # Build and run the benchmark from workspace root, capturing output
-          output=$(cargo bench -p spacewasm_std --bench coremark --no-fail-fast 2>&1)
-          echo "$output"
+          set -euo pipefail
 
-          # Extract the CoreMark score from the output
-          score=$(echo "$output" | grep "CoreMark Score:" | awk '{print $3}')
-          if [ -z "$score" ]; then
-            echo "Failed to extract CoreMark score"
-            exit 1
+          run_once() {
+            ( cd "$1" && ./coremark ) | awk '/CoreMark Score:/ { print $3 }'
+          }
+
+          summarize() {
+            sort -g "$1" | awk '
+              { v[NR] = $1 }
+              END {
+                median = (NR % 2) ? v[(NR + 1) / 2] : (v[NR / 2] + v[NR / 2 + 1]) / 2
+                printf "%.3f %.3f %.3f", median, v[1], v[NR]
+              }'
+          }
+
+          sides=(pr)
+          : > "$RUNNER_TEMP/pr.scores"
+          if [ -x "$RUNNER_TEMP/base/coremark" ]; then
+            sides+=(base)
+            : > "$RUNNER_TEMP/base.scores"
           fi
 
-          echo "score=$score" >> $GITHUB_OUTPUT
-          echo "Benchmark score: $score"
-
-      - name: Download baseline benchmark
-        id: baseline
-        continue-on-error: true
-        run: |
-          # Try to get baseline from main branch
-          if [ "${{ github.event_name }}" == "pull_request" ]; then
-            git fetch origin main:main
-            git checkout main
-            baseline_output=$(cargo bench -p spacewasm_std --bench coremark --no-fail-fast 2>&1) || true
-            baseline_score=$(echo "$baseline_output" | grep "CoreMark Score:" | awk '{print $3}')
-            git checkout -
-
-            if [ -n "$baseline_score" ]; then
-              echo "baseline=$baseline_score" >> $GITHUB_OUTPUT
-              echo "Baseline score: $baseline_score"
-            else
-              echo "baseline=" >> $GITHUB_OUTPUT
+          for i in $(seq 1 "$BENCH_SAMPLES"); do
+            # Swap the order on every other sample. Measuring one side first
+            # every time hands it a systematically different machine state.
+            order=("${sides[@]}")
+            if [ "${#sides[@]}" -eq 2 ] && [ $((i % 2)) -eq 0 ]; then
+              order=(base pr)
             fi
+
+            for side in "${order[@]}"; do
+              score=$(run_once "$RUNNER_TEMP/$side")
+              if [ -z "$score" ]; then
+                echo "Failed to extract CoreMark score for $side"
+                exit 1
+              fi
+              echo "$score" >> "$RUNNER_TEMP/$side.scores"
+              echo "sample $i ($side): $score"
+            done
+          done
+
+          read -r score min max <<< "$(summarize "$RUNNER_TEMP/pr.scores")"
+          {
+            echo "samples=$BENCH_SAMPLES"
+            echo "score=$score"
+            echo "min=$min"
+            echo "max=$max"
+          } >> "$GITHUB_OUTPUT"
+          echo "Benchmark score: $score (range $min-$max over $BENCH_SAMPLES samples)"
+
+          if [ -s "${RUNNER_TEMP}/base.scores" ]; then
+            read -r baseline baseline_min baseline_max <<< "$(summarize "$RUNNER_TEMP/base.scores")"
+            {
+              echo "baseline=$baseline"
+              echo "baseline_min=$baseline_min"
+              echo "baseline_max=$baseline_max"
+            } >> "$GITHUB_OUTPUT"
+            echo "Baseline score: $baseline (range $baseline_min-$baseline_max over $BENCH_SAMPLES samples)"
           else
-            echo "baseline=" >> $GITHUB_OUTPUT
+            echo "baseline=" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Save benchmark results
@@ -274,8 +338,13 @@ jobs:
           cat > benchmark-results.json <<EOF
           {
             "prNumber": "${{ github.event.pull_request.number }}",
+            "samples": "${{ steps.benchmark.outputs.samples }}",
             "currentScore": "${{ steps.benchmark.outputs.score }}",
-            "baselineScore": "${{ steps.baseline.outputs.baseline }}"
+            "currentMin": "${{ steps.benchmark.outputs.min }}",
+            "currentMax": "${{ steps.benchmark.outputs.max }}",
+            "baselineScore": "${{ steps.benchmark.outputs.baseline }}",
+            "baselineMin": "${{ steps.benchmark.outputs.baseline_min }}",
+            "baselineMax": "${{ steps.benchmark.outputs.baseline_max }}"
           }
           EOF
 

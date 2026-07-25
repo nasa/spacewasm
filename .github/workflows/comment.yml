@@ -74,21 +74,60 @@ jobs:
 
             const benchmark = readResults('benchmark-results');
             if (benchmark) {
+              const samples = parseInt(benchmark.samples, 10) || 1;
               const currentScore = parseFloat(benchmark.currentScore);
               const baselineScore = parseFloat(benchmark.baselineScore);
 
+              // Range covered by the raw samples of one side.
+              function spread(min, max) {
+                const lo = parseFloat(min);
+                const hi = parseFloat(max);
+                return isNaN(lo) || isNaN(hi) ? null : { lo, hi, width: hi - lo };
+              }
+
+              function describe(score, range) {
+                if (!range || samples < 2) {
+                  return score.toFixed(3);
+                }
+                return `${score.toFixed(3)} ` +
+                  `(median of ${samples}, range ${range.lo.toFixed(3)}-${range.hi.toFixed(3)})`;
+              }
+
+              const currentRange = spread(benchmark.currentMin, benchmark.currentMax);
+              const baselineRange = spread(benchmark.baselineMin, benchmark.baselineMax);
+
               let comment = '## CoreMark Benchmark Results\n\n';
-              comment += `**Current Score:** ${currentScore.toFixed(3)}\n`;
+              comment += `**Current Score:** ${describe(currentScore, currentRange)}\n`;
 
               if (baselineScore && !isNaN(baselineScore)) {
                 const diff = currentScore - baselineScore;
-                const percentChange = ((diff / baselineScore) * 100).toFixed(2);
+                const percentChange = (diff / baselineScore) * 100;
 
-                comment += `**Baseline Score (main):** ${baselineScore.toFixed(3)}\n`;
-                comment += `**Difference:** ${diff >= 0 ? '+' : ''}${diff.toFixed(3)} (${percentChange}%)\n\n`;
+                comment += `**Baseline Score (main):** ${describe(baselineScore, baselineRange)}\n`;
+                comment += `**Difference:** ${diff >= 0 ? '+' : ''}${diff.toFixed(3)} ` +
+                  `(${percentChange.toFixed(2)}%)\n\n`;
+
+                // The widest sample range seen in this job is the smallest
+                // difference this runner was able to resolve, so treat anything
+                // below it as noise rather than as a result.
+                const widest = Math.max(
+                  currentRange ? currentRange.width : 0,
+                  baselineRange ? baselineRange.width : 0
+                );
+                const noise = (widest / baselineScore) * 100;
+
+                if (noise > 0) {
+                  comment += Math.abs(percentChange) <= noise
+                    ? `_Within the ${noise.toFixed(2)}% sample-to-sample noise of this run._\n`
+                    : `_Larger than the ${noise.toFixed(2)}% sample-to-sample noise of this run._\n`;
+                }
               } else {
                 comment += '\n_No baseline available for comparison_\n';
               }
+
+              comment += '\n_Scores are only comparable within a single run, which measures ' +
+                'both sides on one runner. GitHub-hosted runners differ by more than 2x ' +
+                'between CPU models._\n';
 
               await upsertComment(
                 parseInt(benchmark.prNumber, 10),
