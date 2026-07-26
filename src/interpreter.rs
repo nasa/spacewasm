@@ -146,6 +146,32 @@ impl Engine {
 
         Ok(())
     }
+
+    /// Resume the interpreter after a host pause.
+    /// Optionally pushes a value to the operand stack as a host function return value.
+    pub fn resume(&mut self, resume_value: Option<Value>) {
+        // Unwrap is safe here because we should not call resume() unless the interpreter requested a pause
+        match (self.host_pause_result.take().unwrap(), resume_value) {
+            (ResultType(Some(ValType::F32)), Some(Value::F32(z))) => {
+                self.stack.write_f32(self.sp, z);
+                self.sp += 1;
+            }
+            (ResultType(Some(ValType::F64)), Some(Value::F64(z))) => {
+                self.stack.write_f64(self.sp, z);
+                self.sp += 2;
+            }
+            (ResultType(Some(ValType::I32)), Some(Value::I32(n))) => {
+                self.stack.write_u32(self.sp, n as u32);
+                self.sp += 1;
+            }
+            (ResultType(Some(ValType::I64)), Some(Value::I64(n))) => {
+                self.stack.write_u64(self.sp, n as u64);
+                self.sp += 2;
+            }
+            (ResultType(None), None) => {}
+            _ => panic!("expected host function to return a value"),
+        }
+    }
 }
 
 pub struct Interpreter;
@@ -269,6 +295,7 @@ impl Interpreter {
 /// For all types that implement [IrVisitor<State = InterpreterState, Error = InstructionError>],
 /// this trait will be implemented to execute instructions given the state and store.
 pub trait InterpreterRunner {
+    /// Run the interpreter for a fixed number of cycles or until a trap/host pause
     fn run(
         &self,
         code: &[Box<TextPage>],
@@ -1358,11 +1385,9 @@ impl IrVisitor for Interpreter {
         x: u16,
         state: &mut Self::State,
     ) -> Result<(), Self::Error> {
-        let m = &state.store.host_modules()[module.0 as usize];
-        let f = &m.functions[x as usize];
-
         let mut sv: StaticVec<Value, 9> = StaticVec::new();
 
+        let f = &state.store.host_modules_mut()[module.0 as usize].functions[x as usize];
         state.sp -= f.param_size();
         let mut offset = 0;
         for p_ty in f.params().iter() {
@@ -1390,7 +1415,9 @@ impl IrVisitor for Interpreter {
             }
         }
 
-        match f.call(state, &sv) {
+        let r = state.call_host_fn(module, x, &sv);
+        let f = &state.store.host_modules_mut()[module.0 as usize].functions[x as usize];
+        match r {
             ControlFlow::Continue(v) => {
                 match v {
                     None => {}
@@ -1414,7 +1441,17 @@ impl IrVisitor for Interpreter {
 
                 Ok(())
             }
-            ControlFlow::Break(b) => Err(b.into()),
+            ControlFlow::Break(HostFunctionBreak::Pause) => {
+                let other = state.host_pause_result.replace(f.returns().into());
+                if other.is_some() {
+                    panic!("Unexpected paused engine state");
+                }
+
+                Err(InterpreterBreak::Pause)
+            }
+            ControlFlow::Break(HostFunctionBreak::Trap) => {
+                Err(InterpreterBreak::Trap(TrapReason::Host))
+            }
         }
     }
 

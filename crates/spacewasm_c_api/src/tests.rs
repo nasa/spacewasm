@@ -1091,6 +1091,28 @@ fn run_slices_out_of_fuel_then_resumes() {
     }
 }
 
+/// Host callback that pauses execution without returning a value.
+unsafe extern "C" fn pause_host(
+    _caller: *mut SpacewasmCaller,
+    _userdata: *mut c_void,
+    _params: *const spacewasm_value_t,
+    _n: usize,
+    _out: *mut spacewasm_value_t,
+) -> spacewasm_hostcall_result_t {
+    spacewasm_hostcall_result_t::SPACEWASM_PAUSE
+}
+
+/// Host callback that pauses execution and expects to return an i32.
+unsafe extern "C" fn pause_i32_host(
+    _caller: *mut SpacewasmCaller,
+    _userdata: *mut c_void,
+    _params: *const spacewasm_value_t,
+    _n: usize,
+    _out: *mut spacewasm_value_t,
+) -> spacewasm_hostcall_result_t {
+    spacewasm_hostcall_result_t::SPACEWASM_PAUSE
+}
+
 /// Host callback that exercises `spacewasm_mem_read`/`write`/`size` against the
 /// caller's guest memory, then returns `param + 1` so the `HOST_WASM` guest flow
 /// still produces its expected result.
@@ -1534,4 +1556,202 @@ fn no_leak_across_lifecycle() {
         after, baseline,
         "memory drifted: baseline={baseline} after={after}"
     );
+}
+
+/// `(module (import "env" "pause") (func (export "test_pause") (result i32)
+///    (call 0) (i32.const 42)))` — calls pause, then returns 42 after resume.
+#[rustfmt::skip]
+static PAUSE_WASM: &[u8] = &[
+    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x60,
+    0x00, 0x00, 0x60, 0x00, 0x01, 0x7f, 0x02, 0x0d, 0x01, 0x03, 0x65, 0x6e,
+    0x76, 0x05, 0x70, 0x61, 0x75, 0x73, 0x65, 0x00, 0x00, 0x03, 0x02, 0x01,
+    0x01, 0x07, 0x0e, 0x01, 0x0a, 0x74, 0x65, 0x73, 0x74, 0x5f, 0x70, 0x61,
+    0x75, 0x73, 0x65, 0x00, 0x01, 0x0a, 0x08, 0x01, 0x06, 0x00, 0x10, 0x00,
+    0x41, 0x2a, 0x0b,
+];
+
+/// `(module (import "env" "pause_i32") (func (export "test_pause_i32") (result i32)
+///    (call 0)))` — calls pause_i32, returns whatever value is resumed with.
+#[rustfmt::skip]
+static PAUSE_I32_WASM: &[u8] = &[
+    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x05, 0x01, 0x60,
+    0x00, 0x01, 0x7f, 0x02, 0x11, 0x01, 0x03, 0x65, 0x6e, 0x76, 0x09, 0x70,
+    0x61, 0x75, 0x73, 0x65, 0x5f, 0x69, 0x33, 0x32, 0x00, 0x00, 0x03, 0x02,
+    0x01, 0x00, 0x07, 0x12, 0x01, 0x0e, 0x74, 0x65, 0x73, 0x74, 0x5f, 0x70,
+    0x61, 0x75, 0x73, 0x65, 0x5f, 0x69, 0x33, 0x32, 0x00, 0x01, 0x0a, 0x06,
+    0x01, 0x04, 0x00, 0x10, 0x00, 0x0b,
+];
+
+#[test]
+fn pause_and_resume_no_value() {
+    let _guard = ALLOC_LOCK.lock().unwrap();
+    ensure_global_allocator();
+
+    let mut host = core::mem::MaybeUninit::<spacewasm_host_t>::uninit();
+    assert_eq!(
+        unsafe { spacewasm_host_new(1, host.as_mut_ptr()) },
+        status::SPACEWASM_OK
+    );
+
+    let mut hmod = 0u32;
+    unsafe {
+        assert_eq!(
+            spacewasm_add_host_module(host.as_mut_ptr(), c"env".as_ptr(), 1, 0, &mut hmod),
+            status::SPACEWASM_OK
+        );
+        assert_eq!(
+            spacewasm_add_host_function(
+                host.as_mut_ptr(),
+                hmod,
+                c"pause".as_ptr(),
+                c"".as_ptr(),
+                c"".as_ptr(),
+                Some(pause_host),
+                core::ptr::null_mut(),
+            ),
+            status::SPACEWASM_OK
+        );
+    }
+
+    let mut store: *mut SpacewasmStore = core::ptr::null_mut();
+    assert_eq!(
+        unsafe { spacewasm_store_new(host.as_mut_ptr(), 1024, 1, opts(256), &mut store) },
+        status::SPACEWASM_OK
+    );
+
+    let alloc = new_guest_allocator();
+    let idx = load_module_onto(alloc, store, c"main", PAUSE_WASM, 0).expect("load");
+
+    let mut func = 0u32;
+    assert_eq!(
+        unsafe { spacewasm_store_find_export_func(store, idx, c"test_pause".as_ptr(), &mut func) },
+        status::SPACEWASM_OK
+    );
+
+    // Invoke the function
+    assert_eq!(
+        unsafe { spacewasm_store_invoke(store, idx, func, core::ptr::null(), 0) },
+        status::SPACEWASM_OK
+    );
+
+    // Run until pause
+    let mut trap = spacewasm_trap_t::SPACEWASM_TRAP_NONE;
+    assert_eq!(
+        unsafe { spacewasm_store_run(store, 10000, &mut trap) },
+        spacewasm_run_status_t::SPACEWASM_RUN_PAUSE,
+        "should pause"
+    );
+
+    // Resume without value
+    assert_eq!(
+        unsafe { spacewasm_store_resume(store) },
+        status::SPACEWASM_OK
+    );
+
+    // Continue running to completion
+    assert_eq!(
+        run_to_completion(store, &mut trap),
+        spacewasm_run_status_t::SPACEWASM_RUN_FINISHED
+    );
+
+    // Check result
+    let mut out = i32_val(0);
+    assert_eq!(
+        unsafe { spacewasm_store_get_result(store, spacewasm_valtype_t::SPACEWASM_I32, &mut out) },
+        status::SPACEWASM_OK
+    );
+    assert_eq!(unsafe { out.u.i32_ }, 42);
+
+    unsafe {
+        spacewasm_store_destroy(store);
+        spacewasm_allocator_destroy(alloc);
+    }
+}
+
+#[test]
+fn pause_and_resume_with_value() {
+    let _guard = ALLOC_LOCK.lock().unwrap();
+    ensure_global_allocator();
+
+    let mut host = core::mem::MaybeUninit::<spacewasm_host_t>::uninit();
+    assert_eq!(
+        unsafe { spacewasm_host_new(1, host.as_mut_ptr()) },
+        status::SPACEWASM_OK
+    );
+
+    let mut hmod = 0u32;
+    unsafe {
+        assert_eq!(
+            spacewasm_add_host_module(host.as_mut_ptr(), c"env".as_ptr(), 1, 0, &mut hmod),
+            status::SPACEWASM_OK
+        );
+        assert_eq!(
+            spacewasm_add_host_function(
+                host.as_mut_ptr(),
+                hmod,
+                c"pause_i32".as_ptr(),
+                c"".as_ptr(),
+                c"i".as_ptr(),
+                Some(pause_i32_host),
+                core::ptr::null_mut(),
+            ),
+            status::SPACEWASM_OK
+        );
+    }
+
+    let mut store: *mut SpacewasmStore = core::ptr::null_mut();
+    assert_eq!(
+        unsafe { spacewasm_store_new(host.as_mut_ptr(), 1024, 1, opts(256), &mut store) },
+        status::SPACEWASM_OK
+    );
+
+    let alloc = new_guest_allocator();
+    let idx = load_module_onto(alloc, store, c"main", PAUSE_I32_WASM, 0).expect("load");
+
+    let mut func = 0u32;
+    assert_eq!(
+        unsafe {
+            spacewasm_store_find_export_func(store, idx, c"test_pause_i32".as_ptr(), &mut func)
+        },
+        status::SPACEWASM_OK
+    );
+
+    // Invoke the function
+    assert_eq!(
+        unsafe { spacewasm_store_invoke(store, idx, func, core::ptr::null(), 0) },
+        status::SPACEWASM_OK
+    );
+
+    // Run until pause
+    let mut trap = spacewasm_trap_t::SPACEWASM_TRAP_NONE;
+    assert_eq!(
+        unsafe { spacewasm_store_run(store, 10000, &mut trap) },
+        spacewasm_run_status_t::SPACEWASM_RUN_PAUSE,
+        "should pause"
+    );
+
+    // Resume with value 99
+    assert_eq!(
+        unsafe { spacewasm_store_resume_value(store, i32_val(99)) },
+        status::SPACEWASM_OK
+    );
+
+    // Continue running to completion
+    assert_eq!(
+        run_to_completion(store, &mut trap),
+        spacewasm_run_status_t::SPACEWASM_RUN_FINISHED
+    );
+
+    // Check result - should be the resumed value (99)
+    let mut out = i32_val(0);
+    assert_eq!(
+        unsafe { spacewasm_store_get_result(store, spacewasm_valtype_t::SPACEWASM_I32, &mut out) },
+        status::SPACEWASM_OK
+    );
+    assert_eq!(unsafe { out.u.i32_ }, 99);
+
+    unsafe {
+        spacewasm_store_destroy(store);
+        spacewasm_allocator_destroy(alloc);
+    }
 }

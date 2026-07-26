@@ -95,6 +95,26 @@ static const uint8_t HOST_WASM[] = {
     0x75, 0x6e, 0x00, 0x01, 0x0a, 0x15, 0x01, 0x13, 0x01, 0x01, 0x7f, 0x20, 0x00, 0x10,
     0x00, 0x21, 0x01, 0x41, 0x00, 0x20, 0x01, 0x36, 0x02, 0x00, 0x20, 0x01, 0x0b};
 
+/* (module (import "env" "pause") (func (export "test_pause") (result i32)
+ *   (call 0) (i32.const 42))) */
+static const uint8_t PAUSE_WASM[] = {
+    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x60,
+    0x00, 0x00, 0x60, 0x00, 0x01, 0x7f, 0x02, 0x0d, 0x01, 0x03, 0x65, 0x6e,
+    0x76, 0x05, 0x70, 0x61, 0x75, 0x73, 0x65, 0x00, 0x00, 0x03, 0x02, 0x01,
+    0x01, 0x07, 0x0e, 0x01, 0x0a, 0x74, 0x65, 0x73, 0x74, 0x5f, 0x70, 0x61,
+    0x75, 0x73, 0x65, 0x00, 0x01, 0x0a, 0x08, 0x01, 0x06, 0x00, 0x10, 0x00,
+    0x41, 0x2a, 0x0b};
+
+/* (module (import "env" "pause_i32") (func (export "test_pause_i32") (result i32)
+ *   (call 0))) */
+static const uint8_t PAUSE_I32_WASM[] = {
+    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x05, 0x01, 0x60,
+    0x00, 0x01, 0x7f, 0x02, 0x11, 0x01, 0x03, 0x65, 0x6e, 0x76, 0x09, 0x70,
+    0x61, 0x75, 0x73, 0x65, 0x5f, 0x69, 0x33, 0x32, 0x00, 0x00, 0x03, 0x02,
+    0x01, 0x00, 0x07, 0x12, 0x01, 0x0e, 0x74, 0x65, 0x73, 0x74, 0x5f, 0x70,
+    0x61, 0x75, 0x73, 0x65, 0x5f, 0x69, 0x33, 0x32, 0x00, 0x01, 0x0a, 0x06,
+    0x01, 0x04, 0x00, 0x10, 0x00, 0x0b};
+
 /* ---- helpers ------------------------------------------------------------- */
 
 #define CHECK(cond, ...)                                                                           \
@@ -478,6 +498,141 @@ static int test_no_leak_across_lifecycle(void) {
     return 0;
 }
 
+/* ---- pause/resume host callbacks ----------------------------------------- */
+
+static spacewasm_hostcall_result_t pause_host(spacewasm_caller_t* caller, void* userdata,
+                                              const spacewasm_value_t* params, size_t n,
+                                              spacewasm_value_t* out) {
+    (void)caller;
+    (void)userdata;
+    (void)params;
+    (void)n;
+    (void)out;
+    return SPACEWASM_PAUSE;
+}
+
+static spacewasm_hostcall_result_t pause_i32_host(spacewasm_caller_t* caller, void* userdata,
+                                                  const spacewasm_value_t* params, size_t n,
+                                                  spacewasm_value_t* out) {
+    (void)caller;
+    (void)userdata;
+    (void)params;
+    (void)n;
+    (void)out;
+    return SPACEWASM_PAUSE;
+}
+
+/* ---- pause/resume tests -------------------------------------------------- */
+
+static int test_pause_and_resume_no_value(void) {
+    spacewasm_host_t host;
+    CHECK(spacewasm_host_new(1, &host) == SPACEWASM_OK, "host_new");
+
+    uint32_t hmod;
+    CHECK(spacewasm_add_host_module(&host, "env", 1, 0, &hmod) == SPACEWASM_OK,
+          "add_host_module");
+    CHECK(spacewasm_add_host_function(&host, hmod, "pause", "", "", pause_host, NULL) ==
+              SPACEWASM_OK,
+          "add_host_function");
+
+    spacewasm_store_t* store = NULL;
+    spacewasm_compiler_options_t opts = {false, 0, 256};
+    CHECK(spacewasm_store_new(&host, 1024, 1, opts, &store) == SPACEWASM_OK, "store_new");
+
+    cursor_t cursor = {PAUSE_WASM, sizeof(PAUSE_WASM), 0, 0};
+    spacewasm_allocator_t* alloc = spacewasm_allocator_new(mem_alloc, mem_realloc, mem_dealloc, NULL);
+    CHECK(alloc != NULL, "allocator_new");
+    uint32_t idx;
+    CHECK(spacewasm_store_load_module(store, "main", cursor_read, &cursor, alloc, &idx) ==
+              SPACEWASM_OK,
+          "load_module");
+
+    /* No start function */
+    CHECK(spacewasm_store_module_invoke_start(store, idx) == SPACEWASM_RUN_FINISHED,
+          "no start");
+
+    uint32_t func;
+    CHECK(spacewasm_store_find_export_func(store, idx, "test_pause", &func) == SPACEWASM_OK,
+          "find test_pause");
+    CHECK(spacewasm_store_invoke(store, idx, func, NULL, 0) == SPACEWASM_OK, "invoke");
+
+    /* Run until pause */
+    spacewasm_trap_t trap = SPACEWASM_TRAP_NONE;
+    CHECK(spacewasm_store_run(store, 10000, &trap) == SPACEWASM_RUN_PAUSE, "run until pause");
+
+    /* Resume without value */
+    CHECK(spacewasm_store_resume(store) == SPACEWASM_OK, "resume");
+
+    /* Continue running to completion */
+    while (spacewasm_store_run(store, 10000, &trap) == SPACEWASM_RUN_OUT_OF_FUEL)
+        ;
+    CHECK(trap == SPACEWASM_TRAP_NONE, "no trap");
+
+    /* Check result */
+    spacewasm_value_t out = {SPACEWASM_I32, {.i32_ = 0}};
+    CHECK(spacewasm_store_get_result(store, SPACEWASM_I32, &out) == SPACEWASM_OK, "get_result");
+    CHECK(out.u.i32_ == 42, "expected 42, got %d", out.u.i32_);
+
+    spacewasm_allocator_destroy(alloc);
+    spacewasm_store_destroy(store);
+    return 0;
+}
+
+static int test_pause_and_resume_with_value(void) {
+    spacewasm_host_t host;
+    CHECK(spacewasm_host_new(1, &host) == SPACEWASM_OK, "host_new");
+
+    uint32_t hmod;
+    CHECK(spacewasm_add_host_module(&host, "env", 1, 0, &hmod) == SPACEWASM_OK,
+          "add_host_module");
+    CHECK(spacewasm_add_host_function(&host, hmod, "pause_i32", "", "i", pause_i32_host, NULL) ==
+              SPACEWASM_OK,
+          "add_host_function");
+
+    spacewasm_store_t* store = NULL;
+    spacewasm_compiler_options_t opts = {false, 0, 256};
+    CHECK(spacewasm_store_new(&host, 1024, 1, opts, &store) == SPACEWASM_OK, "store_new");
+
+    cursor_t cursor = {PAUSE_I32_WASM, sizeof(PAUSE_I32_WASM), 0, 0};
+    spacewasm_allocator_t* alloc = spacewasm_allocator_new(mem_alloc, mem_realloc, mem_dealloc, NULL);
+    CHECK(alloc != NULL, "allocator_new");
+    uint32_t idx;
+    CHECK(spacewasm_store_load_module(store, "main", cursor_read, &cursor, alloc, &idx) ==
+              SPACEWASM_OK,
+          "load_module");
+
+    /* No start function */
+    CHECK(spacewasm_store_module_invoke_start(store, idx) == SPACEWASM_RUN_FINISHED,
+          "no start");
+
+    uint32_t func;
+    CHECK(spacewasm_store_find_export_func(store, idx, "test_pause_i32", &func) == SPACEWASM_OK,
+          "find test_pause_i32");
+    CHECK(spacewasm_store_invoke(store, idx, func, NULL, 0) == SPACEWASM_OK, "invoke");
+
+    /* Run until pause */
+    spacewasm_trap_t trap = SPACEWASM_TRAP_NONE;
+    CHECK(spacewasm_store_run(store, 10000, &trap) == SPACEWASM_RUN_PAUSE, "run until pause");
+
+    /* Resume with value 99 */
+    spacewasm_value_t resume_val = {SPACEWASM_I32, {.i32_ = 99}};
+    CHECK(spacewasm_store_resume_value(store, resume_val) == SPACEWASM_OK, "resume_value");
+
+    /* Continue running to completion */
+    while (spacewasm_store_run(store, 10000, &trap) == SPACEWASM_RUN_OUT_OF_FUEL)
+        ;
+    CHECK(trap == SPACEWASM_TRAP_NONE, "no trap");
+
+    /* Check result - should be the resumed value (99) */
+    spacewasm_value_t out = {SPACEWASM_I32, {.i32_ = 0}};
+    CHECK(spacewasm_store_get_result(store, SPACEWASM_I32, &out) == SPACEWASM_OK, "get_result");
+    CHECK(out.u.i32_ == 99, "expected 99, got %d", out.u.i32_);
+
+    spacewasm_allocator_destroy(alloc);
+    spacewasm_store_destroy(store);
+    return 0;
+}
+
 /* ---- runner -------------------------------------------------------------- */
 
 int main(void) {
@@ -498,6 +653,8 @@ int main(void) {
         {"error_paths", test_error_paths},
         {"null_arg_handling", test_null_arg_handling},
         {"statistics_available", test_statistics_available},
+        {"pause_and_resume_no_value", test_pause_and_resume_no_value},
+        {"pause_and_resume_with_value", test_pause_and_resume_with_value},
         {"no_leak_across_lifecycle", test_no_leak_across_lifecycle},
     };
 
