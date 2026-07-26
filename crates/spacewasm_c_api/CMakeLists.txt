@@ -1,7 +1,6 @@
 cmake_minimum_required(VERSION 3.12)
 project(spacewasm_c_api C)
 include(ExternalProject)
-include(GNUInstallDirs)
 
 set(SPACEWASM_TARGET "" CACHE STRING "Target triple for Rust compiler")
 
