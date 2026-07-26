@@ -52,23 +52,22 @@ pub struct spacewasm_value_t {
     pub u: spacewasm_value_payload_t,
 }
 
-impl spacewasm_value_t {
-    /// Convert a C value into a [`spacewasm::Value`], reading the payload field
-    /// selected by `tag`.
-    pub fn to_value(self) -> Value {
+impl From<spacewasm_value_t> for Value {
+    fn from(value: spacewasm_value_t) -> Self {
         // SAFETY: reading the union field that the tag designates as active.
         unsafe {
-            match self.tag {
-                spacewasm_valtype_t::SPACEWASM_I32 => Value::I32(self.u.i32_),
-                spacewasm_valtype_t::SPACEWASM_I64 => Value::I64(self.u.i64_),
-                spacewasm_valtype_t::SPACEWASM_F32 => Value::F32(self.u.f32_),
-                spacewasm_valtype_t::SPACEWASM_F64 => Value::F64(self.u.f64_),
+            match value.tag {
+                spacewasm_valtype_t::SPACEWASM_I32 => Value::I32(value.u.i32_),
+                spacewasm_valtype_t::SPACEWASM_I64 => Value::I64(value.u.i64_),
+                spacewasm_valtype_t::SPACEWASM_F32 => Value::F32(value.u.f32_),
+                spacewasm_valtype_t::SPACEWASM_F64 => Value::F64(value.u.f64_),
             }
         }
     }
+}
 
-    /// Convert a [`spacewasm::Value`] into a C value.
-    pub fn from_value(v: Value) -> spacewasm_value_t {
+impl From<Value> for spacewasm_value_t {
+    fn from(v: Value) -> Self {
         match v {
             Value::I32(x) => spacewasm_value_t {
                 tag: spacewasm_valtype_t::SPACEWASM_I32,
@@ -88,9 +87,19 @@ impl spacewasm_value_t {
             },
         }
     }
+}
+
+impl spacewasm_value_t {
+    pub fn to_value(self) -> Value {
+        self.into()
+    }
+
+    pub fn from_value(v: Value) -> spacewasm_value_t {
+        v.into()
+    }
 
     /// Interpret a [`RawValue`] as the given type and convert to a C value.
     pub fn from_raw(raw: RawValue, ty: ValType) -> spacewasm_value_t {
-        spacewasm_value_t::from_value(raw.to_value(ty))
+        raw.to_value(ty).into()
     }
 }

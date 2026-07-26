@@ -452,6 +452,40 @@ pub unsafe extern "C" fn spacewasm_store_run(
     }
     rs
 }
+
+/// Resume the interpreter from a paused state.
+///
+/// # Safety
+/// `store` must be live; `out` valid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn spacewasm_store_resume(store: *mut SpacewasmStore) -> spacewasm_status_t {
+    let Some(store) = (unsafe { store.as_mut() }) else {
+        return status::SPACEWASM_ERR_NULL_ARG;
+    };
+
+    store.resume(None);
+    status::SPACEWASM_OK
+}
+
+/// Resume the interpreter from a paused state.
+/// This function will also push a value to the interpreter stack
+/// as the return value of the host function that requested a pause.
+///
+/// # Safety
+/// `store` must be live; `out` valid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn spacewasm_store_resume_value(
+    store: *mut SpacewasmStore,
+    resume_value: spacewasm_value_t,
+) -> spacewasm_status_t {
+    let Some(store) = (unsafe { store.as_mut() }) else {
+        return status::SPACEWASM_ERR_NULL_ARG;
+    };
+
+    store.resume(Some(resume_value.into()));
+    status::SPACEWASM_OK
+}
+
 /// Fetch the result of the last completed call, coerced to `expected`, into
 /// `out`.
 ///

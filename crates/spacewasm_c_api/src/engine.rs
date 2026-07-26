@@ -109,11 +109,6 @@ pub struct SpacewasmStore {
 }
 
 impl SpacewasmStore {
-    /// Build an empty store from the accumulated host modules, allocating the
-    /// core [`Engine`] (with a `stack_size`-byte guest stack) and a
-    /// [`CodeBuilder`] bounded to `options`. `max_modules` is the
-    /// guest-module capacity (≤ 256). The store is ready to load guest modules
-    /// onto with [`SpacewasmStore::load_module`].
     pub fn new(
         stack_size: usize,
         max_modules: usize,
@@ -286,6 +281,10 @@ impl SpacewasmStore {
         self.engine
             .result
             .map(|raw| spacewasm_value_t::from_raw(raw, ty))
+    }
+
+    pub fn resume(&mut self, resume_value: Option<Value>) {
+        self.engine.resume(resume_value);
     }
 
     /// The active guest linear memory (from the most recent invocation context).

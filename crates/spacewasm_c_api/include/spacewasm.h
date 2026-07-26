@@ -551,6 +551,25 @@ spacewasm_run_status_t spacewasm_store_run(struct spacewasm_store_t *store,
                                            spacewasm_trap_t *out_trap);
 
 /*
+ Resume the interpreter from a paused state.
+
+ # Safety
+ `store` must be live; `out` valid.
+ */
+spacewasm_status_t spacewasm_store_resume(struct spacewasm_store_t *store);
+
+/*
+ Resume the interpreter from a paused state.
+ This function will also push a value to the interpreter stack
+ as the return value of the host function that requested a pause.
+
+ # Safety
+ `store` must be live; `out` valid.
+ */
+spacewasm_status_t spacewasm_store_resume_value(struct spacewasm_store_t *store,
+                                                struct spacewasm_value_t resume_value);
+
+/*
  Fetch the result of the last completed call, coerced to `expected`, into
  `out`.
 

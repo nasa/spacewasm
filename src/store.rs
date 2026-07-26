@@ -230,7 +230,12 @@ impl Engine {
         }
     }
 
-    pub fn call_host_fn(&mut self, module: HostModuleRef, index: u16, args: &[Value]) -> HostFunctionResult {
+    pub fn call_host_fn(
+        &mut self,
+        module: HostModuleRef,
+        index: u16,
+        args: &[Value],
+    ) -> HostFunctionResult {
         let f = self.store.host_modules[module.0 as usize].functions[index as usize].get_call();
         let r = f(self, args);
         self.store.host_modules[module.0 as usize].functions[index as usize].finish_call(f);
