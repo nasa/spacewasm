@@ -58,7 +58,8 @@ impl From<spacewasm_compiler_options_t> for CompilerOptions {
     }
 }
 
-/// C Engine wrapper combining the core Engine with its CodeBuilder.
+/// Handle holding the SpaceWasm engine and compiled IR code.
+/// This handle is used for holding and executing the SpaceWasm interpreter.
 pub struct CEngine {
     engine: Engine,
     code_builder: CodeBuilder,
@@ -300,7 +301,7 @@ pub unsafe extern "C" fn spacewasm_load_module(
 
 /// Consume the host module vector `host` and finish it into an engine handle,
 /// written to `out_engine`. The engine is sized with a `stack_size`-byte guest
-/// stack, room for `max_modules` guest modules (≤ 256), and compiles guest
+/// stack, room for `max_modules` guest modules (<= 256), and compiles guest
 /// modules according to `options` (code-page budget, `memory.grow` support,
 /// backpatch bound). No guest module is loaded yet; use
 /// [`spacewasm_load_module`] to load one or more.
