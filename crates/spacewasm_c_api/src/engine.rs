@@ -153,15 +153,6 @@ impl SpacewasmStore {
         Ok(module_ref.0 as u32)
     }
 
-    /// Returns `true` if the module at `module_idx` declares a start function
-    /// that should be run (via [`SpacewasmStore::run_start`]) before use.
-    pub fn module_needs_start(&self, module_idx: u32) -> Result<bool, spacewasm_status_t> {
-        if module_idx as usize >= self.engine.store.modules().len() {
-            return Err(status::SPACEWASM_ERR_NOT_FOUND);
-        }
-        Ok(self.engine.needs_start(ModuleRef(module_idx as u8)))
-    }
-
     pub fn invoke_start(&mut self, module_idx: u32) -> spacewasm_run_status_t {
         if self.phase != EngineState::Idle {
             return spacewasm_run_status_t::SPACEWASM_RUN_TRAP;
@@ -285,10 +276,5 @@ impl SpacewasmStore {
 
     pub fn resume(&mut self, resume_value: Option<Value>) {
         self.engine.resume(resume_value);
-    }
-
-    /// The active guest linear memory (from the most recent invocation context).
-    pub fn memory(&self) -> &Rc<Memory> {
-        &self.engine.memory
     }
 }
