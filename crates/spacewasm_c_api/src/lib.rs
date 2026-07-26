@@ -7,7 +7,6 @@
 pub mod alloc;
 pub mod capi;
 pub mod config;
-pub mod engine;
 pub mod host;
 pub mod status;
 pub mod stream;

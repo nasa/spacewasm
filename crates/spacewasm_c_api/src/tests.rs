@@ -1,4 +1,3 @@
-use crate::capi::CEngine;
 //! End-to-end tests for the C ABI, driven from Rust.
 #![cfg(test)]
 
@@ -10,9 +9,7 @@ use std::sync::Mutex;
 
 use crate::SpacewasmAllocator;
 use crate::capi::*;
-use crate::engine::{
-    SpacewasmCaller, spacewasm_compiler_options_t, spacewasm_hostcall_result_t,
-};
+use crate::host::{SpacewasmCaller, spacewasm_hostcall_result_t};
 use crate::status::{self, spacewasm_run_status_t, spacewasm_status_t, spacewasm_trap_t};
 use crate::stream::spacewasm_read_result_t;
 use crate::value::{spacewasm_valtype_t, spacewasm_value_payload_t, spacewasm_value_t};
@@ -507,12 +504,12 @@ fn host_function_and_memory() {
     let mut hmod = 0u32;
     unsafe {
         assert_eq!(
-            spacewasm_host_new(host.as_mut_ptr(), c"env".as_ptr(), 1, 0, &mut hmod),
+            spacewasm_add_host_module(host.as_mut_ptr(), c"env".as_ptr(), 1, 0, &mut hmod),
             status::SPACEWASM_OK,
             "add_host_module"
         );
         assert_eq!(
-            spacewasm_host_add_func(
+            spacewasm_add_host_function(
                 host.as_mut_ptr(),
                 hmod,
                 c"add_one".as_ptr(),
@@ -592,11 +589,11 @@ fn error_paths() {
     let mut hmod = 0u32;
     unsafe {
         assert_eq!(
-            spacewasm_host_new(host.as_mut_ptr(), c"env".as_ptr(), 1, 0, &mut hmod),
+            spacewasm_add_host_module(host.as_mut_ptr(), c"env".as_ptr(), 1, 0, &mut hmod),
             status::SPACEWASM_OK
         );
         assert_eq!(
-            spacewasm_host_add_func(
+            spacewasm_add_host_function(
                 host.as_mut_ptr(),
                 hmod,
                 c"bad".as_ptr(),
@@ -847,15 +844,6 @@ fn run_status_maps() {
         (
             spacewasm_run_status_t::SPACEWASM_RUN_TRAP,
             spacewasm_trap_t::SPACEWASM_TRAP_DIVIDE_BY_ZERO
-        )
-    );
-    assert_eq!(
-        status::run_status(&InterpreterResult::ReaderError(
-            spacewasm::IrReaderError::InvalidAddress
-        )),
-        (
-            spacewasm_run_status_t::SPACEWASM_RUN_READER_ERROR,
-            spacewasm_trap_t::SPACEWASM_TRAP_NONE
         )
     );
 }
@@ -1189,11 +1177,11 @@ fn host_memory_accessors() {
     let mut hmod = 0u32;
     unsafe {
         assert_eq!(
-            spacewasm_host_new(host.as_mut_ptr(), c"env".as_ptr(), 1, 0, &mut hmod),
+            spacewasm_add_host_module(host.as_mut_ptr(), c"env".as_ptr(), 1, 0, &mut hmod),
             status::SPACEWASM_OK
         );
         assert_eq!(
-            spacewasm_host_add_func(
+            spacewasm_add_host_function(
                 host.as_mut_ptr(),
                 hmod,
                 c"add_one".as_ptr(),
@@ -1372,12 +1360,12 @@ fn add_host_function_not_found_module() {
     let mut hmod = 0u32;
     unsafe {
         assert_eq!(
-            spacewasm_host_new(host.as_mut_ptr(), c"env".as_ptr(), 1, 0, &mut hmod),
+            spacewasm_add_host_module(host.as_mut_ptr(), c"env".as_ptr(), 1, 0, &mut hmod),
             status::SPACEWASM_OK
         );
         // A NULL callback is rejected.
         assert_eq!(
-            spacewasm_host_add_func(
+            spacewasm_add_host_function(
                 host.as_mut_ptr(),
                 hmod,
                 c"f".as_ptr(),
@@ -1391,7 +1379,7 @@ fn add_host_function_not_found_module() {
         );
         // A module index that does not exist is not found.
         assert_eq!(
-            spacewasm_host_add_func(
+            spacewasm_add_host_function(
                 host.as_mut_ptr(),
                 99,
                 c"f".as_ptr(),
@@ -1597,11 +1585,11 @@ fn pause_and_resume_no_value() {
     let mut hmod = 0u32;
     unsafe {
         assert_eq!(
-            spacewasm_host_new(host.as_mut_ptr(), c"env".as_ptr(), 1, 0, &mut hmod),
+            spacewasm_add_host_module(host.as_mut_ptr(), c"env".as_ptr(), 1, 0, &mut hmod),
             status::SPACEWASM_OK
         );
         assert_eq!(
-            spacewasm_host_add_func(
+            spacewasm_add_host_function(
                 host.as_mut_ptr(),
                 hmod,
                 c"pause".as_ptr(),
@@ -1683,11 +1671,11 @@ fn pause_and_resume_with_value() {
     let mut hmod = 0u32;
     unsafe {
         assert_eq!(
-            spacewasm_host_new(host.as_mut_ptr(), c"env".as_ptr(), 1, 0, &mut hmod),
+            spacewasm_add_host_module(host.as_mut_ptr(), c"env".as_ptr(), 1, 0, &mut hmod),
             status::SPACEWASM_OK
         );
         assert_eq!(
-            spacewasm_host_add_func(
+            spacewasm_add_host_function(
                 host.as_mut_ptr(),
                 hmod,
                 c"pause_i32".as_ptr(),

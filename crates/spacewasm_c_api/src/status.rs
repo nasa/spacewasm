@@ -176,9 +176,5 @@ pub fn run_status(r: &InterpreterResult) -> (spacewasm_run_status_t, spacewasm_t
             spacewasm_run_status_t::SPACEWASM_RUN_TRAP,
             trap_reason_code(*t),
         ),
-        InterpreterResult::ReaderError(_) => (
-            spacewasm_run_status_t::SPACEWASM_RUN_READER_ERROR,
-            SPACEWASM_TRAP_NONE,
-        ),
     }
 }

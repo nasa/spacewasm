@@ -146,70 +146,93 @@ pub unsafe extern "C" fn spacewasm_host_new(
     status::SPACEWASM_OK
 }
 
-/// Append a host function to the host vector.
+/// Add a host module named `name` sized for `max_functions` functions and
+/// `max_globals` globals, writing its index to `out_idx` (if non-null).
 ///
 /// # Safety
-/// `host` and `module_name` must be live.
+/// `host` must be live; all C strings valid and NUL-terminated.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn spacewasm_host_add_func(
+pub unsafe extern "C" fn spacewasm_add_host_module(
     host: *mut spacewasm_host_t,
-    module_name: *const c_char,
-    export_name: *const c_char,
-    params: *const spacewasm_valtype_t,
-    n_params: usize,
-    result: spacewasm_valtype_t,
-    func: spacewasm_host_fn_t,
-    userdata: *mut c_void,
+    name: *const c_char,
+    max_functions: u32,
+    max_globals: u32,
+    out_idx: *mut u32,
 ) -> spacewasm_status_t {
-    let Some(host) = (unsafe { host.as_mut() }) else {
-        return status::SPACEWASM_ERR_NULL_ARG;
+    let functions = check!(spacewasm::Vec::new(max_functions).map_err(status::alloc_status));
+    let globals = check!(spacewasm::Vec::new(max_globals).map_err(status::alloc_status));
+    let name = check!(unsafe { cstr(name) });
+    let name = check!(spacewasm::HostName::try_from_str(name).map_err(status::host_name_status));
+
+    let module = HostModule {
+        name,
+        globals,
+        functions,
+        memory: Vec::zero(),
+        table: Vec::zero(),
     };
 
-    let module_name = check!(unsafe { cstr(module_name) });
-    let export_name = check!(unsafe { cstr(export_name) });
-
-    let params_slice = if params.is_null() || n_params == 0 {
-        &[]
-    } else {
-        unsafe { core::slice::from_raw_parts(params, n_params) }
-    };
-
-    // If n_params is 0 and params is null, it might indicate no result type
-    // For now, we'll always create Some result type from the given value
-    let result_ty = Some(ValType::from(result));
-
-    let h: &mut spacewasm::Vec<spacewasm::HostModule> = host.into();
-
-    // Find or create the host module
-    let hmod = h.iter_mut().find(|m| m.name == module_name);
-    let hmod = match hmod {
-        Some(m) => m,
-        None => {
-            h.push(HostModule {
-                name: module_name.into(),
-                globals: Vec::zero(),
-                functions: Vec::zero(),
-                memory: Vec::zero(),
-                table: Vec::zero(),
-            });
-            h.last_mut().unwrap()
-        }
-    };
-
-    // Create the host function
-    let params_vec = check!(spacewasm::Vec::from_slice(params_slice).map_err(status::alloc_status));
-    let hf = check!(
-        HostFunction::new(
-            export_name,
-            params_vec,
-            result_ty,
-            CHostFunction::new(func.unwrap(), userdata)
-        )
-        .map_err(status::host_name_status)
+    let host: &mut spacewasm::Vec<spacewasm::HostModule> =
+        check!(unsafe { host.as_mut() }.ok_or(status::SPACEWASM_ERR_NULL_ARG)).into();
+    check!(
+        host.try_push(module)
+            .ok()
+            .ok_or(status::SPACEWASM_ERR_CAPACITY)
     );
 
-    hmod.functions.push(hf);
+    if let Some(out_idx) = unsafe { out_idx.as_mut() } {
+        *out_idx = (host.len() - 1) as u32;
+    }
+
     status::SPACEWASM_OK
+}
+
+/// Register a host function `name` in host module `module_idx`, with parameter
+/// and return signatures given by `params_sig`/`returns_sig` and implemented by
+/// callback `f` (passed `userdata` on each call).
+///
+/// # Safety
+/// `host` must be live; all C strings valid and NUL-terminated.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn spacewasm_add_host_function(
+    host: *mut spacewasm_host_t,
+    module_idx: u32,
+    name: *const c_char,
+    params_sig: *const c_char,
+    returns_sig: *const c_char,
+    f: spacewasm_host_fn_t,
+    userdata: *mut c_void,
+) -> spacewasm_status_t {
+    let name = check!(unsafe { cstr(name) });
+    let params_sig = check!(unsafe { cstr(params_sig) });
+    let returns_sig = check!(unsafe { cstr(returns_sig) });
+
+    let name = check!(spacewasm::HostName::try_from_str(name).map_err(status::host_name_status));
+    let params =
+        check!(spacewasm::HostValList::try_new(params_sig).map_err(status::host_val_list_status));
+    let returns =
+        check!(spacewasm::HostValList::try_new(returns_sig).map_err(status::host_val_list_status));
+
+    let host: &mut spacewasm::Vec<spacewasm::HostModule> =
+        check!(unsafe { host.as_mut() }.ok_or(status::SPACEWASM_ERR_NULL_ARG)).into();
+
+    let f = check!(f.ok_or(status::SPACEWASM_ERR_NULL_ARG));
+
+    let trampoline = CHostFunction::new(f, userdata);
+    let host_fn = check!(
+        HostFunction::try_new(name, params, returns, move |state, args| {
+            trampoline.call(state, args)
+        })
+        .map_err(status::host_val_list_status)
+    );
+
+    match host.get_mut(module_idx as usize) {
+        Some(m) => match m.functions.try_push(host_fn) {
+            Ok(()) => status::SPACEWASM_OK,
+            Err(_) => status::SPACEWASM_ERR_CAPACITY,
+        },
+        None => status::SPACEWASM_ERR_NOT_FOUND,
+    }
 }
 
 /// Load a guest module named `name` onto an existing engine by streaming its
@@ -647,4 +670,17 @@ pub unsafe extern "C" fn spacewasm_mem_write(
     len: usize,
 ) -> spacewasm_status_t {
     unsafe { host::mem_write(caller, addr, src, len) }
+}
+
+/// Report the size of guest linear memory in pages. Intended for use from
+/// within a host function.
+///
+/// # Safety
+/// `caller` must be a live caller handle; `out_pages` must be a valid pointer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn spacewasm_mem_size(
+    caller: *mut SpacewasmCaller,
+    out_pages: *mut u32,
+) -> spacewasm_status_t {
+    unsafe { host::mem_size(caller, out_pages) }
 }
