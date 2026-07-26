@@ -102,7 +102,6 @@ impl IrReader {
         match opcode {
             // Control instructions
             UNREACHABLE => instruction!(unreachable),
-            NOP => instruction!(nop),
 
             IF => {
                 let false_address = IrReader::read_u32(code, pc);

@@ -29,7 +29,7 @@ macro_rules! check {
     };
 }
 
-/// FFI-safe mirror of [`spacewasm::CompilerOptions`], controlling how guest
+/// FFI-safe mirror of [`CompilerOptions`], controlling how guest
 /// modules loaded onto a store are compiled. Passed to [`spacewasm_new`].
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
@@ -106,24 +106,24 @@ pub unsafe extern "C" fn spacewasm_allocator_destroy(allocator: *mut SpacewasmAl
 
 #[repr(C)]
 pub struct spacewasm_host_t {
-    ptr: *mut spacewasm::HostModule,
+    ptr: *mut HostModule,
     capacity: u32,
     len: u32,
 }
 
-impl From<spacewasm::Vec<spacewasm::HostModule>> for spacewasm_host_t {
-    fn from(value: spacewasm::Vec<spacewasm::HostModule>) -> Self {
+impl From<Vec<HostModule>> for spacewasm_host_t {
+    fn from(value: Vec<HostModule>) -> Self {
         unsafe { core::mem::transmute(value) }
     }
 }
 
-impl From<spacewasm_host_t> for spacewasm::Vec<spacewasm::HostModule> {
+impl From<spacewasm_host_t> for Vec<HostModule> {
     fn from(value: spacewasm_host_t) -> Self {
         unsafe { core::mem::transmute(value) }
     }
 }
 
-impl From<&mut spacewasm_host_t> for &mut spacewasm::Vec<spacewasm::HostModule> {
+impl From<&mut spacewasm_host_t> for &mut Vec<HostModule> {
     fn from(value: &mut spacewasm_host_t) -> Self {
         unsafe { core::mem::transmute(value) }
     }
@@ -142,7 +142,7 @@ pub unsafe extern "C" fn spacewasm_host_new(
         return status::SPACEWASM_ERR_NULL_ARG;
     }
 
-    let v = check!(spacewasm::Vec::new(len).map_err(status::alloc_status));
+    let v = check!(Vec::new(len).map_err(status::alloc_status));
     unsafe { *dest = v.into() };
     status::SPACEWASM_OK
 }
@@ -160,8 +160,8 @@ pub unsafe extern "C" fn spacewasm_add_host_module(
     max_globals: u32,
     out_idx: *mut u32,
 ) -> spacewasm_status_t {
-    let functions = check!(spacewasm::Vec::new(max_functions).map_err(status::alloc_status));
-    let globals = check!(spacewasm::Vec::new(max_globals).map_err(status::alloc_status));
+    let functions = check!(Vec::new(max_functions).map_err(status::alloc_status));
+    let globals = check!(Vec::new(max_globals).map_err(status::alloc_status));
     let name = check!(unsafe { cstr(name) });
     let name = check!(spacewasm::HostName::try_from_str(name).map_err(status::host_name_status));
 
@@ -173,7 +173,7 @@ pub unsafe extern "C" fn spacewasm_add_host_module(
         table: Vec::zero(),
     };
 
-    let host: &mut spacewasm::Vec<spacewasm::HostModule> =
+    let host: &mut Vec<HostModule> =
         check!(unsafe { host.as_mut() }.ok_or(status::SPACEWASM_ERR_NULL_ARG)).into();
     check!(
         host.try_push(module)
@@ -214,7 +214,7 @@ pub unsafe extern "C" fn spacewasm_add_host_function(
     let returns =
         check!(spacewasm::HostValList::try_new(returns_sig).map_err(status::host_val_list_status));
 
-    let host: &mut spacewasm::Vec<spacewasm::HostModule> =
+    let host: &mut Vec<HostModule> =
         check!(unsafe { host.as_mut() }.ok_or(status::SPACEWASM_ERR_NULL_ARG)).into();
 
     let f = check!(f.ok_or(status::SPACEWASM_ERR_NULL_ARG));
@@ -307,8 +307,8 @@ pub unsafe extern "C" fn spacewasm_load_module(
 /// [`spacewasm_load_module`] to load one or more.
 ///
 /// `host` may be null to create an engine with no host modules. The host vector
-/// is always consumed (its handle must not be used or destroyed afterwards),
-/// whether or not the engine is created successfully.
+/// is always consumed (its handle must not be used or destroyed afterward),
+/// whether the engine is created successfully.
 ///
 /// # Safety
 /// `host` must be null or a live handle from [`spacewasm_host_new`], not already
@@ -331,8 +331,8 @@ pub unsafe extern "C" fn spacewasm_new(
 
     // Take ownership of the host modules (consuming the handle), or start from
     // an empty set when none were supplied.
-    let host_modules: spacewasm::Vec<spacewasm::HostModule> = if host.is_null() {
-        check!(spacewasm::Vec::new(0).map_err(status::alloc_status))
+    let host_modules: Vec<HostModule> = if host.is_null() {
+        Vec::zero()
     } else {
         unsafe { host.read() }.into()
     };
@@ -364,8 +364,8 @@ pub unsafe extern "C" fn spacewasm_host_destroy(host: *mut spacewasm_host_t) {
     }
     // Convert the handle back to the owning `Vec` so its allocation (and each
     // `HostModule`) is freed.
-    let modules: spacewasm::Vec<spacewasm::HostModule> = unsafe { host.read() }.into();
-    core::mem::drop(modules);
+    let modules: Vec<HostModule> = unsafe { host.read() }.into();
+    drop(modules);
 }
 
 /// Find a module with a given name in the engine.
