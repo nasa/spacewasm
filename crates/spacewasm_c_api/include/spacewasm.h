@@ -143,7 +143,6 @@ enum spacewasm_run_status_t
     SPACEWASM_RUN_OUT_OF_FUEL = 1,
     SPACEWASM_RUN_PAUSE = 2,
     SPACEWASM_RUN_TRAP = 3,
-    SPACEWASM_RUN_READER_ERROR = 4,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
