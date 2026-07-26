@@ -197,10 +197,6 @@ fn main() {
             eprintln!("trap during initialization {t:?}");
             std::process::exit(1);
         }
-        InterpreterResult::ReaderError(e) => {
-            eprintln!("ir reader error {e:?}");
-            std::process::exit(1);
-        }
         InterpreterResult::Pause => {
             eprintln!("pause during init");
             std::process::exit(1);

@@ -286,9 +286,6 @@ pub fn no_traps(wasm: &[u8]) {
         InterpreterResult::Trap(trap_reason) => {
             panic!("Trap during initialization: {trap_reason:?}")
         }
-        InterpreterResult::ReaderError(ir_reader_error) => {
-            panic!("Ir Reader Error: {ir_reader_error:?}")
-        }
         InterpreterResult::Pause => panic!("Host init pause"),
     }
 
@@ -390,9 +387,6 @@ pub fn no_traps(wasm: &[u8]) {
             }
             InterpreterResult::Pause => {
                 panic!("interpreter paused by host function")
-            }
-            InterpreterResult::ReaderError(e) => {
-                panic!("failed to read ir instruction {e:?}")
             }
         }
     }

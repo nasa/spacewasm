@@ -619,9 +619,7 @@ fn load_module(
             .into_wasm_memory_allocator(),
     )?;
 
-    // Append the module and run its start function. `engine` and `code_builder`
-    // are disjoint fields, so the interpreter reads code straight from the
-    // builder's pages without a copy while `engine` is borrowed mutably.
+    // Append the module and run its start function.
     let module_ref = ctx.engine.push_module(module);
     let result = match ctx.engine.invoke_start(module_ref) {
         StartInvocation::Finished => InterpreterResult::Finished,
@@ -697,7 +695,6 @@ fn invoke_function_resume(
                 panic!("Multi-value returns not supported");
             }
         }
-        InterpreterResult::ReaderError(err) => panic!("Reader error: {err:?}"),
         InterpreterResult::OutOfFuel => panic!("Infinite loop detected"),
         err => Err(err),
     }
@@ -768,12 +765,7 @@ fn invoke_function_normal(
         (func_ref, return_types, params)
     };
 
-    // `engine` and `code_builder` are disjoint fields, so the interpreter reads
-    // code straight from the builder's pages while `engine` is borrowed mutably.
-    let text = ctx.code_builder.pages();
-    let state = &mut ctx.engine;
-
-    state.invoke(f_ref, &params).unwrap();
+    ctx.engine.invoke(f_ref, &params).unwrap();
 
     let test_runner: Inspector<'_, _, _, _> = Inspector {
         v: &Interpreter,
@@ -786,7 +778,7 @@ fn invoke_function_normal(
         .push(format!("invoke {}({:?})", func_name, params));
 
     // Run until completion - up to 10-million instructions to catch infinite loops
-    let result = test_runner.run(text, state, 10000000);
+    let result = test_runner.run(ctx.code_builder.pages(), &mut ctx.engine, 10000000);
 
     // Check the result
     match result {
@@ -794,12 +786,11 @@ fn invoke_function_normal(
             if return_types.is_empty() {
                 Ok(None)
             } else if return_types.len() == 1 {
-                Ok(Some(state.result.unwrap().to_value(return_types[0])))
+                Ok(Some(ctx.engine.result.unwrap().to_value(return_types[0])))
             } else {
                 panic!("Multi-value returns not supported");
             }
         }
-        InterpreterResult::ReaderError(err) => panic!("Reader error: {err:?}"),
         InterpreterResult::OutOfFuel => panic!("Infinite loop detected"),
         InterpreterResult::Pause => {
             // Save the return types so we can use them after resume

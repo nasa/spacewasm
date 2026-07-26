@@ -19,12 +19,13 @@ exclude = [
     "__spacewasm_alloc",
     "__spacewasm_dealloc",
     "__spacewasm_memory_statistics",
+    "rust_eh_personality",
 ]
 
 [export.rename]
 "SpacewasmAllocator" = "spacewasm_allocator_t"
 "SpacewasmCaller" = "spacewasm_caller_t"
-"SpacewasmStore" = "spacewasm_store_t"
+"CEngine" = "spacewasm_t"
 "HostModule" = "spacewasm_host_module_t"
 "MemoryStatistics" = "spacewasm_memory_statistics_t"
 

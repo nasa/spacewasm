@@ -55,7 +55,7 @@ mod stack;
 pub use stack::*;
 
 mod ir_reader;
-pub use ir_reader::*;
+pub(crate) use ir_reader::*;
 
 mod engine;
 pub use engine::*;

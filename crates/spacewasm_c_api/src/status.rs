@@ -48,7 +48,7 @@ pub enum spacewasm_status_t {
 
 pub use spacewasm_status_t::*;
 
-/// Outcome of a call to `spacewasm_store_run`.
+/// Outcome of a call to `spacewasm_run`.
 #[repr(i32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum spacewasm_run_status_t {
@@ -56,7 +56,6 @@ pub enum spacewasm_run_status_t {
     SPACEWASM_RUN_OUT_OF_FUEL = 1,
     SPACEWASM_RUN_PAUSE = 2,
     SPACEWASM_RUN_TRAP = 3,
-    SPACEWASM_RUN_READER_ERROR = 4,
 }
 
 /// Reason accompanying a trap (`out_trap`). Mirrors [`spacewasm::TrapReason`],
@@ -175,10 +174,6 @@ pub fn run_status(r: &InterpreterResult) -> (spacewasm_run_status_t, spacewasm_t
         InterpreterResult::Trap(t) => (
             spacewasm_run_status_t::SPACEWASM_RUN_TRAP,
             trap_reason_code(*t),
-        ),
-        InterpreterResult::ReaderError(_) => (
-            spacewasm_run_status_t::SPACEWASM_RUN_READER_ERROR,
-            SPACEWASM_TRAP_NONE,
         ),
     }
 }
