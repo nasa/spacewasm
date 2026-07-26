@@ -659,16 +659,19 @@ fn invoke_function_resume(
     test_log: Rc<RefCell<LimitedVec<String>>>,
 ) -> Result<Option<Value>, InterpreterResult> {
     // Engine is paused, resume with the provided arguments
-    if args.len() != 1 {
-        panic!("Resume expects exactly 1 argument, got {}", args.len());
-    }
-    let resume_value = parse_value(&args[0]);
+    let resume_value = if args.len() == 0 {
+        None
+    } else if args.len() == 1 {
+        Some(parse_value(&args[0]))
+    } else {
+        panic!("Resume expects exactly 0 or 1 argument, got {}", args.len());
+    };
 
     test_log
         .borrow_mut()
         .push(format!("resume {:?}", resume_value));
 
-    ctx.engine.resume(Some(resume_value));
+    ctx.engine.resume(resume_value);
 
     // Continue execution from the paused state
     let test_runner: Inspector<'_, _, _, _> = Inspector {

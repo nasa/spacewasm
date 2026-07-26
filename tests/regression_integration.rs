@@ -73,6 +73,9 @@ pub fn regression_host_module() -> HostModule {
             HostFunction::new("noop", "".into(), "".into(), |_, _| {
                 ControlFlow::Continue(None)
             }),
+            HostFunction::new("pause", "".into(), "".into(), |_, _| {
+                ControlFlow::Break(HostFunctionBreak::Pause)
+            }),
             HostFunction::new("pause_i32", "".into(), "i".into(), |_, _| {
                 ControlFlow::Break(HostFunctionBreak::Pause)
             }),

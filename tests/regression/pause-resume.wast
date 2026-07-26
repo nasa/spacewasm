@@ -1,38 +1,41 @@
 ;; Test pause/resume functionality of the interpreter
 
 (module
+  (import "regression" "pause" (func $pause))
   (import "regression" "pause_i32" (func $pause_i32 (result i32)))
   (import "regression" "pause_i64" (func $pause_i64 (result i64)))
   (import "regression" "pause_f32" (func $pause_f32 (result f32)))
   (import "regression" "pause_f64" (func $pause_f64 (result f64)))
 
-  ;; Simple pause-resume for i32
+  ;; Dummy functions to provide resume values
+  ;; The test harness intercepts these when engine is paused
+  (func (export "resume") (result i32) unreachable (i32.const 0))
+  (func (export "resume-i32") (param i32) (result i32)
+    (unreachable (local.get 0)))
+
+  (func (export "resume-i64") (param i64) (result i64)
+    (unreachable (local.get 0)))
+
+  (func (export "resume-f32") (param f32) (result f32)
+    (unreachable (local.get 0)))
+
+  (func (export "resume-f64") (param f64) (result f64)
+    (unreachable (local.get 0)))
+
+  (func (export "test-pause-resume") (result i32)
+    (call $pause)
+    (i32.const 1234)
+  )
+
   (func (export "test-pause-resume-i32") (result i32)
     (call $pause_i32))
 
-  ;; Dummy functions to provide resume values
-  ;; The test harness intercepts these when engine is paused
-  (func (export "resume-i32") (param i32) (result i32)
-    (local.get 0))
-
-  (func (export "resume-i64") (param i64) (result i64)
-    (local.get 0))
-
-  (func (export "resume-f32") (param f32) (result f32)
-    (local.get 0))
-
-  (func (export "resume-f64") (param f64) (result f64)
-    (local.get 0))
-
-  ;; Simple pause-resume for i64
   (func (export "test-pause-resume-i64") (result i64)
     (call $pause_i64))
 
-  ;; Simple pause-resume for f32
   (func (export "test-pause-resume-f32") (result f32)
     (call $pause_f32))
 
-  ;; Simple pause-resume for f64
   (func (export "test-pause-resume-f64") (result f64)
     (call $pause_f64))
 
@@ -98,12 +101,9 @@
       (call $pause_i32)))
 )
 
-;;  Test Pattern:
-;; 1. assert_trap with "paused" - calls the function, it pauses
-;; 2. Immediately invoke the resume-* function with the resume value
-;;    The test harness detects the paused state and resumes instead of invoking
+(assert_trap (invoke "test-pause-resume") "paused")
+(assert_return (invoke "resume") (i32.const 1234))
 
-;; Basic pause/resume tests
 (assert_trap (invoke "test-pause-resume-i32") "paused")
 (assert_return (invoke "resume-i32" (i32.const 42)) (i32.const 42))
 
