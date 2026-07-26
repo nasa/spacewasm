@@ -250,10 +250,6 @@ fn main() {
             eprintln!("Trap during initialization: {trap_reason:?}");
             process::exit(1);
         }
-        InterpreterResult::ReaderError(ir_reader_error) => {
-            eprintln!("Reader error during initialization: {ir_reader_error:?}");
-            process::exit(1);
-        }
         InterpreterResult::Pause => {
             eprintln!("Module initialization paused");
             process::exit(1);
@@ -364,10 +360,6 @@ fn main() {
             }
             Ok(InterpreterResult::Pause) => {
                 eprintln!("\nResult: Paused");
-            }
-            Ok(InterpreterResult::ReaderError(e)) => {
-                eprintln!("\nResult: Reader error - {:?}", e);
-                process::exit(1);
             }
             Err(panic_payload) => {
                 eprintln!("\nResult: Panicked during execution");

@@ -132,7 +132,7 @@ typedef int32_t spacewasm_read_result_t;
 #endif // __cplusplus
 
 /*
- Outcome of a call to `spacewasm_store_run`.
+ Outcome of a call to `spacewasm_run`.
  */
 enum spacewasm_run_status_t
 #if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
@@ -244,14 +244,14 @@ typedef struct spacewasm_host_module_t spacewasm_host_module_t;
 typedef struct spacewasm_allocator_t spacewasm_allocator_t;
 
 /*
- SpaceWasm store handle (`spacewasm_store_t`).
+ SpaceWasm store handle (`spacewasm_t`).
 
  Owns the core [`Engine`] (which owns the store and execution state) and the
  persistent [`CodeBuilder`] that accumulates compiled text across successive
  module loads. The interpreter reads code directly from the builder's pages,
  so no separate copy is kept.
  */
-typedef struct spacewasm_store_t spacewasm_store_t;
+typedef struct spacewasm_t spacewasm_t;
 
 /*
  Allocate `size` bytes aligned to `align`. Return NULL on failure.
@@ -327,7 +327,7 @@ typedef spacewasm_read_result_t (*spacewasm_read_fn_t)(void *userdata,
 
 /*
  FFI-safe mirror of [`spacewasm::CompilerOptions`], controlling how guest
- modules loaded onto a store are compiled. Passed to [`spacewasm_store_new`].
+ modules loaded onto a store are compiled. Passed to [`spacewasm_new`].
  */
 typedef struct spacewasm_compiler_options_t {
     /*
@@ -381,7 +381,7 @@ spacewasm_memory_statistics_t spacewasm_memory_statistics(void);
 /*
  Create a guest linear-memory allocator from three C callbacks, returning an
  opaque handle (or null if any callback is null or allocation fails). The
- handle is passed to [`spacewasm_store_load_module`] and must be released with
+ handle is passed to [`spacewasm_load_module`] and must be released with
  [`spacewasm_allocator_destroy`]. `userdata` is passed to every callback.
  */
 struct spacewasm_allocator_t *spacewasm_allocator_new(spacewasm_alloc_fn_t alloc,
@@ -442,7 +442,7 @@ spacewasm_status_t spacewasm_add_host_function(struct spacewasm_host_t *host,
  bytes through the `read` callback. The callback owns the buffer backing each
  chunk (see [`spacewasm_read_fn_t`]). This does not run the module's start
  function; use [`spacewasm_store_module_get_start`] and
- [`spacewasm_store_run_start`] for that. `allocator` supplies the guest linear
+ [`spacewasm_run_start`] for that. `allocator` supplies the guest linear
  memory (see [`spacewasm_allocator_new`]). Writes the new module's index to
  `out_module_idx` (if non-null). May be called repeatedly to load several
  modules onto the same store.
@@ -451,7 +451,7 @@ spacewasm_status_t spacewasm_add_host_function(struct spacewasm_host_t *host,
  `store` and `allocator` must be live handles; `read` a valid callback;
  `out_module_idx` null or valid.
  */
-spacewasm_status_t spacewasm_store_load_module(struct spacewasm_store_t *store,
+spacewasm_status_t spacewasm_load_module(struct spacewasm_t *store,
                                                const char *name,
                                                spacewasm_read_fn_t read,
                                                void *read_userdata,
@@ -464,7 +464,7 @@ spacewasm_status_t spacewasm_store_load_module(struct spacewasm_store_t *store,
  stack, room for `max_modules` guest modules (≤ 256), and compiles guest
  modules according to `options` (code-page budget, `memory.grow` support,
  backpatch bound). No guest module is loaded yet; use
- [`spacewasm_store_load_module`] to load one or more.
+ [`spacewasm_load_module`] to load one or more.
 
  `host` may be null to create a store with no host modules. The host vector
  is always consumed (its handle must not be used or destroyed afterwards),
@@ -474,11 +474,11 @@ spacewasm_status_t spacewasm_store_load_module(struct spacewasm_store_t *store,
  `host` must be null or a live handle from [`spacewasm_host_new`], not already
  consumed/destroyed; `out_store` must be a valid pointer.
  */
-spacewasm_status_t spacewasm_store_new(struct spacewasm_host_t *host,
+spacewasm_status_t spacewasm_new(struct spacewasm_host_t *host,
                                        size_t stack_size,
                                        uint32_t max_modules,
                                        struct spacewasm_compiler_options_t options,
-                                       struct spacewasm_store_t **out_store);
+                                       struct spacewasm_t **out_store);
 
 /*
  Destroy a host vector that was never consumed into a store. No-op on null.
@@ -494,7 +494,7 @@ void spacewasm_host_destroy(struct spacewasm_host_t *host);
  # Safety
  `store` must be live; `name` valid; `out_index` valid.
  */
-spacewasm_status_t spacewasm_store_find_module(struct spacewasm_store_t *store,
+spacewasm_status_t spacewasm_find_module(struct spacewasm_t *store,
                                                const char *name,
                                                uint32_t *out_index);
 
@@ -505,7 +505,7 @@ spacewasm_status_t spacewasm_store_find_module(struct spacewasm_store_t *store,
  # Safety
  `store` must be live; `name` valid; `out_index` valid.
  */
-spacewasm_status_t spacewasm_store_find_export_func(struct spacewasm_store_t *store,
+spacewasm_status_t spacewasm_find_export_func(struct spacewasm_t *store,
                                                     uint32_t module_idx,
                                                     const char *name,
                                                     uint32_t *out_index);
@@ -522,18 +522,18 @@ spacewasm_status_t spacewasm_store_find_export_func(struct spacewasm_store_t *st
  # Safety
  `store` must be live
  */
-spacewasm_run_status_t spacewasm_store_module_invoke_start(struct spacewasm_store_t *store,
+spacewasm_run_status_t spacewasm_invoke_start(struct spacewasm_t *store,
                                                            uint32_t module_idx);
 
 /*
  Set up a call to exported function `func_index` of module `module_idx` with
  the `n` arguments in `params`. Does not run the function; drive execution
- with [`spacewasm_store_run`].
+ with [`spacewasm_run`].
 
  # Safety
  `store` must be live; `params` valid for `n` entries.
  */
-spacewasm_status_t spacewasm_store_invoke(struct spacewasm_store_t *store,
+spacewasm_status_t spacewasm_invoke(struct spacewasm_t *store,
                                           uint32_t module_idx,
                                           uint32_t func_index,
                                           const struct spacewasm_value_t *params,
@@ -546,7 +546,7 @@ spacewasm_status_t spacewasm_store_invoke(struct spacewasm_store_t *store,
  # Safety
  `store` must be live; `out_trap` null or valid.
  */
-spacewasm_run_status_t spacewasm_store_run(struct spacewasm_store_t *store,
+spacewasm_run_status_t spacewasm_run(struct spacewasm_t *store,
                                            size_t fuel,
                                            spacewasm_trap_t *out_trap);
 
@@ -556,7 +556,7 @@ spacewasm_run_status_t spacewasm_store_run(struct spacewasm_store_t *store,
  # Safety
  `store` must be live; `out` valid.
  */
-spacewasm_status_t spacewasm_store_resume(struct spacewasm_store_t *store);
+spacewasm_status_t spacewasm_resume(struct spacewasm_t *store);
 
 /*
  Resume the interpreter from a paused state.
@@ -566,7 +566,7 @@ spacewasm_status_t spacewasm_store_resume(struct spacewasm_store_t *store);
  # Safety
  `store` must be live; `out` valid.
  */
-spacewasm_status_t spacewasm_store_resume_value(struct spacewasm_store_t *store,
+spacewasm_status_t spacewasm_resume_value(struct spacewasm_t *store,
                                                 struct spacewasm_value_t resume_value);
 
 /*
@@ -576,7 +576,7 @@ spacewasm_status_t spacewasm_store_resume_value(struct spacewasm_store_t *store,
  # Safety
  `store` must be live; `out` valid.
  */
-spacewasm_status_t spacewasm_store_get_result(struct spacewasm_store_t *store,
+spacewasm_status_t spacewasm_get_result(struct spacewasm_t *store,
                                               spacewasm_valtype_t expected,
                                               struct spacewasm_value_t *out);
 
@@ -586,7 +586,7 @@ spacewasm_status_t spacewasm_store_get_result(struct spacewasm_store_t *store,
  # Safety
  `store` must be a live handle, not already destroyed.
  */
-void spacewasm_store_destroy(struct spacewasm_store_t *store);
+void spacewasm_destroy(struct spacewasm_t *store);
 
 /*
  Read `len` bytes of guest linear memory starting at `addr` into `dst`.

@@ -230,8 +230,6 @@ pub enum InterpreterResult {
     Pause,
     /// No more fuel (ran to instruction bound)
     OutOfFuel,
-    /// Failed to read an instruction from memory
-    ReaderError(IrReaderError),
 }
 
 impl Interpreter {
@@ -292,10 +290,13 @@ impl Interpreter {
 /// This is a meta-trait that provides an auto implementation of run() for all IrVisitors
 /// of a certain shape.
 ///
-/// For all types that implement [IrVisitor<State = InterpreterState, Error = InstructionError>],
+/// For all types that implement [IrVisitor<State = Engine, Error = InstructionError>],
 /// this trait will be implemented to execute instructions given the state and store.
 pub trait InterpreterRunner {
-    /// Run the interpreter for a fixed number of cycles or until a trap/host pause
+    /// Run the interpreter for a fixed number of cycles or until a trap/host pause.
+    ///
+    /// The `code` parameter contains the compiled IR pages. It's passed separately from
+    /// the engine to allow the interpreter to borrow it immutably while mutating the engine state.
     fn run(
         &self,
         code: &[Box<TextPage>],
@@ -311,8 +312,6 @@ impl<T: IrVisitor<State = Engine, Error = InterpreterBreak>> InterpreterRunner f
         state: &mut T::State,
         n_instructions: usize,
     ) -> InterpreterResult {
-        let reader = IrReader::new(code);
-
         // Run up to n instructions
         for _ in 0..n_instructions {
             let mut pc = state.pc;
@@ -322,7 +321,7 @@ impl<T: IrVisitor<State = Engine, Error = InterpreterBreak>> InterpreterRunner f
                 return InterpreterResult::Finished;
             }
 
-            let i_res = reader.visit_instruction(state, &mut pc, self);
+            let i_res = IrReader::visit_instruction(code, state, &mut pc, self);
             if state.jumped {
                 // We jumped, leave the PC
                 state.jumped = false;

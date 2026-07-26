@@ -1,16 +1,6 @@
 use crate::*;
 use ::core::ops::AddAssign;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum IrReaderError {
-    InvalidAddress,
-    InvalidOpcode(u8),
-    InvalidType,
-    InvalidCallType(u8),
-}
-
-pub struct IrReader<'code>(&'code [Box<TextPage>]);
-
 impl AddAssign<i32> for JumpTarget {
     fn add_assign(&mut self, rhs: i32) {
         let a = (self.0 as i32) + rhs;
@@ -18,56 +8,53 @@ impl AddAssign<i32> for JumpTarget {
     }
 }
 
-impl<'code> IrReader<'code> {
-    pub fn new(code: &'code [Box<TextPage>]) -> Self {
-        IrReader(code)
-    }
-
-    fn read(&self, address: &mut JumpTarget) -> Result<u16, IrReaderError> {
+pub(crate) struct IrReader;
+impl IrReader {
+    fn read(code: &[Box<TextPage>], address: &mut JumpTarget) -> u16 {
         let page = address.page();
         let offset = address.offset();
 
         #[cfg(feature = "strict-assertions")]
         {
-            if page >= self.0.len() || offset >= 256 {
-                Err(IrReaderError::InvalidAddress)
+            if page >= code.len() || offset >= 256 {
+                panic!("invalid read address");
             } else {
                 *address += 1;
-                Ok(self.0[page].0[offset])
+                code[page].0[offset]
             }
         }
 
         #[cfg(not(feature = "strict-assertions"))]
         {
-            let v = unsafe { self.0.get_unchecked(page).0.get_unchecked(offset) };
+            let v = unsafe { code.get_unchecked(page).0.get_unchecked(offset) };
             *address += 1;
-            Ok(*v)
+            *v
         }
     }
 
-    fn read_u32(&self, address: &mut JumpTarget) -> Result<u32, IrReaderError> {
-        let w1 = self.read(address)?;
-        let w2 = self.read(address)?;
+    fn read_u32(code: &[Box<TextPage>], address: &mut JumpTarget) -> u32 {
+        let w1 = IrReader::read(code, address);
+        let w2 = IrReader::read(code, address);
 
-        Ok((w1 as u32) | ((w2 as u32) << 16))
+        (w1 as u32) | ((w2 as u32) << 16)
     }
 
-    fn read_u64(&self, address: &mut JumpTarget) -> Result<u64, IrReaderError> {
-        let w1 = self.read(address)?;
-        let w2 = self.read(address)?;
-        let w3 = self.read(address)?;
-        let w4 = self.read(address)?;
+    fn read_u64(code: &[Box<TextPage>], address: &mut JumpTarget) -> u64 {
+        let w1 = IrReader::read(code, address);
+        let w2 = IrReader::read(code, address);
+        let w3 = IrReader::read(code, address);
+        let w4 = IrReader::read(code, address);
 
         let mut o = w1 as u64;
         o |= (w2 as u64) << 16;
         o |= (w3 as u64) << 32;
         o |= (w4 as u64) << 48;
 
-        Ok(o)
+        o
     }
 
     pub fn visit_instruction<S, E, V>(
-        &self,
+        code: &[Box<TextPage>],
         state: &mut S,
         pc: &mut JumpTarget,
         visitor: &V,
@@ -75,7 +62,7 @@ impl<'code> IrReader<'code> {
     where
         V: IrVisitor<State = S, Error = E>,
     {
-        let first = self.read(pc).unwrap();
+        let first = IrReader::read(code, pc);
         let opcode = (first >> 8) as u8;
         let imm = (first & 0xFF) as u8;
 
@@ -87,7 +74,7 @@ impl<'code> IrReader<'code> {
 
             // An instruction with a local variable reference immediate
             ($name:ident, local) => {{
-                let frame_offset = self.read(pc).unwrap() as i16;
+                let frame_offset = IrReader::read(code, pc) as i16;
                 visitor.$name(
                     LocalVariable {
                         frame_offset,
@@ -100,7 +87,7 @@ impl<'code> IrReader<'code> {
             // An instruction with a MemArg operand
             ($name:ident, MemArg) => {{
                 let align = imm;
-                let offset = self.read_u32(pc).unwrap();
+                let offset = IrReader::read_u32(code, pc);
                 visitor.$name(
                     MemArg {
                         align: align as u32,
@@ -118,23 +105,23 @@ impl<'code> IrReader<'code> {
             NOP => instruction!(nop),
 
             IF => {
-                let false_address = self.read_u32(pc).unwrap();
+                let false_address = IrReader::read_u32(code, pc);
                 visitor.if_(false_address.into(), state)?;
             }
 
             BR => {
-                let address = self.read_u32(pc).unwrap();
+                let address = IrReader::read_u32(code, pc);
                 visitor.br(address.into(), state)?;
             }
 
             BR_IF => {
-                let true_address = self.read_u32(pc).unwrap();
+                let true_address = IrReader::read_u32(code, pc);
                 visitor.br_if(true_address.into(), state)?;
             }
 
             BR_TABLE => {
                 let n = if imm == 0xFF {
-                    self.read(pc).unwrap() as u32
+                    IrReader::read(code, pc) as u32
                 } else {
                     imm as u32
                 };
@@ -145,30 +132,30 @@ impl<'code> IrReader<'code> {
                         if case_ < n {
                             // Read & dump the cases before the selected index
                             for _ in 0..case_ {
-                                self.read_u32(pc).unwrap();
+                                IrReader::read_u32(code, pc);
                             }
 
                             // Read the case target
-                            let lt = self.read_u32(pc).unwrap();
+                            let lt = IrReader::read_u32(code, pc);
 
                             // Dump the rest of the cases
                             if case_ + 1 < n {
                                 for _ in (case_ + 1)..n {
-                                    self.read_u32(pc).unwrap();
+                                    IrReader::read_u32(code, pc);
                                 }
                             }
 
                             // Dump the default case
-                            self.read_u32(pc).unwrap();
+                            IrReader::read_u32(code, pc);
 
                             lt.into()
                         } else {
                             // Dump all the cases and return the default
                             for _ in 0..n {
-                                self.read_u32(pc).unwrap();
+                                IrReader::read_u32(code, pc);
                             }
 
-                            let lt = self.read_u32(pc).unwrap();
+                            let lt = IrReader::read_u32(code, pc);
                             lt.into()
                         }
                     },
@@ -180,19 +167,19 @@ impl<'code> IrReader<'code> {
                 visitor.return_(imm, state)?;
             }
             CALL => {
-                let idx = self.read(pc).unwrap();
+                let idx = IrReader::read(code, pc);
                 visitor.call(idx, state)?;
             }
             CALL_HOST => {
-                let idx = self.read(pc).unwrap();
+                let idx = IrReader::read(code, pc);
                 visitor.call_host(HostModuleRef(imm), idx, state)?;
             }
             CALL_EXTERN => {
-                let idx = self.read(pc).unwrap();
+                let idx = IrReader::read(code, pc);
                 visitor.call_extern(ModuleRef(imm), idx, state)?;
             }
             CALL_INDIRECT => {
-                let n = self.read(pc).unwrap();
+                let n = IrReader::read(code, pc);
                 visitor.call_indirect(TypeIdx(n as u32), state)?;
             }
 
@@ -210,7 +197,7 @@ impl<'code> IrReader<'code> {
             LOCAL_TEE => instruction!(local_tee, local),
             GLOBAL_GET => {
                 let index = if imm == 0xFF {
-                    self.read(pc).unwrap()
+                    IrReader::read(code, pc)
                 } else {
                     imm as u16
                 };
@@ -219,7 +206,7 @@ impl<'code> IrReader<'code> {
             }
             GLOBAL_SET => {
                 let index = if imm == 0xFF {
-                    self.read(pc).unwrap()
+                    IrReader::read(code, pc)
                 } else {
                     imm as u16
                 };
@@ -228,22 +215,22 @@ impl<'code> IrReader<'code> {
             }
             GLOBAL_GET_HOST => {
                 let module = HostModuleRef(imm);
-                let index = self.read(pc).unwrap();
+                let index = IrReader::read(code, pc);
                 visitor.global_get_host(module, index, state)?;
             }
             GLOBAL_SET_HOST => {
                 let module = HostModuleRef(imm);
-                let index = self.read(pc).unwrap();
+                let index = IrReader::read(code, pc);
                 visitor.global_set_host(module, index, state)?;
             }
             GLOBAL_GET_EXTERN => {
                 let module = ModuleRef(imm);
-                let index = self.read(pc).unwrap();
+                let index = IrReader::read(code, pc);
                 visitor.global_get_extern(module, index, state)?;
             }
             GLOBAL_SET_EXTERN => {
                 let module = ModuleRef(imm);
-                let index = self.read(pc).unwrap();
+                let index = IrReader::read(code, pc);
                 visitor.global_set_extern(module, index, state)?;
             }
             // Memory instructions - loads
@@ -280,7 +267,7 @@ impl<'code> IrReader<'code> {
             // Numeric instructions - const
             I32_CONST => {
                 let n = if imm == 0xFF {
-                    self.read_u32(pc).unwrap()
+                    IrReader::read_u32(code, pc)
                 } else {
                     imm as u32
                 };
@@ -288,18 +275,18 @@ impl<'code> IrReader<'code> {
             }
             I64_CONST => {
                 let n = if imm == 0xFF {
-                    self.read_u64(pc).unwrap()
+                    IrReader::read_u64(code, pc)
                 } else {
                     imm as u64
                 };
                 visitor.i64_const(n as i64, state)?;
             }
             F32_CONST => {
-                let z = self.read_u32(pc).unwrap();
+                let z = IrReader::read_u32(code, pc);
                 visitor.f32_const(f32::from_bits(z), state)?;
             }
             F64_CONST => {
-                let z = self.read_u64(pc).unwrap();
+                let z = IrReader::read_u64(code, pc);
                 visitor.f64_const(f64::from_bits(z), state)?;
             }
 
@@ -439,7 +426,7 @@ impl<'code> IrReader<'code> {
             F64_CONVERT_I64_S => instruction!(f64_convert_i64_s),
             F64_CONVERT_I64_U => instruction!(f64_convert_i64_u),
             F64_PROMOTE_F32 => instruction!(f64_promote_f32),
-            _ => panic!("{:?}", IrReaderError::InvalidOpcode(opcode)),
+            _ => panic!("invalid opcode {opcode:?}"),
         }
 
         Ok(())

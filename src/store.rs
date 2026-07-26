@@ -181,6 +181,12 @@ impl Engine {
         ModuleRef((self.store.modules.len() - 1) as u8)
     }
 
+    /// Returns `true` if the engine is idle (not currently executing)
+    #[inline(always)]
+    pub fn is_idle(&self) -> bool {
+        self.pc == JumpTarget::SENTINEL
+    }
+
     /// Returns `true` if the module at `module_ref` declares a start function
     /// that must be run before the module is used.
     pub fn needs_start(&self, module_ref: ModuleRef) -> bool {
