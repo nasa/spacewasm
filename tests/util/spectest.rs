@@ -13,6 +13,7 @@
 /// (DLR).
 /// Copyright © 2024-2025 OxidOS Automotive SRL.
 use super::inspector::{Inspector, LimitedVec};
+use core::panic;
 use serde::{Deserialize, Serialize};
 use spacewasm::{
     AllocError, Allocator, CodeBuilder, CompilerOptions, ConstantExprError, Engine, ExportDesc,
@@ -274,6 +275,8 @@ struct TestContext {
     /// Produces the host modules exposed to the test's modules. Stored so the
     /// store can be rebuilt with the same host modules in `save_store`.
     host_modules: HostModuleFactory,
+    /// Return types of the currently paused function (if any)
+    paused_return_types: Option<spacewasm::Vec<ValType>>,
 }
 
 fn new_engine(host_modules: HostModuleFactory) -> Engine {
@@ -292,6 +295,7 @@ impl TestContext {
             .unwrap(),
             instance_names: std::collections::HashMap::new(),
             host_modules,
+            paused_return_types: None,
         }
     }
 
@@ -640,6 +644,69 @@ fn invoke_function(
     args: &[ValueSpec],
     test_log: Rc<RefCell<LimitedVec<String>>>,
 ) -> Result<Option<Value>, InterpreterResult> {
+    // Check if the engine is paused from a previous invocation
+    if ctx.engine.host_pause_result.is_some() {
+        invoke_function_resume(ctx, args, test_log)
+    } else {
+        // Normal invocation path
+        invoke_function_normal(ctx, module_name, func_name, args, test_log)
+    }
+}
+
+fn invoke_function_resume(
+    ctx: &mut TestContext,
+    args: &[ValueSpec],
+    test_log: Rc<RefCell<LimitedVec<String>>>,
+) -> Result<Option<Value>, InterpreterResult> {
+    // Engine is paused, resume with the provided arguments
+    if args.len() != 1 {
+        panic!("Resume expects exactly 1 argument, got {}", args.len());
+    }
+    let resume_value = parse_value(&args[0]);
+
+    test_log
+        .borrow_mut()
+        .push(format!("resume {:?}", resume_value));
+
+    ctx.engine.resume(Some(resume_value));
+
+    // Continue execution from the paused state
+    let test_runner: Inspector<'_, _, _, _> = Inspector {
+        v: &Interpreter,
+        out: test_log.clone(),
+    };
+
+    let result = test_runner.run(ctx.code_builder.pages(), &mut ctx.engine, 10000000);
+
+    // Get the return types we saved when the function paused
+    let return_types = ctx
+        .paused_return_types
+        .take()
+        .expect("No saved return types for paused function");
+
+    match result {
+        InterpreterResult::Finished => {
+            if return_types.is_empty() {
+                Ok(None)
+            } else if return_types.len() == 1 {
+                Ok(Some(ctx.engine.result.unwrap().to_value(return_types[0])))
+            } else {
+                panic!("Multi-value returns not supported");
+            }
+        }
+        InterpreterResult::ReaderError(err) => panic!("Reader error: {err:?}"),
+        InterpreterResult::OutOfFuel => panic!("Infinite loop detected"),
+        err => Err(err),
+    }
+}
+
+fn invoke_function_normal(
+    ctx: &mut TestContext,
+    module_name: &Option<String>,
+    func_name: &str,
+    args: &[ValueSpec],
+    test_log: Rc<RefCell<LimitedVec<String>>>,
+) -> Result<Option<Value>, InterpreterResult> {
     // Resolve module index by name lookup
     let module_index = if let Some(name) = module_name {
         ctx.find_module_by_name(name)
@@ -731,6 +798,11 @@ fn invoke_function(
         }
         InterpreterResult::ReaderError(err) => panic!("Reader error: {err:?}"),
         InterpreterResult::OutOfFuel => panic!("Infinite loop detected"),
+        InterpreterResult::Pause => {
+            // Save the return types so we can use them after resume
+            ctx.paused_return_types = Some(return_types);
+            Err(InterpreterResult::Pause)
+        }
         err => Err(err),
     }
 }
@@ -1094,6 +1166,11 @@ fn run_wast_command(
             } => match invoke_function(ctx, &module, &field, &args, log) {
                 Err(InterpreterResult::Trap(reason)) => {
                     check_trap_reason(reason, &text);
+                }
+                Err(InterpreterResult::Pause) => {
+                    if text != "paused" {
+                        panic!("Interpreter paused while expecting trap '{text}'");
+                    }
                 }
                 Err(err) => {
                     panic!("Expected trap '{text}', got error: {err:?}")

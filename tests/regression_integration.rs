@@ -73,6 +73,18 @@ pub fn regression_host_module() -> HostModule {
             HostFunction::new("noop", "".into(), "".into(), |_, _| {
                 ControlFlow::Continue(None)
             }),
+            HostFunction::new("pause_i32", "".into(), "i".into(), |_, _| {
+                ControlFlow::Break(HostFunctionBreak::Pause)
+            }),
+            HostFunction::new("pause_i64", "".into(), "I".into(), |_, _| {
+                ControlFlow::Break(HostFunctionBreak::Pause)
+            }),
+            HostFunction::new("pause_f32", "".into(), "f".into(), |_, _| {
+                ControlFlow::Break(HostFunctionBreak::Pause)
+            }),
+            HostFunction::new("pause_f64", "".into(), "d".into(), |_, _| {
+                ControlFlow::Break(HostFunctionBreak::Pause)
+            }),
         ],
         memory: vec![],
         table: vec![],
@@ -128,4 +140,9 @@ fn start_stack_overflow() {
 #[test]
 fn decode_errors() {
     run("regression/decode-errors");
+}
+
+#[test]
+fn pause_resume() {
+    run("regression/pause-resume");
 }
