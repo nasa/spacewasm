@@ -321,7 +321,7 @@ typedef spacewasm_read_result_t (*spacewasm_read_fn_t)(void *userdata,
                                                        size_t *out_len);
 
 /*
- FFI-safe mirror of [`spacewasm::CompilerOptions`], controlling how guest
+ FFI-safe mirror of [`CompilerOptions`], controlling how guest
  modules loaded onto a store are compiled. Passed to [`spacewasm_new`].
  */
 typedef struct spacewasm_compiler_options_t {
@@ -461,8 +461,8 @@ spacewasm_status_t spacewasm_load_module(struct spacewasm_t *engine,
  [`spacewasm_load_module`] to load one or more.
 
  `host` may be null to create an engine with no host modules. The host vector
- is always consumed (its handle must not be used or destroyed afterwards),
- whether or not the engine is created successfully.
+ is always consumed (its handle must not be used or destroyed afterward),
+ whether the engine is created successfully.
 
  # Safety
  `host` must be null or a live handle from [`spacewasm_host_new`], not already
