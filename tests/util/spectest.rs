@@ -659,7 +659,7 @@ fn invoke_function_resume(
     test_log: Rc<RefCell<LimitedVec<String>>>,
 ) -> Result<Option<Value>, InterpreterResult> {
     // Engine is paused, resume with the provided arguments
-    let resume_value = if args.len() == 0 {
+    let resume_value = if args.is_empty() {
         None
     } else if args.len() == 1 {
         Some(parse_value(&args[0]))
