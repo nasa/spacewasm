@@ -4,7 +4,7 @@ use core::ffi::c_void;
 
 use spacewasm::{
     CodeBuilder, CompilerOptions, Engine, ExportDesc, HostModule, Interpreter, InterpreterResult,
-    InterpreterRunner, Memory, Module, ModuleRef, Rc, Ref, StartInvocation, ValType, Value, Vec,
+    InterpreterRunner, Module, ModuleRef, Rc, Ref, StartInvocation, ValType, Value, Vec,
     WasmMemoryAllocator, WasmRef, WasmStream,
 };
 
