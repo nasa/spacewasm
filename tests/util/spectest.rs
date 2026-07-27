@@ -933,7 +933,7 @@ fn check_decode_error(err: ParseError, text: String) {
         (ValidationError::TableImportNotFound, "incompatible import type") => {}
         (ValidationError::MemoryImportTooLarge, "incompatible import type") => {}
         (ValidationError::InvalidPageSize(_), "invalid custom page size") => {}
-        (ValidationError::AllocError(AllocError::AllocationFailed), "allocation failed") => {}
+        (ValidationError::GuestMemoryAllocationFailure, "allocation failed") => {}
         (ValidationError::MalformedFunction(_), "malformed function type") => {}
         (ValidationError::MalformedElemType(_), "malformed element type") => {}
         (ValidationError::MalformedLimit(_), "malformed limits flag") => {}
