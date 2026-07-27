@@ -139,9 +139,6 @@ pub enum spacewasm_status_t {
     SPACEWASM_ERR_POSSIBLE_BACKPATCH_CYCLE = 192,
     SPACEWASM_ERR_PAGE_FAULT = 193,
     SPACEWASM_ERR_READER_ERROR = 194,
-
-    // Stream / input errors
-    SPACEWASM_ERR_STREAM = 208,
 }
 
 pub use spacewasm_status_t::*;

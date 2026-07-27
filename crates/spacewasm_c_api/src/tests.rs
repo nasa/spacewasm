@@ -479,7 +479,11 @@ fn streaming_read_error() {
         )
     };
     unsafe { spacewasm_allocator_destroy(alloc) };
-    assert_eq!(st, status::SPACEWASM_ERR_STREAM, "expected ERR_STREAM");
+    assert_eq!(
+        st,
+        status::SPACEWASM_ERR_READER_ERROR,
+        "expected ERR_READER_ERROR"
+    );
 
     unsafe { spacewasm_destroy(store) };
 }

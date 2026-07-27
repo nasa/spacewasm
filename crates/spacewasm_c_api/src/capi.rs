@@ -285,7 +285,7 @@ pub unsafe extern "C" fn spacewasm_load_module(
         // generic parse failure.
         Err(e) if stream.errored() => {
             let _ = e;
-            return status::SPACEWASM_ERR_STREAM;
+            return status::SPACEWASM_ERR_READER_ERROR;
         }
         Err(e) => return status::parse_status(&e),
     };
