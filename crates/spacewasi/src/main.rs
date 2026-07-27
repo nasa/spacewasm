@@ -14,6 +14,8 @@
 ///
 /// Portions of this file are derived from <https://github.com/clap-rs/clap>:
 /// Copyright (c) 2026 Knapp, K. B., & The Clap Community.
+///
+/// Portions of this file are derived from <https://github.com/crossterm-rs/crossterm>
 use spacewasm::{
     CodeBuilder, CompilerOptions, Engine, ExportDesc, Interpreter, InterpreterResult,
     InterpreterRunner, ModuleRef, PageAllocator, Ref, StartInvocation, WasmRef,
