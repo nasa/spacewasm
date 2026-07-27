@@ -151,6 +151,7 @@ impl Engine {
             module: ModuleRef(0),
             store,
             result: None,
+            host_pause_result: None,
         })
     }
 
@@ -178,6 +179,12 @@ impl Engine {
     pub fn push_module(&mut self, module: Module) -> ModuleRef {
         self.store.modules.push(module);
         ModuleRef((self.store.modules.len() - 1) as u8)
+    }
+
+    /// Returns `true` if the engine is idle (not currently executing)
+    #[inline(always)]
+    pub fn is_idle(&self) -> bool {
+        self.pc == JumpTarget::SENTINEL
     }
 
     /// Returns `true` if the module at `module_ref` declares a start function
@@ -209,17 +216,13 @@ impl Engine {
             }),
             Ref::Extern { module, index } => self.setup_start_invoke(WasmRef { module, index }),
             // Host start functions run immediately; no interpreter loop needed.
-            Ref::Host { module, index } => {
-                match self.store.host_modules()[module.0 as usize].functions[index as usize]
-                    .call(self, &[])
-                {
-                    HostFunctionResult::Continue(_) => StartInvocation::Finished,
-                    HostFunctionResult::Break(HostFunctionBreak::Trap) => {
-                        StartInvocation::Trap(TrapReason::Host)
-                    }
-                    HostFunctionResult::Break(HostFunctionBreak::Pause) => StartInvocation::Pause,
+            Ref::Host { module, index } => match self.call_host_fn(module, index, &[]) {
+                HostFunctionResult::Continue(_) => StartInvocation::Finished,
+                HostFunctionResult::Break(HostFunctionBreak::Trap) => {
+                    StartInvocation::Trap(TrapReason::Host)
                 }
-            }
+                HostFunctionResult::Break(HostFunctionBreak::Pause) => StartInvocation::Pause,
+            },
         }
     }
 
@@ -231,6 +234,18 @@ impl Engine {
             // length/type mismatches cannot occur.
             Err(_) => unreachable!(),
         }
+    }
+
+    pub fn call_host_fn(
+        &mut self,
+        module: HostModuleRef,
+        index: u16,
+        args: &[Value],
+    ) -> HostFunctionResult {
+        let f = self.store.host_modules[module.0 as usize].functions[index as usize].get_call();
+        let r = f(self, args);
+        self.store.host_modules[module.0 as usize].functions[index as usize].finish_call(f);
+        r
     }
 }
 

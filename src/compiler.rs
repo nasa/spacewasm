@@ -230,7 +230,7 @@ impl<'a, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize> WasmVisi
                     let _ = state.pop_stack(p)?;
                 }
 
-                for r in f.returns().iter().rev() {
+                if let Some(r) = f.returns().0 {
                     state.push_stack(r)?;
                 }
 
@@ -277,6 +277,10 @@ impl<'a, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize> WasmVisi
 
         for r in &ty.returns {
             state.push_stack(*r)?;
+        }
+
+        if x.0 > u16::MAX as u32 {
+            return Err(ValidationError::IdxTooLarge);
         }
 
         state.instr(CALL_INDIRECT)?;

@@ -84,7 +84,6 @@ mod tests {
                 InterpreterResult::Finished => {}
                 InterpreterResult::OutOfFuel => panic!("insufficient fuel for initialization"),
                 InterpreterResult::Trap(t) => panic!("trap during initialization {t:?}"),
-                InterpreterResult::ReaderError(e) => panic!("ir reader error {e:?}"),
                 InterpreterResult::Pause => panic!("pause during init"),
             },
         }

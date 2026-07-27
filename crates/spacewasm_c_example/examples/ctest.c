@@ -125,13 +125,13 @@ int main(void) {
 
     /* Finish the host vector into a store (1024-byte guest stack, room for 1
      * guest module, 256 code pages). This consumes `host`. */
-    spacewasm_store_t* store = NULL;
+    spacewasm_t* store = NULL;
     spacewasm_compiler_options_t options = {
         .allow_memory_grow = false,
         .max_backpatch_iterations = 0,
         .max_code_pages = 256,
     };
-    st = spacewasm_store_new(&host, 1024, 1, options, &store);
+    st = spacewasm_new(&host, 1024, 1, options, &store);
     if (st != SPACEWASM_OK) {
         fprintf(stderr, "store_new: status=%d\n", (int)st);
         return 1;
@@ -148,7 +148,7 @@ int main(void) {
     /* Load a guest module onto the store, streamed in 16-byte chunks. */
     cursor_t cursor = {ADD_WASM, sizeof(ADD_WASM), 0, 16};
     uint32_t mod_idx = 0;
-    st = spacewasm_store_load_module(store, "main", cursor_read, &cursor, alloc, &mod_idx);
+    st = spacewasm_load_module(store, "main", cursor_read, &cursor, alloc, &mod_idx);
     /* The loaded module holds its own reference; the handle can go now. */
     spacewasm_allocator_destroy(alloc);
     if (st != SPACEWASM_OK) {
@@ -158,10 +158,10 @@ int main(void) {
 
     /* Run the module's start function if it declares one. This module does not,
      * but a well-behaved loader always checks. */
-    spacewasm_run_status_t start_rs = spacewasm_store_module_invoke_start(store, mod_idx);
+    spacewasm_run_status_t start_rs = spacewasm_invoke_start(store, mod_idx);
     spacewasm_trap_t start_trap = SPACEWASM_TRAP_NONE;
     while (start_rs == SPACEWASM_RUN_OUT_OF_FUEL) {
-        start_rs = spacewasm_store_run(store, 1000, &start_trap);
+        start_rs = spacewasm_run(store, 1000, &start_trap);
     }
 
     if (start_rs != SPACEWASM_RUN_FINISHED) {
@@ -170,7 +170,7 @@ int main(void) {
     }
 
     uint32_t idx = 0;
-    st = spacewasm_store_find_export_func(store, mod_idx, "add", &idx);
+    st = spacewasm_find_export_func(store, mod_idx, "add", &idx);
     if (st != SPACEWASM_OK) {
         fprintf(stderr, "find_export: status=%d\n", (int)st);
         return 1;
@@ -182,7 +182,7 @@ int main(void) {
     params[1].tag = SPACEWASM_I32;
     params[1].u.i32_ = 22;
 
-    st = spacewasm_store_invoke(store, mod_idx, idx, params, 2);
+    st = spacewasm_invoke(store, mod_idx, idx, params, 2);
     if (st != SPACEWASM_OK) {
         fprintf(stderr, "invoke: status=%d\n", (int)st);
         return 1;
@@ -191,7 +191,7 @@ int main(void) {
     spacewasm_trap_t trap = SPACEWASM_TRAP_NONE;
     spacewasm_run_status_t rs = SPACEWASM_RUN_OUT_OF_FUEL;
     while (rs == SPACEWASM_RUN_OUT_OF_FUEL) {
-        rs = spacewasm_store_run(store, 1000, &start_trap);
+        rs = spacewasm_run(store, 1000, &start_trap);
     }
 
     if (rs != SPACEWASM_RUN_FINISHED) {
@@ -200,13 +200,13 @@ int main(void) {
     }
 
     spacewasm_value_t out;
-    st = spacewasm_store_get_result(store, SPACEWASM_I32, &out);
+    st = spacewasm_get_result(store, SPACEWASM_I32, &out);
     if (st != SPACEWASM_OK) {
         fprintf(stderr, "get_result: status=%d\n", (int)st);
         return 1;
     }
 
-    spacewasm_store_destroy(store);
+    spacewasm_destroy(store);
 
     if (out.u.i32_ != 42) {
         fprintf(stderr, "wrong result: %d\n", out.u.i32_);

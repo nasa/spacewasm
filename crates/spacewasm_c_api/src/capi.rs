@@ -3,19 +3,20 @@
 use core::ffi::c_char;
 use core::ffi::c_void;
 
-use spacewasm::HostFunction;
+use spacewasm::{
+    CodeBuilder, CompilerOptions, Engine, ExportDesc, HostFunction, HostModule, Interpreter,
+    InterpreterRunner, Module, ModuleRef, Ref, StartInvocation, ValType, Value, Vec, WasmRef,
+};
 
-use crate::abi;
-use crate::alloc::{
-    self, SpacewasmAllocator, spacewasm_alloc_fn_t, spacewasm_dealloc_fn_t, spacewasm_realloc_fn_t,
-};
-use crate::engine::{
-    SpacewasmCaller, SpacewasmStore, spacewasm_compiler_options_t, spacewasm_host_fn_t,
-};
+use crate::SpacewasmCaller;
+use crate::alloc::CAllocator;
+use crate::alloc::{self, spacewasm_alloc_fn_t, spacewasm_dealloc_fn_t, spacewasm_realloc_fn_t};
+use crate::config::{MAX_CONTROL_FRAMES, MAX_STACK_DEPTH};
 use crate::host;
 use crate::host::CHostFunction;
+use crate::host::spacewasm_host_fn_t;
 use crate::status::{self, spacewasm_run_status_t, spacewasm_status_t, spacewasm_trap_t};
-use crate::stream::spacewasm_read_fn_t;
+use crate::stream::{CallbackStream, spacewasm_read_fn_t};
 use crate::value::{spacewasm_valtype_t, spacewasm_value_t};
 
 macro_rules! check {
@@ -27,9 +28,58 @@ macro_rules! check {
     };
 }
 
+/// FFI-safe mirror of [`CompilerOptions`], controlling how guest
+/// modules loaded onto a store are compiled. Passed to [`spacewasm_new`].
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct spacewasm_compiler_options_t {
+    /// Allow compiling `memory.grow` instructions. When `false`, a module using
+    /// `memory.grow` is rejected at load time.
+    pub allow_memory_grow: bool,
+
+    /// Maximum number of iterations to resolve during a control-flow backpatch.
+    /// Bounds compile time on pathological modules at the cost of rejecting some
+    /// valid programs. Set to 0 for unlimited iterations.
+    pub max_backpatch_iterations: u32,
+
+    /// Maximum number of compiled code pages allowed across all modules loaded
+    /// onto the store.
+    pub max_code_pages: u32,
+}
+
+impl From<spacewasm_compiler_options_t> for CompilerOptions {
+    fn from(o: spacewasm_compiler_options_t) -> Self {
+        CompilerOptions {
+            allow_memory_grow: o.allow_memory_grow,
+            max_backpatch_iterations: o.max_backpatch_iterations,
+            max_code_pages: o.max_code_pages,
+        }
+    }
+}
+
+/// Handle holding the SpaceWasm engine and compiled IR code.
+/// This handle is used for holding and executing the SpaceWasm interpreter.
+pub struct CEngine {
+    engine: Engine,
+    code_builder: CodeBuilder,
+}
+
+/// Interpret a NUL-terminated C string as a Rust `&str`.
+///
+/// # Safety
+/// `ptr` must be NUL-terminated and valid, or null.
+pub(crate) unsafe fn cstr<'a>(ptr: *const c_char) -> Result<&'a str, spacewasm_status_t> {
+    if ptr.is_null() {
+        return Err(status::SPACEWASM_ERR_NULL_ARG);
+    }
+    // SAFETY: caller guarantees NUL-termination and validity.
+    let c = unsafe { core::ffi::CStr::from_ptr(ptr) };
+    c.to_str().map_err(|_| status::SPACEWASM_ERR_BAD_UTF8)
+}
+
 /// Create a guest linear-memory allocator from three C callbacks, returning an
 /// opaque handle (or null if any callback is null or allocation fails). The
-/// handle is passed to [`spacewasm_store_load_module`] and must be released with
+/// handle is passed to [`spacewasm_load_module`] and must be released with
 /// [`spacewasm_allocator_destroy`]. `userdata` is passed to every callback.
 #[unsafe(no_mangle)]
 pub extern "C" fn spacewasm_allocator_new(
@@ -37,7 +87,7 @@ pub extern "C" fn spacewasm_allocator_new(
     realloc: spacewasm_realloc_fn_t,
     dealloc: spacewasm_dealloc_fn_t,
     userdata: *mut c_void,
-) -> *mut SpacewasmAllocator {
+) -> *mut CAllocator {
     alloc::allocator_new(alloc, realloc, dealloc, userdata)
 }
 
@@ -49,30 +99,30 @@ pub extern "C" fn spacewasm_allocator_new(
 /// `allocator` must be a live handle from [`spacewasm_allocator_new`], not
 /// already destroyed.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn spacewasm_allocator_destroy(allocator: *mut SpacewasmAllocator) {
+pub unsafe extern "C" fn spacewasm_allocator_destroy(allocator: *mut CAllocator) {
     unsafe { alloc::allocator_destroy(allocator) }
 }
 
 #[repr(C)]
 pub struct spacewasm_host_t {
-    ptr: *mut spacewasm::HostModule,
+    ptr: *mut HostModule,
     capacity: u32,
     len: u32,
 }
 
-impl From<spacewasm::Vec<spacewasm::HostModule>> for spacewasm_host_t {
-    fn from(value: spacewasm::Vec<spacewasm::HostModule>) -> Self {
+impl From<Vec<HostModule>> for spacewasm_host_t {
+    fn from(value: Vec<HostModule>) -> Self {
         unsafe { core::mem::transmute(value) }
     }
 }
 
-impl From<spacewasm_host_t> for spacewasm::Vec<spacewasm::HostModule> {
+impl From<spacewasm_host_t> for Vec<HostModule> {
     fn from(value: spacewasm_host_t) -> Self {
         unsafe { core::mem::transmute(value) }
     }
 }
 
-impl From<&mut spacewasm_host_t> for &mut spacewasm::Vec<spacewasm::HostModule> {
+impl From<&mut spacewasm_host_t> for &mut Vec<HostModule> {
     fn from(value: &mut spacewasm_host_t) -> Self {
         unsafe { core::mem::transmute(value) }
     }
@@ -87,17 +137,17 @@ pub unsafe extern "C" fn spacewasm_host_new(
     len: u32,
     dest: *mut spacewasm_host_t,
 ) -> spacewasm_status_t {
-    let v = check!(spacewasm::Vec::<spacewasm::HostModule>::new(len).map_err(status::alloc_status));
-    // Safety, dest must be a valid pointer
-    unsafe {
-        core::ptr::write(dest, v.into());
-    };
+    if dest.is_null() {
+        return status::SPACEWASM_ERR_NULL_ARG;
+    }
 
-    spacewasm_status_t::SPACEWASM_OK
+    let v = check!(Vec::new(len).map_err(status::alloc_status));
+    unsafe { *dest = v.into() };
+    status::SPACEWASM_OK
 }
 
-/// Add a host module named `name` sized for `max_functions` functions and `max_globals` globals
-/// writing its index to `out_idx` (if non-null).
+/// Add a host module named `name` sized for `max_functions` functions and
+/// `max_globals` globals, writing its index to `out_idx` (if non-null).
 ///
 /// # Safety
 /// `host` must be live; all C strings valid and NUL-terminated.
@@ -109,32 +159,32 @@ pub unsafe extern "C" fn spacewasm_add_host_module(
     max_globals: u32,
     out_idx: *mut u32,
 ) -> spacewasm_status_t {
-    let functions = check!(spacewasm::Vec::new(max_functions).map_err(status::alloc_status));
-    let globals = check!(spacewasm::Vec::new(max_globals).map_err(status::alloc_status));
-    let name = check!(unsafe { abi::cstr(name) });
+    let functions = check!(Vec::new(max_functions).map_err(status::alloc_status));
+    let globals = check!(Vec::new(max_globals).map_err(status::alloc_status));
+    let name = check!(unsafe { cstr(name) });
     let name = check!(spacewasm::HostName::try_from_str(name).map_err(status::host_name_status));
 
-    let module = spacewasm::HostModule {
+    let module = HostModule {
         name,
         globals,
         functions,
-        memory: spacewasm::Vec::zero(),
-        table: spacewasm::Vec::zero(),
+        memory: Vec::zero(),
+        table: Vec::zero(),
     };
 
-    let host: &mut spacewasm::Vec<spacewasm::HostModule> =
-        check!(unsafe { host.as_mut() }.ok_or(spacewasm_status_t::SPACEWASM_ERR_NULL_ARG)).into();
+    let host: &mut Vec<HostModule> =
+        check!(unsafe { host.as_mut() }.ok_or(status::SPACEWASM_ERR_NULL_ARG)).into();
     check!(
         host.try_push(module)
             .ok()
-            .ok_or(spacewasm_status_t::SPACEWASM_ERR_CAPACITY)
+            .ok_or(status::SPACEWASM_ERR_CAPACITY)
     );
 
     if let Some(out_idx) = unsafe { out_idx.as_mut() } {
         *out_idx = (host.len() - 1) as u32;
     }
 
-    spacewasm_status_t::SPACEWASM_OK
+    status::SPACEWASM_OK
 }
 
 /// Register a host function `name` in host module `module_idx`, with parameter
@@ -153,9 +203,9 @@ pub unsafe extern "C" fn spacewasm_add_host_function(
     f: spacewasm_host_fn_t,
     userdata: *mut c_void,
 ) -> spacewasm_status_t {
-    let name = check!(unsafe { abi::cstr(name) });
-    let params_sig = check!(unsafe { abi::cstr(params_sig) });
-    let returns_sig = check!(unsafe { abi::cstr(returns_sig) });
+    let name = check!(unsafe { cstr(name) });
+    let params_sig = check!(unsafe { cstr(params_sig) });
+    let returns_sig = check!(unsafe { cstr(returns_sig) });
 
     let name = check!(spacewasm::HostName::try_from_str(name).map_err(status::host_name_status));
     let params =
@@ -163,132 +213,235 @@ pub unsafe extern "C" fn spacewasm_add_host_function(
     let returns =
         check!(spacewasm::HostValList::try_new(returns_sig).map_err(status::host_val_list_status));
 
-    let host: &mut spacewasm::Vec<spacewasm::HostModule> =
-        check!(unsafe { host.as_mut() }.ok_or(spacewasm_status_t::SPACEWASM_ERR_NULL_ARG)).into();
+    let host: &mut Vec<HostModule> =
+        check!(unsafe { host.as_mut() }.ok_or(status::SPACEWASM_ERR_NULL_ARG)).into();
 
     let f = check!(f.ok_or(status::SPACEWASM_ERR_NULL_ARG));
 
     let trampoline = CHostFunction::new(f, userdata);
-    let host_fn = match HostFunction::try_new(name, params, returns, move |state, args| {
-        trampoline.call(state, args)
-    })
-    .map_err(status::host_val_list_status)
-    {
-        Ok(f) => f,
-        Err(e) => return e,
-    };
+    let host_fn = check!(
+        HostFunction::try_new(name, params, returns, move |state, args| {
+            trampoline.call(state, args)
+        })
+        .map_err(status::host_val_list_status)
+    );
 
     match host.get_mut(module_idx as usize) {
         Some(m) => match m.functions.try_push(host_fn) {
-            Ok(()) => spacewasm_status_t::SPACEWASM_OK,
-            Err(_) => spacewasm_status_t::SPACEWASM_ERR_CAPACITY,
+            Ok(()) => status::SPACEWASM_OK,
+            Err(_) => status::SPACEWASM_ERR_CAPACITY,
         },
-        None => spacewasm_status_t::SPACEWASM_ERR_NOT_FOUND,
+        None => status::SPACEWASM_ERR_NOT_FOUND,
     }
 }
 
-/// Load a guest module named `name` onto an existing store by streaming its
+/// Load a guest module named `name` onto an existing engine by streaming its
 /// bytes through the `read` callback. The callback owns the buffer backing each
 /// chunk (see [`spacewasm_read_fn_t`]). This does not run the module's start
-/// function; use [`spacewasm_store_module_get_start`] and
-/// [`spacewasm_store_run_start`] for that. `allocator` supplies the guest linear
-/// memory (see [`spacewasm_allocator_new`]). Writes the new module's index to
-/// `out_module_idx` (if non-null). May be called repeatedly to load several
-/// modules onto the same store.
+/// function; use [`spacewasm_invoke_start`] for that. `allocator` supplies the
+/// guest linear memory (see [`spacewasm_allocator_new`]). Writes the new module's
+/// index to `out_module_idx` (if non-null). May be called repeatedly to load
+/// several modules onto the same engine.
 ///
 /// # Safety
-/// `store` and `allocator` must be live handles; `read` a valid callback;
+/// `engine` and `allocator` must be live handles; `read` a valid callback;
 /// `out_module_idx` null or valid.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn spacewasm_store_load_module(
-    store: *mut SpacewasmStore,
+pub unsafe extern "C" fn spacewasm_load_module(
+    engine: *mut CEngine,
     name: *const c_char,
     read: spacewasm_read_fn_t,
     read_userdata: *mut c_void,
-    allocator: *mut SpacewasmAllocator,
+    allocator: *mut CAllocator,
     out_module_idx: *mut u32,
 ) -> spacewasm_status_t {
     // SAFETY: `allocator` is null or a live handle per the contract.
     let Some(alloc) = (unsafe { alloc::allocator_clone_rc(allocator) }) else {
         return status::SPACEWASM_ERR_NULL_ARG;
     };
-    unsafe { abi::store_load_module(store, name, read, read_userdata, alloc, out_module_idx) }
+
+    let Some(cengine) = (unsafe { engine.as_mut() }) else {
+        return status::SPACEWASM_ERR_NULL_ARG;
+    };
+
+    if !cengine.engine.is_idle() {
+        return status::SPACEWASM_ERR_WRONG_STATE;
+    }
+
+    let name = check!(unsafe { cstr(name) });
+
+    let mut stream = check!(CallbackStream::new(read, read_userdata));
+
+    let module = match Module::new::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
+        name,
+        &mut stream,
+        &mut cengine.engine.store,
+        &mut cengine.code_builder,
+        alloc,
+    ) {
+        Ok(m) => m,
+        // If the callback reported an I/O error, surface that rather than a
+        // generic parse failure.
+        Err(e) if stream.errored() => {
+            let _ = e;
+            return status::SPACEWASM_ERR_READER_ERROR;
+        }
+        Err(e) => return status::parse_status(&e),
+    };
+
+    let module_ref = cengine.engine.push_module(module);
+    let idx = module_ref.0 as u32;
+
+    if !out_module_idx.is_null() {
+        unsafe { *out_module_idx = idx };
+    }
+    status::SPACEWASM_OK
 }
 
-/// Consume the host module vector `host` and finish it into a store handle,
-/// written to `out_store`. The store is sized with a `stack_size`-byte guest
-/// stack, room for `max_modules` guest modules (≤ 256), and compiles guest
+/// Consume the host module vector `host` and finish it into an engine handle,
+/// written to `out_engine`. The engine is sized with a `stack_size`-byte guest
+/// stack, room for `max_modules` guest modules (<= 256), and compiles guest
 /// modules according to `options` (code-page budget, `memory.grow` support,
 /// backpatch bound). No guest module is loaded yet; use
-/// [`spacewasm_store_load_module`] to load one or more.
+/// [`spacewasm_load_module`] to load one or more.
 ///
-/// `host` may be null to create a store with no host modules. The host vector
-/// is always consumed (its handle must not be used or destroyed afterwards),
-/// whether or not the store is created successfully.
+/// `host` may be null to create an engine with no host modules. The host vector
+/// is always consumed (its handle must not be used or destroyed afterward),
+/// whether the engine is created successfully.
 ///
 /// # Safety
 /// `host` must be null or a live handle from [`spacewasm_host_new`], not already
-/// consumed/destroyed; `out_store` must be a valid pointer.
+/// consumed/destroyed; `out_engine` must be a valid pointer.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn spacewasm_store_new(
+pub unsafe extern "C" fn spacewasm_new(
     host: *mut spacewasm_host_t,
     stack_size: usize,
     max_modules: u32,
     options: spacewasm_compiler_options_t,
-    out_store: *mut *mut SpacewasmStore,
+    out_engine: *mut *mut CEngine,
 ) -> spacewasm_status_t {
-    if out_store.is_null() {
+    if out_engine.is_null() {
         return status::SPACEWASM_ERR_NULL_ARG;
+    }
+
+    if max_modules > 256 {
+        return status::SPACEWASM_ERR_BAD_ARG;
     }
 
     // Take ownership of the host modules (consuming the handle), or start from
     // an empty set when none were supplied.
-    let host_modules: spacewasm::Vec<spacewasm::HostModule> = if host.is_null() {
-        check!(spacewasm::Vec::new(0).map_err(status::alloc_status))
+    let host_modules: Vec<HostModule> = if host.is_null() {
+        Vec::zero()
     } else {
         unsafe { host.read() }.into()
     };
 
-    let store = check!(SpacewasmStore::new(
-        stack_size,
-        max_modules as usize,
-        options.into(),
-        host_modules,
-    ));
+    let engine = check!(
+        Engine::new(stack_size, max_modules as usize, host_modules).map_err(status::memory_status)
+    );
 
-    let boxed = check!(spacewasm::Box::new(store).map_err(status::alloc_status));
-    unsafe { *out_store = spacewasm::Box::leak(boxed) as *mut SpacewasmStore };
+    let code_builder = check!(CodeBuilder::new(options.into()).map_err(status::alloc_status));
+
+    let cengine = CEngine {
+        engine,
+        code_builder,
+    };
+
+    let boxed = check!(spacewasm::Box::new(cengine).map_err(status::alloc_status));
+    unsafe { *out_engine = spacewasm::Box::leak(boxed) as *mut CEngine };
     status::SPACEWASM_OK
 }
 
-/// Destroy a host vector that was never consumed into a store. No-op on null.
+/// Destroy a host vector that was never consumed into an engine. No-op on null.
 ///
 /// # Safety
-/// `host` must be a live handle, not already consumed/destroyed.
+/// `host` must be null or a live unconsumed handle from [`spacewasm_host_new`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn spacewasm_host_destroy(host: *mut spacewasm_host_t) {
     if host.is_null() {
         return;
     }
-    // `spacewasm_host_t` is a plain `#[repr(C)]` struct with no `Drop`; convert
-    // to the owning `Vec` so its allocation (and each `HostModule`) is freed.
-    let modules: spacewasm::Vec<spacewasm::HostModule> = unsafe { host.read() }.into();
-    core::mem::drop(modules);
+    // Convert the handle back to the owning `Vec` so its allocation (and each
+    // `HostModule`) is freed.
+    let modules: Vec<HostModule> = unsafe { host.read() }.into();
+    drop(modules);
+}
+
+/// Find a module with a given name in the engine.
+///
+/// # Safety
+/// `engine` must be live; `name` valid; `out_index` valid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn spacewasm_find_module(
+    engine: *mut CEngine,
+    name: *const c_char,
+    out_index: *mut u32,
+) -> spacewasm_status_t {
+    let Some(cengine) = (unsafe { engine.as_ref() }) else {
+        return status::SPACEWASM_ERR_NULL_ARG;
+    };
+    if out_index.is_null() {
+        return status::SPACEWASM_ERR_NULL_ARG;
+    }
+    let name = check!(unsafe { cstr(name) });
+
+    let idx = cengine
+        .engine
+        .store
+        .modules()
+        .iter()
+        .enumerate()
+        .find_map(|(i, m)| if m.name == name { Some(i as u32) } else { None })
+        .ok_or(status::SPACEWASM_ERR_NOT_FOUND);
+
+    match idx {
+        Ok(i) => {
+            unsafe { *out_index = i };
+            status::SPACEWASM_OK
+        }
+        Err(e) => e,
+    }
 }
 
 /// Look up the exported function named `name` in module `module_idx` and write
 /// its index to `out_index`.
 ///
 /// # Safety
-/// `store` must be live; `name` valid; `out_index` valid.
+/// `engine` must be live; `name` valid; `out_index` valid.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn spacewasm_store_find_export_func(
-    store: *mut SpacewasmStore,
+pub unsafe extern "C" fn spacewasm_find_export_func(
+    engine: *mut CEngine,
     module_idx: u32,
     name: *const c_char,
     out_index: *mut u32,
 ) -> spacewasm_status_t {
-    unsafe { abi::store_find_export_func(store, module_idx, name, out_index) }
+    let Some(cengine) = (unsafe { engine.as_ref() }) else {
+        return status::SPACEWASM_ERR_NULL_ARG;
+    };
+    if out_index.is_null() {
+        return status::SPACEWASM_ERR_NULL_ARG;
+    }
+    let name = check!(unsafe { cstr(name) });
+
+    let module = match cengine.engine.store.modules().get(module_idx as usize) {
+        Some(m) => m,
+        None => return status::SPACEWASM_ERR_NOT_FOUND,
+    };
+
+    for e in &module.exports {
+        if e.name == name {
+            if let ExportDesc::Func(fi) = e.desc {
+                return match module.get_func_ref(fi) {
+                    Some(Ref::Module(idx)) => {
+                        unsafe { *out_index = idx as u32 };
+                        status::SPACEWASM_OK
+                    }
+                    _ => status::SPACEWASM_ERR_NOT_FOUND,
+                };
+            }
+        }
+    }
+    status::SPACEWASM_ERR_NOT_FOUND
 }
 
 /// Invoke the start function of a module.
@@ -300,66 +453,193 @@ pub unsafe extern "C" fn spacewasm_store_find_export_func(
 /// return [`spacewasm_run_status_t::SPACEWASM_RUN_TRAP`]
 ///
 /// # Safety
-/// `store` must be live
+/// `engine` must be live
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn spacewasm_store_module_invoke_start(
-    store: *mut SpacewasmStore,
+pub unsafe extern "C" fn spacewasm_invoke_start(
+    engine: *mut CEngine,
     module_idx: u32,
 ) -> spacewasm_run_status_t {
-    unsafe { abi::store_invoke_start(store, module_idx) }
+    let Some(cengine) = (unsafe { engine.as_mut() }) else {
+        return spacewasm_run_status_t::SPACEWASM_RUN_TRAP;
+    };
+
+    if !cengine.engine.is_idle() {
+        return spacewasm_run_status_t::SPACEWASM_RUN_TRAP;
+    }
+
+    if module_idx as usize >= cengine.engine.store.modules().len() {
+        return spacewasm_run_status_t::SPACEWASM_RUN_TRAP;
+    }
+
+    match cengine.engine.invoke_start(ModuleRef(module_idx as u8)) {
+        StartInvocation::Finished => spacewasm_run_status_t::SPACEWASM_RUN_FINISHED,
+        StartInvocation::Trap(_) => spacewasm_run_status_t::SPACEWASM_RUN_TRAP,
+        StartInvocation::Pause => spacewasm_run_status_t::SPACEWASM_RUN_PAUSE,
+        StartInvocation::Running => spacewasm_run_status_t::SPACEWASM_RUN_OUT_OF_FUEL,
+    }
 }
 
 /// Set up a call to exported function `func_index` of module `module_idx` with
 /// the `n` arguments in `params`. Does not run the function; drive execution
-/// with [`spacewasm_store_run`].
+/// with [`spacewasm_run`].
 ///
 /// # Safety
-/// `store` must be live; `params` valid for `n` entries.
+/// `engine` must be live; `params` valid for `n` entries.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn spacewasm_store_invoke(
-    store: *mut SpacewasmStore,
+pub unsafe extern "C" fn spacewasm_invoke(
+    engine: *mut CEngine,
     module_idx: u32,
     func_index: u32,
     params: *const spacewasm_value_t,
     n: usize,
 ) -> spacewasm_status_t {
-    unsafe { abi::store_invoke(store, module_idx, func_index, params, n) }
+    let Some(cengine) = (unsafe { engine.as_mut() }) else {
+        return status::SPACEWASM_ERR_NULL_ARG;
+    };
+    if params.is_null() && n != 0 {
+        return status::SPACEWASM_ERR_NULL_ARG;
+    }
+    if func_index > u16::MAX as u32 {
+        return status::SPACEWASM_ERR_BAD_ARG;
+    }
+
+    if !cengine.engine.is_idle() {
+        return status::SPACEWASM_ERR_WRONG_STATE;
+    }
+
+    if module_idx as usize >= cengine.engine.store.modules().len() {
+        return status::SPACEWASM_ERR_NOT_FOUND;
+    }
+
+    let mut buf: [Value; 64] = [Value::I32(0); 64];
+    if n > buf.len() {
+        return status::SPACEWASM_ERR_CAPACITY;
+    }
+
+    // Marshal parameters. `from_raw_parts` requires a non-null pointer even for
+    // a zero-length slice, so only build the slice when there are entries (the
+    // contract permits a null `params` when `n == 0`).
+    if n != 0 {
+        let slice = unsafe { core::slice::from_raw_parts(params, n) };
+        for (i, v) in slice.iter().enumerate() {
+            buf[i] = v.to_value();
+        }
+    }
+
+    let f_ref = WasmRef {
+        module: ModuleRef(module_idx as u8),
+        index: func_index as u16,
+    };
+
+    match cengine.engine.invoke(f_ref, &buf[..n]) {
+        Ok(()) => status::SPACEWASM_OK,
+        Err(e) => status::invoke_status(e),
+    }
 }
 
 /// Run the pending invocation for up to `fuel` units of work, writing any trap
 /// to `out_trap`. Returns whether the call finished, trapped, or ran out of fuel.
 ///
 /// # Safety
-/// `store` must be live; `out_trap` null or valid.
+/// `engine` must be live; `out_trap` null or valid.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn spacewasm_store_run(
-    store: *mut SpacewasmStore,
+pub unsafe extern "C" fn spacewasm_run(
+    engine: *mut CEngine,
     fuel: usize,
     out_trap: *mut spacewasm_trap_t,
 ) -> spacewasm_run_status_t {
-    unsafe { abi::store_run(store, fuel, out_trap) }
+    let Some(cengine) = (unsafe { engine.as_mut() }) else {
+        return spacewasm_run_status_t::SPACEWASM_RUN_TRAP;
+    };
+
+    if cengine.engine.is_idle() {
+        return spacewasm_run_status_t::SPACEWASM_RUN_TRAP;
+    }
+
+    let interpreter = Interpreter;
+    let code_pages = cengine.code_builder.pages();
+    let result = interpreter.run(code_pages, &mut cengine.engine, fuel);
+
+    let (rs, trap) = status::run_status(&result);
+    if !out_trap.is_null() {
+        unsafe { *out_trap = trap };
+    }
+    rs
 }
+
+/// Resume the interpreter from a paused state.
+///
+/// # Safety
+/// `engine` must be live.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn spacewasm_resume(engine: *mut CEngine) -> spacewasm_status_t {
+    let Some(cengine) = (unsafe { engine.as_mut() }) else {
+        return status::SPACEWASM_ERR_NULL_ARG;
+    };
+
+    cengine.engine.resume(None);
+    status::SPACEWASM_OK
+}
+
+/// Resume the interpreter from a paused state.
+/// This function will also push a value to the interpreter stack
+/// as the return value of the host function that requested a pause.
+///
+/// # Safety
+/// `engine` must be live.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn spacewasm_resume_value(
+    engine: *mut CEngine,
+    resume_value: spacewasm_value_t,
+) -> spacewasm_status_t {
+    let Some(cengine) = (unsafe { engine.as_mut() }) else {
+        return status::SPACEWASM_ERR_NULL_ARG;
+    };
+
+    cengine.engine.resume(Some(resume_value.into()));
+    status::SPACEWASM_OK
+}
+
 /// Fetch the result of the last completed call, coerced to `expected`, into
 /// `out`.
 ///
 /// # Safety
-/// `store` must be live; `out` valid.
+/// `engine` must be live; `out` valid.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn spacewasm_store_get_result(
-    store: *mut SpacewasmStore,
+pub unsafe extern "C" fn spacewasm_get_result(
+    engine: *mut CEngine,
     expected: spacewasm_valtype_t,
     out: *mut spacewasm_value_t,
 ) -> spacewasm_status_t {
-    unsafe { abi::store_get_result(store, expected, out) }
+    let Some(cengine) = (unsafe { engine.as_ref() }) else {
+        return status::SPACEWASM_ERR_NULL_ARG;
+    };
+    if out.is_null() {
+        return status::SPACEWASM_ERR_NULL_ARG;
+    }
+    match cengine
+        .engine
+        .result
+        .map(|raw| spacewasm_value_t::from_raw(raw, ValType::from(expected)))
+    {
+        Some(v) => {
+            unsafe { *out = v };
+            status::SPACEWASM_OK
+        }
+        None => status::SPACEWASM_ERR_NOT_FOUND,
+    }
 }
 
-/// Destroy a store and free its resources. No-op on null.
+/// Destroy an engine and free its resources. No-op on null.
 ///
 /// # Safety
-/// `store` must be a live handle, not already destroyed.
+/// `engine` must be a live handle, not already destroyed.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn spacewasm_store_destroy(store: *mut SpacewasmStore) {
-    unsafe { abi::store_destroy(store) }
+pub unsafe extern "C" fn spacewasm_destroy(engine: *mut CEngine) {
+    if engine.is_null() {
+        return;
+    }
+    let _ = unsafe { spacewasm::Box::from_raw(spacewasm::GlobalAllocator, engine) };
 }
 
 /// Read `len` bytes of guest linear memory starting at `addr` into `dst`.
@@ -377,7 +657,7 @@ pub unsafe extern "C" fn spacewasm_mem_read(
     unsafe { host::mem_read(caller, addr, dst, len) }
 }
 
-/// Write `len` bytes from `src` into guest linear memory starting at `addr`.
+/// Write `len` bytes from `src` to guest linear memory starting at `addr`.
 /// Intended for use from within a host function.
 ///
 /// # Safety
@@ -392,10 +672,11 @@ pub unsafe extern "C" fn spacewasm_mem_write(
     unsafe { host::mem_write(caller, addr, src, len) }
 }
 
-/// Write the current size of guest linear memory, in pages, to `out_pages`.
+/// Report the size of guest linear memory in pages. Intended for use from
+/// within a host function.
 ///
 /// # Safety
-/// `caller` must be a live caller handle; `out_pages` valid.
+/// `caller` must be a live caller handle; `out_pages` must be a valid pointer.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn spacewasm_mem_size(
     caller: *mut SpacewasmCaller,
