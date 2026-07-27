@@ -27,7 +27,7 @@ use wasi_common::sync::{Dir, WasiCtxBuilder, ambient_authority};
 
 spacewasm::global_allocator!(
     PageAllocator<0x200>,
-    PageAllocator::new(&RustSystemAllocator {}, 0x2_000_000)
+    PageAllocator::new(&RustSystemAllocator {}, 0x8_000_000)
 );
 
 const MAX_PAGES: usize = 0x10_000;
@@ -58,6 +58,10 @@ struct Args {
     /// Inherit all environment variables
     #[arg(long, value_name = "INHERIT_ENV", action = clap::ArgAction::SetTrue)]
     inherit_env: Option<bool>,
+
+    /// Enable raw terminal mode
+    #[arg(long, value_name = "RAW_TTY", action = clap::ArgAction::SetTrue)]
+    raw_tty: Option<bool>,
 
     /// Module filepath
     file: String,
@@ -106,6 +110,13 @@ fn main() {
                 std::process::exit(1);
             };
         }
+    }
+
+    if args.raw_tty.unwrap_or(false) {
+        let Ok(_) = crossterm::terminal::enable_raw_mode() else {
+            eprintln!("error enabling raw terminal mode");
+            std::process::exit(1);
+        };
     }
 
     wasi_ctx_builder.inherit_stdio();
@@ -235,11 +246,16 @@ fn main() {
         )
         .unwrap();
 
-    // TODO(cbwilson) Need to enable raw terminal mode somehow for TTY escape codes and control sequences
-
     let mut result = InterpreterResult::OutOfFuel;
     while result == InterpreterResult::OutOfFuel {
         result = Interpreter.run(code_builder.pages(), &mut engine, usize::MAX)
+    }
+
+    if args.raw_tty.unwrap_or(false) {
+        let Ok(_) = crossterm::terminal::disable_raw_mode() else {
+            eprintln!("error enabling raw terminal mode");
+            std::process::exit(1);
+        };
     }
 
     let InterpreterResult::Finished = result else {
