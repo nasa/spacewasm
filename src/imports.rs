@@ -44,7 +44,7 @@ impl Store {
                         };
 
                         return if f.params() == expected_ty.params[..]
-                            && return_vals != &expected_ty.returns[..]
+                            && return_vals == &expected_ty.returns[..]
                         {
                             Ok(Import::HostFunc {
                                 module: HostModuleRef::new(mi),
