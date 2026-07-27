@@ -27,6 +27,7 @@ pub enum spacewasm_status_t {
     SPACEWASM_ERR_WRONG_STATE = 8,
 
     // Allocation errors
+    SPACEWASM_ERR_GUEST_MEMORY_ALLOC_FAILED = 15,
     SPACEWASM_ERR_ALLOC_FAILED = 16,
     SPACEWASM_ERR_OUT_OF_MEMORY = 17,
     SPACEWASM_ERR_PAGE_TOO_SMALL = 18,
@@ -331,6 +332,7 @@ pub fn validation_status(e: &ValidationError) -> spacewasm_status_t {
             SPACEWASM_ERR_INVALID_START_FUNCTION_SIGNATURE
         }
         ValidationError::InvalidConstantExpr(ce) => constant_expr_status(ce),
+        ValidationError::GuestMemoryAllocationFailure => SPACEWASM_ERR_GUEST_MEMORY_ALLOC_FAILED,
         ValidationError::AllocError(ae) => alloc_status(ae.clone()),
         ValidationError::MemoryError(me) => memory_status(me.clone()),
         ValidationError::ReaderError(_) => SPACEWASM_ERR_READER_ERROR,
