@@ -318,9 +318,11 @@ typedef int32_t spacewasm_trap_t;
 #endif // __cplusplus
 
 /*
- The three C callbacks (unwrapped) plus their shared user data, adapting a C
- allocator to [`WasmMemoryAllocator`]. The callbacks receive `(size, align)`
- pairs rather than a `Layout`, since C has no equivalent type.
+ A struct holding the alloc, realloc, dealloc, userdata pointers to adapt
+ the C API to the Rc<dyn WasmMemoryAllocator> API.
+
+ This struct is reference counted and deallocated once all modules using this allocator
+ are dropped.
  */
 typedef struct spacewasm_allocator_t spacewasm_allocator_t;
 

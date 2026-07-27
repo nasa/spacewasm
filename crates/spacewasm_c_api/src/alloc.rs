@@ -26,9 +26,11 @@ pub type spacewasm_realloc_fn_t = Option<
 pub type spacewasm_dealloc_fn_t =
     Option<unsafe extern "C" fn(userdata: *mut c_void, ptr: *mut u8, size: usize, align: usize)>;
 
-/// The three C callbacks (unwrapped) plus their shared user data, adapting a C
-/// allocator to [`WasmMemoryAllocator`]. The callbacks receive `(size, align)`
-/// pairs rather than a `Layout`, since C has no equivalent type.
+/// A struct holding the alloc, realloc, dealloc, userdata pointers to adapt
+/// the C API to the Rc<dyn WasmMemoryAllocator> API.
+///
+/// This struct is reference counted and deallocated once all modules using this allocator
+/// are dropped.
 pub struct CAllocator {
     alloc: unsafe extern "C" fn(*mut c_void, usize, usize) -> *mut u8,
     realloc: unsafe extern "C" fn(*mut c_void, *mut u8, usize, usize, usize) -> *mut u8,
