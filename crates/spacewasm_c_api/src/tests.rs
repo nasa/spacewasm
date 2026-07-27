@@ -479,7 +479,11 @@ fn streaming_read_error() {
         )
     };
     unsafe { spacewasm_allocator_destroy(alloc) };
-    assert_eq!(st, status::SPACEWASM_ERR_STREAM, "expected ERR_STREAM");
+    assert_eq!(
+        st,
+        status::SPACEWASM_ERR_READER_ERROR,
+        "expected ERR_READER_ERROR"
+    );
 
     unsafe { spacewasm_destroy(store) };
 }
@@ -618,7 +622,11 @@ fn error_paths() {
     assert!(!alloc.is_null(), "allocator_new");
     let st = load_module_onto(alloc, store, c"main", JUNK, 0);
     unsafe { spacewasm_allocator_destroy(alloc) };
-    assert_eq!(st, Err(status::SPACEWASM_ERR_PARSE), "expected ERR_PARSE");
+    assert_eq!(
+        st,
+        Err(status::SPACEWASM_ERR_MALFORMED_MAGIC),
+        "expected ERR_MALFORMED_MAGIC"
+    );
 
     unsafe { spacewasm_destroy(store) };
 }
@@ -735,6 +743,298 @@ fn trap_reason_codes_map() {
 }
 
 #[test]
+fn validation_error_codes_map() {
+    use spacewasm::{AllocError, ConstantExprError, MemoryError, SectionKind, ValidationError::*};
+    let cases = [
+        // Basic parsing errors
+        (Eof, status::SPACEWASM_ERR_EOF),
+        (MalformedInteger, status::SPACEWASM_ERR_MALFORMED_INTEGER),
+        (I33IsNegative, status::SPACEWASM_ERR_I33_IS_NEGATIVE),
+        (MalformedMagic, status::SPACEWASM_ERR_MALFORMED_MAGIC),
+        (MalformedVersion, status::SPACEWASM_ERR_MALFORMED_VERSION),
+        (MalformedUtf8, status::SPACEWASM_ERR_MALFORMED_UTF8),
+        (
+            DuplicateModuleName,
+            status::SPACEWASM_ERR_DUPLICATE_MODULE_NAME,
+        ),
+        (
+            DuplicateExportName,
+            status::SPACEWASM_ERR_DUPLICATE_EXPORT_NAME,
+        ),
+        (
+            MalformedSectionId(0),
+            status::SPACEWASM_ERR_MALFORMED_SECTION_ID,
+        ),
+        (
+            MalformedValueType(0),
+            status::SPACEWASM_ERR_MALFORMED_VALUE_TYPE,
+        ),
+        (
+            MalformedFunction(0),
+            status::SPACEWASM_ERR_MALFORMED_FUNCTION,
+        ),
+        (MalformedLimit(0), status::SPACEWASM_ERR_MALFORMED_LIMIT),
+        (
+            MalformedElemType(0),
+            status::SPACEWASM_ERR_MALFORMED_ELEM_TYPE,
+        ),
+        (
+            MalformedSectionSize,
+            status::SPACEWASM_ERR_MALFORMED_SECTION_SIZE,
+        ),
+        (
+            ExpectedConstOrVar(0),
+            status::SPACEWASM_ERR_EXPECTED_CONST_OR_VAR,
+        ),
+        (
+            MalformedImportExportDesc(0),
+            status::SPACEWASM_ERR_MALFORMED_IMPORT_EXPORT_DESC,
+        ),
+        (
+            MalformedMemType(0),
+            status::SPACEWASM_ERR_MALFORMED_MEM_TYPE,
+        ),
+        (InvalidPageSize(0), status::SPACEWASM_ERR_INVALID_PAGE_SIZE),
+        (
+            InvalidSectionOrdering(SectionKind::Type, SectionKind::Import),
+            status::SPACEWASM_ERR_INVALID_SECTION_ORDERING,
+        ),
+        (
+            DuplicateSection(SectionKind::Type),
+            status::SPACEWASM_ERR_DUPLICATE_SECTION,
+        ),
+        (InvalidMaxLimit, status::SPACEWASM_ERR_INVALID_MAX_LIMIT),
+        (ExpectedTerminal(0), status::SPACEWASM_ERR_EXPECTED_TERMINAL),
+        (InvalidOpcode(0), status::SPACEWASM_ERR_INVALID_OPCODE),
+        (MalformedCodeSize, status::SPACEWASM_ERR_MALFORMED_CODE_SIZE),
+        (
+            InvalidCodeSectionFunctionCount,
+            status::SPACEWASM_ERR_INVALID_CODE_SECTION_FUNCTION_COUNT,
+        ),
+        (VecTooLong, status::SPACEWASM_ERR_VEC_TOO_LONG),
+        (IdxTooLarge, status::SPACEWASM_ERR_IDX_TOO_LARGE),
+        (
+            ModuleIdxTooLarge,
+            status::SPACEWASM_ERR_MODULE_IDX_TOO_LARGE,
+        ),
+        (MemoryTooLarge, status::SPACEWASM_ERR_MEMORY_TOO_LARGE),
+        (
+            MemoryImportTooLarge,
+            status::SPACEWASM_ERR_MEMORY_IMPORT_TOO_LARGE,
+        ),
+        (MemAlignTooLarge, status::SPACEWASM_ERR_MEM_ALIGN_TOO_LARGE),
+        // Control flow validation
+        (
+            ControlFlowTooDeep,
+            status::SPACEWASM_ERR_CONTROL_FLOW_TOO_DEEP,
+        ),
+        (StackUnderflow, status::SPACEWASM_ERR_STACK_UNDERFLOW),
+        (StackTooLarge, status::SPACEWASM_ERR_STACK_TOO_LARGE),
+        (
+            LabelStackJumpTooDeep,
+            status::SPACEWASM_ERR_LABEL_STACK_JUMP_TOO_DEEP,
+        ),
+        (
+            LabelJumpTooLarge,
+            status::SPACEWASM_ERR_LABEL_JUMP_TOO_LARGE,
+        ),
+        (TypeMismatch, status::SPACEWASM_ERR_TYPE_MISMATCH),
+        (
+            BlockResultTypeMismatch,
+            status::SPACEWASM_ERR_BLOCK_RESULT_TYPE_MISMATCH,
+        ),
+        (
+            FunctionResultTypeMismatch,
+            status::SPACEWASM_ERR_FUNCTION_RESULT_TYPE_MISMATCH,
+        ),
+        // Memory and table validation
+        (IllegalMemoryGrow, status::SPACEWASM_ERR_ILLEGAL_MEMORY_GROW),
+        (
+            InvalidElementOffset,
+            status::SPACEWASM_ERR_INVALID_ELEMENT_OFFSET,
+        ),
+        (
+            InvalidElementOutOfBounds,
+            status::SPACEWASM_ERR_INVALID_ELEMENT_OUT_OF_BOUNDS,
+        ),
+        (InvalidTableIndex, status::SPACEWASM_ERR_INVALID_TABLE_INDEX),
+        (TableNotDefined, status::SPACEWASM_ERR_TABLE_NOT_DEFINED),
+        (
+            InvalidElementCount,
+            status::SPACEWASM_ERR_INVALID_ELEMENT_COUNT,
+        ),
+        (InvalidMemIndex, status::SPACEWASM_ERR_INVALID_MEM_INDEX),
+        (MemoryNotDefined, status::SPACEWASM_ERR_MEMORY_NOT_DEFINED),
+        (
+            InvalidMemOffsetType,
+            status::SPACEWASM_ERR_INVALID_MEM_OFFSET_TYPE,
+        ),
+        (
+            InvalidNegativeMemOffset,
+            status::SPACEWASM_ERR_INVALID_NEGATIVE_MEM_OFFSET,
+        ),
+        (InvalidMemOffset, status::SPACEWASM_ERR_INVALID_MEM_OFFSET),
+        (MultipleMemories, status::SPACEWASM_ERR_MULTIPLE_MEMORIES),
+        (MultipleTables, status::SPACEWASM_ERR_MULTIPLE_TABLES),
+        // Index validation
+        (InvalidLabelIndex, status::SPACEWASM_ERR_INVALID_LABEL_INDEX),
+        (InvalidElseBlock, status::SPACEWASM_ERR_INVALID_ELSE_BLOCK),
+        (InvalidEndBlock, status::SPACEWASM_ERR_INVALID_END_BLOCK),
+        (
+            InstructionOutsideOfFunction,
+            status::SPACEWASM_ERR_INSTRUCTION_OUTSIDE_OF_FUNCTION,
+        ),
+        (
+            LocalIdxOutOfRange,
+            status::SPACEWASM_ERR_LOCAL_IDX_OUT_OF_RANGE,
+        ),
+        (
+            FunctionIdxOutOfRange,
+            status::SPACEWASM_ERR_FUNCTION_IDX_OUT_OF_RANGE,
+        ),
+        (
+            TypeIdxOutOfRange,
+            status::SPACEWASM_ERR_TYPE_IDX_OUT_OF_RANGE,
+        ),
+        (
+            FunctionTextOutOfRange,
+            status::SPACEWASM_ERR_FUNCTION_TEXT_OUT_OF_RANGE,
+        ),
+        (
+            GlobalIdxOutOfRange,
+            status::SPACEWASM_ERR_GLOBAL_IDX_OUT_OF_RANGE,
+        ),
+        // Import validation
+        (
+            FunctionImportNotFound,
+            status::SPACEWASM_ERR_FUNCTION_IMPORT_NOT_FOUND,
+        ),
+        (
+            GlobalImportNotFound,
+            status::SPACEWASM_ERR_GLOBAL_IMPORT_NOT_FOUND,
+        ),
+        (
+            MemoryImportNotFound,
+            status::SPACEWASM_ERR_MEMORY_IMPORT_NOT_FOUND,
+        ),
+        (
+            TableImportNotFound,
+            status::SPACEWASM_ERR_TABLE_IMPORT_NOT_FOUND,
+        ),
+        (
+            FunctionImportOutOfRange,
+            status::SPACEWASM_ERR_FUNCTION_IMPORT_OUT_OF_RANGE,
+        ),
+        (
+            FunctionImportTypeMismatch,
+            status::SPACEWASM_ERR_FUNCTION_IMPORT_TYPE_MISMATCH,
+        ),
+        (
+            GlobalIsNotMutable,
+            status::SPACEWASM_ERR_GLOBAL_IS_NOT_MUTABLE,
+        ),
+        (
+            GlobalImportTypeMismatch,
+            status::SPACEWASM_ERR_GLOBAL_IMPORT_TYPE_MISMATCH,
+        ),
+        (
+            MemoryImportTypeMismatch,
+            status::SPACEWASM_ERR_MEMORY_IMPORT_TYPE_MISMATCH,
+        ),
+        (
+            TableImportTypeMismatch,
+            status::SPACEWASM_ERR_TABLE_IMPORT_TYPE_MISMATCH,
+        ),
+        (
+            TableImportIncompatibleSize,
+            status::SPACEWASM_ERR_TABLE_IMPORT_INCOMPATIBLE_SIZE,
+        ),
+        // Function and global validation
+        (
+            FunctionParametersTooLarge,
+            status::SPACEWASM_ERR_FUNCTION_PARAMETERS_TOO_LARGE,
+        ),
+        (
+            FunctionReturnsTooLarge,
+            status::SPACEWASM_ERR_FUNCTION_RETURNS_TOO_LARGE,
+        ),
+        (TooManyLocals, status::SPACEWASM_ERR_TOO_MANY_LOCALS),
+        (
+            InvalidConstInstruction,
+            status::SPACEWASM_ERR_INVALID_CONST_INSTRUCTION,
+        ),
+        (
+            GlobalTypeMismatch,
+            status::SPACEWASM_ERR_GLOBAL_TYPE_MISMATCH,
+        ),
+        (
+            AlignmentLargerThanType,
+            status::SPACEWASM_ERR_ALIGNMENT_LARGER_THAN_TYPE,
+        ),
+        (
+            InvalidStartFunctionSignature,
+            status::SPACEWASM_ERR_INVALID_START_FUNCTION_SIGNATURE,
+        ),
+        // Constant expression validation
+        (
+            InvalidConstantExpr(ConstantExprError::InvalidConstantInstruction),
+            status::SPACEWASM_ERR_INVALID_CONST_INSTRUCTION,
+        ),
+        (
+            InvalidConstantExpr(ConstantExprError::AlreadyHasValue),
+            status::SPACEWASM_ERR_CONST_ALREADY_HAS_VALUE,
+        ),
+        (
+            InvalidConstantExpr(ConstantExprError::NoValue),
+            status::SPACEWASM_ERR_CONST_NO_VALUE,
+        ),
+        (
+            InvalidConstantExpr(ConstantExprError::InvalidGlobal),
+            status::SPACEWASM_ERR_CONST_INVALID_GLOBAL,
+        ),
+        // Nested error types
+        (
+            AllocError(AllocError::AllocationFailed),
+            status::SPACEWASM_ERR_ALLOC_FAILED,
+        ),
+        (
+            AllocError(AllocError::OutOfMemory),
+            status::SPACEWASM_ERR_OUT_OF_MEMORY,
+        ),
+        (
+            AllocError(AllocError::PageTooSmall),
+            status::SPACEWASM_ERR_PAGE_TOO_SMALL,
+        ),
+        (
+            MemoryError(MemoryError::OutOfBounds),
+            status::SPACEWASM_ERR_MEM_OUT_OF_BOUNDS,
+        ),
+        (
+            MemoryError(MemoryError::OutOfMemory),
+            status::SPACEWASM_ERR_OUT_OF_MEMORY,
+        ),
+        (
+            MemoryError(MemoryError::AllocationFailed),
+            status::SPACEWASM_ERR_ALLOC_FAILED,
+        ),
+        (
+            MemoryError(MemoryError::PageTooSmall),
+            status::SPACEWASM_ERR_PAGE_TOO_SMALL,
+        ),
+        // Miscellaneous
+        (
+            PossibleBackpatchCycle,
+            status::SPACEWASM_ERR_POSSIBLE_BACKPATCH_CYCLE,
+        ),
+        (PageFault, status::SPACEWASM_ERR_PAGE_FAULT),
+        (ReaderError(0), status::SPACEWASM_ERR_READER_ERROR),
+    ];
+    for (err, code) in cases {
+        assert_eq!(status::validation_status(&err), code, "{err:?}");
+    }
+}
+
+#[test]
 fn alloc_status_maps() {
     use spacewasm::AllocError::*;
     assert_eq!(
@@ -794,7 +1094,7 @@ fn simple_error_mappers() {
     use spacewasm::{HostNameError, HostValListError, SectionDecodeError, ValidationError};
 
     let pe = spacewasm::ParseError::new(0, SectionDecodeError::new(ValidationError::Eof));
-    assert_eq!(status::parse_status(&pe), status::SPACEWASM_ERR_PARSE);
+    assert_eq!(status::parse_status(&pe), status::SPACEWASM_ERR_EOF);
 
     assert_eq!(
         status::host_name_status(HostNameError),
