@@ -13,6 +13,7 @@
 /// (DLR).
 /// Copyright © 2024-2025 OxidOS Automotive SRL.
 use super::inspector::{Inspector, LimitedVec};
+use core::panic;
 use serde::{Deserialize, Serialize};
 use spacewasm::{
     AllocError, Allocator, CodeBuilder, CompilerOptions, ConstantExprError, Engine, ExportDesc,
@@ -208,9 +209,9 @@ impl GlobalValue for StaticGlobal {
     }
 }
 
-struct MutableStaticGlobal {
-    value: Mutex<Value>,
-    ty: ValType,
+pub struct MutableStaticGlobal {
+    pub value: Mutex<Value>,
+    pub ty: ValType,
 }
 
 impl GlobalValue for MutableStaticGlobal {
@@ -260,27 +261,32 @@ const MAX_CODE_PAGES: u32 = 256;
 const MAX_CONTROL_FRAMES: usize = 128;
 const MAX_STACK_DEPTH: usize = 256;
 
+/// Builds the set of host modules an engine is instantiated with. A factory
+/// (rather than a `Vec`) is required because the engine is rebuilt on every
+/// [`TestContext::save_store`], and [`HostModule`] is not `Clone`.
+type HostModuleFactory = fn() -> spacewasm::Vec<HostModule>;
+
 struct TestContext {
     engine: Engine,
     code_builder: CodeBuilder,
     /// Maps instance names (like "$Mf") to module indices
     /// This is separate from the module's name field which is used for linking/imports
     instance_names: std::collections::HashMap<String, usize>,
+    /// Produces the host modules exposed to the test's modules. Stored so the
+    /// store can be rebuilt with the same host modules in `save_store`.
+    host_modules: HostModuleFactory,
+    /// Return types of the currently paused function (if any)
+    paused_return_types: Option<spacewasm::Vec<ValType>>,
 }
 
-fn new_engine() -> Engine {
-    Engine::new(
-        1024,
-        256,
-        vec![test_host_module(), regression_host_module()],
-    )
-    .unwrap()
+fn new_engine(host_modules: HostModuleFactory) -> Engine {
+    Engine::new(1024, 256, host_modules()).unwrap()
 }
 
 impl TestContext {
-    fn new() -> Self {
+    fn new(host_modules: HostModuleFactory) -> Self {
         TestContext {
-            engine: new_engine(),
+            engine: new_engine(host_modules),
             code_builder: CodeBuilder::new(CompilerOptions {
                 allow_memory_grow: true,
                 max_backpatch_iterations: 0,
@@ -288,6 +294,8 @@ impl TestContext {
             })
             .unwrap(),
             instance_names: std::collections::HashMap::new(),
+            host_modules,
+            paused_return_types: None,
         }
     }
 
@@ -315,7 +323,7 @@ impl TestContext {
     /// Save the current store state
     /// Used to restore state after failed module loads that mutate the store (memory/tables)
     fn save_store(&self) -> Engine {
-        let mut cloned = new_engine();
+        let mut cloned = new_engine(self.host_modules);
 
         // Clone all modules into the new store
         for module in self.engine.store.modules().iter() {
@@ -611,9 +619,7 @@ fn load_module(
             .into_wasm_memory_allocator(),
     )?;
 
-    // Append the module and run its start function. `engine` and `code_builder`
-    // are disjoint fields, so the interpreter reads code straight from the
-    // builder's pages without a copy while `engine` is borrowed mutably.
+    // Append the module and run its start function.
     let module_ref = ctx.engine.push_module(module);
     let result = match ctx.engine.invoke_start(module_ref) {
         StartInvocation::Finished => InterpreterResult::Finished,
@@ -630,6 +636,71 @@ fn load_module(
 }
 
 fn invoke_function(
+    ctx: &mut TestContext,
+    module_name: &Option<String>,
+    func_name: &str,
+    args: &[ValueSpec],
+    test_log: Rc<RefCell<LimitedVec<String>>>,
+) -> Result<Option<Value>, InterpreterResult> {
+    // Check if the engine is paused from a previous invocation
+    if ctx.engine.host_pause_result.is_some() {
+        invoke_function_resume(ctx, args, test_log)
+    } else {
+        // Normal invocation path
+        invoke_function_normal(ctx, module_name, func_name, args, test_log)
+    }
+}
+
+fn invoke_function_resume(
+    ctx: &mut TestContext,
+    args: &[ValueSpec],
+    test_log: Rc<RefCell<LimitedVec<String>>>,
+) -> Result<Option<Value>, InterpreterResult> {
+    // Engine is paused, resume with the provided arguments
+    let resume_value = if args.is_empty() {
+        None
+    } else if args.len() == 1 {
+        Some(parse_value(&args[0]))
+    } else {
+        panic!("Resume expects exactly 0 or 1 argument, got {}", args.len());
+    };
+
+    test_log
+        .borrow_mut()
+        .push(format!("resume {:?}", resume_value));
+
+    ctx.engine.resume(resume_value);
+
+    // Continue execution from the paused state
+    let test_runner: Inspector<'_, _, _, _> = Inspector {
+        v: &Interpreter,
+        out: test_log.clone(),
+    };
+
+    let result = test_runner.run(ctx.code_builder.pages(), &mut ctx.engine, 10000000);
+
+    // Get the return types we saved when the function paused
+    let return_types = ctx
+        .paused_return_types
+        .take()
+        .expect("No saved return types for paused function");
+
+    match result {
+        InterpreterResult::Finished => {
+            if return_types.is_empty() {
+                Ok(None)
+            } else if return_types.len() == 1 {
+                Ok(Some(ctx.engine.result.unwrap().to_value(return_types[0])))
+            } else {
+                panic!("Multi-value returns not supported");
+            }
+        }
+        InterpreterResult::OutOfFuel => panic!("Infinite loop detected"),
+        err => Err(err),
+    }
+}
+
+fn invoke_function_normal(
     ctx: &mut TestContext,
     module_name: &Option<String>,
     func_name: &str,
@@ -694,12 +765,7 @@ fn invoke_function(
         (func_ref, return_types, params)
     };
 
-    // `engine` and `code_builder` are disjoint fields, so the interpreter reads
-    // code straight from the builder's pages while `engine` is borrowed mutably.
-    let text = ctx.code_builder.pages();
-    let state = &mut ctx.engine;
-
-    state.invoke(f_ref, &params).unwrap();
+    ctx.engine.invoke(f_ref, &params).unwrap();
 
     let test_runner: Inspector<'_, _, _, _> = Inspector {
         v: &Interpreter,
@@ -712,7 +778,7 @@ fn invoke_function(
         .push(format!("invoke {}({:?})", func_name, params));
 
     // Run until completion - up to 10-million instructions to catch infinite loops
-    let result = test_runner.run(text, state, 10000000);
+    let result = test_runner.run(ctx.code_builder.pages(), &mut ctx.engine, 10000000);
 
     // Check the result
     match result {
@@ -720,13 +786,17 @@ fn invoke_function(
             if return_types.is_empty() {
                 Ok(None)
             } else if return_types.len() == 1 {
-                Ok(Some(state.result.unwrap().to_value(return_types[0])))
+                Ok(Some(ctx.engine.result.unwrap().to_value(return_types[0])))
             } else {
                 panic!("Multi-value returns not supported");
             }
         }
-        InterpreterResult::ReaderError(err) => panic!("Reader error: {err:?}"),
         InterpreterResult::OutOfFuel => panic!("Infinite loop detected"),
+        InterpreterResult::Pause => {
+            // Save the return types so we can use them after resume
+            ctx.paused_return_types = Some(return_types);
+            Err(InterpreterResult::Pause)
+        }
         err => Err(err),
     }
 }
@@ -914,7 +984,9 @@ impl Drop for TempDir {
     }
 }
 
-fn test_host_module() -> HostModule {
+/// The standard `spectest` host module required by most of the spec test
+/// suite (print functions, well-known globals, a memory and a table).
+pub fn spectest_host_module() -> HostModule {
     HostModule {
         name: "spectest".into(),
         globals: vec![
@@ -1008,77 +1080,6 @@ fn test_host_module() -> HostModule {
     }
 }
 
-fn regression_host_module() -> HostModule {
-    HostModule {
-        name: "regression".into(),
-        globals: vec![
-            HostGlobal {
-                name: "mut_global_i32".into(),
-                value: spacewasm::Box::new(MutableStaticGlobal {
-                    value: Mutex::new(Value::I32(0)),
-                    ty: ValType::I32,
-                })
-                .unwrap()
-                .into_global_value_dyn(),
-            },
-            HostGlobal {
-                name: "mut_global_i64".into(),
-                value: spacewasm::Box::new(MutableStaticGlobal {
-                    value: Mutex::new(Value::I64(0)),
-                    ty: ValType::I64,
-                })
-                .unwrap()
-                .into_global_value_dyn(),
-            },
-            HostGlobal {
-                name: "mut_global_f32".into(),
-                value: spacewasm::Box::new(MutableStaticGlobal {
-                    value: Mutex::new(Value::F32(0.0)),
-                    ty: ValType::F32,
-                })
-                .unwrap()
-                .into_global_value_dyn(),
-            },
-            HostGlobal {
-                name: "mut_global_f64".into(),
-                value: spacewasm::Box::new(MutableStaticGlobal {
-                    value: Mutex::new(Value::F64(0.0)),
-                    ty: ValType::F64,
-                })
-                .unwrap()
-                .into_global_value_dyn(),
-            },
-        ],
-        functions: vec![
-            HostFunction::new(
-                "return_i32_from_all_args",
-                "iIfd".into(),
-                "i".into(),
-                |_, args| {
-                    let Value::I32(v) = args[0] else {
-                        unreachable!()
-                    };
-                    ControlFlow::Continue(Some(Value::I32(v)))
-                },
-            ),
-            HostFunction::new("return_i64", "".into(), "I".into(), |_, _| {
-                ControlFlow::Continue(Some(Value::I64(0x123456789)))
-            }),
-            HostFunction::new("return_f32", "".into(), "f".into(), |_, _| {
-                ControlFlow::Continue(Some(Value::F32(12.5)))
-            }),
-            HostFunction::new("return_f64", "".into(), "d".into(), |_, _| {
-                ControlFlow::Continue(Some(Value::F64(42.25)))
-            }),
-            HostFunction::new("noop", "".into(), "".into(), |_, _| {
-                ControlFlow::Continue(None)
-            }),
-        ],
-        memory: vec![],
-        table: vec![],
-    }
-}
-
 fn run_wast_command(
     command: Command,
     test_dir: &Path,
@@ -1159,6 +1160,11 @@ fn run_wast_command(
             } => match invoke_function(ctx, &module, &field, &args, log) {
                 Err(InterpreterResult::Trap(reason)) => {
                     check_trap_reason(reason, &text);
+                }
+                Err(InterpreterResult::Pause) => {
+                    if text != "paused" {
+                        panic!("Interpreter paused while expecting trap '{text}'");
+                    }
                 }
                 Err(err) => {
                     panic!("Expected trap '{text}', got error: {err:?}")
@@ -1284,6 +1290,7 @@ fn run_wast_command(
 fn run_wast_test_file_inner(
     test_dir: PathBuf,
     test_name: &str,
+    host_modules: HostModuleFactory,
     wast_line: Arc<Mutex<Option<u32>>>,
     subtest_log: SubtestLogType,
 ) {
@@ -1295,7 +1302,7 @@ fn run_wast_test_file_inner(
     let test_file: TestFile = serde_json::from_str(&json_content)
         .unwrap_or_else(|e| panic!("Failed to parse JSON file {}: {}", json_path.display(), e));
 
-    let mut ctx = TestContext::new();
+    let mut ctx = TestContext::new(host_modules);
 
     for command in test_file.commands {
         let test_log = Rc::new(RefCell::new(LimitedVec::<String>::new()));
@@ -1320,7 +1327,11 @@ fn run_wast_test_file_inner(
     }
 }
 
-pub fn run_wast_test_file(test_name: &str) {
+/// Run a spec test file with a caller-provided set of host modules. Use this
+/// for suites that depend on host modules beyond the standard `spectest` one
+/// (for example the regression tests, which also need
+/// [`regression_host_module`]).
+pub fn run_wast_test_file(test_name: &str, host_modules: HostModuleFactory) {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let source_wast_path = PathBuf::from(manifest_dir)
         .join("tests")
@@ -1361,6 +1372,7 @@ pub fn run_wast_test_file(test_name: &str) {
         run_wast_test_file_inner(
             temp_path.to_path_buf(),
             &test_filename,
+            host_modules,
             wast_line.clone(),
             subtest_log.clone(),
         )

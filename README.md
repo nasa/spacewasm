@@ -1,7 +1,12 @@
 <h1 align="center">SpaceWasm</h2>
+
+<p align="center">
+<img src="docs/logo.svg" width="150" height="150">
+</p>
+
 <p align="center">
   <a href="https://github.com/nasa/spacewasm/actions/workflows/ci.yml"><img src="https://github.com/nasa/spacewasm/actions/workflows/ci.yml/badge.svg" /></a>
-  <a href="https://codecov.io/gh/nasa/spacewasm"><img src="https://codecov.io/gh/nasa/spacewasm/branch/main/graph/badge.svg" /></a>
+  <a href="https://codecov.io/gh/nasa/spacewasm"><img src="https://codecov.io/gh/nasa/spacewasm/graph/badge.svg?token=3EddiLtM36"/></a>
   <a href="#license"><img src="https://img.shields.io/badge/license-Apache%202.0-blue" alt="license" /></a>
 </p>
 
@@ -43,13 +48,13 @@ This software comes with two major components:
 SpaceWasm does not execute direct WebAssembly bytecode. Wasm bytecode is meant to be small and structured in a way to
 validate easily. These properties however make it slow to execute in-place. During the decoding process of Wasm
 instructions, SpaceWasm converts bytecode into another intermediate representation (IR) which includes properties better
-suited for interpretation. Read more about the IR in the [specification](src/SPEC.md).
+suited for interpretation. Read more about the IR in the [specification](docs/ir.md).
 
 ## Requirements
 
 The requirements of SpaceWasm are levied from similar work produced by [DLR](https://github.com/DLR-FT/wasm-interpreter).
 
-See [requirements](./REQUIREMENTS.md).
+See [requirements](./docs/REQUIREMENTS.md).
 
 ## Embedding
 

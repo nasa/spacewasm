@@ -1,8 +1,14 @@
 .PHONY: help fuzz seed-to-wasm trace-wasm trace trace-debug clean-artifacts install-tools
 
+# Target Configuration (auto-detect if not set)
+SPACEWASM_TARGET ?= $(shell rustc -vV | grep 'host:' | cut -d' ' -f2)
+
 # Default target
 help:
 	@echo "SpaceWasm Fuzzing Targets"
+	@echo ""
+	@echo "Configuration:"
+	@echo "  SPACEWASM_TARGET=<triple>   Target architecture (default: $(SPACEWASM_TARGET))"
 	@echo ""
 	@echo "Fuzzing:"
 	@echo "  make fuzz                          Run the no_traps fuzzer"
@@ -26,10 +32,10 @@ help:
 
 # Run fuzzer
 fuzz:
-	cargo +nightly fuzz run no_traps
+	cargo +nightly fuzz run no_traps --target $(SPACEWASM_TARGET)
 
 fuzz-validate:
-	cargo +nightly fuzz run validate
+	cargo +nightly fuzz run validate --target $(SPACEWASM_TARGET)
 
 # Convert seed to Wasm and trace execution (release mode)
 trace:
@@ -39,8 +45,8 @@ trace:
 		exit 1; \
 	fi
 	@echo "Converting seed to Wasm and tracing execution (release mode)..."
-	@cargo run --release -p spacewasm-fuzzing --bin seed_to_wasm -- $(if $(TARGET),--target $(TARGET)) $(CRASH) --stdout 2>/dev/null | \
-		cargo run --release -p spacewasm_util --bin spacewasm-trace -- --stdin --limit $(or $(LIMIT),50)
+	@cargo run --release -p spacewasm-fuzzing --bin seed_to_wasm --target $(SPACEWASM_TARGET) -- $(if $(TARGET),--target $(TARGET)) $(CRASH) --stdout 2>/dev/null | \
+		cargo run --release -p spacewasm_util --bin spacewasm-trace --target $(SPACEWASM_TARGET) -- --stdin --limit $(or $(LIMIT),50)
 
 # Convert seed to Wasm and trace execution (debug mode with ASAN)
 trace-debug:
@@ -50,8 +56,8 @@ trace-debug:
 		exit 1; \
 	fi
 	@echo "Converting seed to Wasm and tracing execution (debug mode with ASAN)..."
-	@cargo run -p spacewasm-fuzzing --bin seed_to_wasm -- $(if $(TARGET),--target $(TARGET)) $(CRASH) --stdout 2>/dev/null | \
-		RUSTFLAGS="-Zsanitizer=address" cargo +nightly run -p spacewasm_util --bin spacewasm-trace -- --stdin --limit $(or $(LIMIT),50)
+	@cargo run -p spacewasm-fuzzing --bin seed_to_wasm --target $(SPACEWASM_TARGET) -- $(if $(TARGET),--target $(TARGET)) $(CRASH) --stdout 2>/dev/null | \
+		RUSTFLAGS="-Zsanitizer=address" cargo +nightly run --target $(SPACEWASM_TARGET) -p spacewasm_util --bin spacewasm-trace -- --stdin --limit $(or $(LIMIT),50)
 
 # Convert fuzzer seed to Wasm
 seed-to-wasm:
@@ -61,9 +67,9 @@ seed-to-wasm:
 		exit 1; \
 	fi
 	@if [ -n "$(OUT)" ]; then \
-		cargo run --release -p spacewasm-fuzzing --bin seed_to_wasm -- $(if $(TARGET),--target $(TARGET)) $(CRASH) $(OUT); \
+		cargo run --release -p spacewasm-fuzzing --bin seed_to_wasm --target $(SPACEWASM_TARGET) -- $(if $(TARGET),--target $(TARGET)) $(CRASH) $(OUT); \
 	else \
-		cargo run --release -p spacewasm-fuzzing --bin seed_to_wasm -- $(if $(TARGET),--target $(TARGET)) $(CRASH) $(CRASH).wasm; \
+		cargo run --release -p spacewasm-fuzzing --bin seed_to_wasm --target $(SPACEWASM_TARGET) -- $(if $(TARGET),--target $(TARGET)) $(CRASH) $(CRASH).wasm; \
 	fi
 
 # Trace Wasm file execution (release mode)
@@ -73,7 +79,7 @@ trace-wasm:
 		echo "Usage: make trace-wasm WASM=file.wasm [LIMIT=50]"; \
 		exit 1; \
 	fi
-	cargo run --release -p spacewasm_util --bin spacewasm-trace -- $(WASM) --limit $(or $(LIMIT),200)
+	cargo run --release -p spacewasm_util --bin spacewasm-trace --target $(SPACEWASM_TARGET) -- $(WASM) --limit $(or $(LIMIT),200)
 
 # Trace Wasm file execution (debug mode with ASAN)
 trace-wasm-debug:
@@ -82,7 +88,7 @@ trace-wasm-debug:
 		echo "Usage: make trace-wasm-debug WASM=file.wasm [LIMIT=50]"; \
 		exit 1; \
 	fi
-	RUSTFLAGS="-Zsanitizer=address" cargo run -p spacewasm_util --bin spacewasm-trace -- $(WASM) --limit $(or $(LIMIT),200)
+	RUSTFLAGS="-Zsanitizer=address" cargo run --target $(SPACEWASM_TARGET) -p spacewasm_util --bin spacewasm-trace -- $(WASM) --limit $(or $(LIMIT),200)
 
 # Clean fuzzer artifacts
 clean-artifacts:
