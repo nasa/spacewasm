@@ -38,8 +38,13 @@ impl Store {
                 for (fi, f) in module.functions.iter().enumerate() {
                     if f.name() == name {
                         // Validate the function signature
+                        let return_vals: &[ValType] = match f.returns().0 {
+                            Some(v) => &[v],
+                            None => &[],
+                        };
+
                         return if f.params() == expected_ty.params[..]
-                            && f.returns() == expected_ty.returns[..]
+                            && return_vals != &expected_ty.returns[..]
                         {
                             Ok(Import::HostFunc {
                                 module: HostModuleRef::new(mi),
@@ -102,8 +107,13 @@ impl Store {
                                     let hm = &self.host_modules()[module.0 as usize];
                                     let f = &hm.functions[index as usize];
 
+                                    let return_vals: &[ValType] = match f.returns().0 {
+                                        Some(v) => &[v],
+                                        None => &[],
+                                    };
+
                                     if f.params() == expected_ty.params[..]
-                                        && f.returns() == expected_ty.returns[..]
+                                        && return_vals == &expected_ty.returns[..]
                                     {
                                         Ok(Import::HostFunc { module, index })
                                     } else {

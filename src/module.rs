@@ -354,7 +354,7 @@ impl Module {
                     }
                     Ref::Host { module, index } => {
                         let f = &store.host_modules()[module.0 as usize].functions[index as usize];
-                        if !f.params().is_empty() || !f.returns().is_empty() {
+                        if !f.params().is_empty() || !f.returns().0.is_none() {
                             return Err(ValidationError::InvalidStartFunctionSignature);
                         }
                     }

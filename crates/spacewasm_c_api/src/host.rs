@@ -46,12 +46,14 @@ pub type spacewasm_host_fn_t = Option<
 #[repr(i32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum spacewasm_hostcall_result_t {
+    /// Continue, do not return a value
+    SPACEWASM_CONTINUE_NONE = 0,
     /// Continue; populate `out_result` if the function has a result type.
-    SPACEWASM_CONTINUE = 0,
+    SPACEWASM_CONTINUE_SOME = 1,
     /// Trap the interpreter.
-    SPACEWASM_TRAP = 1,
+    SPACEWASM_TRAP = 2,
     /// Pause the interpreter (cooperative yield).
-    SPACEWASM_PAUSE = 2,
+    SPACEWASM_PAUSE = 3,
 }
 
 /// A C function pointer plus its (embedder-owned) user data, stored inside the
@@ -119,7 +121,8 @@ impl CHostFunction {
         };
 
         match outcome {
-            spacewasm_hostcall_result_t::SPACEWASM_CONTINUE => {
+            spacewasm_hostcall_result_t::SPACEWASM_CONTINUE_NONE => ControlFlow::Continue(None),
+            spacewasm_hostcall_result_t::SPACEWASM_CONTINUE_SOME => {
                 ControlFlow::Continue(Some(out_result.to_value()))
             }
             spacewasm_hostcall_result_t::SPACEWASM_TRAP => {

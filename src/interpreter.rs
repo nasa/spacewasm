@@ -1418,23 +1418,28 @@ impl IrVisitor for Interpreter {
         let f = &state.store.host_modules_mut()[module.0 as usize].functions[x as usize];
         match r {
             ControlFlow::Continue(v) => {
-                match v {
-                    None => {}
-                    Some(Value::I32(i)) => {
+                match (v, f.returns().0) {
+                    (None, None) => {}
+                    (Some(Value::I32(i)), Some(ValType::I32)) => {
                         state.stack.write_u32(state.sp, i as u32);
                         state.sp += 1;
                     }
-                    Some(Value::I64(i)) => {
+                    (Some(Value::I64(i)), Some(ValType::I64)) => {
                         state.stack.write_u64(state.sp, i as u64);
                         state.sp += 2;
                     }
-                    Some(Value::F32(f)) => {
+                    (Some(Value::F32(f)), Some(ValType::F32)) => {
                         state.stack.write_f32(state.sp, f);
                         state.sp += 1;
                     }
-                    Some(Value::F64(f)) => {
+                    (Some(Value::F64(f)), Some(ValType::F64)) => {
                         state.stack.write_f64(state.sp, f);
                         state.sp += 2;
+                    }
+                    (got, expected) => {
+                        panic!(
+                            "host function returned {got:?} while declaration expecting {expected:?}"
+                        )
                     }
                 }
 
@@ -1498,7 +1503,13 @@ impl IrVisitor for Interpreter {
                 // Make sure the type matches our expectations (runtime validation)
                 let m = &state.store.host_modules()[module.0 as usize];
                 let f = &m.functions[*index as usize];
-                if f.params() != f_expected.params[..] || f.returns() != f_expected.returns[..] {
+
+                let return_vals: &[ValType] = match f.returns().0 {
+                    Some(v) => &[v],
+                    None => &[],
+                };
+
+                if f.params() != f_expected.params[..] || return_vals != &f_expected.returns[..] {
                     return Err(InterpreterBreak::Trap(TrapReason::InvalidTableFunctionType));
                 }
 

@@ -354,7 +354,7 @@ unsafe extern "C" fn add_one(
     }
     let arg = unsafe { (*params).u.i32_ };
     unsafe { *out = i32_val(arg + 1) };
-    spacewasm_hostcall_result_t::SPACEWASM_CONTINUE
+    spacewasm_hostcall_result_t::SPACEWASM_CONTINUE_SOME
 }
 
 // ---- test cases (one per C `test_*` function) -------------------------------
@@ -1455,7 +1455,7 @@ unsafe extern "C" fn mem_probe(
 
     let arg = unsafe { (*params).u.i32_ };
     unsafe { *out = i32_val(arg + 1) };
-    spacewasm_hostcall_result_t::SPACEWASM_CONTINUE
+    spacewasm_hostcall_result_t::SPACEWASM_CONTINUE_SOME
 }
 
 #[test]
