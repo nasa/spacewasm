@@ -1446,7 +1446,7 @@ impl IrVisitor for Interpreter {
                 Ok(())
             }
             ControlFlow::Break(HostFunctionBreak::Pause) => {
-                let other = state.host_pause_result.replace(f.returns().into());
+                let other = state.host_pause_result.replace(f.returns());
                 if other.is_some() {
                     panic!("Unexpected paused engine state");
                 }
