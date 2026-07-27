@@ -81,7 +81,7 @@ pub fn allocator_new(
     userdata: *mut c_void,
 ) -> *mut CAllocator {
     let (Some(alloc), Some(realloc), Some(dealloc)) = (alloc, realloc, dealloc) else {
-        return unsafe { core::mem::transmute(core::ptr::null_mut::<CAllocator>()) };
+        return core::ptr::null_mut::<CAllocator>();
     };
 
     let c = CAllocator {
@@ -92,8 +92,8 @@ pub fn allocator_new(
     };
 
     match Rc::new(c) {
-        Ok(rc) => unsafe { core::mem::transmute(rc) },
-        Err(_) => unsafe { core::mem::transmute(core::ptr::null_mut::<CAllocator>()) },
+        Ok(rc) => unsafe { core::mem::transmute::<spacewasm::Rc<CAllocator>, *mut CAllocator>(rc) },
+        Err(_) => core::ptr::null_mut::<CAllocator>(),
     }
 }
 
