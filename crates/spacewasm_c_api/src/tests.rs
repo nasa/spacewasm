@@ -656,7 +656,11 @@ fn void_host_function_pushes_no_value() {
         status::SPACEWASM_OK,
         "result"
     );
-    assert_eq!(unsafe { out.u.i32_ }, 42, "void host call must not push a value");
+    assert_eq!(
+        unsafe { out.u.i32_ },
+        42,
+        "void host call must not push a value"
+    );
 
     unsafe {
         spacewasm_destroy(store);
