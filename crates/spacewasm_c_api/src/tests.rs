@@ -790,7 +790,10 @@ fn validation_error_codes_map() {
             MalformedImportExportDesc(0),
             status::SPACEWASM_ERR_MALFORMED_IMPORT_EXPORT_DESC,
         ),
-        (MalformedMemType(0), status::SPACEWASM_ERR_MALFORMED_MEM_TYPE),
+        (
+            MalformedMemType(0),
+            status::SPACEWASM_ERR_MALFORMED_MEM_TYPE,
+        ),
         (InvalidPageSize(0), status::SPACEWASM_ERR_INVALID_PAGE_SIZE),
         (
             InvalidSectionOrdering(SectionKind::Type, SectionKind::Import),
@@ -810,7 +813,10 @@ fn validation_error_codes_map() {
         ),
         (VecTooLong, status::SPACEWASM_ERR_VEC_TOO_LONG),
         (IdxTooLarge, status::SPACEWASM_ERR_IDX_TOO_LARGE),
-        (ModuleIdxTooLarge, status::SPACEWASM_ERR_MODULE_IDX_TOO_LARGE),
+        (
+            ModuleIdxTooLarge,
+            status::SPACEWASM_ERR_MODULE_IDX_TOO_LARGE,
+        ),
         (MemoryTooLarge, status::SPACEWASM_ERR_MEMORY_TOO_LARGE),
         (
             MemoryImportTooLarge,
@@ -851,10 +857,7 @@ fn validation_error_codes_map() {
             InvalidElementOutOfBounds,
             status::SPACEWASM_ERR_INVALID_ELEMENT_OUT_OF_BOUNDS,
         ),
-        (
-            InvalidTableIndex,
-            status::SPACEWASM_ERR_INVALID_TABLE_INDEX,
-        ),
+        (InvalidTableIndex, status::SPACEWASM_ERR_INVALID_TABLE_INDEX),
         (TableNotDefined, status::SPACEWASM_ERR_TABLE_NOT_DEFINED),
         (
             InvalidElementCount,
@@ -874,10 +877,7 @@ fn validation_error_codes_map() {
         (MultipleMemories, status::SPACEWASM_ERR_MULTIPLE_MEMORIES),
         (MultipleTables, status::SPACEWASM_ERR_MULTIPLE_TABLES),
         // Index validation
-        (
-            InvalidLabelIndex,
-            status::SPACEWASM_ERR_INVALID_LABEL_INDEX,
-        ),
+        (InvalidLabelIndex, status::SPACEWASM_ERR_INVALID_LABEL_INDEX),
         (InvalidElseBlock, status::SPACEWASM_ERR_INVALID_ELSE_BLOCK),
         (InvalidEndBlock, status::SPACEWASM_ERR_INVALID_END_BLOCK),
         (
