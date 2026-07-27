@@ -318,18 +318,21 @@ typedef int32_t spacewasm_trap_t;
 #endif // __cplusplus
 
 /*
+ A struct holding the alloc, realloc, dealloc, userdata pointers to adapt
+ the C API to the Rc<dyn WasmMemoryAllocator> API.
+
+ This struct is reference counted and deallocated once all modules using this allocator
+ are dropped.
+ */
+typedef struct spacewasm_allocator_t spacewasm_allocator_t;
+
+/*
  Handle holding the SpaceWasm engine and compiled IR code.
  This handle is used for holding and executing the SpaceWasm interpreter.
  */
 typedef struct spacewasm_t spacewasm_t;
 
 typedef struct spacewasm_host_module_t spacewasm_host_module_t;
-
-/*
- Opaque guest linear-memory allocator handle (`spacewasm_allocator_t`), owning
- a reference-counted [`WasmMemoryAllocator`] built from C callbacks.
- */
-typedef struct spacewasm_allocator_t spacewasm_allocator_t;
 
 /*
  Allocate `size` bytes aligned to `align`. Return NULL on failure.

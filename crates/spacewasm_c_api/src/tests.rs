@@ -7,7 +7,7 @@ use core::ffi::c_void;
 use std::alloc::{Layout, alloc, dealloc, realloc};
 use std::sync::Mutex;
 
-use crate::SpacewasmAllocator;
+use crate::CAllocator;
 use crate::capi::*;
 use crate::host::{SpacewasmCaller, spacewasm_hostcall_result_t};
 use crate::status::{self, spacewasm_run_status_t, spacewasm_status_t, spacewasm_trap_t};
@@ -85,7 +85,7 @@ unsafe extern "C" fn mem_dealloc(_userdata: *mut c_void, ptr: *mut u8, size: usi
     }
 }
 
-fn new_guest_allocator() -> *mut SpacewasmAllocator {
+fn new_guest_allocator() -> *mut CAllocator {
     spacewasm_allocator_new(
         Some(mem_alloc),
         Some(mem_realloc),
@@ -242,7 +242,7 @@ fn new_store(stack_size: usize, max_modules: u32, max_code_pages: u32) -> *mut C
 /// Stream one module onto an existing store in `step`-byte chunks, then run its
 /// start function if it declares one. Returns the module index on success.
 fn load_module_onto(
-    alloc: *mut SpacewasmAllocator,
+    alloc: *mut CAllocator,
     store: *mut CEngine,
     name: &core::ffi::CStr,
     data: &'static [u8],
