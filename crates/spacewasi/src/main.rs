@@ -255,7 +255,7 @@ fn main() {
 
     if args.raw_tty.unwrap_or(false) {
         let Ok(_) = crossterm::terminal::disable_raw_mode() else {
-            eprintln!("error enabling raw terminal mode");
+            eprintln!("error disabling raw terminal mode");
             std::process::exit(1);
         };
     }
