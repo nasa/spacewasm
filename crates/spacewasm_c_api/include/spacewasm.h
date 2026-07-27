@@ -318,18 +318,19 @@ typedef int32_t spacewasm_trap_t;
 #endif // __cplusplus
 
 /*
+ The three C callbacks (unwrapped) plus their shared user data, adapting a C
+ allocator to [`WasmMemoryAllocator`]. The callbacks receive `(size, align)`
+ pairs rather than a `Layout`, since C has no equivalent type.
+ */
+typedef struct spacewasm_allocator_t spacewasm_allocator_t;
+
+/*
  Handle holding the SpaceWasm engine and compiled IR code.
  This handle is used for holding and executing the SpaceWasm interpreter.
  */
 typedef struct spacewasm_t spacewasm_t;
 
 typedef struct spacewasm_host_module_t spacewasm_host_module_t;
-
-/*
- Opaque guest linear-memory allocator handle (`spacewasm_allocator_t`), owning
- a reference-counted [`WasmMemoryAllocator`] built from C callbacks.
- */
-typedef struct spacewasm_allocator_t spacewasm_allocator_t;
 
 /*
  Allocate `size` bytes aligned to `align`. Return NULL on failure.

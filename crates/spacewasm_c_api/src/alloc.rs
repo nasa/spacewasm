@@ -4,7 +4,7 @@ use core::alloc::Layout;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
-use spacewasm::{AllocError, Box, GlobalAllocator, Rc, WasmMemoryAllocator};
+use spacewasm::{AllocError, Rc, WasmMemoryAllocator};
 
 /// Allocate `size` bytes aligned to `align`. Return NULL on failure.
 pub type spacewasm_alloc_fn_t =
@@ -29,7 +29,7 @@ pub type spacewasm_dealloc_fn_t =
 /// The three C callbacks (unwrapped) plus their shared user data, adapting a C
 /// allocator to [`WasmMemoryAllocator`]. The callbacks receive `(size, align)`
 /// pairs rather than a `Layout`, since C has no equivalent type.
-struct CAllocator {
+pub struct CAllocator {
     alloc: unsafe extern "C" fn(*mut c_void, usize, usize) -> *mut u8,
     realloc: unsafe extern "C" fn(*mut c_void, *mut u8, usize, usize, usize) -> *mut u8,
     dealloc: unsafe extern "C" fn(*mut c_void, *mut u8, usize, usize),
@@ -72,10 +72,6 @@ impl WasmMemoryAllocator for CAllocator {
     }
 }
 
-/// Opaque guest linear-memory allocator handle (`spacewasm_allocator_t`), owning
-/// a reference-counted [`WasmMemoryAllocator`] built from C callbacks.
-pub struct SpacewasmAllocator(Rc<CAllocator>);
-
 /// Build an allocator handle from three C callbacks. Returns null if any
 /// callback is null or the handle allocation fails.
 pub fn allocator_new(
@@ -83,7 +79,7 @@ pub fn allocator_new(
     realloc: spacewasm_realloc_fn_t,
     dealloc: spacewasm_dealloc_fn_t,
     userdata: *mut c_void,
-) -> *mut SpacewasmAllocator {
+) -> *mut CAllocator {
     let (Some(alloc), Some(realloc), Some(dealloc)) = (alloc, realloc, dealloc) else {
         return unsafe { core::mem::transmute(core::ptr::null_mut::<CAllocator>()) };
     };
@@ -106,21 +102,20 @@ pub fn allocator_new(
 ///
 /// # Safety
 /// `handle` must be null or a live pointer from [`allocator_new`].
-pub unsafe fn allocator_clone_rc(
-    handle: *const SpacewasmAllocator,
-) -> Option<Rc<dyn WasmMemoryAllocator>> {
-    let handle = unsafe { handle.as_ref() }?;
-    Some(handle.0.clone().into_wasm_memory_allocator())
+pub unsafe fn allocator_clone_rc(handle: *const CAllocator) -> Option<Rc<dyn WasmMemoryAllocator>> {
+    let handle: Rc<CAllocator> = unsafe { core::mem::transmute(handle.as_ref()?) };
+    Some(handle.clone().into_wasm_memory_allocator())
 }
 
 /// Destroy an allocator handle. No-op on null.
 ///
 /// # Safety
 /// `handle` must be a live pointer from [`allocator_new`], not already destroyed.
-pub unsafe fn allocator_destroy(handle: *mut SpacewasmAllocator) {
+pub unsafe fn allocator_destroy(handle: *mut CAllocator) {
     if handle.is_null() {
         return;
     }
-    // Reclaim ownership and drop, releasing this handle's reference.
-    let _ = unsafe { Box::from_raw(GlobalAllocator, handle) };
+
+    let handle: Rc<CAllocator> = unsafe { core::mem::transmute(handle) };
+    drop(handle);
 }
