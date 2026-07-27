@@ -74,9 +74,7 @@ impl WasmMemoryAllocator for CAllocator {
 
 /// Opaque guest linear-memory allocator handle (`spacewasm_allocator_t`), owning
 /// a reference-counted [`WasmMemoryAllocator`] built from C callbacks.
-pub struct SpacewasmAllocator {
-    inner: Rc<dyn WasmMemoryAllocator>,
-}
+pub struct SpacewasmAllocator(Rc<CAllocator>);
 
 /// Build an allocator handle from three C callbacks. Returns null if any
 /// callback is null or the handle allocation fails.
@@ -87,7 +85,7 @@ pub fn allocator_new(
     userdata: *mut c_void,
 ) -> *mut SpacewasmAllocator {
     let (Some(alloc), Some(realloc), Some(dealloc)) = (alloc, realloc, dealloc) else {
-        return core::ptr::null_mut();
+        return unsafe { core::mem::transmute(core::ptr::null_mut::<CAllocator>()) };
     };
 
     let c = CAllocator {
@@ -98,13 +96,8 @@ pub fn allocator_new(
     };
 
     match Rc::new(c) {
-        Ok(rc) => {
-            let inner = rc.into_wasm_memory_allocator();
-            Box::new(SpacewasmAllocator { inner })
-                .map(|b| Box::leak(b) as *mut SpacewasmAllocator)
-                .unwrap_or(core::ptr::null_mut())
-        }
-        Err(_) => core::ptr::null_mut(),
+        Ok(rc) => unsafe { core::mem::transmute(rc) },
+        Err(_) => unsafe { core::mem::transmute(core::ptr::null_mut::<CAllocator>()) },
     }
 }
 
@@ -117,7 +110,7 @@ pub unsafe fn allocator_clone_rc(
     handle: *const SpacewasmAllocator,
 ) -> Option<Rc<dyn WasmMemoryAllocator>> {
     let handle = unsafe { handle.as_ref() }?;
-    Some(handle.inner.clone())
+    Some(handle.0.clone().into_wasm_memory_allocator())
 }
 
 /// Destroy an allocator handle. No-op on null.
