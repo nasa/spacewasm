@@ -312,7 +312,7 @@ pub const HOST_FUNCTION_NAME_CAP: usize = 31;
 pub struct HostFunction {
     name: HostName<HOST_FUNCTION_NAME_CAP>,
     params: HostValList,
-    returns: HostValList,
+    returns: ResultType,
     f: HostFunctionFn,
 }
 
@@ -321,7 +321,7 @@ impl Debug for HostFunction {
         f.debug_struct("HostFunction")
             .field("name", &self.name)
             .field("params", &self.params.as_slice())
-            .field("returns", &self.returns.as_slice())
+            .field("returns", &self.returns)
             .finish()
     }
 }
@@ -356,7 +356,7 @@ impl HostFunction {
         f: impl Fn(&mut Engine, &[Value]) -> HostFunctionResult + 'static,
     ) -> Self {
         HostFunction::try_new(name.into(), params, returns, f)
-            .expect("host function signature too large")
+            .expect("host function signature too large or invalid return value")
     }
 
     /// Fallibly construct a host function, returning an error if the parameter
@@ -373,15 +373,19 @@ impl HostFunction {
             return Err(HostValListError);
         }
 
-        let rs = returns.iter().fold(0, |n, i| n + i.size()) / 4;
-        if rs > 0xFFFF {
-            return Err(HostValListError);
+        let mut rs: Option<ValType> = None;
+        for r in returns.iter() {
+            if rs.is_some() {
+                return Err(HostValListError);
+            }
+
+            rs = Some(r);
         }
 
         Ok(HostFunction {
             name,
             params,
-            returns,
+            returns: ResultType(rs),
             f: Box::new(f).unwrap().into_host_function_dyn(),
         })
     }
@@ -390,7 +394,7 @@ impl HostFunction {
         self.params
     }
 
-    pub fn returns(&self) -> HostValList {
+    pub fn returns(&self) -> ResultType {
         self.returns
     }
 
