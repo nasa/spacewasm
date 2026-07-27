@@ -618,7 +618,11 @@ fn error_paths() {
     assert!(!alloc.is_null(), "allocator_new");
     let st = load_module_onto(alloc, store, c"main", JUNK, 0);
     unsafe { spacewasm_allocator_destroy(alloc) };
-    assert_eq!(st, Err(status::SPACEWASM_ERR_PARSE), "expected ERR_PARSE");
+    assert_eq!(
+        st,
+        Err(status::SPACEWASM_ERR_MALFORMED_MAGIC),
+        "expected ERR_MALFORMED_MAGIC"
+    );
 
     unsafe { spacewasm_destroy(store) };
 }
@@ -794,7 +798,7 @@ fn simple_error_mappers() {
     use spacewasm::{HostNameError, HostValListError, SectionDecodeError, ValidationError};
 
     let pe = spacewasm::ParseError::new(0, SectionDecodeError::new(ValidationError::Eof));
-    assert_eq!(status::parse_status(&pe), status::SPACEWASM_ERR_PARSE);
+    assert_eq!(status::parse_status(&pe), status::SPACEWASM_ERR_EOF);
 
     assert_eq!(
         status::host_name_status(HostNameError),
