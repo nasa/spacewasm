@@ -103,8 +103,15 @@ pub fn allocator_new(
 /// # Safety
 /// `handle` must be null or a live pointer from [`allocator_new`].
 pub unsafe fn allocator_clone_rc(handle: *const CAllocator) -> Option<Rc<dyn WasmMemoryAllocator>> {
-    let handle: Rc<CAllocator> = unsafe { core::mem::transmute(handle.as_ref()?) };
-    Some(handle.clone().into_wasm_memory_allocator())
+    if handle.is_null() {
+        return None;
+    }
+
+    // Transmut to manually drop since `CAllocator` is really a &Rc<Allocator> but the lifetime is not
+    // defined from the C side.
+    let handle: core::mem::ManuallyDrop<Rc<CAllocator>> =
+        unsafe { core::mem::transmute::<*const CAllocator, _>(handle) };
+    Some(Rc::clone(&handle).into_wasm_memory_allocator())
 }
 
 /// Destroy an allocator handle. No-op on null.
