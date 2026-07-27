@@ -1098,6 +1098,10 @@ fn validation_error_codes_map() {
             InvalidConstantExpr(ConstantExprError::InvalidGlobal),
             status::SPACEWASM_ERR_CONST_INVALID_GLOBAL,
         ),
+        (
+            GuestMemoryAllocationFailure,
+            status::SPACEWASM_ERR_GUEST_MEMORY_ALLOC_FAILED,
+        ),
         // Nested error types
         (
             AllocError(AllocError::AllocationFailed),

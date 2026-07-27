@@ -682,7 +682,8 @@ impl MemorySection {
         } else {
             // We are allocating memory for this module
             let ty = MemType::read(wasm)?;
-            let memory = Memory::new(ty, allocator)?;
+            let memory = Memory::new(ty, allocator)
+                .map_err(|_| ValidationError::GuestMemoryAllocationFailure)?;
             Ok(Some(MemoryKind::Owned(Rc::new(memory)?)))
         }
     }
