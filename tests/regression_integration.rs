@@ -88,6 +88,14 @@ pub fn regression_host_module() -> HostModule {
             HostFunction::new("pause_f64", "".into(), "d".into(), |_, _| {
                 ControlFlow::Break(HostFunctionBreak::Pause)
             }),
+            HostFunction::new("invalid_should_return_some", "".into(), "i".into(), |_, _| {
+                // The return value string says it returns an i32 but we are returning void
+                ControlFlow::Continue(None)
+            }),
+            HostFunction::new("invalid_should_return_none", "".into(), "".into(), |_, _| {
+                // The return value string says it returns void but we are returning Some(I32(1))
+                ControlFlow::Continue(Some(Value::I32(1)))
+            }),
         ],
         memory: vec![],
         table: vec![],
@@ -148,4 +156,16 @@ fn decode_errors() {
 #[test]
 fn pause_resume() {
     run("regression/pause-resume");
+}
+
+#[test]
+#[should_panic = "host function returned Some(I32(1)) while declaration expecting None"]
+fn host_func_invalid_should_panic_none() {
+    run("regression/host_func_invalid_should_panic_none");
+}
+
+#[test]
+#[should_panic = "host function returned None while declaration expecting Some(I32)"]
+fn host_func_invalid_should_panic_some() {
+    run("regression/host_func_invalid_should_panic_some");
 }
