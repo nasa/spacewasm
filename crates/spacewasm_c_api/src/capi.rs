@@ -9,9 +9,8 @@ use spacewasm::{
 };
 
 use crate::SpacewasmCaller;
-use crate::alloc::{
-    self, SpacewasmAllocator, spacewasm_alloc_fn_t, spacewasm_dealloc_fn_t, spacewasm_realloc_fn_t,
-};
+use crate::alloc::CAllocator;
+use crate::alloc::{self, spacewasm_alloc_fn_t, spacewasm_dealloc_fn_t, spacewasm_realloc_fn_t};
 use crate::config::{MAX_CONTROL_FRAMES, MAX_STACK_DEPTH};
 use crate::host;
 use crate::host::CHostFunction;
@@ -88,7 +87,7 @@ pub extern "C" fn spacewasm_allocator_new(
     realloc: spacewasm_realloc_fn_t,
     dealloc: spacewasm_dealloc_fn_t,
     userdata: *mut c_void,
-) -> *mut SpacewasmAllocator {
+) -> *mut CAllocator {
     alloc::allocator_new(alloc, realloc, dealloc, userdata)
 }
 
@@ -100,7 +99,7 @@ pub extern "C" fn spacewasm_allocator_new(
 /// `allocator` must be a live handle from [`spacewasm_allocator_new`], not
 /// already destroyed.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn spacewasm_allocator_destroy(allocator: *mut SpacewasmAllocator) {
+pub unsafe extern "C" fn spacewasm_allocator_destroy(allocator: *mut CAllocator) {
     unsafe { alloc::allocator_destroy(allocator) }
 }
 
@@ -253,7 +252,7 @@ pub unsafe extern "C" fn spacewasm_load_module(
     name: *const c_char,
     read: spacewasm_read_fn_t,
     read_userdata: *mut c_void,
-    allocator: *mut SpacewasmAllocator,
+    allocator: *mut CAllocator,
     out_module_idx: *mut u32,
 ) -> spacewasm_status_t {
     // SAFETY: `allocator` is null or a live handle per the contract.
@@ -285,7 +284,7 @@ pub unsafe extern "C" fn spacewasm_load_module(
         // generic parse failure.
         Err(e) if stream.errored() => {
             let _ = e;
-            return status::SPACEWASM_ERR_STREAM;
+            return status::SPACEWASM_ERR_READER_ERROR;
         }
         Err(e) => return status::parse_status(&e),
     };

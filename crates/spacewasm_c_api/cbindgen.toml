@@ -23,7 +23,7 @@ exclude = [
 ]
 
 [export.rename]
-"SpacewasmAllocator" = "spacewasm_allocator_t"
+"CAllocator" = "spacewasm_allocator_t"
 "SpacewasmCaller" = "spacewasm_caller_t"
 "CEngine" = "spacewasm_t"
 "HostModule" = "spacewasm_host_module_t"

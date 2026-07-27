@@ -4,7 +4,7 @@ use core::alloc::Layout;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
-use spacewasm::{AllocError, Box, GlobalAllocator, Rc, WasmMemoryAllocator};
+use spacewasm::{AllocError, Rc, WasmMemoryAllocator};
 
 /// Allocate `size` bytes aligned to `align`. Return NULL on failure.
 pub type spacewasm_alloc_fn_t =
@@ -26,10 +26,12 @@ pub type spacewasm_realloc_fn_t = Option<
 pub type spacewasm_dealloc_fn_t =
     Option<unsafe extern "C" fn(userdata: *mut c_void, ptr: *mut u8, size: usize, align: usize)>;
 
-/// The three C callbacks (unwrapped) plus their shared user data, adapting a C
-/// allocator to [`WasmMemoryAllocator`]. The callbacks receive `(size, align)`
-/// pairs rather than a `Layout`, since C has no equivalent type.
-struct CAllocator {
+/// A struct holding the alloc, realloc, dealloc, userdata pointers to adapt
+/// the C API to the Rc<dyn WasmMemoryAllocator> API.
+///
+/// This struct is reference counted and deallocated once all modules using this allocator
+/// are dropped.
+pub struct CAllocator {
     alloc: unsafe extern "C" fn(*mut c_void, usize, usize) -> *mut u8,
     realloc: unsafe extern "C" fn(*mut c_void, *mut u8, usize, usize, usize) -> *mut u8,
     dealloc: unsafe extern "C" fn(*mut c_void, *mut u8, usize, usize),
@@ -72,12 +74,6 @@ impl WasmMemoryAllocator for CAllocator {
     }
 }
 
-/// Opaque guest linear-memory allocator handle (`spacewasm_allocator_t`), owning
-/// a reference-counted [`WasmMemoryAllocator`] built from C callbacks.
-pub struct SpacewasmAllocator {
-    inner: Rc<dyn WasmMemoryAllocator>,
-}
-
 /// Build an allocator handle from three C callbacks. Returns null if any
 /// callback is null or the handle allocation fails.
 pub fn allocator_new(
@@ -85,9 +81,9 @@ pub fn allocator_new(
     realloc: spacewasm_realloc_fn_t,
     dealloc: spacewasm_dealloc_fn_t,
     userdata: *mut c_void,
-) -> *mut SpacewasmAllocator {
+) -> *mut CAllocator {
     let (Some(alloc), Some(realloc), Some(dealloc)) = (alloc, realloc, dealloc) else {
-        return core::ptr::null_mut();
+        return core::ptr::null_mut::<CAllocator>();
     };
 
     let c = CAllocator {
@@ -98,13 +94,8 @@ pub fn allocator_new(
     };
 
     match Rc::new(c) {
-        Ok(rc) => {
-            let inner = rc.into_wasm_memory_allocator();
-            Box::new(SpacewasmAllocator { inner })
-                .map(|b| Box::leak(b) as *mut SpacewasmAllocator)
-                .unwrap_or(core::ptr::null_mut())
-        }
-        Err(_) => core::ptr::null_mut(),
+        Ok(rc) => unsafe { core::mem::transmute::<spacewasm::Rc<CAllocator>, *mut CAllocator>(rc) },
+        Err(_) => core::ptr::null_mut::<CAllocator>(),
     }
 }
 
@@ -113,21 +104,27 @@ pub fn allocator_new(
 ///
 /// # Safety
 /// `handle` must be null or a live pointer from [`allocator_new`].
-pub unsafe fn allocator_clone_rc(
-    handle: *const SpacewasmAllocator,
-) -> Option<Rc<dyn WasmMemoryAllocator>> {
-    let handle = unsafe { handle.as_ref() }?;
-    Some(handle.inner.clone())
+pub unsafe fn allocator_clone_rc(handle: *const CAllocator) -> Option<Rc<dyn WasmMemoryAllocator>> {
+    if handle.is_null() {
+        return None;
+    }
+
+    // Transmut to manually drop since `CAllocator` is really a &Rc<Allocator> but the lifetime is not
+    // defined from the C side.
+    let handle: core::mem::ManuallyDrop<Rc<CAllocator>> =
+        unsafe { core::mem::transmute::<*const CAllocator, _>(handle) };
+    Some(Rc::clone(&handle).into_wasm_memory_allocator())
 }
 
 /// Destroy an allocator handle. No-op on null.
 ///
 /// # Safety
 /// `handle` must be a live pointer from [`allocator_new`], not already destroyed.
-pub unsafe fn allocator_destroy(handle: *mut SpacewasmAllocator) {
+pub unsafe fn allocator_destroy(handle: *mut CAllocator) {
     if handle.is_null() {
         return;
     }
-    // Reclaim ownership and drop, releasing this handle's reference.
-    let _ = unsafe { Box::from_raw(GlobalAllocator, handle) };
+
+    let handle: Rc<CAllocator> = unsafe { core::mem::transmute(handle) };
+    drop(handle);
 }
