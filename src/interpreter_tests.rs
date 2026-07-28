@@ -75,7 +75,7 @@ mod tests {
             exports: crate::Vec::zero(),
         };
 
-        let module_ref = engine.push_module(module);
+        let module_ref = engine.push_module(module).unwrap();
         match engine.invoke_start(module_ref) {
             StartInvocation::Finished => {}
             StartInvocation::Trap(t) => panic!("trap during initialization {t:?}"),
