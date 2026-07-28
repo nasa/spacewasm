@@ -46,9 +46,13 @@ pub type spacewasm_host_fn_t = Option<
 #[repr(i32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum spacewasm_hostcall_result_t {
-    /// Continue, do not return a value
+    /// Continue, do not return a value. If the function was registered with a
+    /// result type, the call traps (`SPACEWASM_TRAP_HOST`): the registered
+    /// signature is authoritative.
     SPACEWASM_CONTINUE_NONE = 0,
-    /// Continue; populate `out_result` if the function has a result type.
+    /// Continue; populate `out_result` if the function has a result type. If
+    /// the function was registered without a result type, `out_result` is
+    /// ignored and no value is returned.
     SPACEWASM_CONTINUE_SOME = 1,
     /// Trap the interpreter.
     SPACEWASM_TRAP = 2,
@@ -67,6 +71,10 @@ pub(crate) struct CHostFunction {
         *mut spacewasm_value_t,
     ) -> spacewasm_hostcall_result_t,
     userdata: *mut c_void,
+    /// Whether the function was registered with a result type. The registered
+    /// signature — not the callback's outcome — decides whether a value is
+    /// returned to the interpreter.
+    has_result: bool,
 }
 
 impl CHostFunction {
@@ -79,8 +87,13 @@ impl CHostFunction {
             *mut spacewasm_value_t,
         ) -> spacewasm_hostcall_result_t,
         userdata: *mut c_void,
+        has_result: bool,
     ) -> CHostFunction {
-        CHostFunction { f, userdata }
+        CHostFunction {
+            f,
+            userdata,
+            has_result,
+        }
     }
 
     /// Invoke the C callback for a guest→host call: marshal the arguments,
@@ -120,10 +133,24 @@ impl CHostFunction {
             )
         };
 
+        // The registered signature is authoritative: a void function never
+        // returns a value (a scribbled `out_result` is ignored), and a
+        // function with a declared result must return one (else the call
+        // traps instead of aborting the process on a stack mismatch).
         match outcome {
-            spacewasm_hostcall_result_t::SPACEWASM_CONTINUE_NONE => ControlFlow::Continue(None),
+            spacewasm_hostcall_result_t::SPACEWASM_CONTINUE_NONE => {
+                if self.has_result {
+                    ControlFlow::Break(HostFunctionBreak::Trap)
+                } else {
+                    ControlFlow::Continue(None)
+                }
+            }
             spacewasm_hostcall_result_t::SPACEWASM_CONTINUE_SOME => {
-                ControlFlow::Continue(Some(out_result.to_value()))
+                if self.has_result {
+                    ControlFlow::Continue(Some(out_result.to_value()))
+                } else {
+                    ControlFlow::Continue(None)
+                }
             }
             spacewasm_hostcall_result_t::SPACEWASM_TRAP => {
                 ControlFlow::Break(HostFunctionBreak::Trap)

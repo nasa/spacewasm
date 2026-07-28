@@ -218,7 +218,7 @@ pub unsafe extern "C" fn spacewasm_add_host_function(
 
     let f = check!(f.ok_or(status::SPACEWASM_ERR_NULL_ARG));
 
-    let trampoline = CHostFunction::new(f, userdata);
+    let trampoline = CHostFunction::new(f, userdata, !returns.is_empty());
     let host_fn = check!(
         HostFunction::try_new(name, params, returns, move |state, args| {
             trampoline.call(state, args)

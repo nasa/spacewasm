@@ -144,11 +144,15 @@ enum spacewasm_hostcall_result_t
 #endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
  {
     /*
-     Continue, do not return a value
+     Continue, do not return a value. If the function was registered with a
+     result type, the call traps (`SPACEWASM_TRAP_HOST`): the registered
+     signature is authoritative.
      */
     SPACEWASM_CONTINUE_NONE = 0,
     /*
-     Continue; populate `out_result` if the function has a result type.
+     Continue; populate `out_result` if the function has a result type. If
+     the function was registered without a result type, `out_result` is
+     ignored and no value is returned.
      */
     SPACEWASM_CONTINUE_SOME = 1,
     /*
