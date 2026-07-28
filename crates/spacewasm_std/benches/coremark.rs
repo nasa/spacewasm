@@ -81,7 +81,7 @@ fn main() {
 
     let text = code_builder.pages();
 
-    let module_ref = state.push_module(module);
+    let module_ref = state.push_module(module).unwrap();
     match state.invoke_start(module_ref) {
         StartInvocation::Finished => {}
         StartInvocation::Trap(t) => panic!("trap during initialization {t:?}"),
