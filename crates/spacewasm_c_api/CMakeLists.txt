@@ -59,14 +59,3 @@ target_include_directories(spacewasm
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
 )
-
-install(
-    DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/
-    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
-    FILES_MATCHING PATTERN "*.h"
-)
-
-install(
-    FILES ${SPACEWASM_STATIC_FILES}
-    DESTINATION ${CMAKE_INSTALL_LIBDIR}
-)
