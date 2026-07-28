@@ -217,7 +217,7 @@ fn main() {
 
     // Initialize with instruction limit to prevent infinite loops in start functions
     // Catch panics (e.g., from strict-assertions) during initialization
-    let module_ref = state.push_module(module);
+    let module_ref = state.push_module(module).unwrap();
     let init_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         match state.invoke_start(module_ref) {
             StartInvocation::Finished => InterpreterResult::Finished,

@@ -289,7 +289,11 @@ pub unsafe extern "C" fn spacewasm_load_module(
         Err(e) => return status::parse_status(&e),
     };
 
-    let module_ref = cengine.engine.push_module(module);
+    let module_ref = match cengine.engine.push_module(module) {
+        Ok(m) => m,
+        Err(_) => return status::SPACEWASM_ERR_CAPACITY,
+    };
+
     let idx = module_ref.0 as u32;
 
     if !out_module_idx.is_null() {
