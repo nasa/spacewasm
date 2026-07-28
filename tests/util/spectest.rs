@@ -620,7 +620,7 @@ fn load_module(
     )?;
 
     // Append the module and run its start function.
-    let module_ref = ctx.engine.push_module(module);
+    let module_ref = ctx.engine.push_module(module).unwrap();
     let result = match ctx.engine.invoke_start(module_ref) {
         StartInvocation::Finished => InterpreterResult::Finished,
         StartInvocation::Trap(t) => InterpreterResult::Trap(t),

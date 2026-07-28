@@ -176,9 +176,9 @@ impl Engine {
     /// Append a module to the store without running its start function.
     /// Note: The start function still needs to be run (if there is one)
     /// Returns the ModuleRef of the new module
-    pub fn push_module(&mut self, module: Module) -> ModuleRef {
-        self.store.modules.push(module);
-        ModuleRef((self.store.modules.len() - 1) as u8)
+    pub fn push_module(&mut self, module: Module) -> Result<ModuleRef, AllocError> {
+        self.store.modules.try_push(module)?;
+        Ok(ModuleRef((self.store.modules.len() - 1) as u8))
     }
 
     /// Returns `true` if the engine is idle (not currently executing)
