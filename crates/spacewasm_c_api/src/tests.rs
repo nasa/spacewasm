@@ -669,6 +669,124 @@ fn void_host_function_pushes_no_value() {
 }
 
 #[test]
+fn resume_without_pause_returns_wrong_state() {
+    let _guard = ALLOC_LOCK.lock().unwrap();
+    ensure_global_allocator();
+
+    let store = new_store(1024, 1, 256);
+    assert_eq!(
+        unsafe { spacewasm_resume(store) },
+        status::SPACEWASM_ERR_WRONG_STATE,
+        "resume on a non-paused engine must fail, not abort"
+    );
+    assert_eq!(
+        unsafe { spacewasm_resume_value(store, i32_val(1)) },
+        status::SPACEWASM_ERR_WRONG_STATE,
+        "resume_value on a non-paused engine must fail, not abort"
+    );
+    unsafe { spacewasm_destroy(store) };
+}
+
+#[test]
+fn resume_mismatch_keeps_paused_state() {
+    let _guard = ALLOC_LOCK.lock().unwrap();
+    ensure_global_allocator();
+
+    let mut host = core::mem::MaybeUninit::<spacewasm_host_t>::uninit();
+    assert_eq!(
+        unsafe { spacewasm_host_new(1, host.as_mut_ptr()) },
+        status::SPACEWASM_OK
+    );
+
+    let mut hmod = 0u32;
+    unsafe {
+        assert_eq!(
+            spacewasm_add_host_module(host.as_mut_ptr(), c"env".as_ptr(), 1, 0, &mut hmod),
+            status::SPACEWASM_OK
+        );
+        assert_eq!(
+            spacewasm_add_host_function(
+                host.as_mut_ptr(),
+                hmod,
+                c"pause_i32".as_ptr(),
+                c"".as_ptr(),
+                c"i".as_ptr(),
+                Some(pause_i32_host),
+                core::ptr::null_mut(),
+            ),
+            status::SPACEWASM_OK
+        );
+    }
+
+    let mut store: *mut CEngine = core::ptr::null_mut();
+    assert_eq!(
+        unsafe { spacewasm_new(host.as_mut_ptr(), 1024, 1, opts(256), &mut store) },
+        status::SPACEWASM_OK
+    );
+
+    let alloc = new_guest_allocator();
+    let idx = load_module_onto(alloc, store, c"main", PAUSE_I32_WASM, 0).expect("load");
+
+    let mut func = 0u32;
+    assert_eq!(
+        unsafe { spacewasm_find_export_func(store, idx, c"test_pause_i32".as_ptr(), &mut func) },
+        status::SPACEWASM_OK
+    );
+
+    assert_eq!(
+        unsafe { spacewasm_invoke(store, idx, func, core::ptr::null(), 0) },
+        status::SPACEWASM_OK
+    );
+
+    let mut trap = spacewasm_trap_t::SPACEWASM_TRAP_NONE;
+    assert_eq!(
+        unsafe { spacewasm_run(store, 10000, &mut trap) },
+        spacewasm_run_status_t::SPACEWASM_RUN_PAUSE,
+        "should pause"
+    );
+
+    // Wrong resume shapes fail without consuming the paused state: no value at
+    // all, and a value of the wrong type.
+    assert_eq!(
+        unsafe { spacewasm_resume(store) },
+        status::SPACEWASM_ERR_WRONG_STATE,
+        "resume without the declared value must fail, not abort"
+    );
+    let wrong_ty = spacewasm_value_t {
+        tag: spacewasm_valtype_t::SPACEWASM_F32,
+        u: spacewasm_value_payload_t { f32_: 1.5 },
+    };
+    assert_eq!(
+        unsafe { spacewasm_resume_value(store, wrong_ty) },
+        status::SPACEWASM_ERR_WRONG_STATE,
+        "resume with the wrong value type must fail, not abort"
+    );
+
+    // The engine is still paused: retry with the correct value succeeds.
+    assert_eq!(
+        unsafe { spacewasm_resume_value(store, i32_val(99)) },
+        status::SPACEWASM_OK,
+        "retry with the correct value"
+    );
+    assert_eq!(
+        run_to_completion(store, &mut trap),
+        spacewasm_run_status_t::SPACEWASM_RUN_FINISHED,
+        "run (trap={trap:?})"
+    );
+    let mut out = i32_val(0);
+    assert_eq!(
+        unsafe { spacewasm_get_result(store, spacewasm_valtype_t::SPACEWASM_I32, &mut out) },
+        status::SPACEWASM_OK
+    );
+    assert_eq!(unsafe { out.u.i32_ }, 99);
+
+    unsafe {
+        spacewasm_destroy(store);
+        spacewasm_allocator_destroy(alloc);
+    }
+}
+
+#[test]
 fn error_paths() {
     let _guard = ALLOC_LOCK.lock().unwrap();
     ensure_global_allocator();

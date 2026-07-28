@@ -669,7 +669,10 @@ fn invoke_function_resume(
         .borrow_mut()
         .push(format!("resume {:?}", resume_value));
 
-    ctx.engine.resume(resume_value);
+    assert!(
+        ctx.engine.resume(resume_value),
+        "resume failed: engine not paused or resume value type mismatch"
+    );
 
     // Continue execution from the paused state
     let test_runner: Inspector<'_, _, _, _> = Inspector {

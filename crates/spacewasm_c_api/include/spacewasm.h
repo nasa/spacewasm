@@ -637,6 +637,8 @@ spacewasm_run_status_t spacewasm_run(struct spacewasm_t *engine,
 /*
  Resume the interpreter from a paused state.
 
+ Returns `SPACEWASM_ERR_WRONG_STATE` if the engine is not paused.
+
  # Safety
  `engine` must be live.
  */
@@ -646,6 +648,9 @@ spacewasm_status_t spacewasm_resume(struct spacewasm_t *engine);
  Resume the interpreter from a paused state.
  This function will also push a value to the interpreter stack
  as the return value of the host function that requested a pause.
+
+ Returns `SPACEWASM_ERR_WRONG_STATE` if the engine is not paused, or if
+ `resume_value` does not match the paused host function's result type.
 
  # Safety
  `engine` must be live.

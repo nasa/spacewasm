@@ -569,6 +569,8 @@ pub unsafe extern "C" fn spacewasm_run(
 
 /// Resume the interpreter from a paused state.
 ///
+/// Returns `SPACEWASM_ERR_WRONG_STATE` if the engine is not paused.
+///
 /// # Safety
 /// `engine` must be live.
 #[unsafe(no_mangle)]
@@ -577,13 +579,19 @@ pub unsafe extern "C" fn spacewasm_resume(engine: *mut CEngine) -> spacewasm_sta
         return status::SPACEWASM_ERR_NULL_ARG;
     };
 
-    cengine.engine.resume(None);
-    status::SPACEWASM_OK
+    if cengine.engine.resume(None) {
+        status::SPACEWASM_OK
+    } else {
+        status::SPACEWASM_ERR_WRONG_STATE
+    }
 }
 
 /// Resume the interpreter from a paused state.
 /// This function will also push a value to the interpreter stack
 /// as the return value of the host function that requested a pause.
+///
+/// Returns `SPACEWASM_ERR_WRONG_STATE` if the engine is not paused, or if
+/// `resume_value` does not match the paused host function's result type.
 ///
 /// # Safety
 /// `engine` must be live.
@@ -596,8 +604,11 @@ pub unsafe extern "C" fn spacewasm_resume_value(
         return status::SPACEWASM_ERR_NULL_ARG;
     };
 
-    cengine.engine.resume(Some(resume_value.into()));
-    status::SPACEWASM_OK
+    if cengine.engine.resume(Some(resume_value.into())) {
+        status::SPACEWASM_OK
+    } else {
+        status::SPACEWASM_ERR_WRONG_STATE
+    }
 }
 
 /// Fetch the result of the last completed call, coerced to `expected`, into

@@ -149,28 +149,45 @@ impl Engine {
 
     /// Resume the interpreter after a host pause.
     /// Optionally pushes a value to the operand stack as a host function return value.
-    pub fn resume(&mut self, resume_value: Option<Value>) {
-        // Unwrap is safe here because we should not call resume() unless the interpreter requested a pause
-        match (self.host_pause_result.take().unwrap(), resume_value) {
+    ///
+    /// Returns `false` without modifying interpreter state if the engine is
+    /// not paused, or if `resume_value` does not match the paused host
+    /// function's declared result type (the caller may retry with the correct
+    /// value).
+    pub fn resume(&mut self, resume_value: Option<Value>) -> bool {
+        let Some(expected) = self.host_pause_result else {
+            return false;
+        };
+
+        let resumed = match (expected, resume_value) {
             (ResultType(Some(ValType::F32)), Some(Value::F32(z))) => {
                 self.stack.write_f32(self.sp, z);
                 self.sp += 1;
+                true
             }
             (ResultType(Some(ValType::F64)), Some(Value::F64(z))) => {
                 self.stack.write_f64(self.sp, z);
                 self.sp += 2;
+                true
             }
             (ResultType(Some(ValType::I32)), Some(Value::I32(n))) => {
                 self.stack.write_u32(self.sp, n as u32);
                 self.sp += 1;
+                true
             }
             (ResultType(Some(ValType::I64)), Some(Value::I64(n))) => {
                 self.stack.write_u64(self.sp, n as u64);
                 self.sp += 2;
+                true
             }
-            (ResultType(None), None) => {}
-            _ => panic!("expected host function to return a value"),
+            (ResultType(None), None) => true,
+            _ => false,
+        };
+
+        if resumed {
+            self.host_pause_result = None;
         }
+        resumed
     }
 }
 
