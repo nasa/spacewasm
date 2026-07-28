@@ -169,13 +169,11 @@ fn pause_resume() {
 }
 
 #[test]
-#[should_panic = "host function returned Some(I32(1)) while declaration expecting None"]
-fn host_func_invalid_should_panic_none() {
-    run("regression/host_func_invalid_should_panic_none");
+fn host_func_invalid_traps_none() {
+    run("regression/host_func_invalid_traps_none");
 }
 
 #[test]
-#[should_panic = "host function returned None while declaration expecting Some(I32)"]
-fn host_func_invalid_should_panic_some() {
-    run("regression/host_func_invalid_should_panic_some");
+fn host_func_invalid_traps_some() {
+    run("regression/host_func_invalid_traps_some");
 }

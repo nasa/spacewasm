@@ -838,6 +838,7 @@ fn check_trap_reason(reason: TrapReason, text: &str) {
         (TrapReason::IntegerOverflow, "integer overflow") => {}
         (TrapReason::UninitializedTableElement, "uninitialized element") => {}
         (TrapReason::StackOverflow, "call stack exhausted") => {}
+        (TrapReason::Host, "host function signature mismatch") => {}
         err => {
             panic!("Could not match expected trap text '{text}' with error {err:?}")
         }

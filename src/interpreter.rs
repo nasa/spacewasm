@@ -1436,11 +1436,9 @@ impl IrVisitor for Interpreter {
                         state.stack.write_f64(state.sp, f);
                         state.sp += 2;
                     }
-                    (got, expected) => {
-                        panic!(
-                            "host function returned {got:?} while declaration expecting {expected:?}"
-                        )
-                    }
+                    // A host function that disagrees with its declared result
+                    // type traps the call instead of aborting the process.
+                    _ => return Err(InterpreterBreak::Trap(TrapReason::Host)),
                 }
 
                 Ok(())
