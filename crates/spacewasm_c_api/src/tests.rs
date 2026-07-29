@@ -7,7 +7,7 @@ use core::ffi::c_void;
 use std::alloc::{Layout, alloc, dealloc, realloc};
 use std::sync::Mutex;
 
-use crate::SpacewasmAllocator;
+use crate::CAllocator;
 use crate::capi::*;
 use crate::host::{SpacewasmCaller, spacewasm_hostcall_result_t};
 use crate::status::{self, spacewasm_run_status_t, spacewasm_status_t, spacewasm_trap_t};
@@ -85,7 +85,7 @@ unsafe extern "C" fn mem_dealloc(_userdata: *mut c_void, ptr: *mut u8, size: usi
     }
 }
 
-fn new_guest_allocator() -> *mut SpacewasmAllocator {
+fn new_guest_allocator() -> *mut CAllocator {
     spacewasm_allocator_new(
         Some(mem_alloc),
         Some(mem_realloc),
@@ -171,6 +171,27 @@ static HOST_WASM: &[u8] = &[
     0x00, 0x21, 0x01, 0x41, 0x00, 0x20, 0x01, 0x36, 0x02, 0x00, 0x20, 0x01, 0x0b,
 ];
 
+/// A module importing a void `env.sink` (`(param i32)`, no result) and a `run`
+/// function that keeps a sentinel on the stack across the call, then returns
+/// `param + 1`. If the host call spuriously pushed a value, the sentinel would
+/// be corrupted and the result would be wrong.
+///
+/// ```wat
+/// (module
+///   (import "env" "sink" (func $sink (param i32)))
+///   (func (export "run") (param i32) (result i32)
+///     local.get 0 local.get 0 call $sink i32.const 1 i32.add))
+/// ```
+#[rustfmt::skip]
+static VOID_HOST_WASM: &[u8] = &[
+    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x0a, 0x02, 0x60,
+    0x01, 0x7f, 0x00, 0x60, 0x01, 0x7f, 0x01, 0x7f, 0x02, 0x0c, 0x01, 0x03,
+    0x65, 0x6e, 0x76, 0x04, 0x73, 0x69, 0x6e, 0x6b, 0x00, 0x00, 0x03, 0x02,
+    0x01, 0x01, 0x07, 0x07, 0x01, 0x03, 0x72, 0x75, 0x6e, 0x00, 0x01, 0x0a,
+    0x0d, 0x01, 0x0b, 0x00, 0x20, 0x00, 0x20, 0x00, 0x10, 0x00, 0x41, 0x01,
+    0x6a, 0x0b,
+];
+
 /// `(module (func (export "boom") (result i32) unreachable))` — traps on call.
 #[rustfmt::skip]
 static TRAP_WASM: &[u8] = &[
@@ -242,7 +263,7 @@ fn new_store(stack_size: usize, max_modules: u32, max_code_pages: u32) -> *mut C
 /// Stream one module onto an existing store in `step`-byte chunks, then run its
 /// start function if it declares one. Returns the module index on success.
 fn load_module_onto(
-    alloc: *mut SpacewasmAllocator,
+    alloc: *mut CAllocator,
     store: *mut CEngine,
     name: &core::ffi::CStr,
     data: &'static [u8],
@@ -354,7 +375,7 @@ unsafe extern "C" fn add_one(
     }
     let arg = unsafe { (*params).u.i32_ };
     unsafe { *out = i32_val(arg + 1) };
-    spacewasm_hostcall_result_t::SPACEWASM_CONTINUE
+    spacewasm_hostcall_result_t::SPACEWASM_CONTINUE_SOME
 }
 
 // ---- test cases (one per C `test_*` function) -------------------------------
@@ -479,7 +500,11 @@ fn streaming_read_error() {
         )
     };
     unsafe { spacewasm_allocator_destroy(alloc) };
-    assert_eq!(st, status::SPACEWASM_ERR_STREAM, "expected ERR_STREAM");
+    assert_eq!(
+        st,
+        status::SPACEWASM_ERR_READER_ERROR,
+        "expected ERR_READER_ERROR"
+    );
 
     unsafe { spacewasm_destroy(store) };
 }
@@ -559,6 +584,91 @@ fn host_function_and_memory() {
 }
 
 #[test]
+fn void_host_function_pushes_no_value() {
+    let _guard = ALLOC_LOCK.lock().unwrap();
+    ensure_global_allocator();
+
+    let mut host = core::mem::MaybeUninit::<spacewasm_host_t>::uninit();
+    assert_eq!(
+        unsafe { spacewasm_host_new(1, host.as_mut_ptr()) },
+        status::SPACEWASM_OK,
+        "host_new"
+    );
+
+    let mut hmod = 0u32;
+    unsafe {
+        assert_eq!(
+            spacewasm_add_host_module(host.as_mut_ptr(), c"env".as_ptr(), 1, 0, &mut hmod),
+            status::SPACEWASM_OK,
+            "add_host_module"
+        );
+        // `sink` takes one i32 and returns nothing (empty result signature).
+        assert_eq!(
+            spacewasm_add_host_function(
+                host.as_mut_ptr(),
+                hmod,
+                c"sink".as_ptr(),
+                c"i".as_ptr(),
+                c"".as_ptr(),
+                Some(sink),
+                core::ptr::null_mut(),
+            ),
+            status::SPACEWASM_OK,
+            "add_host_function"
+        );
+    }
+
+    let mut store: *mut CEngine = core::ptr::null_mut();
+    assert_eq!(
+        unsafe { spacewasm_new(host.as_mut_ptr(), 1024, 1, opts(256), &mut store) },
+        status::SPACEWASM_OK,
+        "store_new"
+    );
+
+    let alloc = new_guest_allocator();
+    let idx = load_module_onto(alloc, store, c"main", VOID_HOST_WASM, 0).expect("load void module");
+
+    let mut func = 0u32;
+    assert_eq!(
+        unsafe { spacewasm_find_export_func(store, idx, c"run".as_ptr(), &mut func) },
+        status::SPACEWASM_OK,
+        "find run"
+    );
+
+    // `run(41)` keeps 41 on the stack across the void `sink` call, then adds 1.
+    // If the host call had spuriously pushed a value, the trailing `i32.add`
+    // would consume it and produce a corrupt (or trapping) result.
+    let params = [i32_val(41)];
+    assert_eq!(
+        unsafe { spacewasm_invoke(store, idx, func, params.as_ptr(), params.len()) },
+        status::SPACEWASM_OK,
+        "invoke"
+    );
+    let mut trap = spacewasm_trap_t::SPACEWASM_TRAP_NONE;
+    assert_eq!(
+        run_to_completion(store, &mut trap),
+        spacewasm_run_status_t::SPACEWASM_RUN_FINISHED,
+        "run (trap={trap:?})"
+    );
+    let mut out = i32_val(0);
+    assert_eq!(
+        unsafe { spacewasm_get_result(store, spacewasm_valtype_t::SPACEWASM_I32, &mut out) },
+        status::SPACEWASM_OK,
+        "result"
+    );
+    assert_eq!(
+        unsafe { out.u.i32_ },
+        42,
+        "void host call must not push a value"
+    );
+
+    unsafe {
+        spacewasm_destroy(store);
+        spacewasm_allocator_destroy(alloc);
+    }
+}
+
+#[test]
 fn error_paths() {
     let _guard = ALLOC_LOCK.lock().unwrap();
     ensure_global_allocator();
@@ -618,7 +728,11 @@ fn error_paths() {
     assert!(!alloc.is_null(), "allocator_new");
     let st = load_module_onto(alloc, store, c"main", JUNK, 0);
     unsafe { spacewasm_allocator_destroy(alloc) };
-    assert_eq!(st, Err(status::SPACEWASM_ERR_PARSE), "expected ERR_PARSE");
+    assert_eq!(
+        st,
+        Err(status::SPACEWASM_ERR_MALFORMED_MAGIC),
+        "expected ERR_MALFORMED_MAGIC"
+    );
 
     unsafe { spacewasm_destroy(store) };
 }
@@ -735,6 +849,302 @@ fn trap_reason_codes_map() {
 }
 
 #[test]
+fn validation_error_codes_map() {
+    use spacewasm::{AllocError, ConstantExprError, MemoryError, SectionKind, ValidationError::*};
+    let cases = [
+        // Basic parsing errors
+        (Eof, status::SPACEWASM_ERR_EOF),
+        (MalformedInteger, status::SPACEWASM_ERR_MALFORMED_INTEGER),
+        (I33IsNegative, status::SPACEWASM_ERR_I33_IS_NEGATIVE),
+        (MalformedMagic, status::SPACEWASM_ERR_MALFORMED_MAGIC),
+        (MalformedVersion, status::SPACEWASM_ERR_MALFORMED_VERSION),
+        (MalformedUtf8, status::SPACEWASM_ERR_MALFORMED_UTF8),
+        (
+            DuplicateModuleName,
+            status::SPACEWASM_ERR_DUPLICATE_MODULE_NAME,
+        ),
+        (
+            DuplicateExportName,
+            status::SPACEWASM_ERR_DUPLICATE_EXPORT_NAME,
+        ),
+        (
+            MalformedSectionId(0),
+            status::SPACEWASM_ERR_MALFORMED_SECTION_ID,
+        ),
+        (
+            MalformedValueType(0),
+            status::SPACEWASM_ERR_MALFORMED_VALUE_TYPE,
+        ),
+        (
+            MalformedFunction(0),
+            status::SPACEWASM_ERR_MALFORMED_FUNCTION,
+        ),
+        (MalformedLimit(0), status::SPACEWASM_ERR_MALFORMED_LIMIT),
+        (
+            MalformedElemType(0),
+            status::SPACEWASM_ERR_MALFORMED_ELEM_TYPE,
+        ),
+        (
+            MalformedSectionSize,
+            status::SPACEWASM_ERR_MALFORMED_SECTION_SIZE,
+        ),
+        (
+            ExpectedConstOrVar(0),
+            status::SPACEWASM_ERR_EXPECTED_CONST_OR_VAR,
+        ),
+        (
+            MalformedImportExportDesc(0),
+            status::SPACEWASM_ERR_MALFORMED_IMPORT_EXPORT_DESC,
+        ),
+        (
+            MalformedMemType(0),
+            status::SPACEWASM_ERR_MALFORMED_MEM_TYPE,
+        ),
+        (InvalidPageSize(0), status::SPACEWASM_ERR_INVALID_PAGE_SIZE),
+        (
+            InvalidSectionOrdering(SectionKind::Type, SectionKind::Import),
+            status::SPACEWASM_ERR_INVALID_SECTION_ORDERING,
+        ),
+        (
+            DuplicateSection(SectionKind::Type),
+            status::SPACEWASM_ERR_DUPLICATE_SECTION,
+        ),
+        (InvalidMaxLimit, status::SPACEWASM_ERR_INVALID_MAX_LIMIT),
+        (ExpectedTerminal(0), status::SPACEWASM_ERR_EXPECTED_TERMINAL),
+        (InvalidOpcode(0), status::SPACEWASM_ERR_INVALID_OPCODE),
+        (MalformedCodeSize, status::SPACEWASM_ERR_MALFORMED_CODE_SIZE),
+        (
+            InvalidCodeSectionFunctionCount,
+            status::SPACEWASM_ERR_INVALID_CODE_SECTION_FUNCTION_COUNT,
+        ),
+        (VecTooLong, status::SPACEWASM_ERR_VEC_TOO_LONG),
+        (IdxTooLarge, status::SPACEWASM_ERR_IDX_TOO_LARGE),
+        (
+            ModuleIdxTooLarge,
+            status::SPACEWASM_ERR_MODULE_IDX_TOO_LARGE,
+        ),
+        (MemoryTooLarge, status::SPACEWASM_ERR_MEMORY_TOO_LARGE),
+        (
+            MemoryImportTooLarge,
+            status::SPACEWASM_ERR_MEMORY_IMPORT_TOO_LARGE,
+        ),
+        (MemAlignTooLarge, status::SPACEWASM_ERR_MEM_ALIGN_TOO_LARGE),
+        // Control flow validation
+        (
+            ControlFlowTooDeep,
+            status::SPACEWASM_ERR_CONTROL_FLOW_TOO_DEEP,
+        ),
+        (StackUnderflow, status::SPACEWASM_ERR_STACK_UNDERFLOW),
+        (StackTooLarge, status::SPACEWASM_ERR_STACK_TOO_LARGE),
+        (
+            LabelStackJumpTooDeep,
+            status::SPACEWASM_ERR_LABEL_STACK_JUMP_TOO_DEEP,
+        ),
+        (
+            LabelJumpTooLarge,
+            status::SPACEWASM_ERR_LABEL_JUMP_TOO_LARGE,
+        ),
+        (TypeMismatch, status::SPACEWASM_ERR_TYPE_MISMATCH),
+        (
+            BlockResultTypeMismatch,
+            status::SPACEWASM_ERR_BLOCK_RESULT_TYPE_MISMATCH,
+        ),
+        (
+            FunctionResultTypeMismatch,
+            status::SPACEWASM_ERR_FUNCTION_RESULT_TYPE_MISMATCH,
+        ),
+        // Memory and table validation
+        (IllegalMemoryGrow, status::SPACEWASM_ERR_ILLEGAL_MEMORY_GROW),
+        (
+            InvalidElementOffset,
+            status::SPACEWASM_ERR_INVALID_ELEMENT_OFFSET,
+        ),
+        (
+            InvalidElementOutOfBounds,
+            status::SPACEWASM_ERR_INVALID_ELEMENT_OUT_OF_BOUNDS,
+        ),
+        (InvalidTableIndex, status::SPACEWASM_ERR_INVALID_TABLE_INDEX),
+        (TableNotDefined, status::SPACEWASM_ERR_TABLE_NOT_DEFINED),
+        (
+            InvalidElementCount,
+            status::SPACEWASM_ERR_INVALID_ELEMENT_COUNT,
+        ),
+        (InvalidMemIndex, status::SPACEWASM_ERR_INVALID_MEM_INDEX),
+        (MemoryNotDefined, status::SPACEWASM_ERR_MEMORY_NOT_DEFINED),
+        (
+            InvalidMemOffsetType,
+            status::SPACEWASM_ERR_INVALID_MEM_OFFSET_TYPE,
+        ),
+        (
+            InvalidNegativeMemOffset,
+            status::SPACEWASM_ERR_INVALID_NEGATIVE_MEM_OFFSET,
+        ),
+        (InvalidMemOffset, status::SPACEWASM_ERR_INVALID_MEM_OFFSET),
+        (MultipleMemories, status::SPACEWASM_ERR_MULTIPLE_MEMORIES),
+        (MultipleTables, status::SPACEWASM_ERR_MULTIPLE_TABLES),
+        // Index validation
+        (InvalidLabelIndex, status::SPACEWASM_ERR_INVALID_LABEL_INDEX),
+        (InvalidElseBlock, status::SPACEWASM_ERR_INVALID_ELSE_BLOCK),
+        (InvalidEndBlock, status::SPACEWASM_ERR_INVALID_END_BLOCK),
+        (
+            InstructionOutsideOfFunction,
+            status::SPACEWASM_ERR_INSTRUCTION_OUTSIDE_OF_FUNCTION,
+        ),
+        (
+            LocalIdxOutOfRange,
+            status::SPACEWASM_ERR_LOCAL_IDX_OUT_OF_RANGE,
+        ),
+        (
+            FunctionIdxOutOfRange,
+            status::SPACEWASM_ERR_FUNCTION_IDX_OUT_OF_RANGE,
+        ),
+        (
+            TypeIdxOutOfRange,
+            status::SPACEWASM_ERR_TYPE_IDX_OUT_OF_RANGE,
+        ),
+        (
+            FunctionTextOutOfRange,
+            status::SPACEWASM_ERR_FUNCTION_TEXT_OUT_OF_RANGE,
+        ),
+        (
+            GlobalIdxOutOfRange,
+            status::SPACEWASM_ERR_GLOBAL_IDX_OUT_OF_RANGE,
+        ),
+        // Import validation
+        (
+            FunctionImportNotFound,
+            status::SPACEWASM_ERR_FUNCTION_IMPORT_NOT_FOUND,
+        ),
+        (
+            GlobalImportNotFound,
+            status::SPACEWASM_ERR_GLOBAL_IMPORT_NOT_FOUND,
+        ),
+        (
+            MemoryImportNotFound,
+            status::SPACEWASM_ERR_MEMORY_IMPORT_NOT_FOUND,
+        ),
+        (
+            TableImportNotFound,
+            status::SPACEWASM_ERR_TABLE_IMPORT_NOT_FOUND,
+        ),
+        (
+            FunctionImportOutOfRange,
+            status::SPACEWASM_ERR_FUNCTION_IMPORT_OUT_OF_RANGE,
+        ),
+        (
+            FunctionImportTypeMismatch,
+            status::SPACEWASM_ERR_FUNCTION_IMPORT_TYPE_MISMATCH,
+        ),
+        (
+            GlobalIsNotMutable,
+            status::SPACEWASM_ERR_GLOBAL_IS_NOT_MUTABLE,
+        ),
+        (
+            GlobalImportTypeMismatch,
+            status::SPACEWASM_ERR_GLOBAL_IMPORT_TYPE_MISMATCH,
+        ),
+        (
+            MemoryImportTypeMismatch,
+            status::SPACEWASM_ERR_MEMORY_IMPORT_TYPE_MISMATCH,
+        ),
+        (
+            TableImportTypeMismatch,
+            status::SPACEWASM_ERR_TABLE_IMPORT_TYPE_MISMATCH,
+        ),
+        (
+            TableImportIncompatibleSize,
+            status::SPACEWASM_ERR_TABLE_IMPORT_INCOMPATIBLE_SIZE,
+        ),
+        // Function and global validation
+        (
+            FunctionParametersTooLarge,
+            status::SPACEWASM_ERR_FUNCTION_PARAMETERS_TOO_LARGE,
+        ),
+        (
+            FunctionReturnsTooLarge,
+            status::SPACEWASM_ERR_FUNCTION_RETURNS_TOO_LARGE,
+        ),
+        (TooManyLocals, status::SPACEWASM_ERR_TOO_MANY_LOCALS),
+        (
+            InvalidConstInstruction,
+            status::SPACEWASM_ERR_INVALID_CONST_INSTRUCTION,
+        ),
+        (
+            GlobalTypeMismatch,
+            status::SPACEWASM_ERR_GLOBAL_TYPE_MISMATCH,
+        ),
+        (
+            AlignmentLargerThanType,
+            status::SPACEWASM_ERR_ALIGNMENT_LARGER_THAN_TYPE,
+        ),
+        (
+            InvalidStartFunctionSignature,
+            status::SPACEWASM_ERR_INVALID_START_FUNCTION_SIGNATURE,
+        ),
+        // Constant expression validation
+        (
+            InvalidConstantExpr(ConstantExprError::InvalidConstantInstruction),
+            status::SPACEWASM_ERR_INVALID_CONST_INSTRUCTION,
+        ),
+        (
+            InvalidConstantExpr(ConstantExprError::AlreadyHasValue),
+            status::SPACEWASM_ERR_CONST_ALREADY_HAS_VALUE,
+        ),
+        (
+            InvalidConstantExpr(ConstantExprError::NoValue),
+            status::SPACEWASM_ERR_CONST_NO_VALUE,
+        ),
+        (
+            InvalidConstantExpr(ConstantExprError::InvalidGlobal),
+            status::SPACEWASM_ERR_CONST_INVALID_GLOBAL,
+        ),
+        (
+            GuestMemoryAllocationFailure,
+            status::SPACEWASM_ERR_GUEST_MEMORY_ALLOC_FAILED,
+        ),
+        // Nested error types
+        (
+            AllocError(AllocError::AllocationFailed),
+            status::SPACEWASM_ERR_ALLOC_FAILED,
+        ),
+        (
+            AllocError(AllocError::OutOfMemory),
+            status::SPACEWASM_ERR_OUT_OF_MEMORY,
+        ),
+        (
+            AllocError(AllocError::PageTooSmall),
+            status::SPACEWASM_ERR_PAGE_TOO_SMALL,
+        ),
+        (
+            MemoryError(MemoryError::OutOfBounds),
+            status::SPACEWASM_ERR_MEM_OUT_OF_BOUNDS,
+        ),
+        (
+            MemoryError(MemoryError::OutOfMemory),
+            status::SPACEWASM_ERR_OUT_OF_MEMORY,
+        ),
+        (
+            MemoryError(MemoryError::AllocationFailed),
+            status::SPACEWASM_ERR_ALLOC_FAILED,
+        ),
+        (
+            MemoryError(MemoryError::PageTooSmall),
+            status::SPACEWASM_ERR_PAGE_TOO_SMALL,
+        ),
+        // Miscellaneous
+        (
+            PossibleBackpatchCycle,
+            status::SPACEWASM_ERR_POSSIBLE_BACKPATCH_CYCLE,
+        ),
+        (PageFault, status::SPACEWASM_ERR_PAGE_FAULT),
+        (ReaderError(0), status::SPACEWASM_ERR_READER_ERROR),
+    ];
+    for (err, code) in cases {
+        assert_eq!(status::validation_status(&err), code, "{err:?}");
+    }
+}
+
+#[test]
 fn alloc_status_maps() {
     use spacewasm::AllocError::*;
     assert_eq!(
@@ -794,7 +1204,7 @@ fn simple_error_mappers() {
     use spacewasm::{HostNameError, HostValListError, SectionDecodeError, ValidationError};
 
     let pe = spacewasm::ParseError::new(0, SectionDecodeError::new(ValidationError::Eof));
-    assert_eq!(status::parse_status(&pe), status::SPACEWASM_ERR_PARSE);
+    assert_eq!(status::parse_status(&pe), status::SPACEWASM_ERR_EOF);
 
     assert_eq!(
         status::host_name_status(HostNameError),
@@ -1074,6 +1484,25 @@ fn run_slices_out_of_fuel_then_resumes() {
     }
 }
 
+/// Host implementation of `env.sink`: a void host function (no result type). It
+/// asserts it received exactly one argument and returns `SPACEWASM_CONTINUE_NONE`
+/// *while still writing to `out`*, to prove the interpreter honours the "no
+/// value" outcome and does not push the stale `out` onto the Wasm stack.
+unsafe extern "C" fn sink(
+    _caller: *mut SpacewasmCaller,
+    _userdata: *mut c_void,
+    _params: *const spacewasm_value_t,
+    n: usize,
+    out: *mut spacewasm_value_t,
+) -> spacewasm_hostcall_result_t {
+    if n != 1 {
+        return spacewasm_hostcall_result_t::SPACEWASM_TRAP;
+    }
+    // Deliberately scribble a bogus result; CONTINUE_NONE must ignore it.
+    unsafe { *out = i32_val(0x7fff_ffff) };
+    spacewasm_hostcall_result_t::SPACEWASM_CONTINUE_NONE
+}
+
 /// Host callback that pauses execution without returning a value.
 unsafe extern "C" fn pause_host(
     _caller: *mut SpacewasmCaller,
@@ -1155,7 +1584,7 @@ unsafe extern "C" fn mem_probe(
 
     let arg = unsafe { (*params).u.i32_ };
     unsafe { *out = i32_val(arg + 1) };
-    spacewasm_hostcall_result_t::SPACEWASM_CONTINUE
+    spacewasm_hostcall_result_t::SPACEWASM_CONTINUE_SOME
 }
 
 #[test]

@@ -118,6 +118,7 @@ pub enum ValidationError {
     AlignmentLargerThanType,
     InvalidStartFunctionSignature,
     InvalidConstantExpr(ConstantExprError),
+    GuestMemoryAllocationFailure,
     AllocError(AllocError),
     MemoryError(MemoryError),
     ReaderError(u8),

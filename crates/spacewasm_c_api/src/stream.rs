@@ -17,7 +17,7 @@ pub enum spacewasm_read_result_t {
     SPACEWASM_READ_OK = 0,
     /// End of stream; no more bytes.
     SPACEWASM_READ_EOF = 1,
-    /// An I/O error occurred; loading fails with `SPACEWASM_ERR_STREAM`.
+    /// An I/O error occurred; loading fails with `SPACEWASM_ERR_READER_ERROR`.
     SPACEWASM_READ_ERROR = 2,
 }
 

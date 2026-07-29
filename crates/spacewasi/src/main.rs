@@ -180,7 +180,7 @@ fn main() {
 
     // Append the module and run its start function (if any). The interpreter
     // reads code directly from the builder's pages.
-    let module_ref = engine.push_module(module);
+    let module_ref = engine.push_module(module).unwrap();
     let init_result = match engine.invoke_start(module_ref) {
         StartInvocation::Finished => InterpreterResult::Finished,
         StartInvocation::Trap(t) => InterpreterResult::Trap(t),

@@ -230,7 +230,7 @@ impl<'a, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize> WasmVisi
                     let _ = state.pop_stack(p)?;
                 }
 
-                for r in f.returns().iter().rev() {
+                if let Some(r) = f.returns().0 {
                     state.push_stack(r)?;
                 }
 

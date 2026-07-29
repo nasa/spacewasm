@@ -333,7 +333,7 @@ static int test_streaming_read_error(void) {
     spacewasm_status_t st =
         spacewasm_load_module(store, "main", failing_read, NULL, alloc, &mod_idx);
     spacewasm_allocator_destroy(alloc);
-    CHECK(st == SPACEWASM_ERR_STREAM, "expected ERR_STREAM, got %d", (int)st);
+    CHECK(st == SPACEWASM_ERR_READER_ERROR, "expected ERR_READER_ERROR, got %d", (int)st);
 
     spacewasm_destroy(store);
     return 0;
@@ -349,7 +349,7 @@ static spacewasm_hostcall_result_t add_one(spacewasm_caller_t* caller, void* use
         return SPACEWASM_TRAP;
     }
     *out = i32_val(params[0].u.i32_ + 1);
-    return SPACEWASM_CONTINUE;
+    return SPACEWASM_CONTINUE_SOME;
 }
 
 static int test_host_function_and_memory(void) {
@@ -417,7 +417,7 @@ static int test_error_paths(void) {
     spacewasm_status_t st =
         spacewasm_load_module(store, "main", cursor_read, &cursor, alloc, &mod_idx);
     spacewasm_allocator_destroy(alloc);
-    CHECK(st == SPACEWASM_ERR_PARSE, "expected ERR_PARSE, got %d", (int)st);
+    CHECK(st == SPACEWASM_ERR_MALFORMED_MAGIC, "expected ERR_MALFORMED_MAGIC, got %d", (int)st);
     spacewasm_destroy(store);
     return 0;
 }
