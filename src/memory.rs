@@ -371,7 +371,11 @@ mod tests {
         assert_eq!(mem.grow(1), Ok(0));
         assert_eq!(mem.size(), 1);
         assert_eq!(mem.grow(0), Ok(1));
+        assert_eq!(mem.get_slice().len(), MemPageSize::_65536.size());
         assert!(mem.get_slice().iter().all(|&b| b == 0));
+        assert_eq!(mem.load(0, 1), Ok(&[0][..]));
+        assert_eq!(mem.store(0, &[0xA5]), Ok(()));
+        assert_eq!(mem.load(0, 1), Ok(&[0xA5][..]));
     }
 
     #[test]
