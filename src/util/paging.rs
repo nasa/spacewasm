@@ -637,8 +637,7 @@ mod kani_proofs {
     /// Test zero-size allocation must fail
     #[kani::proof]
     fn proof_zero_size_alloc_fails() {
-        let backing_alloc = RustSystemAllocator;
-        let page_alloc = PageAllocator::<3>::new(&backing_alloc, 128);
+        let page_alloc = PageAllocator::<RustSystemAllocator, 3>::new(RustSystemAllocator, 128);
 
         let zero_layout = Layout::from_size_align(0, 1).unwrap();
         let result_zero = unsafe { page_alloc.alloc(zero_layout) };
@@ -648,8 +647,7 @@ mod kani_proofs {
     /// Test allocation too large for page size must fail
     #[kani::proof]
     fn proof_large_page_alloc_fails() {
-        let backing_alloc = RustSystemAllocator;
-        let page_alloc = PageAllocator::<3>::new(&backing_alloc, 128);
+        let page_alloc = PageAllocator::<RustSystemAllocator, 3>::new(RustSystemAllocator, 128);
 
         let huge_layout = Layout::from_size_align(200, 8).unwrap();
         let result_huge = unsafe { page_alloc.alloc(huge_layout) };
@@ -663,8 +661,7 @@ mod kani_proofs {
     /// that exceed total page capacity will fail
     #[kani::proof]
     fn proof_page_overalloc_failure() {
-        let backing_alloc = RustSystemAllocator;
-        let page_alloc = PageAllocator::<3>::new(&backing_alloc, 128);
+        let page_alloc = PageAllocator::<RustSystemAllocator, 3>::new(RustSystemAllocator, 128);
         let layout = Layout::from_size_align(128, 8).unwrap();
 
         let ptr1 = unsafe { page_alloc.alloc(layout) }.expect("page 0 must fit");
@@ -710,8 +707,7 @@ mod kani_proofs {
     /// of creating a new one
     #[kani::proof]
     fn proof_page_alloc_reuses_existing_page() {
-        let backing_alloc = RustSystemAllocator;
-        let page_alloc = PageAllocator::<3>::new(&backing_alloc, 128);
+        let page_alloc = PageAllocator::<RustSystemAllocator, 3>::new(RustSystemAllocator, 128);
         let layout = Layout::from_size_align(64, 8).unwrap();
 
         let ptr1 = unsafe { page_alloc.alloc(layout) }.expect("page 0 must fit");
@@ -753,7 +749,7 @@ mod kani_proofs {
         );
 
         {
-            let page_alloc = PageAllocator::<3>::new(&backing_alloc, 128);
+            let page_alloc = PageAllocator::<&RustSystemAllocator, 3>::new(&backing_alloc, 128);
 
             // Each allocation is 100 bytes, forcing new page creation
             // (100 bytes won't fit after first allocation in 128-byte page)
