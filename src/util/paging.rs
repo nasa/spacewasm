@@ -33,12 +33,12 @@ impl From<PageAllocatorStatistics> for MemoryStatistics {
 /// fit the next allocation in any of it's currently allocated pages.
 ///
 /// This allocator supports a static number of pages and therefore can run out of memory
-pub struct PageAllocator<'a, const MAX_PAGES: usize> {
-    inner: UnsafeCell<PageAllocatorInner<'a, MAX_PAGES>>,
+pub struct PageAllocator<A: Allocator, const MAX_PAGES: usize> {
+    inner: UnsafeCell<PageAllocatorInner<A, MAX_PAGES>>,
 }
 
-impl<'a, const MAX_PAGES: usize> PageAllocator<'a, MAX_PAGES> {
-    pub const fn new(alloc: &'a dyn Allocator, page_size: usize) -> Self {
+impl<A: Allocator, const MAX_PAGES: usize> PageAllocator<A, MAX_PAGES> {
+    pub const fn new(alloc: A, page_size: usize) -> Self {
         Self {
             inner: UnsafeCell::new(PageAllocatorInner::new(alloc, page_size)),
         }
@@ -62,14 +62,14 @@ impl<'a, const MAX_PAGES: usize> PageAllocator<'a, MAX_PAGES> {
     }
 }
 
-struct PageAllocatorInner<'a, const MAX_PAGES: usize> {
-    page_allocator: &'a dyn Allocator,
+struct PageAllocatorInner<A: Allocator, const MAX_PAGES: usize> {
+    page_allocator: A,
     page_size: usize,
     pages: [Option<Page>; MAX_PAGES],
 }
 
-impl<'a, const MAX_PAGES: usize> PageAllocatorInner<'a, MAX_PAGES> {
-    const fn new(alloc: &'a dyn Allocator, page_size: usize) -> PageAllocatorInner<'a, MAX_PAGES> {
+impl<A: Allocator, const MAX_PAGES: usize> PageAllocatorInner<A, MAX_PAGES> {
+    const fn new(alloc: A, page_size: usize) -> PageAllocatorInner<A, MAX_PAGES> {
         PageAllocatorInner {
             page_allocator: alloc,
             page_size,
@@ -78,7 +78,7 @@ impl<'a, const MAX_PAGES: usize> PageAllocatorInner<'a, MAX_PAGES> {
     }
 }
 
-unsafe impl<'a, const MAX_PAGES: usize> Allocator for PageAllocator<'a, MAX_PAGES> {
+unsafe impl<A: Allocator, const MAX_PAGES: usize> Allocator for PageAllocator<A, MAX_PAGES> {
     unsafe fn alloc(&self, layout: Layout) -> Result<*mut u8, AllocError> {
         unsafe { (&mut *self.inner.get()).alloc(layout) }
     }
@@ -92,7 +92,7 @@ unsafe impl<'a, const MAX_PAGES: usize> Allocator for PageAllocator<'a, MAX_PAGE
     }
 }
 
-impl<'a, const MAX_PAGES: usize> PageAllocatorInner<'a, MAX_PAGES> {
+impl<A: Allocator, const MAX_PAGES: usize> PageAllocatorInner<A, MAX_PAGES> {
     unsafe fn alloc(&mut self, layout: Layout) -> Result<*mut u8, AllocError> {
         if layout.size() == 0 {
             return Err(AllocError::AllocationFailed);
@@ -171,7 +171,7 @@ impl<'a, const MAX_PAGES: usize> PageAllocatorInner<'a, MAX_PAGES> {
     }
 }
 
-impl<'a, const MAX_PAGES: usize> Drop for PageAllocatorInner<'a, MAX_PAGES> {
+impl<A: Allocator, const MAX_PAGES: usize> Drop for PageAllocatorInner<A, MAX_PAGES> {
     fn drop(&mut self) {
         // Deallocate pages in reverse order to satisfy LIFO allocators like StackAllocator
         for bucket in self.pages.iter_mut().rev() {
@@ -290,8 +290,7 @@ mod tests {
 
     #[test]
     fn test_page_allocator_basic() {
-        let stack_alloc = RustSystemAllocator;
-        let page_alloc = PageAllocator::<4>::new(&stack_alloc, 512);
+        let page_alloc = PageAllocator::<RustSystemAllocator, 4>::new(RustSystemAllocator, 512);
 
         unsafe {
             let layout = Layout::from_size_align(64, 8).unwrap();
@@ -305,8 +304,7 @@ mod tests {
 
     #[test]
     fn test_page_allocator_stats() {
-        let stack_alloc = RustSystemAllocator;
-        let page_alloc = PageAllocator::<4>::new(&stack_alloc, 512);
+        let page_alloc = PageAllocator::<RustSystemAllocator, 4>::new(RustSystemAllocator, 512);
 
         unsafe {
             let layout = Layout::from_size_align(64, 8).unwrap();
@@ -320,8 +318,7 @@ mod tests {
 
     #[test]
     fn test_page_allocator_multiple_pages() {
-        let stack_alloc = RustSystemAllocator;
-        let page_alloc = PageAllocator::<4>::new(&stack_alloc, 128);
+        let page_alloc = PageAllocator::<RustSystemAllocator, 4>::new(RustSystemAllocator, 128);
 
         unsafe {
             let layout = Layout::from_size_align(100, 8).unwrap();
@@ -335,8 +332,7 @@ mod tests {
 
     #[test]
     fn test_page_allocator_out_of_pages() {
-        let stack_alloc = RustSystemAllocator;
-        let page_alloc = PageAllocator::<2>::new(&stack_alloc, 128);
+        let page_alloc = PageAllocator::<RustSystemAllocator, 2>::new(RustSystemAllocator, 128);
 
         unsafe {
             let layout = Layout::from_size_align(100, 8).unwrap();
@@ -349,8 +345,7 @@ mod tests {
 
     #[test]
     fn test_full_reclaim_after_non_lifo_frees() {
-        let stack_alloc = RustSystemAllocator;
-        let page_alloc = PageAllocator::<4>::new(&stack_alloc, 512);
+        let page_alloc = PageAllocator::<RustSystemAllocator, 4>::new(RustSystemAllocator, 512);
 
         unsafe {
             let layout = Layout::from_size_align(64, 8).unwrap();
@@ -375,8 +370,7 @@ mod tests {
 
     #[test]
     fn test_page_too_small() {
-        let stack_alloc = RustSystemAllocator;
-        let page_alloc = PageAllocator::<4>::new(&stack_alloc, 64);
+        let page_alloc = PageAllocator::<RustSystemAllocator, 4>::new(RustSystemAllocator, 64);
 
         unsafe {
             let layout = Layout::from_size_align(100, 8).unwrap();
@@ -643,8 +637,7 @@ mod kani_proofs {
     /// Test zero-size allocation must fail
     #[kani::proof]
     fn proof_zero_size_alloc_fails() {
-        let backing_alloc = RustSystemAllocator;
-        let page_alloc = PageAllocator::<3>::new(&backing_alloc, 128);
+        let page_alloc = PageAllocator::<RustSystemAllocator, 3>::new(RustSystemAllocator, 128);
 
         let zero_layout = Layout::from_size_align(0, 1).unwrap();
         let result_zero = unsafe { page_alloc.alloc(zero_layout) };
@@ -654,8 +647,7 @@ mod kani_proofs {
     /// Test allocation too large for page size must fail
     #[kani::proof]
     fn proof_large_page_alloc_fails() {
-        let backing_alloc = RustSystemAllocator;
-        let page_alloc = PageAllocator::<3>::new(&backing_alloc, 128);
+        let page_alloc = PageAllocator::<RustSystemAllocator, 3>::new(RustSystemAllocator, 128);
 
         let huge_layout = Layout::from_size_align(200, 8).unwrap();
         let result_huge = unsafe { page_alloc.alloc(huge_layout) };
@@ -669,8 +661,7 @@ mod kani_proofs {
     /// that exceed total page capacity will fail
     #[kani::proof]
     fn proof_page_overalloc_failure() {
-        let backing_alloc = RustSystemAllocator;
-        let page_alloc = PageAllocator::<3>::new(&backing_alloc, 128);
+        let page_alloc = PageAllocator::<RustSystemAllocator, 3>::new(RustSystemAllocator, 128);
         let layout = Layout::from_size_align(128, 8).unwrap();
 
         let ptr1 = unsafe { page_alloc.alloc(layout) }.expect("page 0 must fit");
@@ -716,8 +707,7 @@ mod kani_proofs {
     /// of creating a new one
     #[kani::proof]
     fn proof_page_alloc_reuses_existing_page() {
-        let backing_alloc = RustSystemAllocator;
-        let page_alloc = PageAllocator::<3>::new(&backing_alloc, 128);
+        let page_alloc = PageAllocator::<RustSystemAllocator, 3>::new(RustSystemAllocator, 128);
         let layout = Layout::from_size_align(64, 8).unwrap();
 
         let ptr1 = unsafe { page_alloc.alloc(layout) }.expect("page 0 must fit");
@@ -759,7 +749,7 @@ mod kani_proofs {
         );
 
         {
-            let page_alloc = PageAllocator::<3>::new(&backing_alloc, 128);
+            let page_alloc = PageAllocator::<&RustSystemAllocator, 3>::new(&backing_alloc, 128);
 
             // Each allocation is 100 bytes, forcing new page creation
             // (100 bytes won't fit after first allocation in 128-byte page)

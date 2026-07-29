@@ -8,8 +8,8 @@ use std::ops::ControlFlow;
 use std::time::Instant;
 
 spacewasm::global_allocator!(
-    PageAllocator<16>,
-    PageAllocator::new(&RustSystemAllocator {}, 8192)
+    PageAllocator<RustSystemAllocator, 16>,
+    PageAllocator::new(RustSystemAllocator, 8192)
 );
 
 const MAX_CODE_PAGES: u32 = 32;
