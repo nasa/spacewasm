@@ -60,6 +60,11 @@ impl<A: Allocator, const MAX_PAGES: usize> PageAllocator<A, MAX_PAGES> {
 
         stats
     }
+
+    pub fn with_inner<R>(&self, f: impl FnOnce(&mut A) -> R) -> R {
+        let r: &mut PageAllocatorInner<A, MAX_PAGES> = unsafe { &mut *self.inner.get() };
+        f(&mut r.page_allocator)
+    }
 }
 
 struct PageAllocatorInner<A: Allocator, const MAX_PAGES: usize> {
