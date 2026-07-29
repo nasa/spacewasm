@@ -302,6 +302,20 @@ jobs:
         with:
           args: '-j --output-format=terse'
 
+  miri:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+    - name: Install Rust toolchain
+      uses: actions-rs/toolchain@v1
+      with:
+        profile: minimal
+        toolchain: nightly
+        override: true
+        components: miri
+    - name: Run Miri
+      run: cargo miri test
+
   coverage:
     name: Code Coverage
     runs-on: ubuntu-latest
