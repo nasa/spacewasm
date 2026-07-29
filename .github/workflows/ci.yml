@@ -297,10 +297,30 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: 'Run Kani on repo'
+      - name: Run Kani on repo
         uses: model-checking/kani-github-action@v1.1
         with:
           args: '-j --output-format=terse'
+
+  miri:
+    name: Miri
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: nightly
+          override: true
+          components: miri
+
+      - name: Run Miri
+        run: cargo miri test -j4 --no-fail-fast --verbose
 
   coverage:
     name: Code Coverage

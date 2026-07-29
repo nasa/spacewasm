@@ -26,8 +26,8 @@ use spacewasm_util::{FileStream, RustSystemAllocator};
 use wasi_common::sync::{Dir, WasiCtxBuilder, ambient_authority};
 
 spacewasm::global_allocator!(
-    PageAllocator<0x200>,
-    PageAllocator::new(&RustSystemAllocator {}, 0x2_000_000)
+    PageAllocator<RustSystemAllocator, 0x200>,
+    PageAllocator::new(RustSystemAllocator, 0x2_000_000)
 );
 
 const MAX_PAGES: usize = 0x10_000;

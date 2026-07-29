@@ -93,7 +93,7 @@ unsafe impl Allocator for CPageBackend {
 static BACKEND: CPageBackend = CPageBackend::new();
 
 spacewasm::global_allocator!(
-    PageAllocator<'static, GLOBAL_ALLOCATOR_MAX_PAGES>,
+    PageAllocator<&CPageBackend, GLOBAL_ALLOCATOR_MAX_PAGES>,
     PageAllocator::new(&BACKEND, GLOBAL_ALLOCATOR_PAGE_SIZE)
 );
 
