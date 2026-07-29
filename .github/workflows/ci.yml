@@ -291,10 +291,29 @@ jobs:
           # without it the module sizes its own workload from wall-clock time,
           # in steps of nearly 2x, and the count would describe the runner
           # rather than the build.
-          count_once() {
-            local side="$1"
-            local out="$RUNNER_TEMP/callgrind.$side"
-            local log="$RUNNER_TEMP/$side.count.log"
+          sides=(pr)
+          if [ -x "$RUNNER_TEMP/base/coremark" ]; then
+            sides+=(base)
+          fi
+
+          # A bench binary built before that variable existed ignores it and
+          # sizes itself from the clock, so it cannot be counted against one
+          # that pins its workload. A pinned run scores exactly 10.000 and takes
+          # a fraction of a second, which is a cheaper way to find that out than
+          # the callgrind run it would spoil.
+          for side in "${sides[@]}"; do
+            log="$RUNNER_TEMP/$side.pin.log"
+            if ! ( cd "$RUNNER_TEMP/$side" && COREMARK_FIXED_CLOCK=1 ./coremark ) > "$log" 2>&1 \
+              || ! grep -q '^CoreMark Score: 10.000$' "$log"; then
+              cat "$log"
+              echo "::warning::the $side benchmark did not produce a pinned run; skipping instruction counts"
+              exit 0
+            fi
+          done
+
+          for side in "${sides[@]}"; do
+            out="$RUNNER_TEMP/callgrind.$side"
+            log="$RUNNER_TEMP/$side.count.log"
 
             if ! (
               cd "$RUNNER_TEMP/$side"
@@ -302,34 +321,29 @@ jobs:
                 --cache-sim=no --branch-sim=no \
                 --callgrind-out-file="$out" ./coremark
             ) > "$log" 2>&1; then
-              cat "$log" >&2
-              return 1
+              cat "$log"
+              echo "Failed to count instructions for $side"
+              exit 1
             fi
 
             # Whole-process total, so parsing and compiling the module count as
             # well as interpreting it. Ir is the only event collected here, so
             # the summary carries a single figure.
-            local ir
             ir=$(awk '/^(summary|totals):/ { print $2; exit }' "$out")
             if ! [[ "$ir" =~ ^[0-9]+$ ]]; then
-              cat "$log" >&2
-              echo "Could not read an instruction count for $side out of $out" >&2
-              return 1
+              cat "$log"
+              echo "No instruction count in $out"
+              exit 1
             fi
-            echo "$ir"
-          }
 
-          instructions=$(count_once pr)
-          echo "instructions=$instructions" >> "$GITHUB_OUTPUT"
-          echo "Instructions: $instructions"
-
-          if [ -x "$RUNNER_TEMP/base/coremark" ]; then
-            baseline_instructions=$(count_once base)
-            echo "baseline_instructions=$baseline_instructions" >> "$GITHUB_OUTPUT"
-            echo "Baseline instructions: $baseline_instructions"
-          else
-            echo "baseline_instructions=" >> "$GITHUB_OUTPUT"
-          fi
+            if [ "$side" = pr ]; then
+              echo "instructions=$ir" >> "$GITHUB_OUTPUT"
+              echo "Instructions: $ir"
+            else
+              echo "baseline_instructions=$ir" >> "$GITHUB_OUTPUT"
+              echo "Baseline instructions: $ir"
+            fi
+          done
 
       - name: Run CoreMark benchmark
         id: benchmark
