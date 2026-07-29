@@ -206,9 +206,10 @@ jobs:
     permissions:
       contents: read
     env:
-      # How many times each side is measured. The reported figure is the
-      # median, so a single unlucky run no longer decides the result.
-      BENCH_SAMPLES: 5
+      # How many times each side is timed. The reported figure is the median, so
+      # a single unlucky run no longer decides the result. Kept low because the
+      # instruction count below, not the score, is what resolves small changes.
+      BENCH_SAMPLES: 3
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -225,6 +226,15 @@ jobs:
           wget https://github.com/WebAssembly/wabt/releases/download/${WABT_VERSION}/wabt-${WABT_VERSION}-${WABT_PLATFORM}.tar.gz
           tar -xzf wabt-${WABT_VERSION}-${WABT_PLATFORM}.tar.gz
           sudo cp wabt-${WABT_VERSION}/bin/* /usr/local/bin/
+
+      - name: Install Valgrind
+        # Counts the instructions each side executes. Hardware counters are not
+        # an option here: GitHub runners are Azure VMs whose hypervisor does not
+        # expose the PMU, so perf reports hardware events as unsupported.
+        # Valgrind needs none, being pure user-space instrumentation.
+        run: |
+          sudo apt-get update
+          sudo apt-get install --assume-yes --no-install-recommends valgrind
 
       - name: Cache Rust dependencies
         # Pinned commit resolved from the annotated Swatinem/rust-cache@v2 tag.
@@ -265,6 +275,60 @@ jobs:
             else
               echo "::warning::could not check out main to build a baseline"
             fi
+          fi
+
+      - name: Count instructions
+        id: instructions
+        run: |
+          set -euo pipefail
+
+          # Instructions retired is the part of a benchmark a PR can actually
+          # change. It does not move with the runner's CPU model, its
+          # neighbours, or the hypervisor, so one run of each side resolves a
+          # difference the timed runs below cannot see at all.
+          #
+          # COREMARK_FIXED_CLOCK is what makes the two counts comparable:
+          # without it the module sizes its own workload from wall-clock time,
+          # in steps of nearly 2x, and the count would describe the runner
+          # rather than the build.
+          count_once() {
+            local side="$1"
+            local out="$RUNNER_TEMP/callgrind.$side"
+            local log="$RUNNER_TEMP/$side.count.log"
+
+            if ! (
+              cd "$RUNNER_TEMP/$side"
+              COREMARK_FIXED_CLOCK=1 valgrind --tool=callgrind \
+                --cache-sim=no --branch-sim=no \
+                --callgrind-out-file="$out" ./coremark
+            ) > "$log" 2>&1; then
+              cat "$log" >&2
+              return 1
+            fi
+
+            # Whole-process total, so parsing and compiling the module count as
+            # well as interpreting it. Ir is the only event collected here, so
+            # the summary carries a single figure.
+            local ir
+            ir=$(awk '/^(summary|totals):/ { print $2; exit }' "$out")
+            if ! [[ "$ir" =~ ^[0-9]+$ ]]; then
+              cat "$log" >&2
+              echo "Could not read an instruction count for $side out of $out" >&2
+              return 1
+            fi
+            echo "$ir"
+          }
+
+          instructions=$(count_once pr)
+          echo "instructions=$instructions" >> "$GITHUB_OUTPUT"
+          echo "Instructions: $instructions"
+
+          if [ -x "$RUNNER_TEMP/base/coremark" ]; then
+            baseline_instructions=$(count_once base)
+            echo "baseline_instructions=$baseline_instructions" >> "$GITHUB_OUTPUT"
+            echo "Baseline instructions: $baseline_instructions"
+          else
+            echo "baseline_instructions=" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Run CoreMark benchmark
@@ -338,6 +402,8 @@ jobs:
           cat > benchmark-results.json <<EOF
           {
             "prNumber": "${{ github.event.pull_request.number }}",
+            "currentInstructions": "${{ steps.instructions.outputs.instructions }}",
+            "baselineInstructions": "${{ steps.instructions.outputs.baseline_instructions }}",
             "samples": "${{ steps.benchmark.outputs.samples }}",
             "currentScore": "${{ steps.benchmark.outputs.score }}",
             "currentMin": "${{ steps.benchmark.outputs.min }}",

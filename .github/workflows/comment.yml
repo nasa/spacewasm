@@ -97,6 +97,38 @@ jobs:
               const baselineRange = spread(benchmark.baselineMin, benchmark.baselineMax);
 
               let comment = '## CoreMark Benchmark Results\n\n';
+
+              // Instruction counts, when the CI run that produced this artifact
+              // was new enough to measure them.
+              const currentInsns = parseInt(benchmark.currentInstructions, 10);
+              const baselineInsns = parseInt(benchmark.baselineInstructions, 10);
+
+              if (currentInsns) {
+                comment += `**Instructions:** ${currentInsns.toLocaleString('en-US')}\n`;
+
+                if (baselineInsns) {
+                  const diff = currentInsns - baselineInsns;
+                  const percentChange = (diff / baselineInsns) * 100;
+
+                  comment += `**Baseline Instructions (main):** ` +
+                    `${baselineInsns.toLocaleString('en-US')}\n`;
+                  comment += `**Difference:** ${diff >= 0 ? '+' : ''}` +
+                    `${diff.toLocaleString('en-US')} (${percentChange.toFixed(2)}%)\n\n`;
+
+                  if (percentChange >= 1.0) {
+                    comment += '**Warning:** this PR executes more than 1% more instructions\n\n';
+                  }
+                } else {
+                  comment += '\n_No baseline available for comparison_\n\n';
+                }
+
+                comment += '_Counted under callgrind on a workload pinned by ' +
+                  '`COREMARK_FIXED_CLOCK`, so both sides do the same work and the count is ' +
+                  'exact: a difference here is work the PR added or removed, not runner ' +
+                  'noise. It ignores cache and branch behaviour, so it stands in for time ' +
+                  'rather than measuring it._\n\n';
+              }
+
               comment += `**Current Score:** ${describe(currentScore, currentRange)}\n`;
 
               if (baselineScore && !isNaN(baselineScore)) {

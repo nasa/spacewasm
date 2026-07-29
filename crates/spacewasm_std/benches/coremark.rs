@@ -16,9 +16,42 @@ const MAX_CODE_PAGES: u32 = 32;
 const MAX_CONTROL_FRAMES: usize = 64;
 const MAX_STACK_DEPTH: usize = 256;
 
+/// Timestamps handed to the wasm module, in order, when `COREMARK_FIXED_CLOCK=1`.
+///
+/// CoreMark sizes its own workload from the clock: it times a run of ten
+/// iterations, keeps multiplying by ten until that takes at least a second,
+/// then settles on `iterations * (1 + 10 / floor(seconds))`. The divisor is an
+/// integer, so a run that takes 1.9s and one that takes 2.1s end up doing
+/// nearly twice as much work as each other. That is fine for a score, which
+/// divides the work back out, but it makes the amount of code executed a
+/// property of the machine rather than of the build, and so not worth counting.
+///
+/// These four values are what the module reads instead: one timed calibration
+/// round reporting exactly one second, which pins the workload at 110
+/// iterations, and a measured window of eleven seconds, which clears the ten
+/// second minimum CoreMark requires for a valid result. The score is then a
+/// constant 110 / 11, and [`FIXED_CLOCK_SCORE`] asserts it.
+const FIXED_CLOCK_MS: [i64; 4] = [0, 1_000, 1_000, 12_000];
+
+/// How far the fixed clock advances per call once [`FIXED_CLOCK_MS`] runs out,
+/// so an unexpected extra timing round changes the score rather than seeing
+/// time stand still.
+const FIXED_CLOCK_STEP_MS: i64 = 12_000;
+
+/// The only score [`FIXED_CLOCK_MS`] can produce, if the module still times
+/// itself the way it does today.
+const FIXED_CLOCK_SCORE: f32 = 10.0;
+
 fn main() {
     println!("\n=== CoreMark Benchmark ===");
     println!("Reference: https://github.com/wasm3/wasm-coremark\n");
+
+    // Fixed-clock runs are for counting instructions, not for timing: the
+    // workload is a fraction of a normal run and the score is a self-check.
+    let fixed_clock = std::env::var("COREMARK_FIXED_CLOCK").as_deref() == Ok("1");
+    if fixed_clock {
+        println!("Fixed clock: workload pinned for instruction counting.\n");
+    }
 
     // According to the reference implementation, clock_ms should return current time in milliseconds
     // See: https://github.com/wasm3/wasm-coremark/blob/main/coremark-minimal.html
@@ -35,11 +68,22 @@ fn main() {
             "clock_ms",
             "".into(),
             "I".into(),
-            |_, _| {
-                let ms = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_millis() as i64;
+            move |_, _| {
+                let call = CLOCK_CALL_COUNT.fetch_add(1, Ordering::Relaxed);
+
+                let ms = if fixed_clock {
+                    let past_end = (call + 1).saturating_sub(FIXED_CLOCK_MS.len()) as i64;
+                    FIXED_CLOCK_MS
+                        .get(call)
+                        .copied()
+                        .unwrap_or(FIXED_CLOCK_MS[FIXED_CLOCK_MS.len() - 1])
+                        + FIXED_CLOCK_STEP_MS * past_end
+                } else {
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_millis() as i64
+                };
 
                 ControlFlow::Continue(Some(Value::I64(ms)))
             },
@@ -147,6 +191,19 @@ fn main() {
             println!("Execution time: {:.3}s", elapsed.as_secs_f64());
             println!("Return value: {:.3}", coremark_score);
             println!();
+
+            // CoreMark only returns a score at all once its own CRC checks
+            // pass, and under the fixed clock there is exactly one score it can
+            // return. Anything else means the workload is no longer the one
+            // FIXED_CLOCK_MS pins, so a count taken from it is not comparable
+            // to a count taken from another build.
+            if fixed_clock && (coremark_score - FIXED_CLOCK_SCORE).abs() > 0.001 {
+                eprintln!(
+                    "Error: fixed-clock score is {coremark_score:.3}, expected {FIXED_CLOCK_SCORE:.3}"
+                );
+                eprintln!("The module no longer times itself the way FIXED_CLOCK_MS assumes.");
+                std::process::exit(1);
+            }
 
             if coremark_score > 1.0 {
                 println!("=== CoreMark Results ===");
