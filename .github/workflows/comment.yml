@@ -82,7 +82,7 @@ jobs:
               function spread(min, max) {
                 const lo = parseFloat(min);
                 const hi = parseFloat(max);
-                return isNaN(lo) || isNaN(hi) ? null : { lo, hi, width: hi - lo };
+                return isNaN(lo) || isNaN(hi) ? null : { lo, hi };
               }
 
               function describe(score, range) {
@@ -114,19 +114,14 @@ jobs:
                     `${baselineInsns.toLocaleString('en-US')}\n`;
                   comment += `**Difference:** ${diff >= 0 ? '+' : ''}` +
                     `${diff.toLocaleString('en-US')} (${percentChange.toFixed(2)}%)\n\n`;
-
-                  if (percentChange >= 1.0) {
-                    comment += '**Warning:** this PR executes more than 1% more instructions\n\n';
-                  }
                 } else {
                   comment += '\n_No baseline available for comparison_\n\n';
                 }
 
-                comment += '_Counted under callgrind on a workload pinned by ' +
-                  '`COREMARK_FIXED_CLOCK`, so both sides do the same work and the count is ' +
-                  'exact: a difference here is work the PR added or removed, not runner ' +
-                  'noise. It ignores cache and branch behaviour, so it stands in for time ' +
-                  'rather than measuring it._\n\n';
+                comment += '_Counted under callgrind with the same benchmark harness and ' +
+                  'a workload pinned by `COREMARK_FIXED_CLOCK`. This is a repeatable ' +
+                  'instruction-count proxy, not a timing measurement; it excludes cache ' +
+                  'and branch behaviour._\n\n';
               }
 
               comment += `**Current Score:** ${describe(currentScore, currentRange)}\n`;
@@ -138,25 +133,12 @@ jobs:
                 comment += `**Baseline Score (main):** ${describe(baselineScore, baselineRange)}\n`;
                 comment += `**Difference:** ${diff >= 0 ? '+' : ''}${diff.toFixed(3)} ` +
                   `(${percentChange.toFixed(2)}%)\n\n`;
-
-                // The widest sample range seen in this job is the smallest
-                // difference this runner was able to resolve, so treat anything
-                // below it as noise rather than as a result.
-                const widest = Math.max(
-                  currentRange ? currentRange.width : 0,
-                  baselineRange ? baselineRange.width : 0
-                );
-                const noise = (widest / baselineScore) * 100;
-
-                if (noise > 0) {
-                  comment += Math.abs(percentChange) <= noise
-                    ? `_Within the ${noise.toFixed(2)}% sample-to-sample noise of this run._\n`
-                    : `_Larger than the ${noise.toFixed(2)}% sample-to-sample noise of this run._\n`;
-                }
               } else {
                 comment += '\n_No baseline available for comparison_\n';
               }
 
+              comment += `\n_The timed-score ranges are descriptive only. With ${samples} ` +
+                'samples they are not confidence bounds or regression thresholds._\n';
               comment += '\n_Scores are only comparable within a single run, which measures ' +
                 'both sides on one runner. GitHub-hosted runners differ by more than 2x ' +
                 'between CPU models._\n';

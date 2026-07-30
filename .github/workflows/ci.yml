@@ -258,23 +258,38 @@ jobs:
                        | select(.target.name == "coremark")
                        | .executable' \
               | tail -n 1)
+            if [ -z "$exe" ] || [ ! -x "$exe" ]; then
+              echo "Could not locate the CoreMark benchmark executable"
+              return 1
+            fi
             mkdir -p "$dest/benches"
             cp "$exe" "$dest/coremark"
             cp crates/spacewasm_std/benches/coremark-minimal.wasm "$dest/benches/"
           }
 
+          # Keep the measurement harness and workload identical for both builds.
+          # The baseline must vary only the implementation under measurement;
+          # otherwise older main branches cannot pin the workload and the two
+          # instruction counts are not comparable.
+          harness="$RUNNER_TEMP/coremark-harness"
+          mkdir -p "$harness"
+          cp crates/spacewasm_std/benches/coremark.rs "$harness/"
+          cp crates/spacewasm_std/benches/coremark-minimal.wasm "$harness/"
+
           stage "$RUNNER_TEMP/pr"
 
-          # The baseline is best effort: a PR should still get a score of its
-          # own if main cannot be built here.
           if [ "${{ github.event_name }}" == "pull_request" ]; then
             head=$(git rev-parse HEAD)
-            if git fetch --no-tags origin main && git checkout --detach FETCH_HEAD; then
-              stage "$RUNNER_TEMP/base" || echo "::warning::could not build the baseline benchmark"
-              git checkout --detach "$head"
-            else
-              echo "::warning::could not check out main to build a baseline"
-            fi
+            git fetch --no-tags origin main
+            git checkout --detach FETCH_HEAD
+            cp "$harness/coremark.rs" crates/spacewasm_std/benches/coremark.rs
+            cp "$harness/coremark-minimal.wasm" \
+              crates/spacewasm_std/benches/coremark-minimal.wasm
+            stage "$RUNNER_TEMP/base"
+            git restore --source=HEAD -- \
+              crates/spacewasm_std/benches/coremark.rs \
+              crates/spacewasm_std/benches/coremark-minimal.wasm
+            git checkout --detach "$head"
           fi
 
       - name: Count instructions
@@ -282,10 +297,10 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Instructions retired is the part of a benchmark a PR can actually
-          # change. It does not move with the runner's CPU model, its
-          # neighbours, or the hypervisor, so one run of each side resolves a
-          # difference the timed runs below cannot see at all.
+          # Callgrind instruction counts do not depend on the runner's CPU model,
+          # its neighbours, or the hypervisor. With the same harness and pinned
+          # workload on both sides, they provide a repeatable work proxy for the
+          # implementation change.
           #
           # COREMARK_FIXED_CLOCK is what makes the two counts comparable:
           # without it the module sizes its own workload from wall-clock time,
@@ -296,18 +311,16 @@ jobs:
             sides+=(base)
           fi
 
-          # A bench binary built before that variable existed ignores it and
-          # sizes itself from the clock, so it cannot be counted against one
-          # that pins its workload. A pinned run scores exactly 10.000 and takes
-          # a fraction of a second, which is a cheaper way to find that out than
-          # the callgrind run it would spoil.
+          # A pinned run scores exactly 10.000 and takes a fraction of a second.
+          # Fail before Callgrind if either binary does not execute that known
+          # workload; comparing counts from different workloads would be invalid.
           for side in "${sides[@]}"; do
             log="$RUNNER_TEMP/$side.pin.log"
             if ! ( cd "$RUNNER_TEMP/$side" && COREMARK_FIXED_CLOCK=1 ./coremark ) > "$log" 2>&1 \
               || ! grep -q '^CoreMark Score: 10.000$' "$log"; then
               cat "$log"
-              echo "::warning::the $side benchmark did not produce a pinned run; skipping instruction counts"
-              exit 0
+              echo "The $side benchmark did not produce the pinned workload"
+              exit 1
             fi
           done
 
