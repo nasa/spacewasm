@@ -198,12 +198,6 @@ impl<A: Allocator, const MAX_PAGES: usize> Drop for PageAllocatorInner<A, MAX_PA
 }
 
 #[derive(Clone)]
-struct AllocCache {
-    restore_ptr: usize,
-    alloc_ptr: usize,
-}
-
-#[derive(Clone)]
 struct Page {
     ptr: *mut u8,
     size: usize,
@@ -211,7 +205,6 @@ struct Page {
     n_allocations: usize,
     wasted: usize,
     has_deallocated: bool,
-    cache: Option<AllocCache>,
 }
 
 impl Page {
@@ -223,7 +216,6 @@ impl Page {
             n_allocations: 0,
             wasted: 0,
             has_deallocated: false,
-            cache: None,
         }
     }
 
@@ -242,10 +234,6 @@ impl Page {
         let final_offset = (aligned_start - self.ptr as usize) + layout.size();
         if final_offset <= self.size {
             assert!(!self.has_deallocated);
-            self.cache = Some(AllocCache {
-                restore_ptr: start_address,
-                alloc_ptr: aligned_start,
-            });
 
             self.wasted += alignment_offset;
             self.allocated = final_offset;
@@ -267,16 +255,6 @@ impl Page {
             assert!(self.n_allocations > 0);
 
             // Check is we can deallocate this pointer without marking this page with a dealloc flag
-            if let Some(cache) = self.cache.take()
-                && cache.alloc_ptr == dealloc_ptr
-            {
-                self.n_allocations -= 1;
-                self.allocated = cache.restore_ptr - page_ptr;
-                self.wasted -= dealloc_ptr - cache.restore_ptr;
-                return Some(self.n_allocations == 0);
-            };
-
-            // FIXME(tumbar) We may want to track used regions of the pages
             self.n_allocations -= 1;
             self.has_deallocated = true;
             Some(self.n_allocations == 0)
@@ -465,12 +443,6 @@ mod kani_proofs {
                 // Allocation counter incremented
                 assert_eq!(page.n_allocations, 1, "Allocation counter must increment");
 
-                // Cache must be set
-                assert!(
-                    page.cache.is_some(),
-                    "Cache must be populated after allocation"
-                );
-
                 // No overflow in pointer arithmetic
                 let offset = ptr_addr - page_base;
                 assert!(
@@ -507,7 +479,7 @@ mod kani_proofs {
         unsafe { backing_alloc.dealloc(page_ptr, page_layout) };
     }
 
-    /// Verify Page::dealloc correctness and cache mechanism
+    /// Verify Page::dealloc correctness
     #[kani::proof]
     fn proof_page_deallocation_safety() {
         let backing_alloc = RustSystemAllocator;
@@ -524,16 +496,10 @@ mod kani_proofs {
         let layout2 = Layout::from_size_align(16, 8).unwrap();
 
         let ptr1 = page.alloc(layout1).unwrap();
-        let allocated_after_first = page.allocated;
-        let wasted_after_first = page.wasted;
-
         let ptr2 = page.alloc(layout2).unwrap();
-        let _allocated_after_second = page.allocated;
-        let _wasted_after_second = page.wasted;
 
         assert_eq!(page.n_allocations, 2, "Should have 2 allocations");
 
-        // Test LIFO deallocation (cache hit)
         let should_drop = page.dealloc(ptr2, layout2);
 
         assert_eq!(
@@ -543,21 +509,10 @@ mod kani_proofs {
         );
         assert_eq!(page.n_allocations, 1, "Counter must decrement");
 
-        // Cache hit must restore allocated to exact previous value
-        assert_eq!(
-            page.allocated, allocated_after_first,
-            "Cache hit must restore allocated to exact previous value"
-        );
-
-        // Cache hit must restore wasted bytes (subtracts alignment padding)
-        assert_eq!(
-            page.wasted, wasted_after_first,
-            "Cache hit must restore wasted bytes"
-        );
-
+        // Deallocation must set the has_deallocated flag
         assert!(
-            !page.has_deallocated,
-            "Cache hit should not set has_deallocated flag"
+            page.has_deallocated,
+            "Deallocation must set has_deallocated flag"
         );
 
         // Test pointer ownership check - pointer outside page range
@@ -572,23 +527,10 @@ mod kani_proofs {
             "Counter must not change for outside pointer"
         );
 
-        // Test non-LIFO deallocation (cache miss)
-        let ptr3 = page.alloc(Layout::from_size_align(8, 8).unwrap()).unwrap();
-        assert_eq!(page.n_allocations, 2, "Should have 2 allocations again");
-
-        // Deallocate ptr1 (not the last allocation, so cache miss)
+        // Deallocate ptr1 - the final live allocation, so the page is dropped
         let should_drop2 = page.dealloc(ptr1, layout1);
-        assert_eq!(should_drop2, Some(false), "Page should not be dropped");
-        assert_eq!(page.n_allocations, 1, "Counter must decrement");
-        assert!(
-            page.has_deallocated,
-            "Cache miss should set has_deallocated flag"
-        );
-
-        // Final deallocation should return true (drop page)
-        let should_drop3 = page.dealloc(ptr3, Layout::from_size_align(8, 8).unwrap());
         assert_eq!(
-            should_drop3,
+            should_drop2,
             Some(true),
             "Page should be dropped when n_allocations reaches 0"
         );
