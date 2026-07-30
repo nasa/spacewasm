@@ -156,6 +156,11 @@ fn extern_memory() {
 }
 
 #[test]
+fn zero_page_memory_grow() {
+    run("regression/zero_page_memory_grow");
+}
+
+#[test]
 fn start_stack_overflow() {
     run("regression/start_stack_overflow");
 }
