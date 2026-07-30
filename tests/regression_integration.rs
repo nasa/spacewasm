@@ -1,3 +1,5 @@
+#![cfg(not(miri))]
+
 mod util;
 use std::{ops::ControlFlow, sync::Mutex};
 
@@ -151,6 +153,11 @@ fn extern_tables() {
 #[test]
 fn extern_memory() {
     run("regression/extern_memory");
+}
+
+#[test]
+fn zero_page_memory_grow() {
+    run("regression/zero_page_memory_grow");
 }
 
 #[test]
