@@ -5,7 +5,7 @@ The `spacewasi` crate provides a binary that can execute arbitrary WebAssembly m
 `spacewasi` is a standalone binary that exposes its configuration via commandline arguments and flags:
 ```bash
 $ spacewasi --help
-Execute WASI-compatible WASM modules with spacewasm
+Execute WASI-compatible WASM modules with SpaceWasm
 
 Usage: spacewasi [OPTIONS] <FILE> [ARGS]...
 
@@ -19,6 +19,7 @@ Options:
 -d, --dir <HOST_DIR[::WASM_DIR]>  Mount directories
 -e, --env <KEY[=VALUE]>           Set environment variables
     --inherit-env                 Inherit all environment variables
+    --raw-tty                     Enable raw terminal mode
 -h, --help                        Print help
 -V, --version                     Print version
 ```
