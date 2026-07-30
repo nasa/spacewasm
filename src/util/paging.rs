@@ -198,12 +198,6 @@ impl<A: Allocator, const MAX_PAGES: usize> Drop for PageAllocatorInner<A, MAX_PA
 }
 
 #[derive(Clone)]
-struct AllocCache {
-    restore_ptr: usize,
-    alloc_ptr: usize,
-}
-
-#[derive(Clone)]
 struct Page {
     ptr: *mut u8,
     size: usize,
@@ -211,7 +205,6 @@ struct Page {
     n_allocations: usize,
     wasted: usize,
     has_deallocated: bool,
-    cache: Option<AllocCache>,
 }
 
 impl Page {
@@ -223,7 +216,6 @@ impl Page {
             n_allocations: 0,
             wasted: 0,
             has_deallocated: false,
-            cache: None,
         }
     }
 
@@ -242,10 +234,6 @@ impl Page {
         let final_offset = (aligned_start - self.ptr as usize) + layout.size();
         if final_offset <= self.size {
             assert!(!self.has_deallocated);
-            self.cache = Some(AllocCache {
-                restore_ptr: start_address,
-                alloc_ptr: aligned_start,
-            });
 
             self.wasted += alignment_offset;
             self.allocated = final_offset;
@@ -267,16 +255,6 @@ impl Page {
             assert!(self.n_allocations > 0);
 
             // Check is we can deallocate this pointer without marking this page with a dealloc flag
-            if let Some(cache) = self.cache.take()
-                && cache.alloc_ptr == dealloc_ptr
-            {
-                self.n_allocations -= 1;
-                self.allocated = cache.restore_ptr - page_ptr;
-                self.wasted -= dealloc_ptr - cache.restore_ptr;
-                return Some(self.n_allocations == 0);
-            };
-
-            // FIXME(tumbar) We may want to track used regions of the pages
             self.n_allocations -= 1;
             self.has_deallocated = true;
             Some(self.n_allocations == 0)
@@ -507,7 +485,7 @@ mod kani_proofs {
         unsafe { backing_alloc.dealloc(page_ptr, page_layout) };
     }
 
-    /// Verify Page::dealloc correctness and cache mechanism
+    /// Verify Page::dealloc correctness
     #[kani::proof]
     fn proof_page_deallocation_safety() {
         let backing_alloc = RustSystemAllocator;

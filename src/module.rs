@@ -883,11 +883,11 @@ impl Element {
             return Err(ValidationError::InvalidElementOffset);
         };
 
-        let init = wasm.read_vec(FuncIdx::read)?;
+        let init_len = wasm.read_u32()?;
         if let Some(table) = module.get_table(store) {
             if offset < 0 || (offset as usize) > table.len() {
                 return Err(ValidationError::InvalidElementOffset);
-            } else if (offset as usize + init.len()) > table.len() {
+            } else if (offset as u64 + init_len as u64) > table.len() as u64 {
                 return Err(ValidationError::InvalidElementOutOfBounds);
             }
         } else {
@@ -895,9 +895,11 @@ impl Element {
         }
 
         // Write the function indexes into the table
-        for (i, idx) in init.iter().enumerate() {
+        for i in 0..init_len as usize {
+            let idx = FuncIdx::read(wasm)?;
+
             let r = module
-                .get_func_ref(*idx)
+                .get_func_ref(idx)
                 .ok_or(ValidationError::FunctionIdxOutOfRange)?;
 
             let tr = match r {
@@ -966,10 +968,7 @@ impl CodeSection {
 }
 
 #[derive(Clone)]
-pub struct Data {
-    pub offset: u32,
-    pub init: Vec<u8>,
-}
+pub struct Data;
 
 impl Module {
     pub(crate) fn check_memory_defined(&self) -> Result<(), ValidationError> {
@@ -986,7 +985,8 @@ impl Data {
         wasm: &mut Reader,
         store: &Store,
         module: &Module,
-    ) -> Result<Self, ValidationError> {
+        memory: &Rc<Memory>,
+    ) -> Result<(), ValidationError> {
         let mem = MemIdx::read(wasm)?;
         if mem.0 != 0 {
             return Err(ValidationError::InvalidMemIndex);
@@ -996,8 +996,6 @@ impl Data {
         module.check_memory_defined()?;
 
         let offset = Expr::read_constant(wasm, store, module)?;
-        let init = wasm.read_vec(|w| w.read_u8())?;
-
         let offset = match offset {
             Value::I32(i) => {
                 if i < 0 {
@@ -1011,7 +1009,21 @@ impl Data {
             Value::F64(_) => return Err(ValidationError::InvalidMemOffsetType),
         };
 
-        Ok(Data { offset, init })
+        // Read the data onto the linear memory
+        // Note! This is a deviation from the Wasm specification, technically we
+        // should be reading into a separate buffer and only populating the linear memory
+        // _after_ the full module validates.
+        let len = wasm.read_u32()?;
+        for i in 0..len {
+            memory.store_u8(Memory::effective_address(offset, i)?, wasm.read_u8()?)?;
+        }
+
+        if len == 0 {
+            // Make sure the data offset is in-range
+            memory.store(offset as usize, &[])?;
+        }
+
+        Ok(())
     }
 }
 
@@ -1040,8 +1052,7 @@ impl DataSection {
             };
 
             for _ in 0..len {
-                let data = Data::read(wasm, store, module)?;
-                memory.store(data.offset as usize, &data.init)?;
+                Data::read(wasm, store, module, memory)?;
             }
 
             Ok(())
