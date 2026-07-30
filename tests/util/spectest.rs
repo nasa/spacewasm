@@ -128,14 +128,74 @@ struct ValueSpec {
     value: Option<String>,
 }
 
-struct RustSystemAllocator;
+/// The phase a test thread is currently in, controlling how the global
+/// [`SpecTestAllocator`] treats allocations and deallocations.
+#[derive(Clone, Copy)]
+enum AllocPhase {
+    /// No allocation check. Used during JSON parsing etc.
+    Unchecked,
+    /// Loading Wasm module. Allows allocation, does not allow deallocation
+    Loading { freed: bool },
+    /// No memory allocation may occur. During execution
+    Locked,
+}
 
-unsafe impl Allocator for RustSystemAllocator {
+thread_local! {
+    /// Per-thread allocator phase. `cargo test` runs each `#[test]`
+    /// concurrently in one process while sharing the single global
+    /// [`SpecTestAllocator`]; keeping the phase thread-local means each test
+    /// thread only gates its own allocations and cannot corrupt another's.
+    static ALLOC_PHASE: RefCell<AllocPhase> = const { RefCell::new(AllocPhase::Unchecked) };
+}
+
+/// RAII guard that sets the current thread's [`AllocPhase`] and restores the
+/// previous phase on drop. Restoring (rather than resetting to `Unchecked`)
+/// keeps nesting and unwinding correct, so the `catch_unwind` in
+/// [`run_wast_test_file`] still reports the offending wast line.
+struct PhaseGuard(AllocPhase);
+
+impl Drop for PhaseGuard {
+    fn drop(&mut self) {
+        ALLOC_PHASE.with(|p| *p.borrow_mut() = self.0);
+    }
+}
+
+/// Enter a module-load epoch (see [`AllocPhase::Loading`]).
+fn enter_loading() -> PhaseGuard {
+    let prev = ALLOC_PHASE.with(|p| p.replace(AllocPhase::Loading { freed: false }));
+    PhaseGuard(prev)
+}
+
+/// Enter a pure-execution region (see [`AllocPhase::Locked`]).
+fn enter_locked() -> PhaseGuard {
+    let prev = ALLOC_PHASE.with(|p| p.replace(AllocPhase::Locked));
+    PhaseGuard(prev)
+}
+
+/// The spectest allocator is a simple model of the production `PageAllocator`
+/// used to verify flight memory constraints of spacewasm.
+struct SpecTestAllocator;
+
+unsafe impl Allocator for SpecTestAllocator {
     unsafe fn alloc(&self, layout: Layout) -> Result<*mut u8, AllocError> {
+        ALLOC_PHASE.with(|p| match &mut *p.borrow_mut() {
+            AllocPhase::Locked => panic!("unexpected allocation during execution"),
+            AllocPhase::Loading { freed: true } => {
+                panic!("allocation after deallocation within module load")
+            }
+            AllocPhase::Loading { freed: false } | AllocPhase::Unchecked => {}
+        });
+
         unsafe { Ok(std::alloc::alloc(layout)) }
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        ALLOC_PHASE.with(|p| match &mut *p.borrow_mut() {
+            AllocPhase::Locked => panic!("unexpected deallocation during execution"),
+            AllocPhase::Loading { freed } => *freed = true,
+            AllocPhase::Unchecked => {}
+        });
+
         unsafe { std::alloc::dealloc(ptr, layout) }
     }
 
@@ -147,6 +207,7 @@ unsafe impl Allocator for RustSystemAllocator {
     }
 }
 
+struct RustSystemAllocator;
 impl WasmMemoryAllocator for RustSystemAllocator {
     fn allocate(&self, layout: Layout) -> Result<NonNull<u8>, AllocError> {
         unsafe { NonNull::new(std::alloc::alloc(layout)).ok_or(AllocError::AllocationFailed) }
@@ -169,7 +230,7 @@ impl WasmMemoryAllocator for RustSystemAllocator {
     }
 }
 
-global_allocator!(RustSystemAllocator, RustSystemAllocator);
+global_allocator!(SpecTestAllocator, SpecTestAllocator);
 
 pub struct ByteStream {
     buffer: Option<Vec<u8>>,
@@ -608,25 +669,33 @@ fn load_module(
     // Create a ByteStream
     let mut stream = ByteStream::new(wasm_bytes);
 
-    // Parse and validate the module
-    let module = Module::new::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
-        module_name.as_ref().map(|f| f.as_ref()).unwrap_or(""),
-        &mut stream,
-        &mut ctx.engine.store,
-        &mut ctx.code_builder,
-        spacewasm::Rc::new(RustSystemAllocator)
-            .unwrap()
-            .into_wasm_memory_allocator(),
-    )?;
+    let module_ref = {
+        let _loading = enter_loading();
 
-    // Append the module and run its start function.
-    let module_ref = ctx.engine.push_module(module).unwrap();
-    let result = match ctx.engine.invoke_start(module_ref) {
-        StartInvocation::Finished => InterpreterResult::Finished,
-        StartInvocation::Trap(t) => InterpreterResult::Trap(t),
-        StartInvocation::Pause => InterpreterResult::Pause,
-        StartInvocation::Running => {
-            Interpreter.run(ctx.code_builder.pages(), &mut ctx.engine, usize::MAX)
+        let module = Module::new::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
+            module_name.as_ref().map(|f| f.as_ref()).unwrap_or(""),
+            &mut stream,
+            &mut ctx.engine.store,
+            &mut ctx.code_builder,
+            spacewasm::Rc::new(RustSystemAllocator)
+                .unwrap()
+                .into_wasm_memory_allocator(),
+        )?;
+
+        ctx.engine.push_module(module).unwrap()
+    };
+
+    // Running the module's start function is pure execution: it must neither
+    // allocate nor deallocate.
+    let result = {
+        let _locked = enter_locked();
+        match ctx.engine.invoke_start(module_ref) {
+            StartInvocation::Finished => InterpreterResult::Finished,
+            StartInvocation::Trap(t) => InterpreterResult::Trap(t),
+            StartInvocation::Pause => InterpreterResult::Pause,
+            StartInvocation::Running => {
+                Interpreter.run(ctx.code_builder.pages(), &mut ctx.engine, usize::MAX)
+            }
         }
     };
     match result {
@@ -669,15 +738,19 @@ fn invoke_function_resume(
         .borrow_mut()
         .push(format!("resume {:?}", resume_value));
 
-    ctx.engine.resume(resume_value);
-
     // Continue execution from the paused state
     let test_runner: Inspector<'_, _, _, _> = Inspector {
         v: &Interpreter,
         out: test_log.clone(),
     };
 
-    let result = test_runner.run(ctx.code_builder.pages(), &mut ctx.engine, 10000000);
+    // Resuming and running the interpreter is pure execution: no allocation or
+    // deallocation may occur.
+    let result = {
+        let _locked = enter_locked();
+        ctx.engine.resume(resume_value);
+        test_runner.run(ctx.code_builder.pages(), &mut ctx.engine, 10000000)
+    };
 
     // Get the return types we saved when the function paused
     let return_types = ctx
@@ -765,8 +838,6 @@ fn invoke_function_normal(
         (func_ref, return_types, params)
     };
 
-    ctx.engine.invoke(f_ref, &params).unwrap();
-
     let test_runner: Inspector<'_, _, _, _> = Inspector {
         v: &Interpreter,
         out: test_log.clone(),
@@ -778,7 +849,11 @@ fn invoke_function_normal(
         .push(format!("invoke {}({:?})", func_name, params));
 
     // Run until completion - up to 10-million instructions to catch infinite loops
-    let result = test_runner.run(ctx.code_builder.pages(), &mut ctx.engine, 10000000);
+    let result = {
+        let _locked = enter_locked();
+        ctx.engine.invoke(f_ref, &params).unwrap();
+        test_runner.run(ctx.code_builder.pages(), &mut ctx.engine, 10000000)
+    };
 
     // Check the result
     match result {
