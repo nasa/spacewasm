@@ -6,7 +6,7 @@ ARCHS = \
 	armv7-unknown-linux-gnueabihf \
 	x86_64-unknown-linux-gnu \
 	i686-unknown-linux-gnu \
-	riscv64gc-unknown-linux-gnu
+# 	riscv64gc-unknown-linux-gnu
 
 RUST_LIBS = $(patsubst %,../../target/%/release/libspacewasm_c_api.a,$(ARCHS))
 
@@ -15,7 +15,7 @@ default: $(patsubst %,out/initramfs-%.cpio.gz,$(ARCHS))
 out:
 	mkdir out
 
-out/coremark_wasm.h: | out coremark.wasm
+out/coremark_wasm.h: coremark.wasm | out
 	xxd -i -name COREMARK_WASM coremark.wasm > out/coremark_wasm.h
 
 $(C_CRATE)/include/spacewasm.h: $(C_CRATE)/src/*
@@ -24,12 +24,14 @@ $(C_CRATE)/include/spacewasm.h: $(C_CRATE)/src/*
 $(RUST_LIBS): ../../target/%/release/libspacewasm_c_api.a: $(C_CRATE)/src/*
 	cargo build -p spacewasm_c_api --release --features codegen --target $*
 
-out/coremark-%: | out ../../target/%/release/libspacewasm_c_api.a \
+out/coremark-%: ../../target/%/release/libspacewasm_c_api.a \
 				$(C_CRATE)/include/spacewasm.h \
 				coremark.c \
-				out/coremark_wasm.h
+				out/coremark_wasm.h \
+				| out
 	clang \
 		-static \
+		-O3 \
 		--sysroot=/opt/homebrew/opt/$*/toolchain/$*/sysroot \
 		--gcc-toolchain=/opt/homebrew/opt/$*/toolchain \
 		-target $* \
@@ -43,13 +45,15 @@ out/initramfs-%.cpio.gz: out/coremark-%
 	mkdir -p out/root-$*/{bin,sbin,etc,proc,sys,dev,usr/bin,usr/sbin}
 	cp out/coremark-$* out/root-$*/init
 	chmod +x out/root-$*/init
-	find out/root-$* -print0 | cpio --null --create --format=newc | gzip -9 > out/initramfs-$*.cpio.gz
+	cd out/root-$* && \
+		find . -print0 | cpio --null --create --format=newc | gzip -9 > ../initramfs-$*.cpio.gz
 
-download-kernels: | out \
+download-kernels: \
 	out/vmlinuz_aarch64_netboot-3.21.7 	\
 	out/vmlinuz_armv7_netboot-3.21.7 	\
 	out/vmlinuz_x86_64_netboot-3.21.7 	\
 	out/vmlinuz_x86_netboot-3.21.7 		\
+	| out
 # 	out/vmlinuz_riscv64_netboot-3.21.7
 
 out/vmlinuz_aarch64_netboot-3.21.7:

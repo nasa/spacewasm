@@ -189,6 +189,7 @@ int main(void) {
 
     spacewasm_value_t params[0];
 
+    
     st = spacewasm_invoke(store, mod_idx, idx, params, 0);
     if (st != SPACEWASM_OK) {
         fprintf(stderr, "invoke: status=%d\n", (int)st);
@@ -198,7 +199,7 @@ int main(void) {
     spacewasm_trap_t trap = SPACEWASM_TRAP_NONE;
     spacewasm_run_status_t rs = SPACEWASM_RUN_OUT_OF_FUEL;
     while (rs == SPACEWASM_RUN_OUT_OF_FUEL) {
-        rs = spacewasm_run(store, 1000, &start_trap);
+        rs = spacewasm_run(store, SIZE_MAX, &start_trap);
     }
 
     if (rs != SPACEWASM_RUN_FINISHED) {
@@ -215,7 +216,7 @@ int main(void) {
 
     spacewasm_destroy(store);
 
-    printf("%f", out.u.f32_);
+    printf("%f\n", out.u.f32_);
 
     return 0;
 }

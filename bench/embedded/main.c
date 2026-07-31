@@ -20,22 +20,24 @@ void spacewasm_panic(const uint8_t* filename, size_t filename_len, uint32_t line
  * aligned_alloc (size is rounded up to a multiple of align, as C requires).
  */
 static uint8_t* heap_alloc(void* userdata, size_t size, size_t align) {
-    (void)userdata;
-    if (size == 0) {
-        return NULL;
-    }
-    if (align < sizeof(void*)) {
-        align = sizeof(void*);
-    }
-    size_t rounded = (size + align - 1) & ~(align - 1);
-    return (uint8_t*)aligned_alloc(align, rounded);
+    // (void)userdata;
+    // if (size == 0) {
+    //     return NULL;
+    // }
+    // if (align < sizeof(void*)) {
+    //     align = sizeof(void*);
+    // }
+    // size_t rounded = (size + align - 1) & ~(align - 1);
+    // return (uint8_t*)aligned_alloc(align, rounded);
+    return 0;
 }
 
 static void heap_dealloc(void* userdata, uint8_t* ptr, size_t size, size_t align) {
-    (void)userdata;
-    (void)size;
-    (void)align;
-    free(ptr);
+    // (void)userdata;
+    // (void)size;
+    // (void)align;
+    // free(ptr);
+    return;
 }
 
 /*
@@ -45,17 +47,19 @@ static void heap_dealloc(void* userdata, uint8_t* ptr, size_t size, size_t align
  * (16). A real integrator honoring larger alignments would use aligned_alloc.
  */
 static uint8_t* mem_alloc(void* userdata, size_t size, size_t align) {
-    (void)userdata;
-    (void)align;
-    return (uint8_t*)malloc(size);
+    // (void)userdata;
+    // (void)align;
+    // return (uint8_t*)malloc(size);
+    return 0;
 }
 
 static uint8_t* mem_realloc(void* userdata, uint8_t* ptr, size_t old_size, size_t new_size,
                             size_t align) {
-    (void)userdata;
-    (void)old_size;
-    (void)align;
-    return (uint8_t*)realloc(ptr, new_size);
+    // (void)userdata;
+    // (void)old_size;
+    // (void)align;
+    // return (uint8_t*)realloc(ptr, new_size);
+    return 0;
 }
 
 static void mem_dealloc(void* userdata, uint8_t* ptr, size_t size, size_t align) {
