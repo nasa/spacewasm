@@ -67,3 +67,6 @@ dkms.conf
 
 # MacOS
 .DS_Store
+
+# Benchmark artifacts
+/bench/*/out
