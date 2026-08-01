@@ -373,8 +373,6 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
                         panic!("expected i64");
                     };
 
-                    // eprintln!("fd_fdstat_set_rights({a0}, {a1}, {a2})");
-
                     let code = block_on(wasi_snapshot_preview1::fd_fdstat_set_rights(
                         &mut *wasi_ctx_fd_fdstat_set_rights.borrow_mut(),
                         &mut GuestMemory::Shared(unsafe {
