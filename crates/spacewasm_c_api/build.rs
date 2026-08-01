@@ -15,12 +15,13 @@ fn main() {
         }
     };
 
+    println!("cargo:rerun-if-env-changed=SPACEWASM_CONFIG");
     println!("cargo:rustc-env=SPACEWASM_CONFIG={config}");
     generate_header();
 }
 
 /// Regenerate `include/spacewasm.h` from the Rust source with cbindgen. Only
-/// compiled in when the `generate-header` feature is on; otherwise a no-op so
+/// compiled in when the `codegen` feature is on; otherwise a no-op so
 /// lean builds carry no cbindgen dependency and consume the committed header.
 #[cfg(feature = "codegen")]
 fn generate_header() {
