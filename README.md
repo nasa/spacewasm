@@ -120,7 +120,7 @@ For more information about this command and basic WASI compilation, see [`spacew
 This Wasm interpreter imposes additional constraints beyond the WebAssembly 1.0 specification to support
 resource-constrained spacecraft environments.
 
-See our [IR SPEC](./src/SPEC.md) for the full list of limitations.
+See our [IR SPEC](./docs/ir.md#limitations) for the full list of limitations.
 
 These constraints enable deterministic memory usage and efficient execution in resource-constrained environments while
 maintaining compatibility with most standard WebAssembly modules.
