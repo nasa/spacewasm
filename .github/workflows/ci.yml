@@ -200,6 +200,51 @@ jobs:
       - name: Build release
         run: cargo build --workspace --release --verbose
 
+  cmake:
+    name: CMake Integration
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install aarch64 cross toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu
+
+      # `crates/spacewasm_c_api/README.md` documents consuming the crate through
+      # `add_subdirectory()`, but nothing in CI configures it. The fixture builds
+      # the same two C programs `spacewasm_c_example` already drives through
+      # cargo, so the CMake path gets covered without new test code. Both embed
+      # their module bytes, so unlike the rest of the suite this needs no WABT.
+      - name: Build and run the documented integration
+        run: |
+          cmake -S crates/spacewasm_c_api/tests/cmake -B target/cmake/native \
+            -DCMAKE_BUILD_TYPE=Debug
+          cmake --build target/cmake/native -j"$(nproc)"
+          ./target/cmake/native/ctest
+          ./target/cmake/native/ctest_suite
+
+      # A cross build has to forward the Rust target explicitly. Without
+      # `SPACEWASM_TARGET` cargo still produces a host archive and the link fails
+      # with "file in wrong format", so assert the emitted ELF is AArch64.
+      - name: Cross-compile to aarch64
+        run: |
+          cmake -S crates/spacewasm_c_api/tests/cmake -B target/cmake/aarch64 \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_SYSTEM_NAME=Linux \
+            -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
+            -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
+            -DSPACEWASM_TARGET=aarch64-unknown-linux-gnu
+          cmake --build target/cmake/aarch64 -j"$(nproc)"
+          readelf -h target/cmake/aarch64/ctest | grep -q AArch64
+
   benchmark:
     name: Benchmark
     runs-on: ubuntu-latest
