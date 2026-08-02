@@ -114,6 +114,14 @@ jobs:
                     `${baselineInsns.toLocaleString('en-US')}\n`;
                   comment += `**Difference:** ${diff >= 0 ? '+' : ''}` +
                     `${diff.toLocaleString('en-US')} (${percentChange.toFixed(2)}%)\n\n`;
+
+                  // The count is exact, so this is a reading aid rather than a
+                  // threshold: it puts a large difference in front of a reviewer
+                  // instead of leaving it to be picked out of the figures.
+                  if (percentChange >= 1.0) {
+                    comment += '**Note:** this PR executes more than 1% more instructions ' +
+                      'than the baseline.\n\n';
+                  }
                 } else {
                   comment += '\n_No baseline available for comparison_\n\n';
                 }

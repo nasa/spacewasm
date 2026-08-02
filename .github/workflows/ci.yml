@@ -278,18 +278,24 @@ jobs:
 
           stage "$RUNNER_TEMP/pr"
 
+          # The baseline stays best effort. A harness written against an
+          # interface main does not have yet will not build there, and a PR
+          # should still get a score of its own when that happens.
           if [ "${{ github.event_name }}" == "pull_request" ]; then
             head=$(git rev-parse HEAD)
-            git fetch --no-tags origin main
-            git checkout --detach FETCH_HEAD
-            cp "$harness/coremark.rs" crates/spacewasm_std/benches/coremark.rs
-            cp "$harness/coremark-minimal.wasm" \
-              crates/spacewasm_std/benches/coremark-minimal.wasm
-            stage "$RUNNER_TEMP/base"
-            git restore --source=HEAD -- \
-              crates/spacewasm_std/benches/coremark.rs \
-              crates/spacewasm_std/benches/coremark-minimal.wasm
-            git checkout --detach "$head"
+            if git fetch --no-tags origin main && git checkout --detach FETCH_HEAD; then
+              cp "$harness/coremark.rs" crates/spacewasm_std/benches/coremark.rs
+              cp "$harness/coremark-minimal.wasm" \
+                crates/spacewasm_std/benches/coremark-minimal.wasm
+              stage "$RUNNER_TEMP/base" \
+                || echo "::warning::could not build the baseline against this branch's harness"
+              git restore --source=HEAD -- \
+                crates/spacewasm_std/benches/coremark.rs \
+                crates/spacewasm_std/benches/coremark-minimal.wasm
+              git checkout --detach "$head"
+            else
+              echo "::warning::could not check out main to build a baseline"
+            fi
           fi
 
       - name: Count instructions
@@ -311,16 +317,22 @@ jobs:
             sides+=(base)
           fi
 
-          # A pinned run scores exactly 10.000 and takes a fraction of a second.
-          # Fail before Callgrind if either binary does not execute that known
-          # workload; comparing counts from different workloads would be invalid.
+          # A pinned run scores exactly 10.000 and takes a fraction of a second,
+          # which is a cheaper way to find out that a side cannot pin than the
+          # callgrind run it would spoil. A pr side that cannot pin is this
+          # branch's own doing and fails the job. A baseline that cannot pin is
+          # not, so the counts are skipped and the timed comparison stands.
           for side in "${sides[@]}"; do
             log="$RUNNER_TEMP/$side.pin.log"
             if ! ( cd "$RUNNER_TEMP/$side" && COREMARK_FIXED_CLOCK=1 ./coremark ) > "$log" 2>&1 \
               || ! grep -q '^CoreMark Score: 10.000$' "$log"; then
               cat "$log"
-              echo "The $side benchmark did not produce the pinned workload"
-              exit 1
+              if [ "$side" = pr ]; then
+                echo "The pr benchmark did not produce the pinned workload"
+                exit 1
+              fi
+              echo "::warning::the baseline did not produce a pinned run; skipping instruction counts"
+              exit 0
             fi
           done
 
