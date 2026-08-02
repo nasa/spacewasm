@@ -146,6 +146,32 @@ impl Engine {
 
         Ok(())
     }
+
+    /// Resume the interpreter after a host pause.
+    /// Optionally pushes a value to the operand stack as a host function return value.
+    pub fn resume(&mut self, resume_value: Option<Value>) {
+        // Unwrap is safe here because we should not call resume() unless the interpreter requested a pause
+        match (self.host_pause_result.take().unwrap(), resume_value) {
+            (ResultType(Some(ValType::F32)), Some(Value::F32(z))) => {
+                self.stack.write_f32(self.sp, z);
+                self.sp += 1;
+            }
+            (ResultType(Some(ValType::F64)), Some(Value::F64(z))) => {
+                self.stack.write_f64(self.sp, z);
+                self.sp += 2;
+            }
+            (ResultType(Some(ValType::I32)), Some(Value::I32(n))) => {
+                self.stack.write_u32(self.sp, n as u32);
+                self.sp += 1;
+            }
+            (ResultType(Some(ValType::I64)), Some(Value::I64(n))) => {
+                self.stack.write_u64(self.sp, n as u64);
+                self.sp += 2;
+            }
+            (ResultType(None), None) => {}
+            _ => panic!("expected host function to return a value"),
+        }
+    }
 }
 
 pub struct Interpreter;
@@ -204,8 +230,6 @@ pub enum InterpreterResult {
     Pause,
     /// No more fuel (ran to instruction bound)
     OutOfFuel,
-    /// Failed to read an instruction from memory
-    ReaderError(IrReaderError),
 }
 
 impl Interpreter {
@@ -266,9 +290,13 @@ impl Interpreter {
 /// This is a meta-trait that provides an auto implementation of run() for all IrVisitors
 /// of a certain shape.
 ///
-/// For all types that implement [IrVisitor<State = InterpreterState, Error = InstructionError>],
+/// For all types that implement [IrVisitor<State = Engine, Error = InstructionError>],
 /// this trait will be implemented to execute instructions given the state and store.
 pub trait InterpreterRunner {
+    /// Run the interpreter for a fixed number of cycles or until a trap/host pause.
+    ///
+    /// The `code` parameter contains the compiled IR pages. It's passed separately from
+    /// the engine to allow the interpreter to borrow it immutably while mutating the engine state.
     fn run(
         &self,
         code: &[Box<TextPage>],
@@ -284,8 +312,6 @@ impl<T: IrVisitor<State = Engine, Error = InterpreterBreak>> InterpreterRunner f
         state: &mut T::State,
         n_instructions: usize,
     ) -> InterpreterResult {
-        let reader = IrReader::new(code);
-
         // Run up to n instructions
         for _ in 0..n_instructions {
             let mut pc = state.pc;
@@ -295,7 +321,7 @@ impl<T: IrVisitor<State = Engine, Error = InterpreterBreak>> InterpreterRunner f
                 return InterpreterResult::Finished;
             }
 
-            let i_res = reader.visit_instruction(state, &mut pc, self);
+            let i_res = IrReader::visit_instruction(code, state, &mut pc, self);
             if state.jumped {
                 // We jumped, leave the PC
                 state.jumped = false;
@@ -1358,11 +1384,9 @@ impl IrVisitor for Interpreter {
         x: u16,
         state: &mut Self::State,
     ) -> Result<(), Self::Error> {
-        let m = &state.store.host_modules()[module.0 as usize];
-        let f = &m.functions[x as usize];
-
         let mut sv: StaticVec<Value, 9> = StaticVec::new();
 
+        let f = &state.store.host_modules_mut()[module.0 as usize].functions[x as usize];
         state.sp -= f.param_size();
         let mut offset = 0;
         for p_ty in f.params().iter() {
@@ -1390,31 +1414,48 @@ impl IrVisitor for Interpreter {
             }
         }
 
-        match f.call(state, &sv) {
+        let r = state.call_host_fn(module, x, &sv);
+        let f = &state.store.host_modules_mut()[module.0 as usize].functions[x as usize];
+        match r {
             ControlFlow::Continue(v) => {
-                match v {
-                    None => {}
-                    Some(Value::I32(i)) => {
+                match (v, f.returns().0) {
+                    (None, None) => {}
+                    (Some(Value::I32(i)), Some(ValType::I32)) => {
                         state.stack.write_u32(state.sp, i as u32);
                         state.sp += 1;
                     }
-                    Some(Value::I64(i)) => {
+                    (Some(Value::I64(i)), Some(ValType::I64)) => {
                         state.stack.write_u64(state.sp, i as u64);
                         state.sp += 2;
                     }
-                    Some(Value::F32(f)) => {
+                    (Some(Value::F32(f)), Some(ValType::F32)) => {
                         state.stack.write_f32(state.sp, f);
                         state.sp += 1;
                     }
-                    Some(Value::F64(f)) => {
+                    (Some(Value::F64(f)), Some(ValType::F64)) => {
                         state.stack.write_f64(state.sp, f);
                         state.sp += 2;
+                    }
+                    (got, expected) => {
+                        panic!(
+                            "host function returned {got:?} while declaration expecting {expected:?}"
+                        )
                     }
                 }
 
                 Ok(())
             }
-            ControlFlow::Break(b) => Err(b.into()),
+            ControlFlow::Break(HostFunctionBreak::Pause) => {
+                let other = state.host_pause_result.replace(f.returns());
+                if other.is_some() {
+                    panic!("Unexpected paused engine state");
+                }
+
+                Err(InterpreterBreak::Pause)
+            }
+            ControlFlow::Break(HostFunctionBreak::Trap) => {
+                Err(InterpreterBreak::Trap(TrapReason::Host))
+            }
         }
     }
 
@@ -1462,7 +1503,13 @@ impl IrVisitor for Interpreter {
                 // Make sure the type matches our expectations (runtime validation)
                 let m = &state.store.host_modules()[module.0 as usize];
                 let f = &m.functions[*index as usize];
-                if f.params() != f_expected.params[..] || f.returns() != f_expected.returns[..] {
+
+                let return_vals: &[ValType] = match f.returns().0 {
+                    Some(v) => &[v],
+                    None => &[],
+                };
+
+                if f.params() != f_expected.params[..] || return_vals != &f_expected.returns[..] {
                     return Err(InterpreterBreak::Trap(TrapReason::InvalidTableFunctionType));
                 }
 

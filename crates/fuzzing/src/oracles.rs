@@ -265,7 +265,7 @@ pub fn no_traps(wasm: &[u8]) {
     // Borrow the compiled text straight from the builder (no copy needed).
     let text = code_builder.pages();
 
-    let module_ref = state.push_module(module);
+    let module_ref = state.push_module(module).unwrap();
     let start_result = match state.invoke_start(module_ref) {
         StartInvocation::Finished => InterpreterResult::Finished,
         StartInvocation::Trap(t) => InterpreterResult::Trap(t),
@@ -285,9 +285,6 @@ pub fn no_traps(wasm: &[u8]) {
         }
         InterpreterResult::Trap(trap_reason) => {
             panic!("Trap during initialization: {trap_reason:?}")
-        }
-        InterpreterResult::ReaderError(ir_reader_error) => {
-            panic!("Ir Reader Error: {ir_reader_error:?}")
         }
         InterpreterResult::Pause => panic!("Host init pause"),
     }
@@ -390,9 +387,6 @@ pub fn no_traps(wasm: &[u8]) {
             }
             InterpreterResult::Pause => {
                 panic!("interpreter paused by host function")
-            }
-            InterpreterResult::ReaderError(e) => {
-                panic!("failed to read ir instruction {e:?}")
             }
         }
     }

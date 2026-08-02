@@ -217,7 +217,7 @@ fn main() {
 
     // Initialize with instruction limit to prevent infinite loops in start functions
     // Catch panics (e.g., from strict-assertions) during initialization
-    let module_ref = state.push_module(module);
+    let module_ref = state.push_module(module).unwrap();
     let init_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         match state.invoke_start(module_ref) {
             StartInvocation::Finished => InterpreterResult::Finished,
@@ -248,10 +248,6 @@ fn main() {
         }
         InterpreterResult::Trap(trap_reason) => {
             eprintln!("Trap during initialization: {trap_reason:?}");
-            process::exit(1);
-        }
-        InterpreterResult::ReaderError(ir_reader_error) => {
-            eprintln!("Reader error during initialization: {ir_reader_error:?}");
             process::exit(1);
         }
         InterpreterResult::Pause => {
@@ -364,10 +360,6 @@ fn main() {
             }
             Ok(InterpreterResult::Pause) => {
                 eprintln!("\nResult: Paused");
-            }
-            Ok(InterpreterResult::ReaderError(e)) => {
-                eprintln!("\nResult: Reader error - {:?}", e);
-                process::exit(1);
             }
             Err(panic_payload) => {
                 eprintln!("\nResult: Panicked during execution");

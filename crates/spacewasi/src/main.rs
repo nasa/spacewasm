@@ -14,6 +14,8 @@
 ///
 /// Portions of this file are derived from <https://github.com/clap-rs/clap>:
 /// Copyright (c) 2026 Knapp, K. B., & The Clap Community.
+///
+/// Portions of this file are derived from <https://github.com/crossterm-rs/crossterm>
 use spacewasm::{
     CodeBuilder, CompilerOptions, Engine, ExportDesc, Interpreter, InterpreterResult,
     InterpreterRunner, ModuleRef, PageAllocator, Ref, StartInvocation, WasmRef,
@@ -26,8 +28,8 @@ use spacewasm_util::{FileStream, RustSystemAllocator};
 use wasi_common::sync::{Dir, WasiCtxBuilder, ambient_authority};
 
 spacewasm::global_allocator!(
-    PageAllocator<0x200>,
-    PageAllocator::new(&RustSystemAllocator {}, 0x2_000_000)
+    PageAllocator<RustSystemAllocator, 0x200>,
+    PageAllocator::new(RustSystemAllocator, 0x8_000_000)
 );
 
 const MAX_PAGES: usize = 0x10_000;
@@ -58,6 +60,10 @@ struct Args {
     /// Inherit all environment variables
     #[arg(long, value_name = "INHERIT_ENV", action = clap::ArgAction::SetTrue)]
     inherit_env: Option<bool>,
+
+    /// Enable raw terminal mode
+    #[arg(long, value_name = "RAW_TTY", action = clap::ArgAction::SetTrue)]
+    raw_tty: Option<bool>,
 
     /// Module filepath
     file: String,
@@ -106,6 +112,13 @@ fn main() {
                 std::process::exit(1);
             };
         }
+    }
+
+    if args.raw_tty.unwrap_or(false) {
+        let Ok(_) = crossterm::terminal::enable_raw_mode() else {
+            eprintln!("error enabling raw terminal mode");
+            std::process::exit(1);
+        };
     }
 
     wasi_ctx_builder.inherit_stdio();
@@ -180,7 +193,7 @@ fn main() {
 
     // Append the module and run its start function (if any). The interpreter
     // reads code directly from the builder's pages.
-    let module_ref = engine.push_module(module);
+    let module_ref = engine.push_module(module).unwrap();
     let init_result = match engine.invoke_start(module_ref) {
         StartInvocation::Finished => InterpreterResult::Finished,
         StartInvocation::Trap(t) => InterpreterResult::Trap(t),
@@ -195,10 +208,6 @@ fn main() {
         }
         InterpreterResult::Trap(t) => {
             eprintln!("trap during initialization {t:?}");
-            std::process::exit(1);
-        }
-        InterpreterResult::ReaderError(e) => {
-            eprintln!("ir reader error {e:?}");
             std::process::exit(1);
         }
         InterpreterResult::Pause => {
@@ -235,11 +244,16 @@ fn main() {
         )
         .unwrap();
 
-    // TODO(cbwilson) Need to enable raw terminal mode somehow for TTY escape codes and control sequences
-
     let mut result = InterpreterResult::OutOfFuel;
     while result == InterpreterResult::OutOfFuel {
         result = Interpreter.run(code_builder.pages(), &mut engine, usize::MAX)
+    }
+
+    if args.raw_tty.unwrap_or(false) {
+        let Ok(_) = crossterm::terminal::disable_raw_mode() else {
+            eprintln!("error disabling raw terminal mode");
+            std::process::exit(1);
+        };
     }
 
     let InterpreterResult::Finished = result else {

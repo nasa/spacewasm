@@ -90,17 +90,22 @@ impl Memory {
             return Err(AllocError::AllocationFailed);
         };
 
-        let ptr = allocator
-            .allocate(
-                Layout::from_size_align(size, ty.page_alignment())
-                    .map_err(|_| AllocError::AllocationFailed)?,
-            )?
-            .as_ptr();
+        let ptr = if size == 0 {
+            core::ptr::null_mut()
+        } else {
+            let ptr = allocator
+                .allocate(
+                    Layout::from_size_align(size, ty.page_alignment())
+                        .map_err(|_| AllocError::AllocationFailed)?,
+                )?
+                .as_ptr();
 
-        // Clear the pages
-        unsafe {
-            ptr.write_bytes(0, size);
-        }
+            // Clear the pages
+            unsafe {
+                ptr.write_bytes(0, size);
+            }
+            ptr
+        };
 
         Ok(Memory {
             ptr,
@@ -168,6 +173,9 @@ impl Memory {
 
     pub fn store(&self, addr: usize, data: &[u8]) -> Result<(), MemoryError> {
         self.check_in_bounds(addr, data.len())?;
+        if data.is_empty() {
+            return Ok(());
+        }
 
         unsafe {
             data.as_ptr().copy_to(self.ptr.add(addr), data.len());
@@ -197,47 +205,55 @@ impl Memory {
 
     pub fn load(&self, addr: usize, len: usize) -> Result<&[u8], MemoryError> {
         self.check_in_bounds(addr, len)?;
+        if len == 0 {
+            return Ok(&[]);
+        }
         Ok(unsafe { core::slice::from_raw_parts(self.ptr.add(addr), len) })
     }
 
     /// Grow the memory by n pages
     /// If the memory growth succeeds, return the old number of pages
     pub fn grow(&mut self, n: u32) -> Result<u32, MemoryError> {
-        let Some(total_pages) = self.size().checked_add(n) else {
-            return Err(MemoryError::OutOfMemory);
-        };
+        let old_pages = self.size();
+        let total_pages = old_pages.checked_add(n).ok_or(MemoryError::OutOfMemory)?;
 
         if !self.ty.can_hold(total_pages) {
             return Err(MemoryError::OutOfMemory);
         }
 
-        let old_size = self.size;
-        let new_size = (self.ty.page_size() * n as usize) + self.size;
-        if let Some(allocator) = &self.allocator
-            && let Some(ptr) = NonNull::new(self.ptr)
-        {
-            self.ptr = allocator
-                .reallocate(
-                    ptr,
-                    Layout::from_size_align(old_size, self.ty.page_alignment())
-                        .map_err(|_| MemoryError::AllocationFailed)?,
-                    Layout::from_size_align(new_size, self.ty.page_alignment())
-                        .map_err(|_| MemoryError::AllocationFailed)?,
-                )?
-                .as_ptr();
-
-            // Clear the new memory
-            let new_ptr = unsafe { self.ptr.add(old_size) };
-            unsafe {
-                new_ptr.write_bytes(0, self.ty.page_size() * n as usize);
-            }
-
-            self.size = new_size;
-
-            Ok((old_size / self.ty.page_size()) as u32)
-        } else {
-            Err(MemoryError::OutOfMemory)
+        let allocator = self.allocator.as_ref().ok_or(MemoryError::OutOfMemory)?;
+        if n == 0 {
+            return Ok(old_pages);
         }
+
+        let old_size = self.size;
+        let new_size = usize::try_from(u64::from(total_pages) * self.ty.page_size() as u64)
+            .map_err(|_| MemoryError::OutOfMemory)?;
+        let new_layout = Layout::from_size_align(new_size, self.ty.page_alignment())
+            .map_err(|_| MemoryError::AllocationFailed)?;
+
+        let ptr = if old_size == 0 {
+            allocator.allocate(new_layout)?
+        } else {
+            allocator.reallocate(
+                NonNull::new(self.ptr).ok_or(MemoryError::OutOfMemory)?,
+                Layout::from_size_align(old_size, self.ty.page_alignment())
+                    .map_err(|_| MemoryError::AllocationFailed)?,
+                new_layout,
+            )?
+        };
+
+        // Clear the new memory before committing the larger size.
+        unsafe {
+            ptr.as_ptr()
+                .add(old_size)
+                .write_bytes(0, new_size - old_size);
+        }
+
+        self.ptr = ptr.as_ptr();
+        self.size = new_size;
+
+        Ok(old_pages)
     }
 
     pub fn mem_type(&self) -> MemType {
@@ -248,12 +264,17 @@ impl Memory {
         (self.size / self.ty.page_size()) as u32
     }
 
+    /// Returns whether this is the absent-memory sentinel created by [`Memory::zero`].
     pub fn is_zero(&self) -> bool {
-        self.ptr.is_null()
+        self.ptr.is_null() && self.allocator.is_none()
     }
 
     pub fn get_slice(&self) -> &[u8] {
-        unsafe { slice::from_raw_parts(self.ptr, self.size) }
+        if self.ptr.is_null() {
+            &[]
+        } else {
+            unsafe { slice::from_raw_parts(self.ptr, self.size) }
+        }
     }
 }
 
@@ -280,6 +301,7 @@ mod tests {
     struct TestAllocator;
     impl WasmMemoryAllocator for TestAllocator {
         fn allocate(&self, layout: Layout) -> Result<NonNull<u8>, AllocError> {
+            assert_ne!(layout.size(), 0);
             unsafe { NonNull::new(std::alloc::alloc(layout)).ok_or(AllocError::AllocationFailed) }
         }
 
@@ -289,6 +311,8 @@ mod tests {
             old_layout: Layout,
             layout: Layout,
         ) -> Result<NonNull<u8>, AllocError> {
+            assert_ne!(old_layout.size(), 0);
+            assert_ne!(layout.size(), 0);
             unsafe {
                 let new_ptr = std::alloc::realloc(ptr.as_ptr(), old_layout, layout.size());
                 NonNull::new(new_ptr).ok_or(AllocError::AllocationFailed)
@@ -296,6 +320,7 @@ mod tests {
         }
 
         fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
+            assert_ne!(layout.size(), 0);
             unsafe { std::alloc::dealloc(ptr.as_ptr(), layout) }
         }
     }
@@ -328,6 +353,29 @@ mod tests {
         // The freshly allocated pages are zeroed.
         assert!(mem.get_slice().iter().all(|&b| b == 0));
         assert_eq!(mem.get_slice().len(), 2 * MemPageSize::_65536.size());
+    }
+
+    #[test]
+    fn zero_page_memory_allocates_lazily() {
+        let mut mem = Memory::new(mem_type(0, None), allocator()).unwrap();
+
+        assert!(!mem.is_zero());
+        assert_eq!(mem.size(), 0);
+        assert!(mem.get_slice().is_empty());
+        assert_eq!(mem.load(0, 0), Ok(&[][..]));
+        assert_eq!(mem.store(0, &[]), Ok(()));
+        assert_eq!(mem.load(1, 0), Err(MemoryError::OutOfBounds));
+        assert_eq!(mem.store(1, &[]), Err(MemoryError::OutOfBounds));
+
+        assert_eq!(mem.grow(0), Ok(0));
+        assert_eq!(mem.grow(1), Ok(0));
+        assert_eq!(mem.size(), 1);
+        assert_eq!(mem.grow(0), Ok(1));
+        assert_eq!(mem.get_slice().len(), MemPageSize::_65536.size());
+        assert!(mem.get_slice().iter().all(|&b| b == 0));
+        assert_eq!(mem.load(0, 1), Ok(&[0][..]));
+        assert_eq!(mem.store(0, &[0xA5]), Ok(()));
+        assert_eq!(mem.load(0, 1), Ok(&[0xA5][..]));
     }
 
     #[test]
@@ -365,8 +413,9 @@ mod tests {
 
     #[test]
     fn grow_zero_memory_fails() {
-        // A zero (unallocated) memory has no backing allocator to reallocate.
+        // The absent-memory sentinel has no backing allocator.
         let mut mem = Memory::zero();
+        assert_eq!(mem.grow(0), Err(MemoryError::OutOfMemory));
         assert_eq!(mem.grow(1), Err(MemoryError::OutOfMemory));
     }
 

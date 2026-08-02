@@ -108,7 +108,7 @@ impl<const CAPACITY: usize> PartialEq<HostName<CAPACITY>> for &str {
     }
 }
 
-pub type HostFunctionFn = Box<dyn Fn(&Engine, &[Value]) -> HostFunctionResult>;
+pub type HostFunctionFn = Box<dyn Fn(&mut Engine, &[Value]) -> HostFunctionResult>;
 
 pub trait GlobalValue {
     /// Write a value to this global variable.
@@ -179,6 +179,18 @@ pub struct HostValListError;
 pub struct HostValList {
     data: [ValType; HOST_SIGNATURE_CAP],
     len: u8,
+}
+
+impl From<HostValList> for ResultType {
+    fn from(value: HostValList) -> Self {
+        if value.len == 0 {
+            ResultType(None)
+        } else if value.len == 1 {
+            ResultType(Some(value.data[0]))
+        } else {
+            panic!("Multi-value list cannot be converted to result type");
+        }
+    }
 }
 
 impl HostValList {
@@ -284,12 +296,12 @@ impl Iterator for HostValListIter {
     }
 }
 
-impl<T: Fn(&Engine, &[Value]) -> HostFunctionResult> Box<T> {
+impl<T: Fn(&mut Engine, &[Value]) -> HostFunctionResult> Box<T> {
     pub fn into_host_function_dyn(mut self) -> HostFunctionFn
     where
-        T: Fn(&Engine, &[Value]) -> HostFunctionResult + 'static,
+        T: Fn(&mut Engine, &[Value]) -> HostFunctionResult + 'static,
     {
-        let ptr = self.as_mut_ptr() as *mut dyn Fn(&Engine, &[Value]) -> HostFunctionResult;
+        let ptr = self.as_mut_ptr() as *mut dyn Fn(&mut Engine, &[Value]) -> HostFunctionResult;
         core::mem::forget(self); // Prevent double free
         unsafe { Box::from_raw(GlobalAllocator, ptr) }
     }
@@ -300,7 +312,7 @@ pub const HOST_FUNCTION_NAME_CAP: usize = 31;
 pub struct HostFunction {
     name: HostName<HOST_FUNCTION_NAME_CAP>,
     params: HostValList,
-    returns: HostValList,
+    returns: ResultType,
     f: HostFunctionFn,
 }
 
@@ -309,7 +321,7 @@ impl Debug for HostFunction {
         f.debug_struct("HostFunction")
             .field("name", &self.name)
             .field("params", &self.params.as_slice())
-            .field("returns", &self.returns.as_slice())
+            .field("returns", &self.returns)
             .finish()
     }
 }
@@ -341,10 +353,10 @@ impl HostFunction {
         name: impl Into<HostName<HOST_FUNCTION_NAME_CAP>>,
         params: HostValList,
         returns: HostValList,
-        f: impl Fn(&Engine, &[Value]) -> HostFunctionResult + 'static,
+        f: impl Fn(&mut Engine, &[Value]) -> HostFunctionResult + 'static,
     ) -> Self {
         HostFunction::try_new(name.into(), params, returns, f)
-            .expect("host function signature too large")
+            .expect("host function signature too large or invalid return value")
     }
 
     /// Fallibly construct a host function, returning an error if the parameter
@@ -354,22 +366,26 @@ impl HostFunction {
         name: HostName<HOST_FUNCTION_NAME_CAP>,
         params: HostValList,
         returns: HostValList,
-        f: impl Fn(&Engine, &[Value]) -> HostFunctionResult + 'static,
+        f: impl Fn(&mut Engine, &[Value]) -> HostFunctionResult + 'static,
     ) -> Result<Self, HostValListError> {
         let ps = params.iter().fold(0, |n, i| n + i.size()) / 4;
         if ps > 0xFFFF {
             return Err(HostValListError);
         }
 
-        let rs = returns.iter().fold(0, |n, i| n + i.size()) / 4;
-        if rs > 0xFFFF {
-            return Err(HostValListError);
+        let mut rs: Option<ValType> = None;
+        for r in returns.iter() {
+            if rs.is_some() {
+                return Err(HostValListError);
+            }
+
+            rs = Some(r);
         }
 
         Ok(HostFunction {
             name,
             params,
-            returns,
+            returns: ResultType(rs),
             f: Box::new(f).unwrap().into_host_function_dyn(),
         })
     }
@@ -378,7 +394,7 @@ impl HostFunction {
         self.params
     }
 
-    pub fn returns(&self) -> HostValList {
+    pub fn returns(&self) -> ResultType {
         self.returns
     }
 
@@ -386,11 +402,22 @@ impl HostFunction {
         self.params.iter().fold(0, |n, i| n + i.size()) / 4
     }
 
-    pub fn call(&self, state: &Engine, a: &[Value]) -> HostFunctionResult {
-        (self.f)(state, a)
+    pub fn get_call(&mut self) -> HostFunctionFn {
+        core::mem::replace(
+            &mut self.f,
+            Box::new(placeholder).unwrap().into_host_function_dyn(),
+        )
+    }
+
+    pub fn finish_call(&mut self, f: HostFunctionFn) {
+        let _ = core::mem::replace(&mut self.f, f);
     }
 
     pub fn name(&self) -> &str {
         self.name.as_str()
     }
+}
+
+fn placeholder(_: &mut Engine, _: &[Value]) -> HostFunctionResult {
+    panic!("invoked invalid host module")
 }

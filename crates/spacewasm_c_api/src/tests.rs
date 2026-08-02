@@ -7,11 +7,9 @@ use core::ffi::c_void;
 use std::alloc::{Layout, alloc, dealloc, realloc};
 use std::sync::Mutex;
 
-use crate::SpacewasmAllocator;
+use crate::CAllocator;
 use crate::capi::*;
-use crate::engine::{
-    SpacewasmCaller, SpacewasmStore, spacewasm_compiler_options_t, spacewasm_hostcall_result_t,
-};
+use crate::host::{SpacewasmCaller, spacewasm_hostcall_result_t};
 use crate::status::{self, spacewasm_run_status_t, spacewasm_status_t, spacewasm_trap_t};
 use crate::stream::spacewasm_read_result_t;
 use crate::value::{spacewasm_valtype_t, spacewasm_value_payload_t, spacewasm_value_t};
@@ -87,7 +85,7 @@ unsafe extern "C" fn mem_dealloc(_userdata: *mut c_void, ptr: *mut u8, size: usi
     }
 }
 
-fn new_guest_allocator() -> *mut SpacewasmAllocator {
+fn new_guest_allocator() -> *mut CAllocator {
     spacewasm_allocator_new(
         Some(mem_alloc),
         Some(mem_realloc),
@@ -173,6 +171,27 @@ static HOST_WASM: &[u8] = &[
     0x00, 0x21, 0x01, 0x41, 0x00, 0x20, 0x01, 0x36, 0x02, 0x00, 0x20, 0x01, 0x0b,
 ];
 
+/// A module importing a void `env.sink` (`(param i32)`, no result) and a `run`
+/// function that keeps a sentinel on the stack across the call, then returns
+/// `param + 1`. If the host call spuriously pushed a value, the sentinel would
+/// be corrupted and the result would be wrong.
+///
+/// ```wat
+/// (module
+///   (import "env" "sink" (func $sink (param i32)))
+///   (func (export "run") (param i32) (result i32)
+///     local.get 0 local.get 0 call $sink i32.const 1 i32.add))
+/// ```
+#[rustfmt::skip]
+static VOID_HOST_WASM: &[u8] = &[
+    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x0a, 0x02, 0x60,
+    0x01, 0x7f, 0x00, 0x60, 0x01, 0x7f, 0x01, 0x7f, 0x02, 0x0c, 0x01, 0x03,
+    0x65, 0x6e, 0x76, 0x04, 0x73, 0x69, 0x6e, 0x6b, 0x00, 0x00, 0x03, 0x02,
+    0x01, 0x01, 0x07, 0x07, 0x01, 0x03, 0x72, 0x75, 0x6e, 0x00, 0x01, 0x0a,
+    0x0d, 0x01, 0x0b, 0x00, 0x20, 0x00, 0x20, 0x00, 0x10, 0x00, 0x41, 0x01,
+    0x6a, 0x0b,
+];
+
 /// `(module (func (export "boom") (result i32) unreachable))` — traps on call.
 #[rustfmt::skip]
 static TRAP_WASM: &[u8] = &[
@@ -222,14 +241,14 @@ fn opts(max_code_pages: u32) -> spacewasm_compiler_options_t {
 }
 
 /// Create an empty (no host modules) store with the given capacities.
-fn new_store(stack_size: usize, max_modules: u32, max_code_pages: u32) -> *mut SpacewasmStore {
+fn new_store(stack_size: usize, max_modules: u32, max_code_pages: u32) -> *mut CEngine {
     let mut host = core::mem::MaybeUninit::<spacewasm_host_t>::uninit();
     let st = unsafe { spacewasm_host_new(0, host.as_mut_ptr()) };
     assert_eq!(st, status::SPACEWASM_OK, "host_new");
 
-    let mut store: *mut SpacewasmStore = core::ptr::null_mut();
+    let mut store: *mut CEngine = core::ptr::null_mut();
     let st = unsafe {
-        spacewasm_store_new(
+        spacewasm_new(
             host.as_mut_ptr(),
             stack_size,
             max_modules,
@@ -244,8 +263,8 @@ fn new_store(stack_size: usize, max_modules: u32, max_code_pages: u32) -> *mut S
 /// Stream one module onto an existing store in `step`-byte chunks, then run its
 /// start function if it declares one. Returns the module index on success.
 fn load_module_onto(
-    alloc: *mut SpacewasmAllocator,
-    store: *mut SpacewasmStore,
+    alloc: *mut CAllocator,
+    store: *mut CEngine,
     name: &core::ffi::CStr,
     data: &'static [u8],
     step: usize,
@@ -253,7 +272,7 @@ fn load_module_onto(
     let mut cursor = Cursor { data, pos: 0, step };
     let mut idx = 0u32;
     let st = unsafe {
-        spacewasm_store_load_module(
+        spacewasm_load_module(
             store,
             name.as_ptr(),
             Some(cursor_read),
@@ -266,7 +285,7 @@ fn load_module_onto(
         return Err(st);
     }
 
-    let run = unsafe { spacewasm_store_module_invoke_start(store, idx) };
+    let run = unsafe { spacewasm_invoke_start(store, idx) };
 
     // The error codes don't really matter, just spin the start function
     match run {
@@ -275,7 +294,7 @@ fn load_module_onto(
             // We must spin the start function
             loop {
                 let mut trap = spacewasm_trap_t::SPACEWASM_TRAP_NONE;
-                let run = unsafe { spacewasm_store_run(store, 10000, &mut trap) };
+                let run = unsafe { spacewasm_run(store, 10000, &mut trap) };
                 if run == spacewasm_run_status_t::SPACEWASM_RUN_FINISHED {
                     break Ok(idx);
                 } else if run != spacewasm_run_status_t::SPACEWASM_RUN_OUT_OF_FUEL {
@@ -285,16 +304,12 @@ fn load_module_onto(
         }
         spacewasm_run_status_t::SPACEWASM_RUN_PAUSE => Err(status::SPACEWASM_ERR_WRONG_STATE),
         spacewasm_run_status_t::SPACEWASM_RUN_TRAP => Err(status::SPACEWASM_ERR_WRONG_STATE),
-        spacewasm_run_status_t::SPACEWASM_RUN_READER_ERROR => Err(status::SPACEWASM_ERR_STREAM),
     }
 }
 
-fn run_to_completion(
-    store: *mut SpacewasmStore,
-    trap: &mut spacewasm_trap_t,
-) -> spacewasm_run_status_t {
+fn run_to_completion(store: *mut CEngine, trap: &mut spacewasm_trap_t) -> spacewasm_run_status_t {
     loop {
-        let run = unsafe { spacewasm_store_run(store, 10000, trap) };
+        let run = unsafe { spacewasm_run(store, 10000, trap) };
         if run != spacewasm_run_status_t::SPACEWASM_RUN_OUT_OF_FUEL {
             break run;
         }
@@ -303,14 +318,14 @@ fn run_to_completion(
 
 /// Invoke a 2-arg i32 function and run it to completion, returning its result.
 fn invoke_add(
-    store: *mut SpacewasmStore,
+    store: *mut CEngine,
     module: u32,
     func: u32,
     a: i32,
     b: i32,
 ) -> Result<i32, spacewasm_status_t> {
     let params = [i32_val(a), i32_val(b)];
-    let st = unsafe { spacewasm_store_invoke(store, module, func, params.as_ptr(), params.len()) };
+    let st = unsafe { spacewasm_invoke(store, module, func, params.as_ptr(), params.len()) };
     if st != status::SPACEWASM_OK {
         return Err(st);
     }
@@ -322,8 +337,7 @@ fn invoke_add(
         "run (trap={trap:?})"
     );
     let mut out = i32_val(0);
-    let st =
-        unsafe { spacewasm_store_get_result(store, spacewasm_valtype_t::SPACEWASM_I32, &mut out) };
+    let st = unsafe { spacewasm_get_result(store, spacewasm_valtype_t::SPACEWASM_I32, &mut out) };
     if st != status::SPACEWASM_OK {
         return Err(st);
     }
@@ -337,11 +351,11 @@ fn run_add_once() {
     let alloc = new_guest_allocator();
     let idx = load_module_onto(alloc, store, c"main", ADD_WASM, 0).expect("load");
     let mut func = 0u32;
-    let st = unsafe { spacewasm_store_find_export_func(store, idx, c"add".as_ptr(), &mut func) };
+    let st = unsafe { spacewasm_find_export_func(store, idx, c"add".as_ptr(), &mut func) };
     assert_eq!(st, status::SPACEWASM_OK, "find");
     assert_eq!(invoke_add(store, idx, func, 1, 2).expect("invoke"), 3);
     unsafe {
-        spacewasm_store_destroy(store);
+        spacewasm_destroy(store);
         spacewasm_allocator_destroy(alloc);
     }
 }
@@ -361,7 +375,7 @@ unsafe extern "C" fn add_one(
     }
     let arg = unsafe { (*params).u.i32_ };
     unsafe { *out = i32_val(arg + 1) };
-    spacewasm_hostcall_result_t::SPACEWASM_CONTINUE
+    spacewasm_hostcall_result_t::SPACEWASM_CONTINUE_SOME
 }
 
 // ---- test cases (one per C `test_*` function) -------------------------------
@@ -376,13 +390,13 @@ fn add_module_invoke() {
 
     let idx = load_module_onto(alloc, store, c"main", ADD_WASM, 0).expect("load");
     let mut func = 0u32;
-    let st = unsafe { spacewasm_store_find_export_func(store, idx, c"add".as_ptr(), &mut func) };
+    let st = unsafe { spacewasm_find_export_func(store, idx, c"add".as_ptr(), &mut func) };
     assert_eq!(st, status::SPACEWASM_OK, "find");
 
     assert_eq!(invoke_add(store, idx, func, 20, 22).expect("invoke"), 42);
 
     unsafe {
-        spacewasm_store_destroy(store);
+        spacewasm_destroy(store);
         spacewasm_allocator_destroy(alloc);
     }
 }
@@ -399,15 +413,36 @@ fn two_modules_on_one_store() {
     let b = load_module_onto(alloc, store, c"b", ADD_WASM, 0).expect("load b");
     assert_eq!((a, b), (0, 1), "module indices");
 
+    let mut mod_a = 0u32;
+    let mut mod_b = 0u32;
+    let mut mod_c = 0u32;
+    unsafe {
+        assert_eq!(
+            spacewasm_find_module(store, c"a".as_ptr(), &mut mod_a),
+            status::SPACEWASM_OK,
+        );
+        assert_eq!(
+            spacewasm_find_module(store, c"b".as_ptr(), &mut mod_b),
+            status::SPACEWASM_OK,
+        );
+        assert_eq!(
+            spacewasm_find_module(store, c"c".as_ptr(), &mut mod_c),
+            status::SPACEWASM_ERR_NOT_FOUND,
+        );
+    }
+
+    assert_eq!(mod_a, 0);
+    assert_eq!(mod_b, 1);
+
     let mut func_a = 0u32;
     let mut func_b = 0u32;
     unsafe {
         assert_eq!(
-            spacewasm_store_find_export_func(store, 0, c"add".as_ptr(), &mut func_a),
+            spacewasm_find_export_func(store, 0, c"add".as_ptr(), &mut func_a),
             status::SPACEWASM_OK
         );
         assert_eq!(
-            spacewasm_store_find_export_func(store, 1, c"add".as_ptr(), &mut func_b),
+            spacewasm_find_export_func(store, 1, c"add".as_ptr(), &mut func_b),
             status::SPACEWASM_OK
         );
     }
@@ -417,7 +452,7 @@ fn two_modules_on_one_store() {
     assert_eq!(invoke_add(store, 0, func_a, 20, 22).expect("a"), 42);
 
     unsafe {
-        spacewasm_store_destroy(store);
+        spacewasm_destroy(store);
         spacewasm_allocator_destroy(alloc);
     }
 }
@@ -433,13 +468,13 @@ fn streaming_load() {
     // Force many small 7-byte chunks.
     let idx = load_module_onto(alloc, store, c"main", ADD_WASM, 7).expect("streaming load");
     let mut func = 0u32;
-    let st = unsafe { spacewasm_store_find_export_func(store, idx, c"add".as_ptr(), &mut func) };
+    let st = unsafe { spacewasm_find_export_func(store, idx, c"add".as_ptr(), &mut func) };
     assert_eq!(st, status::SPACEWASM_OK, "find");
 
     assert_eq!(invoke_add(store, idx, func, 30, 12).expect("invoke"), 42);
 
     unsafe {
-        spacewasm_store_destroy(store);
+        spacewasm_destroy(store);
         spacewasm_allocator_destroy(alloc);
     }
 }
@@ -455,7 +490,7 @@ fn streaming_read_error() {
 
     let mut idx = 0u32;
     let st = unsafe {
-        spacewasm_store_load_module(
+        spacewasm_load_module(
             store,
             c"main".as_ptr(),
             Some(failing_read),
@@ -465,9 +500,13 @@ fn streaming_read_error() {
         )
     };
     unsafe { spacewasm_allocator_destroy(alloc) };
-    assert_eq!(st, status::SPACEWASM_ERR_STREAM, "expected ERR_STREAM");
+    assert_eq!(
+        st,
+        status::SPACEWASM_ERR_READER_ERROR,
+        "expected ERR_READER_ERROR"
+    );
 
-    unsafe { spacewasm_store_destroy(store) };
+    unsafe { spacewasm_destroy(store) };
 }
 
 #[test]
@@ -504,9 +543,9 @@ fn host_function_and_memory() {
         );
     }
 
-    let mut store: *mut SpacewasmStore = core::ptr::null_mut();
+    let mut store: *mut CEngine = core::ptr::null_mut();
     assert_eq!(
-        unsafe { spacewasm_store_new(host.as_mut_ptr(), 1024, 1, opts(256), &mut store) },
+        unsafe { spacewasm_new(host.as_mut_ptr(), 1024, 1, opts(256), &mut store) },
         status::SPACEWASM_OK,
         "store_new"
     );
@@ -515,12 +554,12 @@ fn host_function_and_memory() {
     let idx = load_module_onto(alloc, store, c"main", HOST_WASM, 0).expect("load host module");
 
     let mut func = 0u32;
-    let st = unsafe { spacewasm_store_find_export_func(store, idx, c"run".as_ptr(), &mut func) };
+    let st = unsafe { spacewasm_find_export_func(store, idx, c"run".as_ptr(), &mut func) };
     assert_eq!(st, status::SPACEWASM_OK, "find run");
 
     let params = [i32_val(41)];
     assert_eq!(
-        unsafe { spacewasm_store_invoke(store, idx, func, params.as_ptr(), params.len()) },
+        unsafe { spacewasm_invoke(store, idx, func, params.as_ptr(), params.len()) },
         status::SPACEWASM_OK,
         "invoke"
     );
@@ -532,14 +571,99 @@ fn host_function_and_memory() {
     );
     let mut out = i32_val(0);
     assert_eq!(
-        unsafe { spacewasm_store_get_result(store, spacewasm_valtype_t::SPACEWASM_I32, &mut out,) },
+        unsafe { spacewasm_get_result(store, spacewasm_valtype_t::SPACEWASM_I32, &mut out,) },
         status::SPACEWASM_OK,
         "result"
     );
     assert_eq!(unsafe { out.u.i32_ }, 42, "add_one(41)");
 
     unsafe {
-        spacewasm_store_destroy(store);
+        spacewasm_destroy(store);
+        spacewasm_allocator_destroy(alloc);
+    }
+}
+
+#[test]
+fn void_host_function_pushes_no_value() {
+    let _guard = ALLOC_LOCK.lock().unwrap();
+    ensure_global_allocator();
+
+    let mut host = core::mem::MaybeUninit::<spacewasm_host_t>::uninit();
+    assert_eq!(
+        unsafe { spacewasm_host_new(1, host.as_mut_ptr()) },
+        status::SPACEWASM_OK,
+        "host_new"
+    );
+
+    let mut hmod = 0u32;
+    unsafe {
+        assert_eq!(
+            spacewasm_add_host_module(host.as_mut_ptr(), c"env".as_ptr(), 1, 0, &mut hmod),
+            status::SPACEWASM_OK,
+            "add_host_module"
+        );
+        // `sink` takes one i32 and returns nothing (empty result signature).
+        assert_eq!(
+            spacewasm_add_host_function(
+                host.as_mut_ptr(),
+                hmod,
+                c"sink".as_ptr(),
+                c"i".as_ptr(),
+                c"".as_ptr(),
+                Some(sink),
+                core::ptr::null_mut(),
+            ),
+            status::SPACEWASM_OK,
+            "add_host_function"
+        );
+    }
+
+    let mut store: *mut CEngine = core::ptr::null_mut();
+    assert_eq!(
+        unsafe { spacewasm_new(host.as_mut_ptr(), 1024, 1, opts(256), &mut store) },
+        status::SPACEWASM_OK,
+        "store_new"
+    );
+
+    let alloc = new_guest_allocator();
+    let idx = load_module_onto(alloc, store, c"main", VOID_HOST_WASM, 0).expect("load void module");
+
+    let mut func = 0u32;
+    assert_eq!(
+        unsafe { spacewasm_find_export_func(store, idx, c"run".as_ptr(), &mut func) },
+        status::SPACEWASM_OK,
+        "find run"
+    );
+
+    // `run(41)` keeps 41 on the stack across the void `sink` call, then adds 1.
+    // If the host call had spuriously pushed a value, the trailing `i32.add`
+    // would consume it and produce a corrupt (or trapping) result.
+    let params = [i32_val(41)];
+    assert_eq!(
+        unsafe { spacewasm_invoke(store, idx, func, params.as_ptr(), params.len()) },
+        status::SPACEWASM_OK,
+        "invoke"
+    );
+    let mut trap = spacewasm_trap_t::SPACEWASM_TRAP_NONE;
+    assert_eq!(
+        run_to_completion(store, &mut trap),
+        spacewasm_run_status_t::SPACEWASM_RUN_FINISHED,
+        "run (trap={trap:?})"
+    );
+    let mut out = i32_val(0);
+    assert_eq!(
+        unsafe { spacewasm_get_result(store, spacewasm_valtype_t::SPACEWASM_I32, &mut out) },
+        status::SPACEWASM_OK,
+        "result"
+    );
+    assert_eq!(
+        unsafe { out.u.i32_ },
+        42,
+        "void host call must not push a value"
+    );
+
+    unsafe {
+        spacewasm_destroy(store);
         spacewasm_allocator_destroy(alloc);
     }
 }
@@ -555,9 +679,9 @@ fn error_paths() {
         unsafe { spacewasm_host_new(0, host.as_mut_ptr()) },
         status::SPACEWASM_OK
     );
-    let mut store: *mut SpacewasmStore = core::ptr::null_mut();
+    let mut store: *mut CEngine = core::ptr::null_mut();
     assert_eq!(
-        unsafe { spacewasm_store_new(host.as_mut_ptr(), 1024, 257, opts(256), &mut store) },
+        unsafe { spacewasm_new(host.as_mut_ptr(), 1024, 257, opts(256), &mut store) },
         status::SPACEWASM_ERR_BAD_ARG,
         "oversized max_modules"
     );
@@ -595,7 +719,7 @@ fn error_paths() {
         status::SPACEWASM_OK
     );
     assert_eq!(
-        unsafe { spacewasm_store_new(host.as_mut_ptr(), 1024, 1, opts(256), &mut store) },
+        unsafe { spacewasm_new(host.as_mut_ptr(), 1024, 1, opts(256), &mut store) },
         status::SPACEWASM_OK,
         "store_new"
     );
@@ -604,9 +728,13 @@ fn error_paths() {
     assert!(!alloc.is_null(), "allocator_new");
     let st = load_module_onto(alloc, store, c"main", JUNK, 0);
     unsafe { spacewasm_allocator_destroy(alloc) };
-    assert_eq!(st, Err(status::SPACEWASM_ERR_PARSE), "expected ERR_PARSE");
+    assert_eq!(
+        st,
+        Err(status::SPACEWASM_ERR_MALFORMED_MAGIC),
+        "expected ERR_MALFORMED_MAGIC"
+    );
 
-    unsafe { spacewasm_store_destroy(store) };
+    unsafe { spacewasm_destroy(store) };
 }
 
 #[test]
@@ -626,7 +754,7 @@ fn null_arg_handling() {
     };
     let mut idx = 0u32;
     let st = unsafe {
-        spacewasm_store_load_module(
+        spacewasm_load_module(
             store,
             core::ptr::null(),
             Some(cursor_read),
@@ -640,12 +768,11 @@ fn null_arg_handling() {
 
     // NULL store to find_export_func.
     let mut func = 0u32;
-    let st = unsafe {
-        spacewasm_store_find_export_func(core::ptr::null_mut(), 0, c"add".as_ptr(), &mut func)
-    };
+    let st =
+        unsafe { spacewasm_find_export_func(core::ptr::null_mut(), 0, c"add".as_ptr(), &mut func) };
     assert_eq!(st, status::SPACEWASM_ERR_NULL_ARG, "null store");
 
-    unsafe { spacewasm_store_destroy(store) };
+    unsafe { spacewasm_destroy(store) };
 }
 
 #[test]
@@ -722,6 +849,302 @@ fn trap_reason_codes_map() {
 }
 
 #[test]
+fn validation_error_codes_map() {
+    use spacewasm::{AllocError, ConstantExprError, MemoryError, SectionKind, ValidationError::*};
+    let cases = [
+        // Basic parsing errors
+        (Eof, status::SPACEWASM_ERR_EOF),
+        (MalformedInteger, status::SPACEWASM_ERR_MALFORMED_INTEGER),
+        (I33IsNegative, status::SPACEWASM_ERR_I33_IS_NEGATIVE),
+        (MalformedMagic, status::SPACEWASM_ERR_MALFORMED_MAGIC),
+        (MalformedVersion, status::SPACEWASM_ERR_MALFORMED_VERSION),
+        (MalformedUtf8, status::SPACEWASM_ERR_MALFORMED_UTF8),
+        (
+            DuplicateModuleName,
+            status::SPACEWASM_ERR_DUPLICATE_MODULE_NAME,
+        ),
+        (
+            DuplicateExportName,
+            status::SPACEWASM_ERR_DUPLICATE_EXPORT_NAME,
+        ),
+        (
+            MalformedSectionId(0),
+            status::SPACEWASM_ERR_MALFORMED_SECTION_ID,
+        ),
+        (
+            MalformedValueType(0),
+            status::SPACEWASM_ERR_MALFORMED_VALUE_TYPE,
+        ),
+        (
+            MalformedFunction(0),
+            status::SPACEWASM_ERR_MALFORMED_FUNCTION,
+        ),
+        (MalformedLimit(0), status::SPACEWASM_ERR_MALFORMED_LIMIT),
+        (
+            MalformedElemType(0),
+            status::SPACEWASM_ERR_MALFORMED_ELEM_TYPE,
+        ),
+        (
+            MalformedSectionSize,
+            status::SPACEWASM_ERR_MALFORMED_SECTION_SIZE,
+        ),
+        (
+            ExpectedConstOrVar(0),
+            status::SPACEWASM_ERR_EXPECTED_CONST_OR_VAR,
+        ),
+        (
+            MalformedImportExportDesc(0),
+            status::SPACEWASM_ERR_MALFORMED_IMPORT_EXPORT_DESC,
+        ),
+        (
+            MalformedMemType(0),
+            status::SPACEWASM_ERR_MALFORMED_MEM_TYPE,
+        ),
+        (InvalidPageSize(0), status::SPACEWASM_ERR_INVALID_PAGE_SIZE),
+        (
+            InvalidSectionOrdering(SectionKind::Type, SectionKind::Import),
+            status::SPACEWASM_ERR_INVALID_SECTION_ORDERING,
+        ),
+        (
+            DuplicateSection(SectionKind::Type),
+            status::SPACEWASM_ERR_DUPLICATE_SECTION,
+        ),
+        (InvalidMaxLimit, status::SPACEWASM_ERR_INVALID_MAX_LIMIT),
+        (ExpectedTerminal(0), status::SPACEWASM_ERR_EXPECTED_TERMINAL),
+        (InvalidOpcode(0), status::SPACEWASM_ERR_INVALID_OPCODE),
+        (MalformedCodeSize, status::SPACEWASM_ERR_MALFORMED_CODE_SIZE),
+        (
+            InvalidCodeSectionFunctionCount,
+            status::SPACEWASM_ERR_INVALID_CODE_SECTION_FUNCTION_COUNT,
+        ),
+        (VecTooLong, status::SPACEWASM_ERR_VEC_TOO_LONG),
+        (IdxTooLarge, status::SPACEWASM_ERR_IDX_TOO_LARGE),
+        (
+            ModuleIdxTooLarge,
+            status::SPACEWASM_ERR_MODULE_IDX_TOO_LARGE,
+        ),
+        (MemoryTooLarge, status::SPACEWASM_ERR_MEMORY_TOO_LARGE),
+        (
+            MemoryImportTooLarge,
+            status::SPACEWASM_ERR_MEMORY_IMPORT_TOO_LARGE,
+        ),
+        (MemAlignTooLarge, status::SPACEWASM_ERR_MEM_ALIGN_TOO_LARGE),
+        // Control flow validation
+        (
+            ControlFlowTooDeep,
+            status::SPACEWASM_ERR_CONTROL_FLOW_TOO_DEEP,
+        ),
+        (StackUnderflow, status::SPACEWASM_ERR_STACK_UNDERFLOW),
+        (StackTooLarge, status::SPACEWASM_ERR_STACK_TOO_LARGE),
+        (
+            LabelStackJumpTooDeep,
+            status::SPACEWASM_ERR_LABEL_STACK_JUMP_TOO_DEEP,
+        ),
+        (
+            LabelJumpTooLarge,
+            status::SPACEWASM_ERR_LABEL_JUMP_TOO_LARGE,
+        ),
+        (TypeMismatch, status::SPACEWASM_ERR_TYPE_MISMATCH),
+        (
+            BlockResultTypeMismatch,
+            status::SPACEWASM_ERR_BLOCK_RESULT_TYPE_MISMATCH,
+        ),
+        (
+            FunctionResultTypeMismatch,
+            status::SPACEWASM_ERR_FUNCTION_RESULT_TYPE_MISMATCH,
+        ),
+        // Memory and table validation
+        (IllegalMemoryGrow, status::SPACEWASM_ERR_ILLEGAL_MEMORY_GROW),
+        (
+            InvalidElementOffset,
+            status::SPACEWASM_ERR_INVALID_ELEMENT_OFFSET,
+        ),
+        (
+            InvalidElementOutOfBounds,
+            status::SPACEWASM_ERR_INVALID_ELEMENT_OUT_OF_BOUNDS,
+        ),
+        (InvalidTableIndex, status::SPACEWASM_ERR_INVALID_TABLE_INDEX),
+        (TableNotDefined, status::SPACEWASM_ERR_TABLE_NOT_DEFINED),
+        (
+            InvalidElementCount,
+            status::SPACEWASM_ERR_INVALID_ELEMENT_COUNT,
+        ),
+        (InvalidMemIndex, status::SPACEWASM_ERR_INVALID_MEM_INDEX),
+        (MemoryNotDefined, status::SPACEWASM_ERR_MEMORY_NOT_DEFINED),
+        (
+            InvalidMemOffsetType,
+            status::SPACEWASM_ERR_INVALID_MEM_OFFSET_TYPE,
+        ),
+        (
+            InvalidNegativeMemOffset,
+            status::SPACEWASM_ERR_INVALID_NEGATIVE_MEM_OFFSET,
+        ),
+        (InvalidMemOffset, status::SPACEWASM_ERR_INVALID_MEM_OFFSET),
+        (MultipleMemories, status::SPACEWASM_ERR_MULTIPLE_MEMORIES),
+        (MultipleTables, status::SPACEWASM_ERR_MULTIPLE_TABLES),
+        // Index validation
+        (InvalidLabelIndex, status::SPACEWASM_ERR_INVALID_LABEL_INDEX),
+        (InvalidElseBlock, status::SPACEWASM_ERR_INVALID_ELSE_BLOCK),
+        (InvalidEndBlock, status::SPACEWASM_ERR_INVALID_END_BLOCK),
+        (
+            InstructionOutsideOfFunction,
+            status::SPACEWASM_ERR_INSTRUCTION_OUTSIDE_OF_FUNCTION,
+        ),
+        (
+            LocalIdxOutOfRange,
+            status::SPACEWASM_ERR_LOCAL_IDX_OUT_OF_RANGE,
+        ),
+        (
+            FunctionIdxOutOfRange,
+            status::SPACEWASM_ERR_FUNCTION_IDX_OUT_OF_RANGE,
+        ),
+        (
+            TypeIdxOutOfRange,
+            status::SPACEWASM_ERR_TYPE_IDX_OUT_OF_RANGE,
+        ),
+        (
+            FunctionTextOutOfRange,
+            status::SPACEWASM_ERR_FUNCTION_TEXT_OUT_OF_RANGE,
+        ),
+        (
+            GlobalIdxOutOfRange,
+            status::SPACEWASM_ERR_GLOBAL_IDX_OUT_OF_RANGE,
+        ),
+        // Import validation
+        (
+            FunctionImportNotFound,
+            status::SPACEWASM_ERR_FUNCTION_IMPORT_NOT_FOUND,
+        ),
+        (
+            GlobalImportNotFound,
+            status::SPACEWASM_ERR_GLOBAL_IMPORT_NOT_FOUND,
+        ),
+        (
+            MemoryImportNotFound,
+            status::SPACEWASM_ERR_MEMORY_IMPORT_NOT_FOUND,
+        ),
+        (
+            TableImportNotFound,
+            status::SPACEWASM_ERR_TABLE_IMPORT_NOT_FOUND,
+        ),
+        (
+            FunctionImportOutOfRange,
+            status::SPACEWASM_ERR_FUNCTION_IMPORT_OUT_OF_RANGE,
+        ),
+        (
+            FunctionImportTypeMismatch,
+            status::SPACEWASM_ERR_FUNCTION_IMPORT_TYPE_MISMATCH,
+        ),
+        (
+            GlobalIsNotMutable,
+            status::SPACEWASM_ERR_GLOBAL_IS_NOT_MUTABLE,
+        ),
+        (
+            GlobalImportTypeMismatch,
+            status::SPACEWASM_ERR_GLOBAL_IMPORT_TYPE_MISMATCH,
+        ),
+        (
+            MemoryImportTypeMismatch,
+            status::SPACEWASM_ERR_MEMORY_IMPORT_TYPE_MISMATCH,
+        ),
+        (
+            TableImportTypeMismatch,
+            status::SPACEWASM_ERR_TABLE_IMPORT_TYPE_MISMATCH,
+        ),
+        (
+            TableImportIncompatibleSize,
+            status::SPACEWASM_ERR_TABLE_IMPORT_INCOMPATIBLE_SIZE,
+        ),
+        // Function and global validation
+        (
+            FunctionParametersTooLarge,
+            status::SPACEWASM_ERR_FUNCTION_PARAMETERS_TOO_LARGE,
+        ),
+        (
+            FunctionReturnsTooLarge,
+            status::SPACEWASM_ERR_FUNCTION_RETURNS_TOO_LARGE,
+        ),
+        (TooManyLocals, status::SPACEWASM_ERR_TOO_MANY_LOCALS),
+        (
+            InvalidConstInstruction,
+            status::SPACEWASM_ERR_INVALID_CONST_INSTRUCTION,
+        ),
+        (
+            GlobalTypeMismatch,
+            status::SPACEWASM_ERR_GLOBAL_TYPE_MISMATCH,
+        ),
+        (
+            AlignmentLargerThanType,
+            status::SPACEWASM_ERR_ALIGNMENT_LARGER_THAN_TYPE,
+        ),
+        (
+            InvalidStartFunctionSignature,
+            status::SPACEWASM_ERR_INVALID_START_FUNCTION_SIGNATURE,
+        ),
+        // Constant expression validation
+        (
+            InvalidConstantExpr(ConstantExprError::InvalidConstantInstruction),
+            status::SPACEWASM_ERR_INVALID_CONST_INSTRUCTION,
+        ),
+        (
+            InvalidConstantExpr(ConstantExprError::AlreadyHasValue),
+            status::SPACEWASM_ERR_CONST_ALREADY_HAS_VALUE,
+        ),
+        (
+            InvalidConstantExpr(ConstantExprError::NoValue),
+            status::SPACEWASM_ERR_CONST_NO_VALUE,
+        ),
+        (
+            InvalidConstantExpr(ConstantExprError::InvalidGlobal),
+            status::SPACEWASM_ERR_CONST_INVALID_GLOBAL,
+        ),
+        (
+            GuestMemoryAllocationFailure,
+            status::SPACEWASM_ERR_GUEST_MEMORY_ALLOC_FAILED,
+        ),
+        // Nested error types
+        (
+            AllocError(AllocError::AllocationFailed),
+            status::SPACEWASM_ERR_ALLOC_FAILED,
+        ),
+        (
+            AllocError(AllocError::OutOfMemory),
+            status::SPACEWASM_ERR_OUT_OF_MEMORY,
+        ),
+        (
+            AllocError(AllocError::PageTooSmall),
+            status::SPACEWASM_ERR_PAGE_TOO_SMALL,
+        ),
+        (
+            MemoryError(MemoryError::OutOfBounds),
+            status::SPACEWASM_ERR_MEM_OUT_OF_BOUNDS,
+        ),
+        (
+            MemoryError(MemoryError::OutOfMemory),
+            status::SPACEWASM_ERR_OUT_OF_MEMORY,
+        ),
+        (
+            MemoryError(MemoryError::AllocationFailed),
+            status::SPACEWASM_ERR_ALLOC_FAILED,
+        ),
+        (
+            MemoryError(MemoryError::PageTooSmall),
+            status::SPACEWASM_ERR_PAGE_TOO_SMALL,
+        ),
+        // Miscellaneous
+        (
+            PossibleBackpatchCycle,
+            status::SPACEWASM_ERR_POSSIBLE_BACKPATCH_CYCLE,
+        ),
+        (PageFault, status::SPACEWASM_ERR_PAGE_FAULT),
+        (ReaderError(0), status::SPACEWASM_ERR_READER_ERROR),
+    ];
+    for (err, code) in cases {
+        assert_eq!(status::validation_status(&err), code, "{err:?}");
+    }
+}
+
+#[test]
 fn alloc_status_maps() {
     use spacewasm::AllocError::*;
     assert_eq!(
@@ -781,7 +1204,7 @@ fn simple_error_mappers() {
     use spacewasm::{HostNameError, HostValListError, SectionDecodeError, ValidationError};
 
     let pe = spacewasm::ParseError::new(0, SectionDecodeError::new(ValidationError::Eof));
-    assert_eq!(status::parse_status(&pe), status::SPACEWASM_ERR_PARSE);
+    assert_eq!(status::parse_status(&pe), status::SPACEWASM_ERR_EOF);
 
     assert_eq!(
         status::host_name_status(HostNameError),
@@ -825,15 +1248,6 @@ fn run_status_maps() {
         (
             spacewasm_run_status_t::SPACEWASM_RUN_TRAP,
             spacewasm_trap_t::SPACEWASM_TRAP_DIVIDE_BY_ZERO
-        )
-    );
-    assert_eq!(
-        status::run_status(&InterpreterResult::ReaderError(
-            spacewasm::IrReaderError::InvalidAddress
-        )),
-        (
-            spacewasm_run_status_t::SPACEWASM_RUN_READER_ERROR,
-            spacewasm_trap_t::SPACEWASM_TRAP_NONE
         )
     );
 }
@@ -906,11 +1320,11 @@ fn trap_is_reported() {
     let idx = load_module_onto(alloc, store, c"main", TRAP_WASM, 0).expect("load");
 
     let mut func = 0u32;
-    let st = unsafe { spacewasm_store_find_export_func(store, idx, c"boom".as_ptr(), &mut func) };
+    let st = unsafe { spacewasm_find_export_func(store, idx, c"boom".as_ptr(), &mut func) };
     assert_eq!(st, status::SPACEWASM_OK, "find");
 
     assert_eq!(
-        unsafe { spacewasm_store_invoke(store, idx, func, core::ptr::null(), 0) },
+        unsafe { spacewasm_invoke(store, idx, func, core::ptr::null(), 0) },
         status::SPACEWASM_OK,
         "invoke"
     );
@@ -923,7 +1337,7 @@ fn trap_is_reported() {
     assert_eq!(trap, spacewasm_trap_t::SPACEWASM_TRAP_UNREACHABLE);
 
     unsafe {
-        spacewasm_store_destroy(store);
+        spacewasm_destroy(store);
         spacewasm_allocator_destroy(alloc);
     }
 }
@@ -946,7 +1360,7 @@ fn module_with_start_runs() {
     let mut idx = 0u32;
     assert_eq!(
         unsafe {
-            spacewasm_store_load_module(
+            spacewasm_load_module(
                 store,
                 c"main".as_ptr(),
                 Some(cursor_read),
@@ -960,7 +1374,7 @@ fn module_with_start_runs() {
     );
 
     assert_eq!(
-        unsafe { spacewasm_store_module_invoke_start(store, idx) },
+        unsafe { spacewasm_invoke_start(store, idx) },
         spacewasm_run_status_t::SPACEWASM_RUN_OUT_OF_FUEL
     );
 
@@ -976,11 +1390,11 @@ fn module_with_start_runs() {
     // The start function wrote 42 to linear memory; `get` reads it back.
     let mut func = 0u32;
     assert_eq!(
-        unsafe { spacewasm_store_find_export_func(store, idx, c"get".as_ptr(), &mut func) },
+        unsafe { spacewasm_find_export_func(store, idx, c"get".as_ptr(), &mut func) },
         status::SPACEWASM_OK
     );
     assert_eq!(
-        unsafe { spacewasm_store_invoke(store, idx, func, core::ptr::null(), 0) },
+        unsafe { spacewasm_invoke(store, idx, func, core::ptr::null(), 0) },
         status::SPACEWASM_OK
     );
     assert_eq!(
@@ -989,14 +1403,14 @@ fn module_with_start_runs() {
     );
     let mut out = i32_val(0);
     assert_eq!(
-        unsafe { spacewasm_store_get_result(store, spacewasm_valtype_t::SPACEWASM_I32, &mut out) },
+        unsafe { spacewasm_get_result(store, spacewasm_valtype_t::SPACEWASM_I32, &mut out) },
         status::SPACEWASM_OK
     );
     assert_eq!(unsafe { out.u.i32_ }, 42, "start wrote 42");
 
     // A second module with no start reports `needs_start == false`.
     unsafe {
-        spacewasm_store_destroy(store);
+        spacewasm_destroy(store);
         spacewasm_allocator_destroy(alloc);
     }
 }
@@ -1012,12 +1426,12 @@ fn no_start_module_reports_false() {
 
     // No start function should return finished
     assert_eq!(
-        unsafe { spacewasm_store_module_invoke_start(store, idx) },
+        unsafe { spacewasm_invoke_start(store, idx) },
         spacewasm_run_status_t::SPACEWASM_RUN_FINISHED
     );
 
     unsafe {
-        spacewasm_store_destroy(store);
+        spacewasm_destroy(store);
         spacewasm_allocator_destroy(alloc);
     }
 }
@@ -1033,7 +1447,7 @@ fn run_slices_out_of_fuel_then_resumes() {
 
     let mut func = 0u32;
     assert_eq!(
-        unsafe { spacewasm_store_find_export_func(store, idx, c"spin".as_ptr(), &mut func) },
+        unsafe { spacewasm_find_export_func(store, idx, c"spin".as_ptr(), &mut func) },
         status::SPACEWASM_OK
     );
 
@@ -1041,14 +1455,14 @@ fn run_slices_out_of_fuel_then_resumes() {
     // slice, so we observe OUT_OF_FUEL at least once before it finishes.
     let params = [i32_val(5000)];
     assert_eq!(
-        unsafe { spacewasm_store_invoke(store, idx, func, params.as_ptr(), params.len()) },
+        unsafe { spacewasm_invoke(store, idx, func, params.as_ptr(), params.len()) },
         status::SPACEWASM_OK
     );
 
     let mut saw_out_of_fuel = false;
     let mut trap = spacewasm_trap_t::SPACEWASM_TRAP_NONE;
     let final_status = loop {
-        let rs = unsafe { spacewasm_store_run(store, 64, &mut trap) };
+        let rs = unsafe { spacewasm_run(store, 64, &mut trap) };
         match rs {
             spacewasm_run_status_t::SPACEWASM_RUN_OUT_OF_FUEL => saw_out_of_fuel = true,
             other => break other,
@@ -1059,15 +1473,56 @@ fn run_slices_out_of_fuel_then_resumes() {
 
     let mut out = i32_val(0);
     assert_eq!(
-        unsafe { spacewasm_store_get_result(store, spacewasm_valtype_t::SPACEWASM_I32, &mut out) },
+        unsafe { spacewasm_get_result(store, spacewasm_valtype_t::SPACEWASM_I32, &mut out) },
         status::SPACEWASM_OK
     );
     assert_eq!(unsafe { out.u.i32_ }, 5000, "spin(5000)");
 
     unsafe {
-        spacewasm_store_destroy(store);
+        spacewasm_destroy(store);
         spacewasm_allocator_destroy(alloc);
     }
+}
+
+/// Host implementation of `env.sink`: a void host function (no result type). It
+/// asserts it received exactly one argument and returns `SPACEWASM_CONTINUE_NONE`
+/// *while still writing to `out`*, to prove the interpreter honours the "no
+/// value" outcome and does not push the stale `out` onto the Wasm stack.
+unsafe extern "C" fn sink(
+    _caller: *mut SpacewasmCaller,
+    _userdata: *mut c_void,
+    _params: *const spacewasm_value_t,
+    n: usize,
+    out: *mut spacewasm_value_t,
+) -> spacewasm_hostcall_result_t {
+    if n != 1 {
+        return spacewasm_hostcall_result_t::SPACEWASM_TRAP;
+    }
+    // Deliberately scribble a bogus result; CONTINUE_NONE must ignore it.
+    unsafe { *out = i32_val(0x7fff_ffff) };
+    spacewasm_hostcall_result_t::SPACEWASM_CONTINUE_NONE
+}
+
+/// Host callback that pauses execution without returning a value.
+unsafe extern "C" fn pause_host(
+    _caller: *mut SpacewasmCaller,
+    _userdata: *mut c_void,
+    _params: *const spacewasm_value_t,
+    _n: usize,
+    _out: *mut spacewasm_value_t,
+) -> spacewasm_hostcall_result_t {
+    spacewasm_hostcall_result_t::SPACEWASM_PAUSE
+}
+
+/// Host callback that pauses execution and expects to return an i32.
+unsafe extern "C" fn pause_i32_host(
+    _caller: *mut SpacewasmCaller,
+    _userdata: *mut c_void,
+    _params: *const spacewasm_value_t,
+    _n: usize,
+    _out: *mut spacewasm_value_t,
+) -> spacewasm_hostcall_result_t {
+    spacewasm_hostcall_result_t::SPACEWASM_PAUSE
 }
 
 /// Host callback that exercises `spacewasm_mem_read`/`write`/`size` against the
@@ -1129,7 +1584,7 @@ unsafe extern "C" fn mem_probe(
 
     let arg = unsafe { (*params).u.i32_ };
     unsafe { *out = i32_val(arg + 1) };
-    spacewasm_hostcall_result_t::SPACEWASM_CONTINUE
+    spacewasm_hostcall_result_t::SPACEWASM_CONTINUE_SOME
 }
 
 #[test]
@@ -1162,9 +1617,9 @@ fn host_memory_accessors() {
         );
     }
 
-    let mut store: *mut SpacewasmStore = core::ptr::null_mut();
+    let mut store: *mut CEngine = core::ptr::null_mut();
     assert_eq!(
-        unsafe { spacewasm_store_new(host.as_mut_ptr(), 1024, 1, opts(256), &mut store) },
+        unsafe { spacewasm_new(host.as_mut_ptr(), 1024, 1, opts(256), &mut store) },
         status::SPACEWASM_OK
     );
 
@@ -1173,12 +1628,12 @@ fn host_memory_accessors() {
 
     let mut func = 0u32;
     assert_eq!(
-        unsafe { spacewasm_store_find_export_func(store, idx, c"run".as_ptr(), &mut func) },
+        unsafe { spacewasm_find_export_func(store, idx, c"run".as_ptr(), &mut func) },
         status::SPACEWASM_OK
     );
     let params = [i32_val(41)];
     assert_eq!(
-        unsafe { spacewasm_store_invoke(store, idx, func, params.as_ptr(), params.len()) },
+        unsafe { spacewasm_invoke(store, idx, func, params.as_ptr(), params.len()) },
         status::SPACEWASM_OK
     );
     let mut trap = spacewasm_trap_t::SPACEWASM_TRAP_NONE;
@@ -1189,13 +1644,13 @@ fn host_memory_accessors() {
     );
     let mut out = i32_val(0);
     assert_eq!(
-        unsafe { spacewasm_store_get_result(store, spacewasm_valtype_t::SPACEWASM_I32, &mut out) },
+        unsafe { spacewasm_get_result(store, spacewasm_valtype_t::SPACEWASM_I32, &mut out) },
         status::SPACEWASM_OK
     );
     assert_eq!(unsafe { out.u.i32_ }, 42);
 
     unsafe {
-        spacewasm_store_destroy(store);
+        spacewasm_destroy(store);
         spacewasm_allocator_destroy(alloc);
     }
 }
@@ -1206,9 +1661,9 @@ fn store_with_null_host() {
     ensure_global_allocator();
 
     // A NULL host makes a store with no host modules.
-    let mut store: *mut SpacewasmStore = core::ptr::null_mut();
+    let mut store: *mut CEngine = core::ptr::null_mut();
     assert_eq!(
-        unsafe { spacewasm_store_new(core::ptr::null_mut(), 1024, 1, opts(256), &mut store) },
+        unsafe { spacewasm_new(core::ptr::null_mut(), 1024, 1, opts(256), &mut store) },
         status::SPACEWASM_OK
     );
     assert!(!store.is_null());
@@ -1217,13 +1672,13 @@ fn store_with_null_host() {
     let idx = load_module_onto(alloc, store, c"main", ADD_WASM, 0).expect("load");
     let mut func = 0u32;
     assert_eq!(
-        unsafe { spacewasm_store_find_export_func(store, idx, c"add".as_ptr(), &mut func) },
+        unsafe { spacewasm_find_export_func(store, idx, c"add".as_ptr(), &mut func) },
         status::SPACEWASM_OK
     );
     assert_eq!(invoke_add(store, idx, func, 2, 3).expect("invoke"), 5);
 
     unsafe {
-        spacewasm_store_destroy(store);
+        spacewasm_destroy(store);
         spacewasm_allocator_destroy(alloc);
     }
 }
@@ -1238,14 +1693,14 @@ fn invoke_and_result_error_paths() {
     let idx = load_module_onto(alloc, store, c"main", ADD_WASM, 0).expect("load");
     let mut func = 0u32;
     assert_eq!(
-        unsafe { spacewasm_store_find_export_func(store, idx, c"add".as_ptr(), &mut func) },
+        unsafe { spacewasm_find_export_func(store, idx, c"add".as_ptr(), &mut func) },
         status::SPACEWASM_OK
     );
 
     // No invocation yet: get_result has nothing to return.
     let mut out = i32_val(0);
     assert_eq!(
-        unsafe { spacewasm_store_get_result(store, spacewasm_valtype_t::SPACEWASM_I32, &mut out) },
+        unsafe { spacewasm_get_result(store, spacewasm_valtype_t::SPACEWASM_I32, &mut out) },
         status::SPACEWASM_ERR_NOT_FOUND,
         "no result available"
     );
@@ -1253,7 +1708,7 @@ fn invoke_and_result_error_paths() {
     // Running while idle (nothing invoked) reports a trap without panicking.
     let mut trap = spacewasm_trap_t::SPACEWASM_TRAP_NONE;
     assert_eq!(
-        unsafe { spacewasm_store_run(store, 0, &mut trap) },
+        unsafe { spacewasm_run(store, 0, &mut trap) },
         spacewasm_run_status_t::SPACEWASM_RUN_TRAP,
         "run while idle"
     );
@@ -1261,7 +1716,7 @@ fn invoke_and_result_error_paths() {
     // func_index that does not fit in a u16 is rejected as a bad argument.
     let params = [i32_val(1), i32_val(2)];
     assert_eq!(
-        unsafe { spacewasm_store_invoke(store, idx, 0x1_0000, params.as_ptr(), params.len()) },
+        unsafe { spacewasm_invoke(store, idx, 0x1_0000, params.as_ptr(), params.len()) },
         status::SPACEWASM_ERR_BAD_ARG,
         "func_index overflow"
     );
@@ -1269,23 +1724,23 @@ fn invoke_and_result_error_paths() {
     // A missing export is not found.
     let mut nope = 0u32;
     assert_eq!(
-        unsafe { spacewasm_store_find_export_func(store, idx, c"missing".as_ptr(), &mut nope) },
+        unsafe { spacewasm_find_export_func(store, idx, c"missing".as_ptr(), &mut nope) },
         status::SPACEWASM_ERR_NOT_FOUND
     );
 
     // Invoking, then invoking again before running, is a state error.
     assert_eq!(
-        unsafe { spacewasm_store_invoke(store, idx, func, params.as_ptr(), params.len()) },
+        unsafe { spacewasm_invoke(store, idx, func, params.as_ptr(), params.len()) },
         status::SPACEWASM_OK
     );
     assert_eq!(
-        unsafe { spacewasm_store_invoke(store, idx, func, params.as_ptr(), params.len()) },
+        unsafe { spacewasm_invoke(store, idx, func, params.as_ptr(), params.len()) },
         status::SPACEWASM_ERR_WRONG_STATE,
         "double invoke"
     );
 
     unsafe {
-        spacewasm_store_destroy(store);
+        spacewasm_destroy(store);
         spacewasm_allocator_destroy(alloc);
     }
 }
@@ -1302,9 +1757,7 @@ fn store_new_null_out_and_host_destroy() {
         status::SPACEWASM_OK
     );
     assert_eq!(
-        unsafe {
-            spacewasm_store_new(host.as_mut_ptr(), 1024, 1, opts(256), core::ptr::null_mut())
-        },
+        unsafe { spacewasm_new(host.as_mut_ptr(), 1024, 1, opts(256), core::ptr::null_mut()) },
         status::SPACEWASM_ERR_NULL_ARG,
         "null out_store"
     );
@@ -1433,7 +1886,7 @@ fn start_function_traps() {
     let mut idx = 0u32;
     assert_eq!(
         unsafe {
-            spacewasm_store_load_module(
+            spacewasm_load_module(
                 store,
                 c"main".as_ptr(),
                 Some(cursor_read),
@@ -1446,7 +1899,7 @@ fn start_function_traps() {
     );
 
     assert_eq!(
-        unsafe { spacewasm_store_module_invoke_start(store, idx) },
+        unsafe { spacewasm_invoke_start(store, idx) },
         spacewasm_run_status_t::SPACEWASM_RUN_OUT_OF_FUEL
     );
 
@@ -1456,7 +1909,7 @@ fn start_function_traps() {
     assert_eq!(trap, spacewasm_trap_t::SPACEWASM_TRAP_UNREACHABLE);
 
     unsafe {
-        spacewasm_store_destroy(store);
+        spacewasm_destroy(store);
         spacewasm_allocator_destroy(alloc);
     }
 }
@@ -1472,26 +1925,26 @@ fn engine_rejects_out_of_range_module() {
 
     // module_needs_start on an out-of-range module is trap.
     assert_eq!(
-        unsafe { spacewasm_store_module_invoke_start(store, 99) },
+        unsafe { spacewasm_invoke_start(store, 99) },
         spacewasm_run_status_t::SPACEWASM_RUN_TRAP
     );
 
     // run_start on an out-of-range module traps (no such module to seed).
     let mut trap = spacewasm_trap_t::SPACEWASM_TRAP_NONE;
     assert_eq!(
-        unsafe { spacewasm_store_run(store, 0, &mut trap) },
+        unsafe { spacewasm_run(store, 0, &mut trap) },
         spacewasm_run_status_t::SPACEWASM_RUN_TRAP
     );
 
     // invoke on an out-of-range module is NOT_FOUND.
     let params = [i32_val(1), i32_val(2)];
     assert_eq!(
-        unsafe { spacewasm_store_invoke(store, 99, 0, params.as_ptr(), params.len()) },
+        unsafe { spacewasm_invoke(store, 99, 0, params.as_ptr(), params.len()) },
         status::SPACEWASM_ERR_NOT_FOUND
     );
 
     unsafe {
-        spacewasm_store_destroy(store);
+        spacewasm_destroy(store);
         spacewasm_allocator_destroy(alloc);
     }
 }
@@ -1513,4 +1966,197 @@ fn no_leak_across_lifecycle() {
         after, baseline,
         "memory drifted: baseline={baseline} after={after}"
     );
+}
+
+/// `(module (import "env" "pause") (func (export "test_pause") (result i32)
+///    (call 0) (i32.const 42)))` — calls pause, then returns 42 after resume.
+#[rustfmt::skip]
+static PAUSE_WASM: &[u8] = &[
+    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x60,
+    0x00, 0x00, 0x60, 0x00, 0x01, 0x7f, 0x02, 0x0d, 0x01, 0x03, 0x65, 0x6e,
+    0x76, 0x05, 0x70, 0x61, 0x75, 0x73, 0x65, 0x00, 0x00, 0x03, 0x02, 0x01,
+    0x01, 0x07, 0x0e, 0x01, 0x0a, 0x74, 0x65, 0x73, 0x74, 0x5f, 0x70, 0x61,
+    0x75, 0x73, 0x65, 0x00, 0x01, 0x0a, 0x08, 0x01, 0x06, 0x00, 0x10, 0x00,
+    0x41, 0x2a, 0x0b,
+];
+
+/// `(module (import "env" "pause_i32") (func (export "test_pause_i32") (result i32)
+///    (call 0)))` — calls pause_i32, returns whatever value is resumed with.
+#[rustfmt::skip]
+static PAUSE_I32_WASM: &[u8] = &[
+    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x05, 0x01, 0x60,
+    0x00, 0x01, 0x7f, 0x02, 0x11, 0x01, 0x03, 0x65, 0x6e, 0x76, 0x09, 0x70,
+    0x61, 0x75, 0x73, 0x65, 0x5f, 0x69, 0x33, 0x32, 0x00, 0x00, 0x03, 0x02,
+    0x01, 0x00, 0x07, 0x12, 0x01, 0x0e, 0x74, 0x65, 0x73, 0x74, 0x5f, 0x70,
+    0x61, 0x75, 0x73, 0x65, 0x5f, 0x69, 0x33, 0x32, 0x00, 0x01, 0x0a, 0x06,
+    0x01, 0x04, 0x00, 0x10, 0x00, 0x0b,
+];
+
+#[test]
+fn pause_and_resume_no_value() {
+    let _guard = ALLOC_LOCK.lock().unwrap();
+    ensure_global_allocator();
+
+    let mut host = core::mem::MaybeUninit::<spacewasm_host_t>::uninit();
+    assert_eq!(
+        unsafe { spacewasm_host_new(1, host.as_mut_ptr()) },
+        status::SPACEWASM_OK
+    );
+
+    let mut hmod = 0u32;
+    unsafe {
+        assert_eq!(
+            spacewasm_add_host_module(host.as_mut_ptr(), c"env".as_ptr(), 1, 0, &mut hmod),
+            status::SPACEWASM_OK
+        );
+        assert_eq!(
+            spacewasm_add_host_function(
+                host.as_mut_ptr(),
+                hmod,
+                c"pause".as_ptr(),
+                c"".as_ptr(),
+                c"".as_ptr(),
+                Some(pause_host),
+                core::ptr::null_mut(),
+            ),
+            status::SPACEWASM_OK
+        );
+    }
+
+    let mut store: *mut CEngine = core::ptr::null_mut();
+    assert_eq!(
+        unsafe { spacewasm_new(host.as_mut_ptr(), 1024, 1, opts(256), &mut store) },
+        status::SPACEWASM_OK
+    );
+
+    let alloc = new_guest_allocator();
+    let idx = load_module_onto(alloc, store, c"main", PAUSE_WASM, 0).expect("load");
+
+    let mut func = 0u32;
+    assert_eq!(
+        unsafe { spacewasm_find_export_func(store, idx, c"test_pause".as_ptr(), &mut func) },
+        status::SPACEWASM_OK
+    );
+
+    // Invoke the function
+    assert_eq!(
+        unsafe { spacewasm_invoke(store, idx, func, core::ptr::null(), 0) },
+        status::SPACEWASM_OK
+    );
+
+    // Run until pause
+    let mut trap = spacewasm_trap_t::SPACEWASM_TRAP_NONE;
+    assert_eq!(
+        unsafe { spacewasm_run(store, 10000, &mut trap) },
+        spacewasm_run_status_t::SPACEWASM_RUN_PAUSE,
+        "should pause"
+    );
+
+    // Resume without value
+    assert_eq!(unsafe { spacewasm_resume(store) }, status::SPACEWASM_OK);
+
+    // Continue running to completion
+    assert_eq!(
+        run_to_completion(store, &mut trap),
+        spacewasm_run_status_t::SPACEWASM_RUN_FINISHED
+    );
+
+    // Check result
+    let mut out = i32_val(0);
+    assert_eq!(
+        unsafe { spacewasm_get_result(store, spacewasm_valtype_t::SPACEWASM_I32, &mut out) },
+        status::SPACEWASM_OK
+    );
+    assert_eq!(unsafe { out.u.i32_ }, 42);
+
+    unsafe {
+        spacewasm_destroy(store);
+        spacewasm_allocator_destroy(alloc);
+    }
+}
+
+#[test]
+fn pause_and_resume_with_value() {
+    let _guard = ALLOC_LOCK.lock().unwrap();
+    ensure_global_allocator();
+
+    let mut host = core::mem::MaybeUninit::<spacewasm_host_t>::uninit();
+    assert_eq!(
+        unsafe { spacewasm_host_new(1, host.as_mut_ptr()) },
+        status::SPACEWASM_OK
+    );
+
+    let mut hmod = 0u32;
+    unsafe {
+        assert_eq!(
+            spacewasm_add_host_module(host.as_mut_ptr(), c"env".as_ptr(), 1, 0, &mut hmod),
+            status::SPACEWASM_OK
+        );
+        assert_eq!(
+            spacewasm_add_host_function(
+                host.as_mut_ptr(),
+                hmod,
+                c"pause_i32".as_ptr(),
+                c"".as_ptr(),
+                c"i".as_ptr(),
+                Some(pause_i32_host),
+                core::ptr::null_mut(),
+            ),
+            status::SPACEWASM_OK
+        );
+    }
+
+    let mut store: *mut CEngine = core::ptr::null_mut();
+    assert_eq!(
+        unsafe { spacewasm_new(host.as_mut_ptr(), 1024, 1, opts(256), &mut store) },
+        status::SPACEWASM_OK
+    );
+
+    let alloc = new_guest_allocator();
+    let idx = load_module_onto(alloc, store, c"main", PAUSE_I32_WASM, 0).expect("load");
+
+    let mut func = 0u32;
+    assert_eq!(
+        unsafe { spacewasm_find_export_func(store, idx, c"test_pause_i32".as_ptr(), &mut func) },
+        status::SPACEWASM_OK
+    );
+
+    // Invoke the function
+    assert_eq!(
+        unsafe { spacewasm_invoke(store, idx, func, core::ptr::null(), 0) },
+        status::SPACEWASM_OK
+    );
+
+    // Run until pause
+    let mut trap = spacewasm_trap_t::SPACEWASM_TRAP_NONE;
+    assert_eq!(
+        unsafe { spacewasm_run(store, 10000, &mut trap) },
+        spacewasm_run_status_t::SPACEWASM_RUN_PAUSE,
+        "should pause"
+    );
+
+    // Resume with value 99
+    assert_eq!(
+        unsafe { spacewasm_resume_value(store, i32_val(99)) },
+        status::SPACEWASM_OK
+    );
+
+    // Continue running to completion
+    assert_eq!(
+        run_to_completion(store, &mut trap),
+        spacewasm_run_status_t::SPACEWASM_RUN_FINISHED
+    );
+
+    // Check result - should be the resumed value (99)
+    let mut out = i32_val(0);
+    assert_eq!(
+        unsafe { spacewasm_get_result(store, spacewasm_valtype_t::SPACEWASM_I32, &mut out) },
+        status::SPACEWASM_OK
+    );
+    assert_eq!(unsafe { out.u.i32_ }, 99);
+
+    unsafe {
+        spacewasm_destroy(store);
+        spacewasm_allocator_destroy(alloc);
+    }
 }

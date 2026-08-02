@@ -5,12 +5,56 @@ use core::ops::ControlFlow;
 
 use spacewasm::{Engine, HostFunctionBreak, HostFunctionResult, Value};
 
-use crate::engine::{SpacewasmCaller, spacewasm_hostcall_result_t};
 use crate::value::spacewasm_value_t;
 
 /// Maximum number of parameters marshalled for a single host call; larger
 /// arities trap.
 const MAX_HOST_PARAMS: usize = 32;
+
+/// Opaque handle passed to C host callbacks, wrapping a borrowed core
+/// [`Engine`]. Valid only for the duration of the call.
+#[repr(C)]
+pub struct SpacewasmCaller;
+
+impl SpacewasmCaller {
+    /// Re-derive the borrowed engine from an opaque caller pointer.
+    ///
+    /// # Safety
+    /// `ptr` must be a caller pointer from the trampoline for an in-progress call.
+    pub(crate) unsafe fn state<'a>(ptr: *const SpacewasmCaller) -> Option<&'a Engine> {
+        if ptr.is_null() {
+            None
+        } else {
+            Some(unsafe { &*(ptr as *const Engine) })
+        }
+    }
+}
+
+/// Callback signature for a host function implemented in C. `caller` is an
+/// opaque handle for `spacewasm_mem_*`; write `out_result` iff returning a value.
+pub type spacewasm_host_fn_t = Option<
+    unsafe extern "C" fn(
+        caller: *mut SpacewasmCaller,
+        userdata: *mut c_void,
+        params: *const spacewasm_value_t,
+        n_params: usize,
+        out_result: *mut spacewasm_value_t,
+    ) -> spacewasm_hostcall_result_t,
+>;
+
+/// Result of a C host function call.
+#[repr(i32)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum spacewasm_hostcall_result_t {
+    /// Continue, do not return a value
+    SPACEWASM_CONTINUE_NONE = 0,
+    /// Continue; populate `out_result` if the function has a result type.
+    SPACEWASM_CONTINUE_SOME = 1,
+    /// Trap the interpreter.
+    SPACEWASM_TRAP = 2,
+    /// Pause the interpreter (cooperative yield).
+    SPACEWASM_PAUSE = 3,
+}
 
 /// A C function pointer plus its (embedder-owned) user data, stored inside the
 /// boxed Rust closure that [`spacewasm::HostFunction`] expects.
@@ -77,7 +121,8 @@ impl CHostFunction {
         };
 
         match outcome {
-            spacewasm_hostcall_result_t::SPACEWASM_CONTINUE => {
+            spacewasm_hostcall_result_t::SPACEWASM_CONTINUE_NONE => ControlFlow::Continue(None),
+            spacewasm_hostcall_result_t::SPACEWASM_CONTINUE_SOME => {
                 ControlFlow::Continue(Some(out_result.to_value()))
             }
             spacewasm_hostcall_result_t::SPACEWASM_TRAP => {
