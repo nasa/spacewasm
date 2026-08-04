@@ -74,27 +74,8 @@ jobs:
 
             const benchmark = readResults('benchmark-results');
             if (benchmark) {
-              const samples = parseInt(benchmark.samples, 10) || 1;
               const currentScore = parseFloat(benchmark.currentScore);
               const baselineScore = parseFloat(benchmark.baselineScore);
-
-              // Range covered by the raw samples of one side.
-              function spread(min, max) {
-                const lo = parseFloat(min);
-                const hi = parseFloat(max);
-                return isNaN(lo) || isNaN(hi) ? null : { lo, hi };
-              }
-
-              function describe(score, range) {
-                if (!range || samples < 2) {
-                  return score.toFixed(3);
-                }
-                return `${score.toFixed(3)} ` +
-                  `(median of ${samples}, range ${range.lo.toFixed(3)}-${range.hi.toFixed(3)})`;
-              }
-
-              const currentRange = spread(benchmark.currentMin, benchmark.currentMax);
-              const baselineRange = spread(benchmark.baselineMin, benchmark.baselineMax);
 
               let comment = '## CoreMark Benchmark Results\n\n';
 
@@ -126,30 +107,28 @@ jobs:
                   comment += '\n_No baseline available for comparison_\n\n';
                 }
 
-                comment += '_Counted under callgrind with the same benchmark harness and ' +
-                  'a workload pinned by `COREMARK_FIXED_CLOCK`. This is a repeatable ' +
-                  'instruction-count proxy, not a timing measurement; it excludes cache ' +
-                  'and branch behaviour._\n\n';
+                comment += '_Read off the CPU performance counter, with the same benchmark ' +
+                  'harness on both sides and a workload pinned by `COREMARK_FIXED_CLOCK`. ' +
+                  'This is a repeatable count of the work done, not a timing measurement; ' +
+                  'it says nothing about cache or branch behaviour._\n\n';
               }
 
-              comment += `**Current Score:** ${describe(currentScore, currentRange)}\n`;
+              comment += `**Current Score:** ${currentScore.toFixed(3)}\n`;
 
               if (baselineScore && !isNaN(baselineScore)) {
-                const diff = currentScore - baselineScore;
-                const percentChange = (diff / baselineScore) * 100;
-
-                comment += `**Baseline Score (main):** ${describe(baselineScore, baselineRange)}\n`;
-                comment += `**Difference:** ${diff >= 0 ? '+' : ''}${diff.toFixed(3)} ` +
-                  `(${percentChange.toFixed(2)}%)\n\n`;
+                comment += `**Baseline Score (main):** ${baselineScore.toFixed(3)}\n`;
               } else {
                 comment += '\n_No baseline available for comparison_\n';
               }
 
-              comment += `\n_The timed-score ranges are descriptive only. With ${samples} ` +
-                'samples they are not confidence bounds or regression thresholds._\n';
+              comment += currentInsns
+                ? '\n_One timed run each. On a shared runner the score is worth a few percent ' +
+                  'either way, which is why no difference is quoted for it: read the ' +
+                  'instruction count above instead._\n'
+                : '\n_One timed run each, and worth a few percent either way on a shared ' +
+                  'runner, so no difference is quoted for it._\n';
               comment += '\n_Scores are only comparable within a single run, which measures ' +
-                'both sides on one runner. GitHub-hosted runners differ by more than 2x ' +
-                'between CPU models._\n';
+                'both sides on one runner._\n';
 
               await upsertComment(
                 parseInt(benchmark.prNumber, 10),
