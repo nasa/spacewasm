@@ -136,7 +136,7 @@ pub mod test_support {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, kani))]
 mod tests {
     use crate::MemoryStatistics;
     use crate::alloc::Allocator;
