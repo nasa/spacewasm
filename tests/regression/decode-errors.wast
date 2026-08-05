@@ -122,13 +122,8 @@
   "malformed section id")
 
 ;; ---------------------------------------------------------------------------
-;; A local variable's frame offset is encoded as a signed 16-bit value, but the
-;; validator otherwise permits up to 0xFFFF words of locals. A high local index
-;; used to wrap the `as i16` cast into a negative offset, producing an
-;; out-of-bounds stack read/write at runtime. The offset-encoding site now
-;; rejects any local whose word offset cannot be represented.
-;; One function declaring 40000 i32 locals (accepted by the size validator)
-;; whose body accesses `local.get 35000` (word offset 35000 > i16::MAX - 2).
+;; We normally accept up to 0xFFFF locals but the real check if whether it's
+;; 16-bit word offset overflows i16::MAX. This is a failure case.
 ;; ---------------------------------------------------------------------------
 (assert_invalid
   (module binary
@@ -146,7 +141,11 @@
 ;; `i32.const 0; if (result i32); unreachable; end`.
 ;; ---------------------------------------------------------------------------
 (assert_invalid
-  (module binary
-    "\00asm\01\00\00\00\01\05\01\60\00\01\7f\03\02\01\00\07"
-    "\05\01\01\66\00\00\0a\0a\01\08\00\41\00\04\7f\00\0b\0b")
+  (module
+    (type $t0 (func (result i32)))
+    (func $f (export "f") (type $t0) (result i32)
+      (if $I0 (result i32)
+        (i32.const 0)
+        (then
+          (unreachable)))))
   "result-typed if without else")
