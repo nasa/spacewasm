@@ -1043,8 +1043,7 @@ impl<'a, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize>
             }
             BlockKind::If => {
                 // We are currently inside an if-statement without an else.
-                // A result-typed `if` requires an `else` because the false
-                // would diverge from the true path (different values returned)
+                // Only if-statements without return values are valid here
                 if last.out.0.is_none() {
                     let pc = self.pc();
                     self.code.backpatch(last.target, |code, address, label| {
