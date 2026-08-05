@@ -72,6 +72,7 @@ pub enum spacewasm_status_t {
     SPACEWASM_ERR_MEMORY_TOO_LARGE = 92,
     SPACEWASM_ERR_MEMORY_IMPORT_TOO_LARGE = 93,
     SPACEWASM_ERR_MEM_ALIGN_TOO_LARGE = 94,
+    SPACEWASM_ERR_TABLE_TOO_LARGE = 95,
 
     // Parse / validation errors - Control flow validation
     SPACEWASM_ERR_CONTROL_FLOW_TOO_DEEP = 96,
@@ -273,6 +274,7 @@ pub fn validation_status(e: &ValidationError) -> spacewasm_status_t {
         ValidationError::IdxTooLarge => SPACEWASM_ERR_IDX_TOO_LARGE,
         ValidationError::ModuleIdxTooLarge => SPACEWASM_ERR_MODULE_IDX_TOO_LARGE,
         ValidationError::MemoryTooLarge => SPACEWASM_ERR_MEMORY_TOO_LARGE,
+        ValidationError::TableTooLarge => SPACEWASM_ERR_TABLE_TOO_LARGE,
         ValidationError::MemoryImportTooLarge => SPACEWASM_ERR_MEMORY_IMPORT_TOO_LARGE,
         ValidationError::MemAlignTooLarge => SPACEWASM_ERR_MEM_ALIGN_TOO_LARGE,
         ValidationError::ControlFlowTooDeep => SPACEWASM_ERR_CONTROL_FLOW_TOO_DEEP,

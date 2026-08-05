@@ -929,6 +929,7 @@ fn validation_error_codes_map() {
             status::SPACEWASM_ERR_MEMORY_IMPORT_TOO_LARGE,
         ),
         (MemAlignTooLarge, status::SPACEWASM_ERR_MEM_ALIGN_TOO_LARGE),
+        (TableTooLarge, status::SPACEWASM_ERR_TABLE_TOO_LARGE),
         // Control flow validation
         (
             ControlFlowTooDeep,

@@ -582,9 +582,15 @@ impl<'a, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize>
                 // This bucket has the local variable
                 // Compute it's offset as a word index from the frame
                 let offset = current_offset + ty.size() * (x - current_index) as usize;
+
+                let word_offset = offset / 4;
+                if word_offset > (i16::MAX as usize) - 2 {
+                    return Err(ValidationError::LocalIdxOutOfRange);
+                }
+
                 return Ok(LocalVariable {
                     // Add 2 to skip over fp and lr
-                    frame_offset: ((offset / 4) as i16) + 2,
+                    frame_offset: (word_offset as i16) + 2,
                     ty: *ty,
                 });
             }
@@ -1037,8 +1043,9 @@ impl<'a, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize>
             }
             BlockKind::If => {
                 // We are currently inside an if-statement without an else.
-                // Only if-statements without return values are valid here (or inside an unreachable state).
-                if last.out.0.is_none() || last.unreachable {
+                // A result-typed `if` requires an `else` because the false
+                // would diverge from the true path (different values returned)
+                if last.out.0.is_none() {
                     let pc = self.pc();
                     self.code.backpatch(last.target, |code, address, label| {
                         let patched = label.with_jump(JumpOffset::new(address, pc)?);

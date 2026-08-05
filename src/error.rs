@@ -65,6 +65,7 @@ pub enum ValidationError {
     IdxTooLarge,
     ModuleIdxTooLarge,
     MemoryTooLarge,
+    TableTooLarge,
     MemoryImportTooLarge,
     MemAlignTooLarge,
     ControlFlowTooDeep,

@@ -982,6 +982,9 @@ fn check_decode_error(err: ParseError, text: String) {
         (ValidationError::InvalidMaxLimit, "size minimum must not be greater than maximum") => {}
         (ValidationError::MemoryTooLarge, "memory size must be at most 65536 pages (4GiB)") => {}
         (ValidationError::MemoryTooLarge, "memory size must be at most 4 GiB") => {}
+        (ValidationError::TableTooLarge, "table size too large") => {}
+        (ValidationError::LocalIdxOutOfRange, "local offset out of range") => {}
+        (ValidationError::BlockResultTypeMismatch, "result-typed if without else") => {}
         (ValidationError::InvalidNegativeMemOffset, "data segment does not fit") => {}
         (ValidationError::InvalidMemOffsetType, "type mismatch") => {}
         (ValidationError::InvalidStartFunctionSignature, "start function") => {}

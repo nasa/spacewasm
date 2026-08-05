@@ -105,8 +105,11 @@ impl<T, A: Allocator + Clone> Rc<[T], A> {
 
             // Calculate the layout we need: Cell<u32> + align padding + [T; len]
             let count_layout = core::alloc::Layout::new::<Cell<u32>>();
-            let slice_layout = core::alloc::Layout::array::<T>(len).unwrap();
-            let (full_layout, slice_offset) = count_layout.extend(slice_layout).unwrap();
+            let slice_layout =
+                core::alloc::Layout::array::<T>(len).map_err(|_| AllocError::OutOfMemory)?;
+            let (full_layout, slice_offset) = count_layout
+                .extend(slice_layout)
+                .map_err(|_| AllocError::OutOfMemory)?;
             let full_layout = full_layout.pad_to_align();
 
             // Allocate new memory for RcInner<[T]>
