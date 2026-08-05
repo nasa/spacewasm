@@ -39,6 +39,17 @@
   "size minimum must not be greater than maximum")
 
 ;; ---------------------------------------------------------------------------
+;; A table whose `limits.min` is used unbounded as an allocation length is
+;; rejected at decode time (symmetric with the memory-size bound). Left
+;; unchecked, `min` drove a panic on 32-bit targets (Layout::array failure) or
+;; a multi-gigabyte allocation on 64-bit hosts.
+;; table section (id 4): count=1, funcref, flag=0x00 (min only), min=0xFFFFFFFF
+;; ---------------------------------------------------------------------------
+(assert_invalid
+  (module binary "\00asm\01\00\00\00\04\08\01\70\00\ff\ff\ff\ff\0f")
+  "table size too large")
+
+;; ---------------------------------------------------------------------------
 ;; Memory type flag with the "shared" bit (bit 1) set is unsupported.
 ;; memory section (id 5): count=1, flag 0x02, min 0
 ;; ---------------------------------------------------------------------------
@@ -109,3 +120,32 @@
 (assert_malformed
   (module binary "\00asm\01\00\00\00\0c\01\00")
   "malformed section id")
+
+;; ---------------------------------------------------------------------------
+;; We normally accept up to 0xFFFF locals but the real check if whether it's
+;; 16-bit word offset overflows i16::MAX. This is a failure case.
+;; ---------------------------------------------------------------------------
+(assert_invalid
+  (module binary
+    "\00asm\01\00\00\00\01\04\01\60\00\00\03\02\01\00\07\08"
+    "\01\04\74\65\73\74\00\00\0a\0d\01\0b\01\c0\b8\02\7f\20\b8\91"
+    "\02\1a\0b")
+  "local offset out of range")
+
+;; ---------------------------------------------------------------------------
+;; A result-typed `if` without an `else` used to be accepted when the then-arm
+;; ended unreachable. The false path is still reachable and produces no result,
+;; desynchronizing the validator's operand-stack model from the runtime stack
+;; pointer. Such a module must be rejected regardless of then-arm reachability.
+;; Function `f` of type () -> i32 whose body is
+;; `i32.const 0; if (result i32); unreachable; end`.
+;; ---------------------------------------------------------------------------
+(assert_invalid
+  (module
+    (type $t0 (func (result i32)))
+    (func $f (export "f") (type $t0) (result i32)
+      (if $I0 (result i32)
+        (i32.const 0)
+        (then
+          (unreachable)))))
+  "result-typed if without else")

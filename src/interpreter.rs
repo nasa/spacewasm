@@ -1384,7 +1384,7 @@ impl IrVisitor for Interpreter {
         x: u16,
         state: &mut Self::State,
     ) -> Result<(), Self::Error> {
-        let mut sv: StaticVec<Value, 9> = StaticVec::new();
+        let mut sv: StaticVec<Value, MAX_HOST_FUNCTION_PARAMS> = StaticVec::new();
 
         let f = &state.store.host_modules_mut()[module.0 as usize].functions[x as usize];
         state.sp -= f.param_size();
