@@ -171,6 +171,27 @@ static HOST_WASM: &[u8] = &[
     0x00, 0x21, 0x01, 0x41, 0x00, 0x20, 0x01, 0x36, 0x02, 0x00, 0x20, 0x01, 0x0b,
 ];
 
+/// A module importing a void `env.sink` (`(param i32)`, no result) and a `run`
+/// function that keeps a sentinel on the stack across the call, then returns
+/// `param + 1`. If the host call spuriously pushed a value, the sentinel would
+/// be corrupted and the result would be wrong.
+///
+/// ```wat
+/// (module
+///   (import "env" "sink" (func $sink (param i32)))
+///   (func (export "run") (param i32) (result i32)
+///     local.get 0 local.get 0 call $sink i32.const 1 i32.add))
+/// ```
+#[rustfmt::skip]
+static VOID_HOST_WASM: &[u8] = &[
+    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x0a, 0x02, 0x60,
+    0x01, 0x7f, 0x00, 0x60, 0x01, 0x7f, 0x01, 0x7f, 0x02, 0x0c, 0x01, 0x03,
+    0x65, 0x6e, 0x76, 0x04, 0x73, 0x69, 0x6e, 0x6b, 0x00, 0x00, 0x03, 0x02,
+    0x01, 0x01, 0x07, 0x07, 0x01, 0x03, 0x72, 0x75, 0x6e, 0x00, 0x01, 0x0a,
+    0x0d, 0x01, 0x0b, 0x00, 0x20, 0x00, 0x20, 0x00, 0x10, 0x00, 0x41, 0x01,
+    0x6a, 0x0b,
+];
+
 /// `(module (func (export "boom") (result i32) unreachable))` — traps on call.
 #[rustfmt::skip]
 static TRAP_WASM: &[u8] = &[
@@ -354,7 +375,7 @@ unsafe extern "C" fn add_one(
     }
     let arg = unsafe { (*params).u.i32_ };
     unsafe { *out = i32_val(arg + 1) };
-    spacewasm_hostcall_result_t::SPACEWASM_CONTINUE
+    spacewasm_hostcall_result_t::SPACEWASM_CONTINUE_SOME
 }
 
 // ---- test cases (one per C `test_*` function) -------------------------------
@@ -555,6 +576,91 @@ fn host_function_and_memory() {
         "result"
     );
     assert_eq!(unsafe { out.u.i32_ }, 42, "add_one(41)");
+
+    unsafe {
+        spacewasm_destroy(store);
+        spacewasm_allocator_destroy(alloc);
+    }
+}
+
+#[test]
+fn void_host_function_pushes_no_value() {
+    let _guard = ALLOC_LOCK.lock().unwrap();
+    ensure_global_allocator();
+
+    let mut host = core::mem::MaybeUninit::<spacewasm_host_t>::uninit();
+    assert_eq!(
+        unsafe { spacewasm_host_new(1, host.as_mut_ptr()) },
+        status::SPACEWASM_OK,
+        "host_new"
+    );
+
+    let mut hmod = 0u32;
+    unsafe {
+        assert_eq!(
+            spacewasm_add_host_module(host.as_mut_ptr(), c"env".as_ptr(), 1, 0, &mut hmod),
+            status::SPACEWASM_OK,
+            "add_host_module"
+        );
+        // `sink` takes one i32 and returns nothing (empty result signature).
+        assert_eq!(
+            spacewasm_add_host_function(
+                host.as_mut_ptr(),
+                hmod,
+                c"sink".as_ptr(),
+                c"i".as_ptr(),
+                c"".as_ptr(),
+                Some(sink),
+                core::ptr::null_mut(),
+            ),
+            status::SPACEWASM_OK,
+            "add_host_function"
+        );
+    }
+
+    let mut store: *mut CEngine = core::ptr::null_mut();
+    assert_eq!(
+        unsafe { spacewasm_new(host.as_mut_ptr(), 1024, 1, opts(256), &mut store) },
+        status::SPACEWASM_OK,
+        "store_new"
+    );
+
+    let alloc = new_guest_allocator();
+    let idx = load_module_onto(alloc, store, c"main", VOID_HOST_WASM, 0).expect("load void module");
+
+    let mut func = 0u32;
+    assert_eq!(
+        unsafe { spacewasm_find_export_func(store, idx, c"run".as_ptr(), &mut func) },
+        status::SPACEWASM_OK,
+        "find run"
+    );
+
+    // `run(41)` keeps 41 on the stack across the void `sink` call, then adds 1.
+    // If the host call had spuriously pushed a value, the trailing `i32.add`
+    // would consume it and produce a corrupt (or trapping) result.
+    let params = [i32_val(41)];
+    assert_eq!(
+        unsafe { spacewasm_invoke(store, idx, func, params.as_ptr(), params.len()) },
+        status::SPACEWASM_OK,
+        "invoke"
+    );
+    let mut trap = spacewasm_trap_t::SPACEWASM_TRAP_NONE;
+    assert_eq!(
+        run_to_completion(store, &mut trap),
+        spacewasm_run_status_t::SPACEWASM_RUN_FINISHED,
+        "run (trap={trap:?})"
+    );
+    let mut out = i32_val(0);
+    assert_eq!(
+        unsafe { spacewasm_get_result(store, spacewasm_valtype_t::SPACEWASM_I32, &mut out) },
+        status::SPACEWASM_OK,
+        "result"
+    );
+    assert_eq!(
+        unsafe { out.u.i32_ },
+        42,
+        "void host call must not push a value"
+    );
 
     unsafe {
         spacewasm_destroy(store);
@@ -823,6 +929,7 @@ fn validation_error_codes_map() {
             status::SPACEWASM_ERR_MEMORY_IMPORT_TOO_LARGE,
         ),
         (MemAlignTooLarge, status::SPACEWASM_ERR_MEM_ALIGN_TOO_LARGE),
+        (TableTooLarge, status::SPACEWASM_ERR_TABLE_TOO_LARGE),
         // Control flow validation
         (
             ControlFlowTooDeep,
@@ -991,6 +1098,10 @@ fn validation_error_codes_map() {
         (
             InvalidConstantExpr(ConstantExprError::InvalidGlobal),
             status::SPACEWASM_ERR_CONST_INVALID_GLOBAL,
+        ),
+        (
+            GuestMemoryAllocationFailure,
+            status::SPACEWASM_ERR_GUEST_MEMORY_ALLOC_FAILED,
         ),
         // Nested error types
         (
@@ -1374,6 +1485,25 @@ fn run_slices_out_of_fuel_then_resumes() {
     }
 }
 
+/// Host implementation of `env.sink`: a void host function (no result type). It
+/// asserts it received exactly one argument and returns `SPACEWASM_CONTINUE_NONE`
+/// *while still writing to `out`*, to prove the interpreter honours the "no
+/// value" outcome and does not push the stale `out` onto the Wasm stack.
+unsafe extern "C" fn sink(
+    _caller: *mut SpacewasmCaller,
+    _userdata: *mut c_void,
+    _params: *const spacewasm_value_t,
+    n: usize,
+    out: *mut spacewasm_value_t,
+) -> spacewasm_hostcall_result_t {
+    if n != 1 {
+        return spacewasm_hostcall_result_t::SPACEWASM_TRAP;
+    }
+    // Deliberately scribble a bogus result; CONTINUE_NONE must ignore it.
+    unsafe { *out = i32_val(0x7fff_ffff) };
+    spacewasm_hostcall_result_t::SPACEWASM_CONTINUE_NONE
+}
+
 /// Host callback that pauses execution without returning a value.
 unsafe extern "C" fn pause_host(
     _caller: *mut SpacewasmCaller,
@@ -1455,7 +1585,7 @@ unsafe extern "C" fn mem_probe(
 
     let arg = unsafe { (*params).u.i32_ };
     unsafe { *out = i32_val(arg + 1) };
-    spacewasm_hostcall_result_t::SPACEWASM_CONTINUE
+    spacewasm_hostcall_result_t::SPACEWASM_CONTINUE_SOME
 }
 
 #[test]

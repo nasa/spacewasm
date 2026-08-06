@@ -75,7 +75,7 @@ mod tests {
             exports: crate::Vec::zero(),
         };
 
-        let module_ref = engine.push_module(module);
+        let module_ref = engine.push_module(module).unwrap();
         match engine.invoke_start(module_ref) {
             StartInvocation::Finished => {}
             StartInvocation::Trap(t) => panic!("trap during initialization {t:?}"),
@@ -97,8 +97,9 @@ mod tests {
     // Helper macro for testing operations
     macro_rules! test_op {
         // i32 unary operation
-        ($test_name:ident, $op:ident, i32: $input:expr => $expected:expr) => {
+        ($(#[$attr:meta])* $test_name:ident, $op:ident, i32: $input:expr => $expected:expr) => {
             #[test]
+            $(#[$attr])*
             fn $test_name() {
                 with_test_context(|state| {
                     state.stack.write_u32(0, $input);
@@ -113,8 +114,9 @@ mod tests {
         };
 
         // i32 binary operation
-        ($test_name:ident, $op:ident, i32, i32: $a:expr, $b:expr => $expected:expr) => {
+        ($(#[$attr:meta])* $test_name:ident, $op:ident, i32, i32: $a:expr, $b:expr => $expected:expr) => {
             #[test]
+            $(#[$attr])*
             fn $test_name() {
                 with_test_context(|state| {
                     state.stack.write_u32(0, $a);
@@ -130,8 +132,9 @@ mod tests {
         };
 
         // i64 unary operation (2 words)
-        ($test_name:ident, $op:ident, i64: $input:expr => $expected:expr) => {
+        ($(#[$attr:meta])* $test_name:ident, $op:ident, i64: $input:expr => $expected:expr) => {
             #[test]
+            $(#[$attr])*
             fn $test_name() {
                 with_test_context(|state| {
                     let input_val = $input as u64;
@@ -148,8 +151,9 @@ mod tests {
         };
 
         // i64 unary bool operation (2 words)
-        ($test_name:ident, $op:ident, i64 bool: $input:expr => $expected:expr) => {
+        ($(#[$attr:meta])* $test_name:ident, $op:ident, i64 bool: $input:expr => $expected:expr) => {
             #[test]
+            $(#[$attr])*
             fn $test_name() {
                 with_test_context(|state| {
                     let input_val = $input as u64;
@@ -166,8 +170,9 @@ mod tests {
         };
 
         // i64 binary operation (4 words -> 2 words)
-        ($test_name:ident, $op:ident, i64, i64: $a:expr, $b:expr => $expected:expr) => {
+        ($(#[$attr:meta])* $test_name:ident, $op:ident, i64, i64: $a:expr, $b:expr => $expected:expr) => {
             #[test]
+            $(#[$attr])*
             fn $test_name() {
                 with_test_context(|state| {
                     let a_val = $a as u64;
@@ -186,8 +191,9 @@ mod tests {
         };
 
         // f32 unary operation
-        ($test_name:ident, $op:ident, f32: $input:expr => $expected:expr) => {
+        ($(#[$attr:meta])* $test_name:ident, $op:ident, f32: $input:expr => $expected:expr) => {
             #[test]
+            $(#[$attr])*
             fn $test_name() {
                 with_test_context(|state| {
                     state.stack.write_f32(0, $input);
@@ -203,8 +209,9 @@ mod tests {
         };
 
         // f32 binary operation
-        ($test_name:ident, $op:ident, f32, f32: $a:expr, $b:expr => $expected:expr) => {
+        ($(#[$attr:meta])* $test_name:ident, $op:ident, f32, f32: $a:expr, $b:expr => $expected:expr) => {
             #[test]
+            $(#[$attr])*
             fn $test_name() {
                 with_test_context(|state| {
                     state.stack.write_f32(0, $a);
@@ -221,8 +228,9 @@ mod tests {
         };
 
         // f64 unary operation
-        ($test_name:ident, $op:ident, f64: $input:expr => $expected:expr) => {
+        ($(#[$attr:meta])* $test_name:ident, $op:ident, f64: $input:expr => $expected:expr) => {
             #[test]
+            $(#[$attr])*
             fn $test_name() {
                 with_test_context(|state| {
                     state.stack.write_f64(0, $input);
@@ -238,8 +246,9 @@ mod tests {
         };
 
         // f64 binary operation
-        ($test_name:ident, $op:ident, f64, f64: $a:expr, $b:expr => $expected:expr) => {
+        ($(#[$attr:meta])* $test_name:ident, $op:ident, f64, f64: $a:expr, $b:expr => $expected:expr) => {
             #[test]
+            $(#[$attr])*
             fn $test_name() {
                 with_test_context(|state| {
                     state.stack.write_f64(0, $a);
@@ -720,7 +729,7 @@ mod tests {
     test_op!(test_f32_ceil, f32_ceil, f32: 3.14f32 => 4.0f32);
     test_op!(test_f32_floor, f32_floor, f32: 3.14f32 => 3.0f32);
     test_op!(test_f32_trunc, f32_trunc, f32: 3.99f32 => 3.0f32);
-    test_op!(test_f32_sqrt, f32_sqrt, f32: 16.0f32 => 4.0f32);
+    test_op!(#[cfg_attr(miri, ignore)] test_f32_sqrt, f32_sqrt, f32: 16.0f32 => 4.0f32);
     test_op!(test_f32_add, f32_add, f32, f32: 1.5f32, 2.5f32 => 4.0f32);
     test_op!(test_f32_sub, f32_sub, f32, f32: 5.5f32, 2.5f32 => 3.0f32);
     test_op!(test_f32_mul, f32_mul, f32, f32: 2.5f32, 4.0f32 => 10.0f32);
@@ -733,7 +742,7 @@ mod tests {
     test_op!(test_f64_ceil, f64_ceil, f64: 3.14 => 4.0);
     test_op!(test_f64_floor, f64_floor, f64: 3.14 => 3.0);
     test_op!(test_f64_trunc, f64_trunc, f64: 3.99 => 3.0);
-    test_op!(test_f64_sqrt, f64_sqrt, f64: 16.0 => 4.0);
+    test_op!(#[cfg_attr(miri, ignore)] test_f64_sqrt, f64_sqrt, f64: 16.0 => 4.0);
     test_op!(test_f64_add, f64_add, f64, f64: 1.5, 2.5 => 4.0);
     test_op!(test_f64_sub, f64_sub, f64, f64: 5.5, 2.5 => 3.0);
     test_op!(test_f64_mul, f64_mul, f64, f64: 2.5, 4.0 => 10.0);

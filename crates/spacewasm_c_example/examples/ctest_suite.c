@@ -349,7 +349,7 @@ static spacewasm_hostcall_result_t add_one(spacewasm_caller_t* caller, void* use
         return SPACEWASM_TRAP;
     }
     *out = i32_val(params[0].u.i32_ + 1);
-    return SPACEWASM_CONTINUE;
+    return SPACEWASM_CONTINUE_SOME;
 }
 
 static int test_host_function_and_memory(void) {

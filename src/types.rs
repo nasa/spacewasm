@@ -423,13 +423,24 @@ pub struct TableType {
     pub limits: Limit,
 }
 
+/// Maximum number of elements permitted in a table.
+pub const MAX_TABLE_ELEMENTS: u32 = 10_000_000;
+
 impl TableType {
     pub(crate) fn read(wasm: &mut Reader) -> Result<Self, ValidationError> {
         // Table types are encoded with their limits and a constant byte indicating their element type.
-        Ok(TableType {
-            elem_type: ElemType::read(wasm)?,
-            limits: Limit::read(wasm)?,
-        })
+        let elem_type = ElemType::read(wasm)?;
+        let limits = Limit::read(wasm)?;
+
+        if limits.min > MAX_TABLE_ELEMENTS {
+            return Err(ValidationError::TableTooLarge);
+        } else if let Some(max) = limits.max {
+            if max > MAX_TABLE_ELEMENTS {
+                return Err(ValidationError::TableTooLarge);
+            }
+        }
+
+        Ok(TableType { elem_type, limits })
     }
 }
 

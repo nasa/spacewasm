@@ -36,8 +36,6 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
                         panic!("expected i32");
                     };
 
-                    // eprintln!("args_get({a0}, {a1})");
-
                     let code = block_on(wasi_snapshot_preview1::args_get(
                         &mut *wasi_ctx_args_get.borrow_mut(),
                         &mut GuestMemory::Shared(unsafe {
@@ -49,8 +47,6 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
                         *a1,
                     ))
                     .unwrap();
-
-                    // eprintln!("\t-->{code}");
 
                     ControlFlow::Continue(Some(Value::I32(code as i32)))
                 }
@@ -64,8 +60,6 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
                     let Some(Value::I32(a1)) = args.get(1) else {
                         panic!("expected i32");
                     };
-
-                    // eprintln!("args_sizes_get({a0}, {a1})");
 
                     let code = block_on(wasi_snapshot_preview1::args_sizes_get(
                         &mut *wasi_ctx_args_sizes_get.borrow_mut(),
@@ -92,8 +86,6 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
                         panic!("expected i32");
                     };
 
-                    // eprintln!("environ_get({a0}, {a1})");
-
                     let code = block_on(wasi_snapshot_preview1::environ_get(
                         &mut *wasi_ctx_environ_get.borrow_mut(),
                         &mut GuestMemory::Shared(unsafe {
@@ -119,8 +111,6 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
                         panic!("expected i32");
                     };
 
-                    // eprintln!("environ_sizes_get({a0}, {a1})");
-
                     let code = block_on(wasi_snapshot_preview1::environ_sizes_get(
                         &mut *wasi_ctx_environ_sizes_get.borrow_mut(),
                         &mut GuestMemory::Shared(unsafe {
@@ -145,8 +135,6 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
                     let Some(Value::I32(a1)) = args.get(1) else {
                         panic!("expected i32");
                     };
-
-                    // eprintln!("clock_res_get({a0}, {a1})");
 
                     let code = block_on(wasi_snapshot_preview1::clock_res_get(
                         &mut *wasi_ctx_clock_res_get.borrow_mut(),
@@ -175,8 +163,6 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
                     let Some(Value::I32(a2)) = args.get(2) else {
                         panic!("expected i32");
                     };
-
-                    // eprintln!("clock_time_get({a0}, {a1}, {a2})");
 
                     let code = block_on(wasi_snapshot_preview1::clock_time_get(
                         &mut *wasi_ctx_clock_time_get.borrow_mut(),
@@ -210,8 +196,6 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
                         panic!("expected i32");
                     };
 
-                    // eprintln!("fd_advise({a0}, {a1}, {a2}, {a3})");
-
                     let code = block_on(wasi_snapshot_preview1::fd_advise(
                         &mut *wasi_ctx_fd_advise.borrow_mut(),
                         &mut GuestMemory::Shared(unsafe {
@@ -242,8 +226,6 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
                         panic!("expected i64");
                     };
 
-                    // eprintln!("fd_allocate({a0}, {a1}, {a2})");
-
                     let code = block_on(wasi_snapshot_preview1::fd_allocate(
                         &mut *wasi_ctx_fd_allocate.borrow_mut(),
                         &mut GuestMemory::Shared(unsafe {
@@ -267,8 +249,6 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
                         panic!("expected i32");
                     };
 
-                    // eprintln!("fd_close({a0})");
-
                     let code = block_on(wasi_snapshot_preview1::fd_close(
                         &mut *wasi_ctx_fd_close.borrow_mut(),
                         &mut GuestMemory::Shared(unsafe {
@@ -289,8 +269,6 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
                     let Some(Value::I32(a0)) = args.first() else {
                         panic!("expected i32");
                     };
-
-                    // eprintln!("fd_datasync({a0})");
 
                     let code = block_on(wasi_snapshot_preview1::fd_datasync(
                         &mut *wasi_ctx_fd_datasync.borrow_mut(),
@@ -316,8 +294,6 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
                         panic!("expected i32");
                     };
 
-                    // eprintln!("fd_fdstat_get({a0}, {a1})");
-
                     let code = block_on(wasi_snapshot_preview1::fd_fdstat_get(
                         &mut *wasi_ctx_fd_fdstat_get.borrow_mut(),
                         &mut GuestMemory::Shared(unsafe {
@@ -342,8 +318,6 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
                     let Some(Value::I32(a1)) = args.get(1) else {
                         panic!("expected i32");
                     };
-
-                    // eprintln!("fd_fdstat_set_flags({a0}, {a1})");
 
                     let code = block_on(wasi_snapshot_preview1::fd_fdstat_set_flags(
                         &mut *wasi_ctx_fd_fdstat_set_flags.borrow_mut(),
@@ -373,8 +347,6 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
                         panic!("expected i64");
                     };
 
-                    eprintln!("fd_fdstat_set_rights({a0}, {a1}, {a2})");
-
                     let code = block_on(wasi_snapshot_preview1::fd_fdstat_set_rights(
                         &mut *wasi_ctx_fd_fdstat_set_rights.borrow_mut(),
                         &mut GuestMemory::Shared(unsafe {
@@ -401,8 +373,6 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
                         panic!("expected i32");
                     };
 
-                    // eprintln!("fd_filestat_get({a0}, {a1})");
-
                     let code = block_on(wasi_snapshot_preview1::fd_filestat_get(
                         &mut *wasi_ctx_fd_filestat_get.borrow_mut(),
                         &mut GuestMemory::Shared(unsafe {
@@ -427,8 +397,6 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
                     let Some(Value::I64(a1)) = args.get(1) else {
                         panic!("expected i64");
                     };
-
-                    // eprintln!("fd_filestat_set_size({a0}, {a1})");
 
                     let code = block_on(wasi_snapshot_preview1::fd_filestat_set_size(
                         &mut *wasi_ctx_fd_filestat_set_size.borrow_mut(),
@@ -460,8 +428,6 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
                     let Some(Value::I32(a3)) = args.get(3) else {
                         panic!("expected i32");
                     };
-
-                    // eprintln!("fd_filestat_set_times({a0}, {a1}, {a2}, {a3})");
 
                     let code = block_on(wasi_snapshot_preview1::fd_filestat_set_times(
                         &mut *wasi_ctx_fd_filestat_set_times.borrow_mut(),
@@ -499,8 +465,6 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
                         panic!("expected i32");
                     };
 
-                    // eprintln!("fd_pread({a0}, {a1}, {a2}, {a3}, {a4})");
-
                     let code = block_on(wasi_snapshot_preview1::fd_pread(
                         &mut *wasi_ctx_fd_pread.borrow_mut(),
                         &mut GuestMemory::Shared(unsafe {
@@ -529,8 +493,6 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
                         panic!("expected i32");
                     };
 
-                    // eprintln!("fd_prestat_get({a0}, {a1})");
-
                     let code = block_on(wasi_snapshot_preview1::fd_prestat_get(
                         &mut *wasi_ctx_fd_prestat_get.borrow_mut(),
                         &mut GuestMemory::Shared(unsafe {
@@ -543,7 +505,6 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
                     ))
                     .unwrap();
 
-                    // eprintln!("\t-->{code}");
                     ControlFlow::Continue(Some(Value::I32(code as i32)))
                 }
             }),
@@ -560,8 +521,6 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
                         panic!("expected i32");
                     };
 
-                    // eprintln!("fd_prestat_dir_name({a0}, {a1}, {a2})");
-
                     let code = block_on(wasi_snapshot_preview1::fd_prestat_dir_name(
                         &mut *wasi_ctx_fd_prestat_dir_name.borrow_mut(),
                         &mut GuestMemory::Shared(unsafe {
@@ -574,8 +533,6 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
                         *a2,
                     ))
                     .unwrap();
-
-                    // eprintln!("\t-->{code}");
 
                     ControlFlow::Continue(Some(Value::I32(code as i32)))
                 }
@@ -598,8 +555,6 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
                     let Some(Value::I32(a4)) = args.get(4) else {
                         panic!("expected i32");
                     };
-
-                    // eprintln!("fd_pwrite({a0}, {a1}, {a2}, {a3}, {a4})");
 
                     let code = block_on(wasi_snapshot_preview1::fd_pwrite(
                         &mut *wasi_ctx_fd_pwrite.borrow_mut(),
@@ -634,8 +589,6 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
                     let Some(Value::I32(a3)) = args.get(3) else {
                         panic!("expected i32");
                     };
-
-                    // eprintln!("fd_read({a0}, {a1}, {a2}, {a3})");
 
                     let code = block_on(wasi_snapshot_preview1::fd_read(
                         &mut *wasi_ctx_fd_read.borrow_mut(),
@@ -673,8 +626,6 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
                         panic!("expected i32");
                     };
 
-                    // eprintln!("fd_readdir({a0}, {a1}, {a2}, {a3}, {a4})");
-
                     let code = block_on(wasi_snapshot_preview1::fd_readdir(
                         &mut *wasi_ctx_fd_readdir.borrow_mut(),
                         &mut GuestMemory::Shared(unsafe {
@@ -709,8 +660,6 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
                         panic!("expected i32");
                     };
 
-                    // eprintln!("fd_seek({a0}, {a1}, {a2}, {a3})");
-
                     let code = block_on(wasi_snapshot_preview1::fd_seek(
                         &mut *wasi_ctx_fd_seek.borrow_mut(),
                         &mut GuestMemory::Shared(unsafe {
@@ -735,8 +684,6 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
                         panic!("expected i32");
                     };
 
-                    // eprintln!("fd_sync({a0})");
-
                     let code = block_on(wasi_snapshot_preview1::fd_sync(
                         &mut *wasi_ctx_fd_sync.borrow_mut(),
                         &mut GuestMemory::Shared(unsafe {
@@ -760,8 +707,6 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
                     let Some(Value::I32(a1)) = args.get(1) else {
                         panic!("expected i32");
                     };
-
-                    // eprintln!("fd_tell({a0}, {a1})");
 
                     let code = block_on(wasi_snapshot_preview1::fd_tell(
                         &mut *wasi_ctx_fd_tell.borrow_mut(),
@@ -794,8 +739,6 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
                         panic!("expected i32");
                     };
 
-                    // eprintln!("fd_write({a0}, {a1}, {a2}, {a3})");
-
                     let code = block_on(wasi_snapshot_preview1::fd_write(
                         &mut *wasi_ctx_fd_write.borrow_mut(),
                         &mut GuestMemory::Shared(unsafe {
@@ -825,8 +768,6 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
                     let Some(Value::I32(a2)) = args.get(2) else {
                         panic!("expected i32");
                     };
-
-                    // eprintln!("path_create_directory({a0}, {a1}, {a2})");
 
                     let code = block_on(wasi_snapshot_preview1::path_create_directory(
                         &mut *wasi_ctx_path_create_directory.borrow_mut(),
@@ -862,8 +803,6 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
                     let Some(Value::I32(a4)) = args.get(4) else {
                         panic!("expected i32");
                     };
-
-                    // eprintln!("path_filestat_get({a0}, {a1}, {a2}, {a3}, {a4})");
 
                     let code = block_on(wasi_snapshot_preview1::path_filestat_get(
                         &mut *wasi_ctx_path_filestat_get.borrow_mut(),
@@ -907,8 +846,6 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
                     let Some(Value::I32(a6)) = args.get(6) else {
                         panic!("expected i32");
                     };
-
-                    // eprintln!("path_filestat_set_times({a0}, {a1}, {a2}, {a3}, {a4}, {a5}, {a6})");
 
                     let code = block_on(wasi_snapshot_preview1::path_filestat_set_times(
                         &mut *wasi_ctx_path_filestat_set_times.borrow_mut(),
@@ -954,8 +891,6 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
                     let Some(Value::I32(a6)) = args.get(6) else {
                         panic!("expected i32");
                     };
-
-                    // eprintln!("path_link({a0}, {a1}, {a2}, {a3}, {a4}, {a5}, {a6})");
 
                     let code = block_on(wasi_snapshot_preview1::path_link(
                         &mut *wasi_ctx_path_link.borrow_mut(),
@@ -1008,8 +943,6 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
                         panic!("expected i32");
                     };
 
-                    // eprintln!("path_open({a0}, {a1}, {a2}, {a3}, {a4}, {a5}, {a6}, {a7}, {a8})");
-
                     let code = block_on(wasi_snapshot_preview1::path_open(
                         &mut *wasi_ctx_path_open.borrow_mut(),
                         &mut GuestMemory::Shared(unsafe {
@@ -1054,8 +987,6 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
                         panic!("expected i32");
                     };
 
-                    // eprintln!("path_readlink({a0}, {a1}, {a2}, {a3}, {a4}, {a5})");
-
                     let code = block_on(wasi_snapshot_preview1::path_readlink(
                         &mut *wasi_ctx_path_readlink.borrow_mut(),
                         &mut GuestMemory::Shared(unsafe {
@@ -1087,8 +1018,6 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
                     let Some(Value::I32(a2)) = args.get(2) else {
                         panic!("expected i32");
                     };
-
-                    // eprintln!("path_remove_directory({a0}, {a1}, {a2})");
 
                     let code = block_on(wasi_snapshot_preview1::path_remove_directory(
                         &mut *wasi_ctx_path_remove_directory.borrow_mut(),
@@ -1128,8 +1057,6 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
                         panic!("expected i32");
                     };
 
-                    // eprintln!("path_rename({a0}, {a1}, {a2}, {a3}, {a4}, {a5})");
-
                     let code = block_on(wasi_snapshot_preview1::path_rename(
                         &mut *wasi_ctx_path_rename.borrow_mut(),
                         &mut GuestMemory::Shared(unsafe {
@@ -1168,8 +1095,6 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
                         panic!("expected i32");
                     };
 
-                    // eprintln!("path_symlink({a0}, {a1}, {a2}, {a3}, {a4})");
-
                     let code = block_on(wasi_snapshot_preview1::path_symlink(
                         &mut *wasi_ctx_path_symlink.borrow_mut(),
                         &mut GuestMemory::Shared(unsafe {
@@ -1200,8 +1125,6 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
                     let Some(Value::I32(a2)) = args.get(2) else {
                         panic!("expected i32");
                     };
-
-                    // eprintln!("path_unlink_file({a0}, {a1}, {a2})");
 
                     let code = block_on(wasi_snapshot_preview1::path_unlink_file(
                         &mut *wasi_ctx_path_unlink_file.borrow_mut(),
@@ -1234,8 +1157,6 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
                     let Some(Value::I32(a3)) = args.get(3) else {
                         panic!("expected i32");
                     };
-
-                    // eprintln!("poll_oneoff({a0}, {a1}, {a2}, {a3})");
 
                     let code = block_on(wasi_snapshot_preview1::poll_oneoff(
                         &mut *wasi_ctx_poll_oneoff.borrow_mut(),
@@ -1281,8 +1202,6 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
                         panic!("expected i32");
                     };
 
-                    // eprintln!("proc_raise({a0}))");
-
                     let code = block_on(wasi_snapshot_preview1::proc_raise(
                         &mut *wasi_ctx_proc_raise.borrow_mut(),
                         &mut GuestMemory::Shared(unsafe {
@@ -1307,8 +1226,6 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
                         panic!("expected i32");
                     };
 
-                    // eprintln!("random_get({a0}, {a1})");
-
                     let code = block_on(wasi_snapshot_preview1::random_get(
                         &mut *wasi_ctx_random_get.borrow_mut(),
                         &mut GuestMemory::Shared(unsafe {
@@ -1321,17 +1238,12 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
                     ))
                     .unwrap();
 
-                    // eprintln!("\t\t{:?}", state.memory.get_slice().get((*a0 as usize)..((*a0 as usize) + (*a1 as usize))));
-                    // eprintln!("\t-->{code}");
-
                     ControlFlow::Continue(Some(Value::I32(code as i32)))
                 }
             }),
             HostFunction::new("sched_yield", "".into(), "i".into(), {
                 let wasi_ctx_sched_yield = Rc::clone(&wasi_ctx_two);
                 move |state, _| {
-                    // eprintln!("sched_yield())");
-
                     let code = block_on(wasi_snapshot_preview1::sched_yield(
                         &mut *wasi_ctx_sched_yield.borrow_mut(),
                         &mut GuestMemory::Shared(unsafe {
@@ -1357,8 +1269,6 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
                     let Some(Value::I32(a2)) = args.get(2) else {
                         panic!("expected i32");
                     };
-
-                    // eprintln!("sock_accept({a0}, {a1}, {a2})");
 
                     let code = block_on(wasi_snapshot_preview1::sock_accept(
                         &mut *wasi_ctx_sock_accept.borrow_mut(),
@@ -1398,8 +1308,6 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
                         panic!("expected i32");
                     };
 
-                    // eprintln!("sock_recv({a0}, {a1}, {a2}, {a3}, {a4}, {a5})");
-
                     let code = block_on(wasi_snapshot_preview1::sock_recv(
                         &mut *wasi_ctx_sock_recv.borrow_mut(),
                         &mut GuestMemory::Shared(unsafe {
@@ -1438,8 +1346,6 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
                         panic!("expected i32");
                     };
 
-                    // eprintln!("sock_send({a0}, {a1}, {a2}, {a3}, {a4})");
-
                     let code = block_on(wasi_snapshot_preview1::sock_send(
                         &mut *wasi_ctx_sock_send.borrow_mut(),
                         &mut GuestMemory::Shared(unsafe {
@@ -1467,8 +1373,6 @@ pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
                     let Some(Value::I32(a1)) = args.get(1) else {
                         panic!("expected i32");
                     };
-
-                    // eprintln!("sock_shutdown({a0}, {a1})");
 
                     let code = block_on(wasi_snapshot_preview1::sock_shutdown(
                         &mut *wasi_ctx_sock_shutdown.borrow_mut(),

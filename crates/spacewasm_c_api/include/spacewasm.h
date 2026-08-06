@@ -33,6 +33,7 @@ enum spacewasm_status_t
     SPACEWASM_ERR_CAPACITY = 6,
     SPACEWASM_ERR_NOT_FOUND = 7,
     SPACEWASM_ERR_WRONG_STATE = 8,
+    SPACEWASM_ERR_GUEST_MEMORY_ALLOC_FAILED = 15,
     SPACEWASM_ERR_ALLOC_FAILED = 16,
     SPACEWASM_ERR_OUT_OF_MEMORY = 17,
     SPACEWASM_ERR_PAGE_TOO_SMALL = 18,
@@ -71,6 +72,7 @@ enum spacewasm_status_t
     SPACEWASM_ERR_MEMORY_TOO_LARGE = 92,
     SPACEWASM_ERR_MEMORY_IMPORT_TOO_LARGE = 93,
     SPACEWASM_ERR_MEM_ALIGN_TOO_LARGE = 94,
+    SPACEWASM_ERR_TABLE_TOO_LARGE = 95,
     SPACEWASM_ERR_CONTROL_FLOW_TOO_DEEP = 96,
     SPACEWASM_ERR_STACK_UNDERFLOW = 97,
     SPACEWASM_ERR_STACK_TOO_LARGE = 98,
@@ -143,17 +145,21 @@ enum spacewasm_hostcall_result_t
 #endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
  {
     /*
+     Continue, do not return a value
+     */
+    SPACEWASM_CONTINUE_NONE = 0,
+    /*
      Continue; populate `out_result` if the function has a result type.
      */
-    SPACEWASM_CONTINUE = 0,
+    SPACEWASM_CONTINUE_SOME = 1,
     /*
      Trap the interpreter.
      */
-    SPACEWASM_TRAP = 1,
+    SPACEWASM_TRAP = 2,
     /*
      Pause the interpreter (cooperative yield).
      */
-    SPACEWASM_PAUSE = 2,
+    SPACEWASM_PAUSE = 3,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L

@@ -8,8 +8,8 @@ use std::ops::ControlFlow;
 use std::time::Instant;
 
 spacewasm::global_allocator!(
-    PageAllocator<16>,
-    PageAllocator::new(&RustSystemAllocator {}, 8192)
+    PageAllocator<RustSystemAllocator, 16>,
+    PageAllocator::new(RustSystemAllocator, 8192)
 );
 
 const MAX_CODE_PAGES: u32 = 256;
@@ -152,7 +152,7 @@ fn main() {
     let text = code_builder.pages();
     let final_page_offset = code_builder.offset();
 
-    let module_ref = state.push_module(module);
+    let module_ref = state.push_module(module).unwrap();
     match state.invoke_start(module_ref) {
         StartInvocation::Finished => {}
         StartInvocation::Trap(t) => panic!("trap during initialization {t:?}"),
