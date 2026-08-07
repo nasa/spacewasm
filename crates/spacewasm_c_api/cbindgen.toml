@@ -3,6 +3,8 @@ include_guard = "SPACEWASM_H"
 tab_width = 4
 documentation_style = "c"
 cpp_compat = true
+no_includes = true
+sys_includes = ["stdbool.h", "stdint.h", "stddef.h"]
 # Render Rust `usize`/`isize` as `size_t`/`ptrdiff_t` rather than `uintptr_t`.
 usize_is_size_t = true
 header = """/*

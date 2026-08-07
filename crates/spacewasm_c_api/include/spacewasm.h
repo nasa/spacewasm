@@ -6,11 +6,9 @@
 #ifndef SPACEWASM_H
 #define SPACEWASM_H
 
-#include <stdarg.h>
 #include <stdbool.h>
-#include <stddef.h>
 #include <stdint.h>
-#include <stdlib.h>
+#include <stddef.h>
 
 /*
  Operation status returned by most `spacewasm_*` functions.
