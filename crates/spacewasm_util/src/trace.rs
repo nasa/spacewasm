@@ -314,6 +314,11 @@ impl<'a, T: BaseVisitor<State = Engine, Error = E>, E> BaseVisitor for StateTrac
 
     // Numeric instructions - conversions
     trace_visit_fn!(i32_wrap_i64);
+    trace_visit_fn!(i32_extend8_s);
+    trace_visit_fn!(i32_extend16_s);
+    trace_visit_fn!(i64_extend8_s);
+    trace_visit_fn!(i64_extend16_s);
+    trace_visit_fn!(i64_extend32_s);
     trace_visit_fn!(i32_trunc_f32_s);
     trace_visit_fn!(i32_trunc_f32_u);
     trace_visit_fn!(i32_trunc_f64_s);
