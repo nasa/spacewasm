@@ -334,7 +334,9 @@ jobs:
       - name: Run Miri
         env:
           MIRIFLAGS: -Zmiri-disable-isolation
-        run: cargo miri test -j4 --no-fail-fast --verbose --features miri-soft-floats
+          MIRI_TEST_TIMEOUT_SECS: 300
+          MIRI_TEST_JOBS: 4
+        run: ./.github/scripts/miri-integration-tests.sh
 
   coverage:
     name: Code Coverage
