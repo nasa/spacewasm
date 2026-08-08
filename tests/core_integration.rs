@@ -170,6 +170,7 @@ fn int_exprs() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "long runtime")]
 fn loop_() {
     run("core/loop");
 }
@@ -311,6 +312,7 @@ fn unwind() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "long runtime")]
 fn br_table() {
     run("core/br_table");
 }
