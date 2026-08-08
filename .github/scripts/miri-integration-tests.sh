@@ -11,6 +11,8 @@ set -uo pipefail
 manifest_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$manifest_dir"
 
+cargo miri setup
+
 timeout_secs="${MIRI_TEST_TIMEOUT_SECS:-300}"
 jobs="${MIRI_TEST_JOBS:-$(nproc)}"
 
