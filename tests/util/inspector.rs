@@ -52,7 +52,7 @@ pub struct Inspector<'a, S, E, T: BaseVisitor<State = S, Error = E>> {
     pub out: Rc<RefCell<LimitedVec<String>>>,
 }
 
-impl<'a, S, E, T: BaseVisitor<State = S, Error = E>> BaseVisitor for Inspector<'a, S, E, T> {
+impl<S, E, T: BaseVisitor<State = S, Error = E>> BaseVisitor for Inspector<'_, S, E, T> {
     type Error = E;
     type State = S;
 
@@ -237,8 +237,8 @@ impl<'a, S, E, T: BaseVisitor<State = S, Error = E>> BaseVisitor for Inspector<'
     visit_fn!(f64_promote_f32);
 }
 
-impl<'a, S, E, T: BaseVisitor<State = S, Error = E> + WasmVisitor> WasmVisitor
-    for Inspector<'a, S, E, T>
+impl<S, E, T: BaseVisitor<State = S, Error = E> + WasmVisitor> WasmVisitor
+    for Inspector<'_, S, E, T>
 {
     // Parametric instructions
     visit_fn!(drop);
@@ -274,8 +274,8 @@ impl<'a, S, E, T: BaseVisitor<State = S, Error = E> + WasmVisitor> WasmVisitor
     visit_fn!(f64_reinterpret_i64);
 }
 
-impl<'a, S, E, T: BaseVisitor<State = S, Error = E> + IrVisitor> IrVisitor
-    for Inspector<'a, S, E, T>
+impl<S, E, T: BaseVisitor<State = S, Error = E> + IrVisitor> IrVisitor
+    for Inspector<'_, S, E, T>
 {
     // Parametric instructions
     visit_fn!(drop, ty: ValType);
@@ -290,7 +290,7 @@ impl<'a, S, E, T: BaseVisitor<State = S, Error = E> + IrVisitor> IrVisitor
         cases: impl FnOnce(u32) -> LabelTarget,
         state: &mut Self::State,
     ) -> Result<(), Self::Error> {
-        self.out.borrow_mut().push(format!("br_table(n={:?})", n));
+        self.out.borrow_mut().push(format!("br_table(n={n:?})"));
         self.v.br_table(n, cases, state)
     }
 

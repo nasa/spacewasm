@@ -1,5 +1,5 @@
 use crate::util::Vec;
-use crate::*;
+use crate::{Box, Engine, Value, ValType, GlobalAllocator, ResultType, Rc, Memory, TableElement, Limit};
 use ::core::ops::ControlFlow;
 use core::fmt::{Debug, Formatter};
 
@@ -42,6 +42,7 @@ impl<const CAPACITY: usize> HostName<CAPACITY> {
     /// Construct a host name from a string slice, panicking if it is longer
     /// than [`HOST_NAME_CAP`]. Intended for compile-time string literals in
     /// Rust code; use [`HostName::try_from_str`] on caller-supplied input.
+    #[must_use]
     pub const fn new(s: &str) -> HostName<CAPACITY> {
         match HostName::build(s.as_bytes()) {
             Some(n) => n,
@@ -60,10 +61,12 @@ impl<const CAPACITY: usize> HostName<CAPACITY> {
         HostName::build(bytes).ok_or(HostNameError)
     }
 
+    #[must_use]
     pub fn as_bytes(&self) -> &[u8] {
         &self.data[..self.len as usize]
     }
 
+    #[must_use]
     pub fn as_str(&self) -> &str {
         // SAFETY: `data[..len]` is only ever populated from a `&str` (via
         // `new`/`try_from_str`) or from bytes validated as UTF-8 in
@@ -113,11 +116,11 @@ pub type HostFunctionFn = Box<dyn Fn(&mut Engine, &[Value]) -> HostFunctionResul
 pub trait GlobalValue {
     /// Write a value to this global variable.
     /// This will not be called if this value is not mutable.
-    /// The value will always correspond to the [self.ty()] variant
+    /// The value will always correspond to the [`self.ty()`] variant
     fn write(&self, value: Value) -> Result<(), GlobalValueError>;
 
     /// Read a global's value
-    /// The value should always correspond to the [self.ty()] variant
+    /// The value should always correspond to the [`self.ty()`] variant
     fn read(&self) -> Result<Value, GlobalValueError>;
 
     /// Global's type
@@ -138,11 +141,12 @@ impl Debug for HostGlobal {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("HostGlobal")
             .field("name", &self.name)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
 impl<T: GlobalValue> Box<T> {
+    #[must_use]
     pub fn into_global_value_dyn(mut self) -> Box<dyn GlobalValue>
     where
         T: GlobalValue + 'static,
@@ -207,6 +211,7 @@ impl HostValList {
     /// Construct a signature list, panicking on an invalid or too-long
     /// signature. Intended for compile-time string literals in Rust code; use
     /// [`HostValList::try_new`] on caller-supplied input.
+    #[must_use]
     pub fn new(s: &str) -> Self {
         HostValList::try_new(s).expect("invalid host value signature")
     }
@@ -232,10 +237,12 @@ impl HostValList {
         })
     }
 
+    #[must_use]
     pub fn as_slice(&self) -> &[ValType] {
         &self.data[..self.len as usize]
     }
 
+    #[must_use]
     pub fn iter(&self) -> HostValListIter {
         HostValListIter {
             index: 0,
@@ -244,10 +251,12 @@ impl HostValList {
         }
     }
 
+    #[must_use]
     pub fn len(&self) -> usize {
         self.len as usize
     }
 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
@@ -256,6 +265,15 @@ impl HostValList {
 impl From<&str> for HostValList {
     fn from(value: &str) -> Self {
         HostValList::new(value)
+    }
+}
+
+impl IntoIterator for &HostValList {
+    type Item = ValType;
+    type IntoIter = HostValListIter;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
     }
 }
 
@@ -297,6 +315,7 @@ impl Iterator for HostValListIter {
 }
 
 impl<T: Fn(&mut Engine, &[Value]) -> HostFunctionResult> Box<T> {
+    #[must_use]
     pub fn into_host_function_dyn(mut self) -> HostFunctionFn
     where
         T: Fn(&mut Engine, &[Value]) -> HostFunctionResult + 'static,
@@ -322,7 +341,7 @@ impl Debug for HostFunction {
             .field("name", &self.name)
             .field("params", &self.params.as_slice())
             .field("returns", &self.returns)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -378,7 +397,7 @@ impl HostFunction {
         }
 
         let mut rs: Option<ValType> = None;
-        for r in returns.iter() {
+        for r in &returns {
             if rs.is_some() {
                 return Err(HostValListError);
             }
@@ -394,14 +413,17 @@ impl HostFunction {
         })
     }
 
+    #[must_use]
     pub fn params(&self) -> HostValList {
         self.params
     }
 
+    #[must_use]
     pub fn returns(&self) -> ResultType {
         self.returns
     }
 
+    #[must_use]
     pub fn param_size(&self) -> usize {
         self.params.iter().fold(0, |n, i| n + i.size()) / 4
     }
@@ -417,6 +439,7 @@ impl HostFunction {
         let _ = core::mem::replace(&mut self.f, f);
     }
 
+    #[must_use]
     pub fn name(&self) -> &str {
         self.name.as_str()
     }

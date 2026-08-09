@@ -90,15 +90,18 @@ impl From<Value> for spacewasm_value_t {
 }
 
 impl spacewasm_value_t {
+    #[must_use]
     pub fn to_value(self) -> Value {
         self.into()
     }
 
+    #[must_use]
     pub fn from_value(v: Value) -> spacewasm_value_t {
         v.into()
     }
 
     /// Interpret a [`RawValue`] as the given type and convert to a C value.
+    #[must_use]
     pub fn from_raw(raw: RawValue, ty: ValType) -> spacewasm_value_t {
         raw.to_value(ty).into()
     }

@@ -1,4 +1,4 @@
-//! # spacewasm_c_api
+//! # `spacewasm_c_api`
 //!
 //! C-ABI support layer for the [`spacewasm`] interpreter
 #![no_std]

@@ -94,10 +94,10 @@ impl<T, A: Allocator + Clone> Rc<[T], A> {
                 // For empty slices, just allocate the RcInner with empty slice
                 let layout = core::alloc::Layout::new::<Cell<u32>>();
                 let ptr = alloc.alloc(layout)?;
-                core::ptr::write(ptr as *mut Cell<u32>, Cell::new(1));
+                core::ptr::write(ptr.cast::<Cell<u32>>(), Cell::new(1));
 
                 let rc_inner_ptr =
-                    core::ptr::slice_from_raw_parts_mut(ptr as *mut (), 0) as *mut RcInner<[T]>;
+                    core::ptr::slice_from_raw_parts_mut(ptr.cast::<()>(), 0) as *mut RcInner<[T]>;
 
                 let rc = Self::from_inner_in(NonNull::new_unchecked(rc_inner_ptr), alloc);
                 return Ok((core::ptr::null_mut(), rc));
@@ -116,14 +116,14 @@ impl<T, A: Allocator + Clone> Rc<[T], A> {
             let ptr = alloc.alloc(full_layout)?;
 
             // Write the count field (note: count is u32, not usize)
-            core::ptr::write(ptr as *mut Cell<u32>, Cell::new(1));
+            core::ptr::write(ptr.cast::<Cell<u32>>(), Cell::new(1));
 
             // Get pointer to the slice data (uninitialized)
-            let slice_ptr = ptr.add(slice_offset) as *mut T;
+            let slice_ptr = ptr.add(slice_offset).cast::<T>();
 
             // Create the fat pointer for RcInner<[T]>
             let rc_inner_ptr =
-                core::ptr::slice_from_raw_parts_mut(ptr as *mut (), len) as *mut RcInner<[T]>;
+                core::ptr::slice_from_raw_parts_mut(ptr.cast::<()>(), len) as *mut RcInner<[T]>;
 
             let rc = Self::from_inner_in(NonNull::new_unchecked(rc_inner_ptr), alloc);
             Ok((slice_ptr, rc))
@@ -221,7 +221,7 @@ impl<T: ?Sized, A: Allocator> Rc<T, A> {
 
             // Extract the metadata (vtable) from the trait object reference
             let trait_value_fat = PtrCast {
-                ptr: trait_ref as *const U,
+                ptr: core::ptr::from_ref::<U>(trait_ref),
             };
             let vtable = trait_value_fat.fat.meta;
 
@@ -233,10 +233,10 @@ impl<T: ?Sized, A: Allocator> Rc<T, A> {
                 }),
             };
 
-            let trait_inner_ptr: *mut RcInner<U> = inner_fat.ptr as *mut RcInner<U>;
+            let trait_inner_ptr: *mut RcInner<U> = inner_fat.ptr.cast_mut();
 
             let trait_ptr = NonNull::new_unchecked(trait_inner_ptr);
-            let alloc = core::ptr::read(&self.alloc);
+            let alloc = core::ptr::read(&raw const self.alloc);
             core::mem::forget(self); // Don't run Drop, we're transferring ownership
 
             Rc::from_inner_in(trait_ptr, alloc)
@@ -336,7 +336,7 @@ impl<T: ?Sized, A: Allocator> Drop for Rc<T, A> {
 
                 // Deallocate the memory
                 let layout = core::alloc::Layout::for_value(self.ptr.as_ref());
-                self.alloc.dealloc(self.ptr.as_ptr() as *mut u8, layout);
+                self.alloc.dealloc(self.ptr.as_ptr().cast::<u8>(), layout);
             }
         }
     }

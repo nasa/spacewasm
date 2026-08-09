@@ -13,7 +13,7 @@ impl From<InnerVec<u8>> for Chunk {
 impl Chunk {
     pub(crate) fn return_(&mut self, stream: &mut dyn WasmStream) {
         let to_drop = core::mem::replace(&mut self.0, InnerVec::zero());
-        stream.return_(to_drop)
+        stream.return_(to_drop);
     }
 }
 

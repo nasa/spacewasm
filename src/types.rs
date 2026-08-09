@@ -10,7 +10,7 @@ pub struct Name;
 
 impl Name {
     pub(crate) fn read(wasm: &mut Reader) -> Result<String, ValidationError> {
-        wasm.read_vec(|r| r.read_u8())?.try_into()
+        wasm.read_vec(super::reader::Reader::read_u8)?.try_into()
     }
 }
 
@@ -54,18 +54,17 @@ pub enum Value {
 }
 
 impl ValType {
+    #[must_use]
     pub fn size(&self) -> usize {
         match self {
-            ValType::I32 => 4,
-            ValType::I64 => 8,
-            ValType::F32 => 4,
-            ValType::F64 => 8,
+            ValType::I32 | ValType::F32 => 4,
+            ValType::I64 | ValType::F64 => 8,
         }
     }
 
     fn convert(v: u8) -> Result<ValType, ValidationError> {
         // Value types are encoded by a single byte.
-        use ValType::*;
+        use ValType::{I32, I64, F32, F64};
         match v {
             0x7F => Ok(I32),
             0x7E => Ok(I64),
@@ -85,32 +84,38 @@ impl ValType {
 pub struct RawValue(u64);
 
 impl RawValue {
+    #[must_use]
     pub fn from_32(u: u32) -> RawValue {
-        RawValue(u as u64)
+        RawValue(u64::from(u))
     }
 
+    #[must_use]
     pub fn from_64(u: u64) -> RawValue {
         RawValue(u)
     }
 
+    #[must_use]
     pub fn from_i32(i: i32) -> RawValue {
         RawValue::from_32(i as u32)
     }
 
+    #[must_use]
     pub fn from_i64(i: i64) -> RawValue {
         RawValue::from_64(i as u64)
     }
 
+    #[must_use]
     pub fn from_f32(f: f32) -> RawValue {
         RawValue::from_32(f.to_bits())
     }
 
+    #[must_use]
     pub fn from_f64(f: f64) -> RawValue {
         RawValue::from_64(f.to_bits())
     }
 
     pub fn write_32(&mut self, i: u32) {
-        self.0 = i as u64;
+        self.0 = u64::from(i);
     }
 
     pub fn write_64(&mut self, i: u64) {
@@ -126,37 +131,44 @@ impl RawValue {
     }
 
     pub fn write_f32(&mut self, z: f32) {
-        self.0 = z.to_bits() as u64;
+        self.0 = u64::from(z.to_bits());
     }
 
     pub fn write_f64(&mut self, z: f64) {
         self.0 = z.to_bits();
     }
 
+    #[must_use]
     pub fn read_32(&self) -> u32 {
         self.0 as u32
     }
 
+    #[must_use]
     pub fn read_64(&self) -> u64 {
         self.0
     }
 
+    #[must_use]
     pub fn read_i32(&self) -> i32 {
         self.0 as i32
     }
 
+    #[must_use]
     pub fn read_i64(&self) -> i64 {
         self.0 as i64
     }
 
+    #[must_use]
     pub fn read_f32(&self) -> f32 {
         f32::from_bits(self.0 as u32)
     }
 
+    #[must_use]
     pub fn read_f64(&self) -> f64 {
         f64::from_bits(self.0)
     }
 
+    #[must_use]
     pub fn to_value(self, ty: ValType) -> Value {
         match ty {
             ValType::I32 => Value::I32((self.0 as u32) as i32),
@@ -241,6 +253,7 @@ impl Limit {
         }
     }
 
+    #[must_use]
     pub fn matches(&self, other: &Limit) -> bool {
         if self.min < other.min {
             return false;
@@ -261,6 +274,7 @@ pub enum MemPageSize {
 }
 
 impl MemPageSize {
+    #[must_use]
     pub fn size(&self) -> usize {
         match self {
             MemPageSize::_1 => 1,
@@ -268,6 +282,7 @@ impl MemPageSize {
         }
     }
 
+    #[must_use]
     pub fn alignment(&self) -> usize {
         match self {
             MemPageSize::_1 => 1,
@@ -336,14 +351,14 @@ impl MemType {
         // The limits must be valid within the range 2**32 / pagesize
 
         let max_allowed_pages = match page_size {
-            MemPageSize::_1 => (u32::MAX as u64) + 1,
+            MemPageSize::_1 => u64::from(u32::MAX) + 1,
             MemPageSize::_65536 => 65536,
         };
 
-        if min as u64 > max_allowed_pages {
+        if u64::from(min) > max_allowed_pages {
             return Err(ValidationError::MemoryTooLarge);
         } else if let Some(max) = max {
-            if max as u64 > max_allowed_pages {
+            if u64::from(max) > max_allowed_pages {
                 return Err(ValidationError::MemoryTooLarge);
             }
         }
@@ -355,6 +370,7 @@ impl MemType {
         })
     }
 
+    #[must_use]
     pub fn zero() -> MemType {
         MemType {
             initial_pages: 0,
@@ -363,10 +379,12 @@ impl MemType {
         }
     }
 
+    #[must_use]
     pub fn min(&self) -> u32 {
         self.initial_pages
     }
 
+    #[must_use]
     pub fn can_hold(&self, n_pages: u32) -> bool {
         if let Some(max) = self.max_pages {
             if n_pages > max {
@@ -374,7 +392,7 @@ impl MemType {
             }
         } else {
             // Wasm only has 4 GiB per memory
-            let n_bytes = (n_pages as u64) * (self.page_size() as u64);
+            let n_bytes = u64::from(n_pages) * (self.page_size() as u64);
             if n_bytes > (1 << 32) {
                 return false;
             }
@@ -383,14 +401,17 @@ impl MemType {
         self.initial_pages <= n_pages
     }
 
+    #[must_use]
     pub fn page_size(&self) -> usize {
         self.page_size.size()
     }
 
+    #[must_use]
     pub fn page_alignment(&self) -> usize {
         self.page_size.alignment()
     }
 
+    #[must_use]
     pub fn matches(&self, other: &MemType) -> bool {
         Limit {
             min: self.initial_pages,
@@ -496,6 +517,9 @@ mod tests {
         assert_eq!(v.read_i64(), -2);
     }
 
+    // Exact round-trip of exactly-representable values; bitwise equality is the
+    // property under test.
+    #[allow(clippy::float_cmp)]
     #[test]
     fn raw_value_roundtrip_float() {
         let mut v = RawValue::from_f32(3.5);

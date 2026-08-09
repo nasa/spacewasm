@@ -11,6 +11,36 @@ license = "Apache-2.0"
 repository = "https://github.com/nasa/spacewasm"
 rust-version = "1.87"
 
+[workspace.lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+
+# Casts between integer/float types are pervasive and deliberate in a Wasm
+# interpreter: Wasm values are untyped bit patterns and the spec mandates
+# wrapping/truncating conversions. Rewriting to `try_from`/`From` would add
+# spurious error/panic paths or change semantics, so these are allowed.
+cast_possible_truncation = "allow"
+cast_possible_wrap = "allow"
+cast_sign_loss = "allow"
+cast_precision_loss = "allow"
+cast_ptr_alignment = "allow"
+# Reinterpreting between reference/pointer types is intrinsic to the memory and
+# value machinery here.
+transmute_ptr_to_ptr = "allow"
+# Documentation-only lints: the `# Errors`/`# Panics` sections add churn without
+# improving these internal interfaces.
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+# Stylistic lints that fight the existing structure (locals-scoped consts, the
+# large opcode dispatch loop, opcode/bitmask literals, hot inlined accessors).
+items_after_statements = "allow"
+too_many_lines = "allow"
+unreadable_literal = "allow"
+inline_always = "allow"
+
 [package]
 name = "spacewasm"
 version.workspace = true
@@ -24,8 +54,8 @@ readme = "README.md"
 keywords = ["wasm", "webassembly", "interpreter", "no_std", "embedded"]
 categories = ["wasm", "no-std", "embedded"]
 
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
+[lints]
+workspace = true
 
 [lib]
 name = "spacewasm"

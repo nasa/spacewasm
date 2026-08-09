@@ -9,6 +9,7 @@ pub struct ConstantCompiler<'a> {
 }
 
 impl<'a> ConstantCompiler<'a> {
+    #[must_use]
     pub fn new(store: &'a Store, module: &'a Module) -> Self {
         Self { store, module }
     }
@@ -41,7 +42,7 @@ pub enum ConstantExprError {
     InvalidGlobal,
 }
 
-impl<'a> BaseVisitor for ConstantCompiler<'a> {
+impl BaseVisitor for ConstantCompiler<'_> {
     type Error = ConstantExprError;
     type State = Option<Value>;
 
@@ -254,7 +255,7 @@ impl<'a> BaseVisitor for ConstantCompiler<'a> {
     invalid_constant_fn!(f64_promote_f32);
 }
 
-impl<'a> WasmVisitor for ConstantCompiler<'a> {
+impl WasmVisitor for ConstantCompiler<'_> {
     // Parametric instructions
     invalid_constant_fn!(drop);
     invalid_constant_fn!(select);

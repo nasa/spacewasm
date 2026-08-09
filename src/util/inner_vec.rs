@@ -15,6 +15,7 @@ impl<T: core::fmt::Debug> core::fmt::Debug for InnerVec<T> {
 }
 
 impl<T: Sized> InnerVec<T> {
+    #[must_use]
     pub fn zero() -> InnerVec<T> {
         InnerVec {
             ptr: core::ptr::null_mut(),
@@ -23,14 +24,17 @@ impl<T: Sized> InnerVec<T> {
         }
     }
 
+    #[must_use]
     pub fn len(&self) -> usize {
         self.len as usize
     }
 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
 
+    #[must_use]
     pub fn capacity(&self) -> usize {
         self.capacity as usize
     }

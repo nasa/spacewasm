@@ -12,7 +12,7 @@
 use arbitrary::{Arbitrary, Result, Unstructured};
 use wasm_smith::Config as SmithConfig;
 
-/// Configuration for generating WebAssembly modules for SpaceWasm.
+/// Configuration for generating WebAssembly modules for `SpaceWasm`.
 ///
 /// This wraps wasm-smith's Config with SpaceWasm-specific constraints.
 #[derive(Debug, Clone)]
@@ -21,7 +21,8 @@ pub struct ModuleConfig {
 }
 
 impl ModuleConfig {
-    /// Create a new module configuration with SpaceWasm constraints.
+    /// Create a new module configuration with `SpaceWasm` constraints.
+    #[must_use]
     pub fn new() -> Self {
         let config = SmithConfig {
             // SpaceWasm constraints
@@ -70,6 +71,7 @@ impl ModuleConfig {
     }
 
     /// Get the underlying wasm-smith config.
+    #[must_use]
     pub fn smith_config(&self) -> &SmithConfig {
         &self.config
     }
@@ -120,6 +122,7 @@ impl FuzzModule {
     }
 
     /// Get the Wasm bytes.
+    #[must_use]
     pub fn wasm(&self) -> &[u8] {
         &self.wasm
     }
@@ -161,6 +164,7 @@ impl NoTrapsModule {
     }
 
     /// Get the Wasm bytes.
+    #[must_use]
     pub fn wasm(&self) -> &[u8] {
         &self.wasm
     }

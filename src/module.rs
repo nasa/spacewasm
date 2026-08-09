@@ -1,4 +1,4 @@
-use crate::*;
+use crate::{Rc, Memory, ModuleRef, HostRef, TableType, HostModuleRef, String, Vec, FuncType, Func, Import, Ref, Reader, ValidationError, WasmStream, Store, CodeBuilder, WasmMemoryAllocator, ParseError, MemoryStatistics, SectionDecodeError, Allocator, GlobalAllocator, StaticVec, MemType, GlobalType, Expr, RawValue, Value, ValType, Name};
 
 #[derive(Debug)]
 pub enum MemoryKind {
@@ -63,6 +63,9 @@ impl CustomSectionHandler for DefaultCustomSectionHandler {
 }
 
 impl Module {
+    // Public entry points take the allocator handle by value: callers hand off
+    // an `Rc` they own, matching the idiomatic reference-counted-handle API.
+    #[allow(clippy::needless_pass_by_value)]
     pub fn new<const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize>(
         name: &str,
         stream: &mut dyn WasmStream,
@@ -78,7 +81,7 @@ impl Module {
             store,
             code_builder,
             &mut DefaultCustomSectionHandler,
-            allocator,
+            &allocator,
             None,
         )
         .map_err(|err| ParseError {
@@ -87,6 +90,7 @@ impl Module {
         })
     }
 
+    #[allow(clippy::needless_pass_by_value)]
     pub fn new_with_statistics<const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize>(
         name: &str,
         stream: &mut dyn WasmStream,
@@ -103,7 +107,7 @@ impl Module {
             store,
             code_builder,
             &mut DefaultCustomSectionHandler,
-            allocator,
+            &allocator,
             Some(&mut stats),
         )
         .map_err(|err| ParseError {
@@ -121,7 +125,7 @@ impl Module {
         store: &mut Store,
         code_builder: &mut CodeBuilder,
         custom_handler: &mut dyn CustomSectionHandler,
-        allocator: Rc<dyn WasmMemoryAllocator>,
+        allocator: &Rc<dyn WasmMemoryAllocator>,
         mut stats: Option<&mut [MemoryStatistics; SectionKind::N as usize]>,
     ) -> Result<Module, SectionDecodeError> {
         let magic = wasm.strip_bytes::<4>()?;
@@ -243,7 +247,7 @@ impl Module {
         code_builder: &mut CodeBuilder,
         allocator: Rc<dyn WasmMemoryAllocator>,
     ) -> Result<(), ValidationError> {
-        use SectionKind::*;
+        use SectionKind::{Custom, Type, Import, Function, Table, Memory, Global, Export, Start, Element, Code, Data};
         match section_ty {
             Custom => {
                 CustomSection::read(wasm, section_size, custom_handler)?;
@@ -285,7 +289,7 @@ impl Module {
                             self.memory = Some(MemoryKind::ImportHost(HostRef {
                                 module: *module,
                                 index: *index,
-                            }))
+                            }));
                         }
                         crate::Import::Table { module, .. } => {
                             if self.table.is_some() {
@@ -384,12 +388,13 @@ impl Module {
             Data => {
                 DataSection::read(wasm, store, self)?;
             }
-            _ => unreachable!(),
+            SectionKind::N => unreachable!(),
         }
 
         Ok(())
     }
 
+    #[must_use]
     pub fn get_func_ref(&self, x: FuncIdx) -> Option<Ref> {
         // Check if this function index is a host function or an internal function
         let mut n = 0;
@@ -431,6 +436,7 @@ impl Module {
         }
     }
 
+    #[must_use]
     pub fn get_global_ref(&self, x: GlobalIdx) -> Option<Ref> {
         // Check if this global index is a host function or an internal global
         let mut n = 0;
@@ -494,7 +500,7 @@ pub enum SectionKind {
 
 impl SectionKind {
     pub fn convert(value: u8) -> Result<SectionKind, ValidationError> {
-        use SectionKind::*;
+        use SectionKind::{Custom, Type, Import, Function, Table, Memory, Global, Export, Start, Element, Code, Data};
         let ty = match value {
             0 => Custom,
             1 => Type,
@@ -528,7 +534,7 @@ impl CustomSection {
         handler: &mut dyn CustomSectionHandler,
     ) -> Result<(), ValidationError> {
         let start = wasm.offset();
-        let name: StaticVec<u8, 32> = wasm.read_vec_stack(|w| w.read_u8())?;
+        let name: StaticVec<u8, 32> = wasm.read_vec_stack(super::reader::Reader::read_u8)?;
         let name_str = core::str::from_utf8(&name).map_err(|_| ValidationError::MalformedUtf8)?;
 
         let name_length = wasm.offset() - start;
@@ -696,6 +702,7 @@ pub struct Global {
 }
 
 impl Global {
+    #[must_use]
     pub fn value(&self) -> Value {
         self.value.to_value(self.type_.ty)
     }
@@ -887,7 +894,7 @@ impl Element {
         if let Some(table) = module.get_table(store) {
             if offset < 0 || (offset as usize) > table.len() {
                 return Err(ValidationError::InvalidElementOffset);
-            } else if (offset as u64 + init_len as u64) > table.len() as u64 {
+            } else if (offset as u64 + u64::from(init_len)) > table.len() as u64 {
                 return Err(ValidationError::InvalidElementOutOfBounds);
             }
         } else {
@@ -1004,9 +1011,9 @@ impl Data {
 
                 i as u32
             }
-            Value::I64(_) => return Err(ValidationError::InvalidMemOffsetType),
-            Value::F32(_) => return Err(ValidationError::InvalidMemOffsetType),
-            Value::F64(_) => return Err(ValidationError::InvalidMemOffsetType),
+            Value::I64(_) | Value::F32(_) | Value::F64(_) => {
+                return Err(ValidationError::InvalidMemOffsetType)
+            }
         };
 
         // Read the data onto the linear memory

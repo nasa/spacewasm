@@ -11,3 +11,6 @@ log = "0.4"
 wasm-smith = "0.220.0"
 wasmprinter = "0.220.0"
 env_logger = "0.11"
+
+[lints]
+workspace = true

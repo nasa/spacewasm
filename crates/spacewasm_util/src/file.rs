@@ -10,6 +10,7 @@ pub struct FileStream {
 }
 
 impl FileStream {
+    #[must_use]
     pub fn new(file: std::fs::File) -> FileStream {
         let mut ready = VecDeque::new();
         for _ in 0..8 {
@@ -19,15 +20,17 @@ impl FileStream {
         FileStream {
             file,
             ready,
-            used: Default::default(),
+            used: HashMap::default(),
             n: 0,
         }
     }
 
+    #[must_use]
     pub fn len(&self) -> usize {
         self.n
     }
 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.n == 0
     }
@@ -38,7 +41,7 @@ impl WasmStream for FileStream {
         let mut buf = self.ready.pop_front().expect("no more buffers");
 
         let n = self.file.read(&mut buf).map_err(|err| {
-            eprintln!("Failed to read file: {}", err);
+            eprintln!("Failed to read file: {err}");
             err.raw_os_error().unwrap_or(0) as u8
         })?;
 

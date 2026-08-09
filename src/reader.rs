@@ -8,13 +8,13 @@
 /// you may not use this file except in compliance with the License.
 /// You may obtain a copy of the License at
 ///
-/// http://www.apache.org/licenses/LICENSE-2.0
+/// <http://www.apache.org/licenses/LICENSE-2.0>
 ///
 /// ---
-/// Portions of this file are derived from https://github.com/DLR-FT/wasm-interpreter:
+/// Portions of this file are derived from <https://github.com/DLR-FT/wasm-interpreter>:
 /// Copyright © 2024-2026 Deutsches Zentrum für Luft- und Raumfahrt e.V.
 /// (DLR).
-/// Copyright © 2024-2025 OxidOS Automotive SRL.
+/// Copyright © 2024-2025 `OxidOS` Automotive SRL.
 use crate::{
     Allocator, Chunk, CircularBuffer, GlobalAllocator, StaticVec, ValidationError, Vec, WasmStream,
 };
@@ -64,6 +64,7 @@ impl<'wasm> Reader<'wasm> {
         }
     }
 
+    #[must_use]
     pub fn offset(&self) -> usize {
         self.full_offset
     }
@@ -101,7 +102,7 @@ impl<'wasm> Reader<'wasm> {
             .stream
             .read()
             .map_err(ValidationError::ReaderError)?
-            .map(|inner| inner.into());
+            .map(core::convert::Into::into);
         self.chunk_used = 0;
 
         // Try to fill buffer from new chunk
@@ -466,7 +467,7 @@ impl<'wasm> Reader<'wasm> {
     }
 }
 
-impl<'wasm> Drop for Reader<'wasm> {
+impl Drop for Reader<'_> {
     fn drop(&mut self) {
         // Return the current chunk to the stream if one exists
         if let Some(mut chunk) = self.next.take() {

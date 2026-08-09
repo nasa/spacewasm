@@ -1,6 +1,6 @@
-//! # SpaceWasm IR Encoding
+//! # `SpaceWasm` IR Encoding
 //!
-//! This module implements the compiled intermediate representation (IR) for SpaceWasm.
+//! This module implements the compiled intermediate representation (IR) for `SpaceWasm`.
 //! The IR is organized into pages of 16-bit words to support streaming execution.
 //!
 //! ## Memory Layout
@@ -23,7 +23,7 @@
 //! - **Memory arg**: `[opcode:8][align:8]` `[offset_lo:16]` `[offset_hi:16]`
 //! - **Jump target**: 2 words encoding a 32-bit address
 
-use crate::*;
+use crate::{ValidationError, ResultType, ValType, Ref, Vec, Box, AllocError, Store, Module, Func, StaticVec, LocalIdx, LocalVariable, GlobalIdx, LabelIdx, MemArg};
 use ::core::ops::AddAssign;
 
 /// A page of compiled IR code containing 256 16-bit words (512 bytes).
@@ -40,10 +40,12 @@ impl Default for TextPage {
 pub struct JumpOffset(i32);
 
 impl JumpOffset {
+    #[must_use]
     pub fn sentinel() -> JumpOffset {
         JumpOffset(0)
     }
 
+    #[must_use]
     pub fn offset(n: i32) -> JumpOffset {
         JumpOffset(n)
     }
@@ -54,10 +56,10 @@ impl JumpOffset {
         } else {
             let offset = (to.0 as i32) - (current.0 as i32);
             let fits = offset == ((offset << (32 - 22)) >> (32 - 22));
-            if !fits {
-                Err(ValidationError::LabelJumpTooLarge)
-            } else {
+            if fits {
                 Ok(JumpOffset(offset))
+            } else {
+                Err(ValidationError::LabelJumpTooLarge)
             }
         }
     }
@@ -112,13 +114,14 @@ impl LabelTarget {
             Some(ValType::I64 | ValType::F64) => 2,
         };
 
-        LabelTarget((rt << 30) | ((depth as u32) << 22) | (offset.0 as u32) & 0x3FFFFF)
+        LabelTarget((rt << 30) | (u32::from(depth) << 22) | (offset.0 as u32) & 0x3FFFFF)
     }
 
     fn early_return(result_type: ResultType) -> LabelTarget {
         Self::new(result_type, 0, JumpOffset::sentinel())
     }
 
+    #[must_use]
     pub fn with_jump(self, offset: JumpOffset) -> LabelTarget {
         LabelTarget(
             self.0 & 0xFFC00000 // First 10 bits
@@ -127,6 +130,7 @@ impl LabelTarget {
     }
 
     /// Extract the jump target from the encoded label target
+    #[must_use]
     pub fn jump(&self) -> JumpOffset {
         // The offset is 22-bits
         let u = self.0 & 0x3FFFFF;
@@ -135,11 +139,13 @@ impl LabelTarget {
         JumpOffset(((u << 10) as i32) >> 10)
     }
 
+    #[must_use]
     pub fn is_sentinel(&self) -> bool {
         self.jump() == JumpOffset(0)
     }
 
     /// Number of 32-bit values to move from the current stack to the result stack
+    #[must_use]
     pub fn arity(&self) -> LabelArity {
         match (self.0 >> 30) & 0b11 {
             0 => LabelArity::None,
@@ -150,6 +156,7 @@ impl LabelTarget {
     }
 
     /// Number of 32-bit values to drop from the stack
+    #[must_use]
     pub fn depth(&self) -> u8 {
         ((self.0 >> 22) & 0xFF) as u8
     }
@@ -185,11 +192,13 @@ impl JumpTarget {
     pub const SENTINEL: JumpTarget = JumpTarget(0xFFFF_FFFFu32);
 
     /// Extract the page index (upper 24 bits).
+    #[must_use]
     pub fn page(&self) -> usize {
         (self.0 >> 8) as usize
     }
 
     /// Extract the word offset within the page (lower 8 bits).
+    #[must_use]
     pub fn offset(&self) -> usize {
         (self.0 & 0xFF) as usize
     }
@@ -252,9 +261,7 @@ pub struct CodeBuilder {
 
 impl CodeBuilder {
     pub fn new(options: CompilerOptions) -> Result<CodeBuilder, AllocError> {
-        if options.max_code_pages >= (1 << 24) {
-            panic!("SpaceWasm supports up to 24-bit code pages");
-        }
+        assert!(options.max_code_pages < (1 << 24), "SpaceWasm supports up to 24-bit code pages");
 
         Ok(CodeBuilder {
             pages: Vec::new(options.max_code_pages)?,
@@ -308,17 +315,20 @@ impl CodeBuilder {
     ///
     /// The interpreter reads code directly from this slice, so no copy of the
     /// pages is needed to run the compiled module.
+    #[must_use]
     pub fn pages(&self) -> &[Box<TextPage>] {
         &self.pages
     }
 
     /// The write offset within the final (partially-filled) page, i.e. the
     /// number of 16-bit words used on the last page.
+    #[must_use]
     pub fn offset(&self) -> usize {
         self.offset
     }
 
     /// Get the current program counter (address of the next word to be written)
+    #[must_use]
     pub fn pc(&self) -> JumpTarget {
         let (page_index, offset) = {
             if self.offset == 256 {
@@ -401,7 +411,7 @@ impl CodeBuilder {
         let w1 = self.read(address)?;
         let w2 = self.read(address + 1)?;
 
-        Ok((w1 as u32) | ((w2 as u32) << 16))
+        Ok(u32::from(w1) | (u32::from(w2) << 16))
     }
 }
 
@@ -474,8 +484,8 @@ impl<'a, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize>
             store,
             module,
             func,
-            control_frames: Default::default(),
-            value_stack: Default::default(),
+            control_frames: StaticVec::default(),
+            value_stack: StaticVec::default(),
             stack_highwater: 0,
             br_table_result: None,
         };
@@ -488,32 +498,37 @@ impl<'a, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize>
         builder
     }
 
+    #[must_use]
     pub fn options(&self) -> &CompilerOptions {
         self.code.options()
     }
 
+    #[must_use]
     pub fn store(&self) -> &'a Store {
         self.store
     }
 
+    #[must_use]
     pub fn func(&self) -> &'a Func {
         self.func
     }
 
+    #[must_use]
     pub fn module(&self) -> &'a Module {
         self.module
     }
 
+    #[must_use]
     pub fn stack_usage(&self) -> usize {
         self.stack_highwater
     }
 
     pub fn check_br_table_result(&mut self, r: ResultType) -> Result<(), ValidationError> {
         if let Some(other) = self.br_table_result {
-            if other != r {
-                Err(ValidationError::BlockResultTypeMismatch)
-            } else {
+            if other == r {
                 Ok(())
+            } else {
+                Err(ValidationError::BlockResultTypeMismatch)
             }
         } else {
             self.br_table_result = Some(r);
@@ -526,11 +541,11 @@ impl<'a, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize>
         def_result: ResultType,
     ) -> Result<(), ValidationError> {
         if let Some(other) = self.br_table_result {
-            if other != def_result {
-                Err(ValidationError::BlockResultTypeMismatch)
-            } else {
+            if other == def_result {
                 self.br_table_result = None;
                 Ok(())
+            } else {
+                Err(ValidationError::BlockResultTypeMismatch)
             }
         } else {
             Ok(())
@@ -562,7 +577,7 @@ impl<'a, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize>
                 // We need to convert this offset to be relative to the frame pointer
                 // which is immediately after the final parameter
                 let frame_offset =
-                    (((current_offset / 4) as i32) - (self.func.parameter_size as i32)) as i16;
+                    (((current_offset / 4) as i32) - i32::from(self.func.parameter_size)) as i16;
 
                 return Ok(LocalVariable {
                     frame_offset,
@@ -652,6 +667,7 @@ impl<'a, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize>
         }
     }
 
+    #[must_use]
     pub fn pc(&self) -> JumpTarget {
         self.code.pc()
     }
@@ -668,16 +684,14 @@ impl<'a, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize>
         // With the implicit function frame, there's always a frame
         self.control_frames
             .last()
-            .map(|c| c.unreachable)
-            .unwrap_or(false)
+            .is_some_and(|c| c.unreachable)
     }
 
     fn control_frame_stack_len(&self) -> usize {
         let height = self
             .control_frames
             .last()
-            .map(|c| c.height as usize)
-            .unwrap_or(0);
+            .map_or(0, |c| c.height as usize);
         self.value_stack.len() - height
     }
 
@@ -769,10 +783,8 @@ impl<'a, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize>
         for i in self.value_stack.iter() {
             size += match i {
                 OperandType::Unknown => break,
-                OperandType::Known(ValType::I32) => 1,
-                OperandType::Known(ValType::I64) => 2,
-                OperandType::Known(ValType::F32) => 1,
-                OperandType::Known(ValType::F64) => 2,
+                OperandType::Known(ValType::I32 | ValType::F32) => 1,
+                OperandType::Known(ValType::I64 | ValType::F64) => 2,
             }
         }
 
@@ -783,13 +795,11 @@ impl<'a, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize>
         assert!(truncate_len <= self.value_stack.len());
 
         let mut size: usize = 0;
-        for i in self.value_stack[0..truncate_len].iter() {
+        for i in &self.value_stack[0..truncate_len] {
             size += match i {
                 OperandType::Unknown => break,
-                OperandType::Known(ValType::I32) => 1,
-                OperandType::Known(ValType::I64) => 2,
-                OperandType::Known(ValType::F32) => 1,
-                OperandType::Known(ValType::F64) => 2,
+                OperandType::Known(ValType::I32 | ValType::F32) => 1,
+                OperandType::Known(ValType::I64 | ValType::F64) => 2,
             }
         }
 
@@ -862,10 +872,10 @@ impl<'a, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize>
             return Ok(actual);
         }
 
-        if actual != expect {
-            Err(ValidationError::TypeMismatch)
-        } else {
+        if actual == expect {
             Ok(actual)
+        } else {
+            Err(ValidationError::TypeMismatch)
         }
     }
 
@@ -931,7 +941,7 @@ impl<'a, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize>
     /// Exit an if control block and patch its false-branch to point to the current location.
     /// This is called when entering an else block.
     /// Walks the linked list to find the tail (false-branch with sentinel), patches it,
-    /// and breaks it off from the chain. Returns (result_type, remaining_chain_head).
+    /// and breaks it off from the chain. Returns (`result_type`, `remaining_chain_head`).
     pub(crate) fn pop_control_and_patch_if(
         &mut self,
     ) -> Result<(ResultType, JumpTarget), ValidationError> {
@@ -1064,12 +1074,12 @@ impl<'a, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize>
     ///
     /// Format: `[opcode:8][0x00:8]`
     pub(crate) fn instr(&mut self, op: u8) -> Result<(), AllocError> {
-        self.code.push((op as u16) << 8)
+        self.code.push(u16::from(op) << 8)
     }
 
     /// Emit an instruction with an 8-bit operand
     pub(crate) fn instr_imm_8(&mut self, op: u8, imm: u8) -> Result<(), AllocError> {
-        self.code.push((op as u16) << 8 | (imm as u16))
+        self.code.push(u16::from(op) << 8 | u16::from(imm))
     }
 
     /// Emit an instruction with an 8-bit or 16-bit index operand.

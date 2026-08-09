@@ -22,6 +22,7 @@ pub struct StateHistory {
 }
 
 impl StateHistory {
+    #[must_use]
     pub fn new(capacity: usize) -> Self {
         Self {
             snapshots: std::vec::Vec::with_capacity(capacity),
@@ -42,6 +43,7 @@ impl StateHistory {
     }
 
     /// Get snapshots in chronological order (oldest to newest)
+    #[must_use]
     pub fn iter(&self) -> std::boxed::Box<dyn Iterator<Item = &StateSnapshot> + '_> {
         if self.count < self.capacity {
             // Haven't wrapped yet, just iterate from start
@@ -56,6 +58,7 @@ impl StateHistory {
         }
     }
 
+    #[must_use]
     pub fn dump(&self) -> String {
         use core::fmt::Write;
         let mut s = String::new();
@@ -84,6 +87,15 @@ impl StateHistory {
     }
 }
 
+impl<'a> IntoIterator for &'a StateHistory {
+    type Item = &'a StateSnapshot;
+    type IntoIter = std::boxed::Box<dyn Iterator<Item = &'a StateSnapshot> + 'a>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
 macro_rules! trace_visit_fn {
     // No additional parameters
     ($name:ident) => {
@@ -102,7 +114,7 @@ macro_rules! trace_visit_fn {
     };
 }
 
-/// State tracer that wraps an IrVisitor and records pc/sp/fp history
+/// State tracer that wraps an `IrVisitor` and records pc/sp/fp history
 pub struct StateTracer<'a, T: BaseVisitor<State = Engine, Error = E>, E> {
     pub v: &'a T,
     pub history: core::cell::RefCell<StateHistory>,
@@ -153,7 +165,7 @@ impl<'a, T: BaseVisitor<State = Engine, Error = E>, E> StateTracer<'a, T, E> {
     }
 }
 
-impl<'a, T: BaseVisitor<State = Engine, Error = E>, E> BaseVisitor for StateTracer<'a, T, E> {
+impl<T: BaseVisitor<State = Engine, Error = E>, E> BaseVisitor for StateTracer<'_, T, E> {
     type Error = E;
     type State = Engine;
 
@@ -336,7 +348,7 @@ impl<'a, T: BaseVisitor<State = Engine, Error = E>, E> BaseVisitor for StateTrac
     trace_visit_fn!(f64_promote_f32);
 }
 
-impl<'a, T, E> IrVisitor for StateTracer<'a, T, E>
+impl<T, E> IrVisitor for StateTracer<'_, T, E>
 where
     T: BaseVisitor<State = Engine, Error = E> + IrVisitor,
 {

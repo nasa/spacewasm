@@ -78,7 +78,7 @@ unsafe impl Allocator for CPageBackend {
                 ptr,
                 layout.size(),
                 layout.align(),
-            )
+            );
         };
     }
 

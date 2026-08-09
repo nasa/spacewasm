@@ -1,4 +1,4 @@
-use crate::*;
+use crate::{JumpTarget, Box, TextPage, IrVisitor, HostModuleRef, ModuleRef, TypeIdx, LocalVariable, MemArg};
 use ::core::ops::AddAssign;
 
 impl AddAssign<i32> for JumpTarget {
@@ -36,7 +36,7 @@ impl IrReader {
         let w1 = IrReader::read(code, address);
         let w2 = IrReader::read(code, address);
 
-        (w1 as u32) | ((w2 as u32) << 16)
+        u32::from(w1) | (u32::from(w2) << 16)
     }
 
     fn read_u64(code: &[Box<TextPage>], address: &mut JumpTarget) -> u64 {
@@ -45,10 +45,10 @@ impl IrReader {
         let w3 = IrReader::read(code, address);
         let w4 = IrReader::read(code, address);
 
-        let mut o = w1 as u64;
-        o |= (w2 as u64) << 16;
-        o |= (w3 as u64) << 32;
-        o |= (w4 as u64) << 48;
+        let mut o = u64::from(w1);
+        o |= u64::from(w2) << 16;
+        o |= u64::from(w3) << 32;
+        o |= u64::from(w4) << 48;
 
         o
     }
@@ -90,7 +90,7 @@ impl IrReader {
                 let offset = IrReader::read_u32(code, pc);
                 visitor.$name(
                     MemArg {
-                        align: align as u32,
+                        align: u32::from(align),
                         offset,
                     },
                     state,
@@ -98,7 +98,7 @@ impl IrReader {
             }};
         }
 
-        use crate::opcode::*;
+        use crate::opcode::{UNREACHABLE, IF, BR, BR_IF, BR_TABLE, RETURN, CALL, CALL_HOST, CALL_EXTERN, CALL_INDIRECT, DROP, SELECT, LOCAL_GET, LOCAL_SET, LOCAL_TEE, GLOBAL_GET, GLOBAL_SET, GLOBAL_GET_HOST, GLOBAL_SET_HOST, GLOBAL_GET_EXTERN, GLOBAL_SET_EXTERN, I32_LOAD, I64_LOAD, F32_LOAD, F64_LOAD, I32_LOAD8_S, I32_LOAD8_U, I32_LOAD16_S, I32_LOAD16_U, I64_LOAD8_S, I64_LOAD8_U, I64_LOAD16_S, I64_LOAD16_U, I64_LOAD32_S, I64_LOAD32_U, I32_STORE, I64_STORE, F32_STORE, F64_STORE, I32_STORE8, I32_STORE16, I64_STORE8, I64_STORE16, I64_STORE32, MEMORY_SIZE, MEMORY_GROW, I32_CONST, I64_CONST, F32_CONST, F64_CONST, I32_EQZ, I32_EQ, I32_NE, I32_LT_S, I32_LT_U, I32_GT_S, I32_GT_U, I32_LE_S, I32_LE_U, I32_GE_S, I32_GE_U, I64_EQZ, I64_EQ, I64_NE, I64_LT_S, I64_LT_U, I64_GT_S, I64_GT_U, I64_LE_S, I64_LE_U, I64_GE_S, I64_GE_U, F32_EQ, F32_NE, F32_LT, F32_GT, F32_LE, F32_GE, F64_EQ, F64_NE, F64_LT, F64_GT, F64_LE, F64_GE, I32_CLZ, I32_CTZ, I32_POPCNT, I32_ADD, I32_SUB, I32_MUL, I32_DIV_S, I32_DIV_U, I32_REM_S, I32_REM_U, I32_AND, I32_OR, I32_XOR, I32_SHL, I32_SHR_S, I32_SHR_U, I32_ROTL, I32_ROTR, I64_CLZ, I64_CTZ, I64_POPCNT, I64_ADD, I64_SUB, I64_MUL, I64_DIV_S, I64_DIV_U, I64_REM_S, I64_REM_U, I64_AND, I64_OR, I64_XOR, I64_SHL, I64_SHR_S, I64_SHR_U, I64_ROTL, I64_ROTR, F32_ABS, F32_NEG, F32_CEIL, F32_FLOOR, F32_TRUNC, F32_NEAREST, F32_SQRT, F32_ADD, F32_SUB, F32_MUL, F32_DIV, F32_MIN, F32_MAX, F32_COPYSIGN, F64_ABS, F64_NEG, F64_CEIL, F64_FLOOR, F64_TRUNC, F64_NEAREST, F64_SQRT, F64_ADD, F64_SUB, F64_MUL, F64_DIV, F64_MIN, F64_MAX, F64_COPYSIGN, I32_WRAP_I64, I32_TRUNC_F32_S, I32_TRUNC_F32_U, I32_TRUNC_F64_S, I32_TRUNC_F64_U, I64_EXTEND_I32_S, I64_EXTEND_I32_U, I64_TRUNC_F32_S, I64_TRUNC_F32_U, I64_TRUNC_F64_S, I64_TRUNC_F64_U, F32_CONVERT_I32_S, F32_CONVERT_I32_U, F32_CONVERT_I64_S, F32_CONVERT_I64_U, F32_DEMOTE_F64, F64_CONVERT_I32_S, F64_CONVERT_I32_U, F64_CONVERT_I64_S, F64_CONVERT_I64_U, F64_PROMOTE_F32};
         match opcode {
             // Control instructions
             UNREACHABLE => instruction!(unreachable),
@@ -120,9 +120,9 @@ impl IrReader {
 
             BR_TABLE => {
                 let n = if imm == 0xFF {
-                    IrReader::read(code, pc) as u32
+                    u32::from(IrReader::read(code, pc))
                 } else {
-                    imm as u32
+                    u32::from(imm)
                 };
 
                 visitor.br_table(
@@ -179,7 +179,7 @@ impl IrReader {
             }
             CALL_INDIRECT => {
                 let n = IrReader::read(code, pc);
-                visitor.call_indirect(TypeIdx(n as u32), state)?;
+                visitor.call_indirect(TypeIdx(u32::from(n)), state)?;
             }
 
             // Parametric instructions
@@ -198,7 +198,7 @@ impl IrReader {
                 let index = if imm == 0xFF {
                     IrReader::read(code, pc)
                 } else {
-                    imm as u16
+                    u16::from(imm)
                 };
 
                 visitor.global_get(index, state)?;
@@ -207,7 +207,7 @@ impl IrReader {
                 let index = if imm == 0xFF {
                     IrReader::read(code, pc)
                 } else {
-                    imm as u16
+                    u16::from(imm)
                 };
 
                 visitor.global_set(index, state)?;
@@ -268,7 +268,7 @@ impl IrReader {
                 let n = if imm == 0xFF {
                     IrReader::read_u32(code, pc)
                 } else {
-                    imm as u32
+                    u32::from(imm)
                 };
                 visitor.i32_const(n as i32, state)?;
             }
@@ -276,7 +276,7 @@ impl IrReader {
                 let n = if imm == 0xFF {
                     IrReader::read_u64(code, pc)
                 } else {
-                    imm as u64
+                    u64::from(imm)
                 };
                 visitor.i64_const(n as i64, state)?;
             }

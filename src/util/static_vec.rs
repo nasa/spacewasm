@@ -111,7 +111,7 @@ impl<T, const N: usize> Deref for StaticVec<T, N> {
     fn deref(&self) -> &[T] {
         unsafe {
             // SAFETY: elements [0..len) are initialized
-            core::slice::from_raw_parts(self.data.as_ptr() as *const T, self.len as usize)
+            core::slice::from_raw_parts(self.data.as_ptr().cast::<T>(), self.len as usize)
         }
     }
 }
@@ -120,7 +120,7 @@ impl<T, const N: usize> DerefMut for StaticVec<T, N> {
     fn deref_mut(&mut self) -> &mut [T] {
         unsafe {
             // SAFETY: elements [0..len) are initialized
-            core::slice::from_raw_parts_mut(self.data.as_mut_ptr() as *mut T, self.len as usize)
+            core::slice::from_raw_parts_mut(self.data.as_mut_ptr().cast::<T>(), self.len as usize)
         }
     }
 }

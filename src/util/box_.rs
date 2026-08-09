@@ -37,7 +37,7 @@ impl<T: ?Sized, A: Allocator> Box<T, A> {
         // In case `A` *is* `Global`, this does not quite have the right behavior; `into_raw`
         // works around that.
         let ptr = &raw mut **b;
-        let alloc = unsafe { ptr::read(&b.alloc) };
+        let alloc = unsafe { ptr::read(&raw const b.alloc) };
         (ptr, alloc)
     }
 
@@ -69,7 +69,7 @@ impl<T: Sized, A: Allocator> Box<T, A> {
             })
         } else {
             let layout = Layout::new::<T>();
-            let ptr = unsafe { alloc.alloc(layout)? } as *mut T;
+            let ptr = unsafe { alloc.alloc(layout)? }.cast::<T>();
 
             // Write the value into the allocated memory
             unsafe {
@@ -91,7 +91,7 @@ impl<T: Sized, A: Allocator> Box<T, A> {
         let value = unsafe { ptr::read(ptr) };
         if size_of::<T>() != 0 {
             let layout = Layout::new::<T>();
-            unsafe { alloc.dealloc(ptr as *mut u8, layout) };
+            unsafe { alloc.dealloc(ptr.cast::<u8>(), layout) };
         }
         value
     }
@@ -147,7 +147,7 @@ impl<T: ?Sized, A: Allocator> Drop for Box<T, A> {
             // nothing to free. Their pointer is a dangling sentinel, not a real allocation.
             if layout.size() != 0 {
                 // Deallocate the memory
-                self.alloc.dealloc(self.ptr as *mut u8, layout);
+                self.alloc.dealloc(self.ptr.cast::<u8>(), layout);
             }
         }
     }

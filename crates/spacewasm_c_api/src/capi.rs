@@ -57,8 +57,8 @@ impl From<spacewasm_compiler_options_t> for CompilerOptions {
     }
 }
 
-/// Handle holding the SpaceWasm engine and compiled IR code.
-/// This handle is used for holding and executing the SpaceWasm interpreter.
+/// Handle holding the `SpaceWasm` engine and compiled IR code.
+/// This handle is used for holding and executing the `SpaceWasm` interpreter.
 pub struct CEngine {
     engine: Engine,
     code_builder: CodeBuilder,
@@ -128,7 +128,7 @@ impl From<&mut spacewasm_host_t> for &mut Vec<HostModule> {
     }
 }
 
-/// Create a new host module vector of max_host_module size
+/// Create a new host module vector of `max_host_module` size
 ///
 /// # Safety
 /// `host` must be live
@@ -289,12 +289,11 @@ pub unsafe extern "C" fn spacewasm_load_module(
         Err(e) => return status::parse_status(&e),
     };
 
-    let module_ref = match cengine.engine.push_module(module) {
-        Ok(m) => m,
-        Err(_) => return status::SPACEWASM_ERR_CAPACITY,
+    let Ok(module_ref) = cengine.engine.push_module(module) else {
+        return status::SPACEWASM_ERR_CAPACITY;
     };
 
-    let idx = module_ref.0 as u32;
+    let idx = u32::from(module_ref.0);
 
     if !out_module_idx.is_null() {
         unsafe { *out_module_idx = idx };
@@ -352,7 +351,7 @@ pub unsafe extern "C" fn spacewasm_new(
     };
 
     let boxed = check!(spacewasm::Box::new(cengine).map_err(status::alloc_status));
-    unsafe { *out_engine = spacewasm::Box::leak(boxed) as *mut CEngine };
+    unsafe { *out_engine = core::ptr::from_mut::<CEngine>(spacewasm::Box::leak(boxed)) };
     status::SPACEWASM_OK
 }
 
@@ -427,9 +426,8 @@ pub unsafe extern "C" fn spacewasm_find_export_func(
     }
     let name = check!(unsafe { cstr(name) });
 
-    let module = match cengine.engine.store.modules().get(module_idx as usize) {
-        Some(m) => m,
-        None => return status::SPACEWASM_ERR_NOT_FOUND,
+    let Some(module) = cengine.engine.store.modules().get(module_idx as usize) else {
+        return status::SPACEWASM_ERR_NOT_FOUND;
     };
 
     for e in &module.exports {
@@ -437,7 +435,7 @@ pub unsafe extern "C" fn spacewasm_find_export_func(
             if let ExportDesc::Func(fi) = e.desc {
                 return match module.get_func_ref(fi) {
                     Some(Ref::Module(idx)) => {
-                        unsafe { *out_index = idx as u32 };
+                        unsafe { *out_index = u32::from(idx) };
                         status::SPACEWASM_OK
                     }
                     _ => status::SPACEWASM_ERR_NOT_FOUND,
@@ -503,7 +501,7 @@ pub unsafe extern "C" fn spacewasm_invoke(
     if params.is_null() && n != 0 {
         return status::SPACEWASM_ERR_NULL_ARG;
     }
-    if func_index > u16::MAX as u32 {
+    if func_index > u32::from(u16::MAX) {
         return status::SPACEWASM_ERR_BAD_ARG;
     }
 

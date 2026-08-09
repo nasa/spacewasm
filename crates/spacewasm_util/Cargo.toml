@@ -8,3 +8,6 @@ publish = false
 [dependencies]
 spacewasm = { path = "../..", features = ["strict-assertions"] }
 
+
+[lints]
+workspace = true

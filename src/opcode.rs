@@ -12,7 +12,7 @@
 /// Portions of this file are derived from <https://github.com/DLR-FT/wasm-interpreter>:
 /// Copyright © 2024-2026 Deutsches Zentrum für Luft- und Raumfahrt e.V.
 /// (DLR).
-/// Copyright © 2024-2025 OxidOS Automotive SRL.
+/// Copyright © 2024-2025 `OxidOS` Automotive SRL.
 pub(crate) const UNREACHABLE: u8 = 0x00;
 pub(crate) const NOP: u8 = 0x01;
 pub(crate) const BLOCK: u8 = 0x02;

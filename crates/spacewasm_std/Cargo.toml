@@ -13,3 +13,6 @@ spacewasm_util = { path = "../spacewasm_util" }
 [[bench]]
 name = "coremark"
 harness = false
+
+[lints]
+workspace = true

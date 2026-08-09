@@ -105,42 +105,36 @@ impl<A: Allocator, const MAX_PAGES: usize> PageAllocatorInner<A, MAX_PAGES> {
 
         // Go through each page one-by-one and try to allocate
         // If we reach a 'None' page, allocate the page and allocate this request there
-        for bucket in self.pages.iter_mut() {
-            match bucket {
-                Some(page) => {
-                    // Attempt to allocate to this page
-                    match page.alloc(layout) {
-                        None => {
-                            // Allocation failed, fallthrough to the next page
-                        }
-                        Some(ptr) => {
-                            return Ok(ptr);
-                        }
+        for bucket in &mut self.pages {
+            if let Some(page) = bucket {
+                // Attempt to allocate to this page
+                match page.alloc(layout) {
+                    None => {
+                        // Allocation failed, fallthrough to the next page
+                    }
+                    Some(ptr) => {
+                        return Ok(ptr);
                     }
                 }
-                None => {
-                    // We have reached an empty page
-                    // Allocate the page and place the allocation here
-                    let page_layout = Layout::from_size_align(self.page_size, ALIGNMENT).unwrap();
-                    let addr = unsafe { self.page_allocator.alloc(page_layout)? };
+            } else {
+                // We have reached an empty page
+                // Allocate the page and place the allocation here
+                let page_layout = Layout::from_size_align(self.page_size, ALIGNMENT).unwrap();
+                let addr = unsafe { self.page_allocator.alloc(page_layout)? };
 
-                    // Attempt to allocate this memory into the page
-                    let mut page = Page::new(addr, self.page_size);
-                    let ptr = match page.alloc(layout) {
-                        None => {
-                            // Allocation failed on a new page
-                            // Drop the page and error
-                            // FIXME(tumbar) This means that the page size is too small! What do we do?
-                            unsafe { self.page_allocator.dealloc(addr, page_layout) }
-                            return Err(AllocError::PageTooSmall);
-                        }
-                        Some(ptr) => ptr,
-                    };
+                // Attempt to allocate this memory into the page
+                let mut page = Page::new(addr, self.page_size);
+                let Some(ptr) = page.alloc(layout) else {
+                    // Allocation failed on a new page
+                    // Drop the page and error
+                    // FIXME(tumbar) This means that the page size is too small! What do we do?
+                    unsafe { self.page_allocator.dealloc(addr, page_layout) }
+                    return Err(AllocError::PageTooSmall);
+                };
 
-                    // Place the new page in the bucket
-                    bucket.replace(page);
-                    return Ok(ptr);
-                }
+                // Place the new page in the bucket
+                bucket.replace(page);
+                return Ok(ptr);
             }
         }
 
@@ -149,7 +143,7 @@ impl<A: Allocator, const MAX_PAGES: usize> PageAllocatorInner<A, MAX_PAGES> {
     }
 
     unsafe fn dealloc(&mut self, ptr: *mut u8, layout: Layout) {
-        for bucket in self.pages.iter_mut() {
+        for bucket in &mut self.pages {
             if let Some(page) = bucket {
                 match page.dealloc(ptr, layout) {
                     None => {

@@ -45,7 +45,7 @@ fn main() {
                 let f = state.memory.load(*addr as usize, *len as usize).unwrap();
                 let s: &str = core::str::from_utf8(f).unwrap();
 
-                eprintln!("PANIC {}:{}", s, line_no);
+                eprintln!("PANIC {s}:{line_no}");
                 ControlFlow::Break(HostFunctionBreak::Trap)
             }),
             HostFunction::new("rsleep", "I".into(), "".into(), |_, a| {
@@ -119,7 +119,7 @@ fn main() {
             "I".into(),
             move |_, _| {
                 let elapse = start.elapsed();
-                let ms = elapse.as_secs() * 1000 + (elapse.subsec_nanos() as u64 / 1_000_000);
+                let ms = elapse.as_secs() * 1000 + (u64::from(elapse.subsec_nanos()) / 1_000_000);
 
                 ControlFlow::Continue(Some(Value::I64(ms as i64)))
             },
@@ -137,7 +137,7 @@ fn main() {
 
     let file = std::fs::File::open(path).expect("failed to open file");
     let mut file_stream = FileStream::new(file);
-    let (module, stats) =
+    let (module, statistics) =
         spacewasm::Module::new_with_statistics::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
             "main",
             &mut file_stream,
@@ -170,7 +170,7 @@ fn main() {
     let module = state.store.modules().last().unwrap();
 
     let mut total: usize = 0;
-    for (i, section) in stats.iter().enumerate() {
+    for (i, section) in statistics.iter().enumerate() {
         let section_kind = SectionKind::convert(i as u8).unwrap();
         eprintln!("{:?}: {} bytes", section_kind, section.total_bytes);
         total += section.total_bytes as usize;
@@ -178,7 +178,7 @@ fn main() {
 
     let wasm_size = file_stream.len();
 
-    eprintln!("Total: {}", total);
+    eprintln!("Total: {total}");
     eprintln!(
         "Compilation Ratio: {:.2}x",
         (total as f64) / (wasm_size as f64)
@@ -209,9 +209,7 @@ fn main() {
             ExportDesc::Func(fi) => {
                 eprintln!("Function: {} {:?}", i.name, fi);
             }
-            ExportDesc::Table(_) => {}
-            ExportDesc::Mem(_) => {}
-            ExportDesc::Global(_) => {}
+            ExportDesc::Table(_) | ExportDesc::Mem(_) | ExportDesc::Global(_) => {}
         }
     }
     eprintln!("====");
@@ -248,15 +246,15 @@ fn main() {
 
     let mut result = InterpreterResult::OutOfFuel;
     while result == InterpreterResult::OutOfFuel {
-        result = spacewasm::Interpreter.run(text, &mut state, usize::MAX)
+        result = spacewasm::Interpreter.run(text, &mut state, usize::MAX);
     }
 
     let InterpreterResult::Finished = result else {
-        panic!("interpreter failed: {:?}", result)
+        panic!("interpreter failed: {result:?}")
     };
 
     eprintln!(
         "Interpreter result: {:?}",
         state.result.map(|v| v.to_value(ValType::F32))
-    )
+    );
 }

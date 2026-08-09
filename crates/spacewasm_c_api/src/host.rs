@@ -25,7 +25,7 @@ impl SpacewasmCaller {
         if ptr.is_null() {
             None
         } else {
-            Some(unsafe { &*(ptr as *const Engine) })
+            Some(unsafe { &*ptr.cast::<Engine>() })
         }
     }
 }
@@ -107,7 +107,7 @@ impl CHostFunction {
 
         // Expose the borrowed state as an opaque caller pointer. The callback
         // may only use it for the duration of this call.
-        let caller = state as *const Engine as *mut SpacewasmCaller;
+        let caller = core::ptr::from_ref::<Engine>(state) as *mut SpacewasmCaller;
 
         // SAFETY: `f` is a valid C function pointer supplied at registration.
         let outcome = unsafe {
@@ -116,7 +116,7 @@ impl CHostFunction {
                 self.userdata,
                 params.as_ptr(),
                 args.len(),
-                &mut out_result,
+                &raw mut out_result,
             )
         };
 
@@ -167,6 +167,7 @@ pub unsafe fn mem_read(
 ///
 /// # Safety
 /// `caller` must be a live caller handle; `src` must be valid for `len` bytes.
+#[must_use]
 pub unsafe fn mem_write(
     caller: *const SpacewasmCaller,
     addr: u32,

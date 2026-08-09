@@ -37,7 +37,7 @@ use crate::MemoryStatistics;
 unsafe extern "C" {
     /// Allocate a pointer on the heap (or wherever) given a size and alignment.
     /// If allocation could not succeed, write the error code corresponding
-    /// to [AllocError] into `err` and return NULL.
+    /// to [`AllocError`] into `err` and return NULL.
     fn __spacewasm_alloc(size: usize, align: usize, err: *mut u32) -> *mut u8;
 
     /// Deallocate a pointer given it's size and alignment
@@ -86,7 +86,7 @@ macro_rules! global_allocator {
     };
 }
 
-/// Our allocator trait. This is very similar to [core::alloc::GlobalAlloc].
+/// Our allocator trait. This is very similar to [`core::alloc::GlobalAlloc`].
 /// We are not using that trait since it doesn't return Result<...> it just panics
 /// if an allocation fails. An adaptor is automatically implemented
 ///
@@ -95,7 +95,7 @@ macro_rules! global_allocator {
 /// layout must have non-zero size. Attempting to allocate for a zero-sized layout will
 /// result in undefined behavior.
 ///
-/// The implementation must guarentee Ok() results are valid pointers against the requested layout.
+/// The implementation must guarentee `Ok()` results are valid pointers against the requested layout.
 pub unsafe trait Allocator {
     /// # Safety
     /// The caller must ensure that the layout has non-zero size.
@@ -142,14 +142,14 @@ impl<'a, const N: usize> StaticAllocator<'a, N> {
     }
 }
 
-unsafe impl<'a, const N: usize> Allocator for StaticAllocator<'a, N> {
+unsafe impl<const N: usize> Allocator for StaticAllocator<'_, N> {
     unsafe fn alloc(&self, layout: Layout) -> Result<*mut u8, AllocError> {
         assert_eq!(layout.size(), N);
         Ok(self.data)
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, _: Layout) {
-        assert_eq!(ptr, self.data)
+        assert_eq!(ptr, self.data);
     }
 
     fn memory_statistics(&self) -> MemoryStatistics {
@@ -165,7 +165,7 @@ pub struct GlobalAllocator;
 unsafe impl Allocator for GlobalAllocator {
     unsafe fn alloc(&self, layout: Layout) -> Result<*mut u8, AllocError> {
         let mut err: u32 = 0;
-        let ptr = unsafe { __spacewasm_alloc(layout.size(), layout.align(), &mut err) };
+        let ptr = unsafe { __spacewasm_alloc(layout.size(), layout.align(), &raw mut err) };
 
         if ptr.is_null() {
             Err(err.into())
@@ -273,7 +273,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
+    #[should_panic(expected = "assertion `left == right` failed")]
     fn test_static_allocator_alloc_wrong_size_panics() {
         let mut backing = [0u8; 4];
         let alloc = StaticAllocator::<4>::new(&mut backing);
@@ -283,13 +283,13 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
+    #[should_panic(expected = "assertion `left == right` failed")]
     fn test_static_allocator_dealloc_wrong_ptr_panics() {
         let mut backing = [0u8; 4];
         let alloc = StaticAllocator::<4>::new(&mut backing);
         let layout = Layout::from_size_align(4, 1).unwrap();
         let mut other = 0u8;
-        unsafe { alloc.dealloc(&mut other as *mut u8, layout) };
+        unsafe { alloc.dealloc(&raw mut other, layout) };
     }
 
     #[test]

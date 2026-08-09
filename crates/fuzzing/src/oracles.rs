@@ -13,7 +13,7 @@
 //! When an oracle finds a bug, it should report it to the fuzzing engine by
 //! panicking.
 
-use spacewasm::*;
+use spacewasm::{WasmStream, InnerVec, Allocator, AllocError, MemoryStatistics, WasmMemoryAllocator, Store, Vec, CodeBuilder, CompilerOptions, Module, Engine, Rc, StartInvocation, InterpreterResult, InterpreterRunner, Interpreter, TrapReason, WasmRef, Value, ExportDesc, Ref, ModuleRef, ValType};
 use std::alloc::Layout;
 use std::cell::RefCell;
 use std::ptr::NonNull;
@@ -212,7 +212,7 @@ pub fn validate(wasm: &[u8]) {
 
 /// Oracle: Execute module that should not trap.
 ///
-/// This tests modules generated with disallow_traps configuration.
+/// This tests modules generated with `disallow_traps` configuration.
 /// Such modules should never trap during execution - if they do, it's a bug
 /// in either the generator or the interpreter.
 ///
@@ -337,7 +337,7 @@ pub fn no_traps(wasm: &[u8]) {
                             index,
                         },
                         Ref::Extern { module, index } => WasmRef { module, index },
-                        _ => return None,
+                        Ref::Host { .. } => return None,
                     };
 
                     // Generate default parameters based on the function signature

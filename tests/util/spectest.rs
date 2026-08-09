@@ -5,13 +5,13 @@
 /// you may not use this file except in compliance with the License.
 /// You may obtain a copy of the License at
 ///
-/// http://www.apache.org/licenses/LICENSE-2.0
+/// <http://www.apache.org/licenses/LICENSE-2.0>
 ///
 /// ---
-/// Portions of this file are derived from https://github.com/DLR-FT/wasm-interpreter:
+/// Portions of this file are derived from <https://github.com/DLR-FT/wasm-interpreter>:
 /// Copyright © 2024-2026 Deutsches Zentrum für Luft- und Raumfahrt e.V.
 /// (DLR).
-/// Copyright © 2024-2025 OxidOS Automotive SRL.
+/// Copyright © 2024-2025 `OxidOS` Automotive SRL.
 use super::inspector::{Inspector, LimitedVec};
 use core::panic;
 use serde::{Deserialize, Serialize};
@@ -387,7 +387,7 @@ impl TestContext {
         let mut cloned = new_engine(self.host_modules);
 
         // Clone all modules into the new store
-        for module in self.engine.store.modules().iter() {
+        for module in self.engine.store.modules() {
             let cloned_module = clone_module(module);
             cloned.store.push_module(cloned_module);
         }
@@ -441,20 +441,12 @@ fn assert_nan_f32(z: f32, arithmetic: bool) {
     if arithmetic {
         assert!(
             (exponent == 0xFF) && ((payload & 0x40_0000) != 0),
-            "Expected arithmetic NaN f32 {} ({:x}) (exponent={}), (payload={:x})",
-            z,
-            bits,
-            exponent,
-            payload
-        )
+            "Expected arithmetic NaN f32 {z} ({bits:x}) (exponent={exponent}), (payload={payload:x})"
+        );
     } else {
         assert!(
             (exponent == 0xFF) && (payload == 0x400000),
-            "Expected canonical NaN f32 {} ({:x}) (exponent={}), (payload={:x})",
-            z,
-            bits,
-            exponent,
-            payload
+            "Expected canonical NaN f32 {z} ({bits:x}) (exponent={exponent}), (payload={payload:x})"
         );
     }
 }
@@ -468,20 +460,12 @@ fn assert_nan_f64(z: f64, arithmetic: bool) {
     if arithmetic {
         assert!(
             (exponent == 0x7FF) && ((payload & 0x8_0000_0000_0000) != 0),
-            "Expected arithmetic NaN f64 {} ({:x}) (exponent={}), (payload={:x})",
-            z,
-            bits,
-            exponent,
-            payload
-        )
+            "Expected arithmetic NaN f64 {z} ({bits:x}) (exponent={exponent}), (payload={payload:x})"
+        );
     } else {
         assert!(
             (exponent == 0x7FF) && (payload == 0x8_0000_0000_0000),
-            "Expected canonical NaN f32 {} ({:08x}) (exponent={}), (payload={:08x})",
-            z,
-            bits,
-            exponent,
-            payload
+            "Expected canonical NaN f32 {z} ({bits:08x}) (exponent={exponent}), (payload={payload:08x})"
         );
     }
 }
@@ -528,7 +512,7 @@ fn compare_values(actual: Value, expected: &ValueSpec) {
                         a.to_bits()
                     );
                 }
-            };
+            }
         }
         "f64" => {
             let Value::F64(a) = actual else {
@@ -551,7 +535,7 @@ fn compare_values(actual: Value, expected: &ValueSpec) {
                         a.to_bits()
                     );
                 }
-            };
+            }
         }
         _ => panic!("Unsupported expected value type: {}", expected.ty),
     }
@@ -596,7 +580,7 @@ fn clone_memory(memory: &Memory) -> spacewasm::Rc<Memory> {
     if current_size > initial_size {
         let grow_by = current_size - initial_size;
         if let Err(e) = new_memory.grow(grow_by) {
-            panic!("Failed to grow cloned memory: {:?}", e);
+            panic!("Failed to grow cloned memory: {e:?}");
         }
     }
 
@@ -649,7 +633,7 @@ fn clone_module(module: &Module) -> Module {
 
 fn load_module(
     ctx: &mut TestContext,
-    module_name: Option<String>,
+    module_name: Option<&str>,
     wasm_bytes: &[u8],
 ) -> Result<(), ModuleLoadError> {
     // Remove the last module if it has an empty name (unreferenceable)
@@ -673,7 +657,7 @@ fn load_module(
         let _loading = enter_loading();
 
         let module = Module::new::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
-            module_name.as_ref().map(|f| f.as_ref()).unwrap_or(""),
+            module_name.unwrap_or(""),
             &mut stream,
             &mut ctx.engine.store,
             &mut ctx.code_builder,
@@ -706,10 +690,10 @@ fn load_module(
 
 fn invoke_function(
     ctx: &mut TestContext,
-    module_name: &Option<String>,
+    module_name: Option<&str>,
     func_name: &str,
     args: &[ValueSpec],
-    test_log: Rc<RefCell<LimitedVec<String>>>,
+    test_log: &Rc<RefCell<LimitedVec<String>>>,
 ) -> Result<Option<Value>, InterpreterResult> {
     // Check if the engine is paused from a previous invocation
     if ctx.engine.host_pause_result.is_some() {
@@ -723,7 +707,7 @@ fn invoke_function(
 fn invoke_function_resume(
     ctx: &mut TestContext,
     args: &[ValueSpec],
-    test_log: Rc<RefCell<LimitedVec<String>>>,
+    test_log: &Rc<RefCell<LimitedVec<String>>>,
 ) -> Result<Option<Value>, InterpreterResult> {
     // Engine is paused, resume with the provided arguments
     let resume_value = if args.is_empty() {
@@ -736,7 +720,7 @@ fn invoke_function_resume(
 
     test_log
         .borrow_mut()
-        .push(format!("resume {:?}", resume_value));
+        .push(format!("resume {resume_value:?}"));
 
     // Continue execution from the paused state
     let test_runner: Inspector<'_, _, _, _> = Inspector {
@@ -775,10 +759,10 @@ fn invoke_function_resume(
 
 fn invoke_function_normal(
     ctx: &mut TestContext,
-    module_name: &Option<String>,
+    module_name: Option<&str>,
     func_name: &str,
     args: &[ValueSpec],
-    test_log: Rc<RefCell<LimitedVec<String>>>,
+    test_log: &Rc<RefCell<LimitedVec<String>>>,
 ) -> Result<Option<Value>, InterpreterResult> {
     // Resolve module index by name lookup
     let module_index = if let Some(name) = module_name {
@@ -806,13 +790,13 @@ fn invoke_function_normal(
 
         let func_idx = match &export.desc {
             ExportDesc::Func(idx) => *idx,
-            _ => panic!("{} is not a function export", func_name),
+            _ => panic!("{func_name} is not a function export"),
         };
 
         // Get the function reference
         let func_ref = module
             .get_func_ref(func_idx)
-            .unwrap_or_else(|| panic!("Function {} not found in exports", func_name));
+            .unwrap_or_else(|| panic!("Function {func_name} not found in exports"));
 
         let func_ref = match func_ref {
             Ref::Module(index) => WasmRef {
@@ -820,9 +804,8 @@ fn invoke_function_normal(
                 index,
             },
             Ref::Extern { module, index } => WasmRef { module, index },
-            _ => panic!(
-                "Function {} is not a function export: {:?}",
-                func_name, func_ref
+            Ref::Host { .. } => panic!(
+                "Function {func_name} is not a function export: {func_ref:?}"
             ),
         };
 
@@ -846,7 +829,7 @@ fn invoke_function_normal(
     test_runner
         .out
         .borrow_mut()
-        .push(format!("invoke {}({:?})", func_name, params));
+        .push(format!("invoke {func_name}({params:?})"));
 
     // Run until completion - up to 10-million instructions to catch infinite loops
     let result = {
@@ -872,10 +855,13 @@ fn invoke_function_normal(
             ctx.paused_return_types = Some(return_types);
             Err(InterpreterResult::Pause)
         }
-        err => Err(err),
+        err @ InterpreterResult::Trap(_) => Err(err),
     }
 }
 
+// Readable one-case-per-line validation table; identical empty bodies are
+// intentional and merging them would hurt clarity.
+#[allow(clippy::match_same_arms)]
 fn check_trap_reason(reason: TrapReason, text: &str) {
     /*
     RuntimeError::Trap(TrapError::DivideBy0) => Ok("integer divide by zero"),
@@ -919,8 +905,11 @@ fn check_trap_reason(reason: TrapReason, text: &str) {
     }
 }
 
-fn check_decode_error(err: ParseError, text: String) {
-    match (err.err.err, text.as_str()) {
+// Readable one-case-per-line validation table; identical empty bodies are
+// intentional and merging them would hurt clarity.
+#[allow(clippy::match_same_arms)]
+fn check_decode_error(err: ParseError, text: &str) {
+    match (err.err.err, text) {
         (
             ValidationError::MalformedInteger,
             "integer too large" | "integer representation too long",
@@ -1025,6 +1014,9 @@ fn check_decode_error(err: ParseError, text: String) {
     }
 }
 
+// Readable one-case-per-line validation table; identical empty bodies are
+// intentional and merging them would hurt clarity.
+#[allow(clippy::match_same_arms)]
 fn check_initialization_error(result: InterpreterResult, text: &str) {
     match (result, text) {
         (InterpreterResult::Trap(TrapReason::Unreachable), "unreachable") => {}
@@ -1045,7 +1037,7 @@ impl TempDir {
         static COUNTER: AtomicU64 = AtomicU64::new(0);
         let pid = std::process::id();
         let count = COUNTER.fetch_add(1, Ordering::SeqCst);
-        let dir_name = format!("spacewasm-test-{}-{}", pid, count);
+        let dir_name = format!("spacewasm-test-{pid}-{count}");
         let path = std::env::temp_dir().join(dir_name);
         std::fs::create_dir(&path)?;
         Ok(TempDir { path })
@@ -1162,14 +1154,14 @@ fn run_wast_command(
     command: Command,
     test_dir: &Path,
     ctx: &mut TestContext,
-    log: Rc<RefCell<LimitedVec<String>>>,
+    log: &Rc<RefCell<LimitedVec<String>>>,
 ) {
     match command {
         Command::Module { name, filename, .. } => {
             let wasm_path = test_dir.join(&filename);
             let wasm_bytes =
                 std::fs::read(&wasm_path).unwrap_or_else(|e| panic!("Failed to read module: {e}"));
-            load_module(ctx, name.clone(), &wasm_bytes).unwrap();
+            load_module(ctx, name.as_deref(), &wasm_bytes).unwrap();
 
             // Register the instance name if provided
             if let Some(instance_name) = name {
@@ -1185,7 +1177,7 @@ fn run_wast_command(
                     module,
                     field,
                     args,
-                } => match invoke_function(ctx, &module, &field, &args, log) {
+                } => match invoke_function(ctx, module.as_deref(), &field, &args, log) {
                     Ok(val) => val,
                     Err(e) => {
                         panic!("Invoke '{field}' failed: {e:?}")
@@ -1218,7 +1210,7 @@ fn run_wast_command(
                     .unwrap_or_else(|e| panic!("Failed to read module: {e}"));
 
                 match load_module(ctx, None, &wasm_bytes) {
-                    Ok(_) => {
+                    Ok(()) => {
                         panic!("Expected error when linking/initializing module");
                     }
                     Err(ModuleLoadError::InitializeError(result)) => {
@@ -1235,14 +1227,12 @@ fn run_wast_command(
                 module,
                 field,
                 args,
-            } => match invoke_function(ctx, &module, &field, &args, log) {
+            } => match invoke_function(ctx, module.as_deref(), &field, &args, log) {
                 Err(InterpreterResult::Trap(reason)) => {
                     check_trap_reason(reason, &text);
                 }
                 Err(InterpreterResult::Pause) => {
-                    if text != "paused" {
-                        panic!("Interpreter paused while expecting trap '{text}'");
-                    }
+                    assert!(text == "paused", "Interpreter paused while expecting trap '{text}'");
                 }
                 Err(err) => {
                     panic!("Expected trap '{text}', got error: {err:?}")
@@ -1267,15 +1257,12 @@ fn run_wast_command(
                 let wasm_bytes = std::fs::read(&wasm_path).unwrap();
 
                 let saved_store = ctx.save_store();
-                match load_module(ctx, None, &wasm_bytes) {
-                    Err(ModuleLoadError::DecodeError(err)) => {
-                        check_decode_error(err, text);
-                        ctx.restore_store(saved_store);
-                    }
-                    _ => {
-                        ctx.restore_store(saved_store);
-                        panic!("Expected error when decoding module");
-                    }
+                if let Err(ModuleLoadError::DecodeError(err)) = load_module(ctx, None, &wasm_bytes) {
+                    check_decode_error(err, &text);
+                    ctx.restore_store(saved_store);
+                } else {
+                    ctx.restore_store(saved_store);
+                    panic!("Expected error when decoding module");
                 }
             }
         }
@@ -1299,7 +1286,7 @@ fn run_wast_command(
                 let saved_store = ctx.save_store();
                 match load_module(ctx, None, &wasm_bytes) {
                     Err(ModuleLoadError::DecodeError(err)) => {
-                        check_decode_error(err, text);
+                        check_decode_error(err, &text);
                         ctx.restore_store(saved_store);
                     }
                     Err(ModuleLoadError::AllocationError(err)) => {
@@ -1318,7 +1305,7 @@ fn run_wast_command(
                 module,
                 field,
                 args,
-            } => match invoke_function(ctx, &module, &field, &args, log) {
+            } => match invoke_function(ctx, module.as_deref(), &field, &args, log) {
                 Err(InterpreterResult::Trap(reason)) => check_trap_reason(reason, &text),
                 Err(err) => {
                     panic!("Expected exhaustion '{text}', got error: {err:?}")
@@ -1356,7 +1343,7 @@ fn run_wast_command(
                 field,
                 args,
             } => {
-                invoke_function(ctx, &module, &field, &args, log).unwrap();
+                invoke_function(ctx, module.as_deref(), &field, &args, log).unwrap();
             }
             Action::Get { .. } => {
                 panic!("Get actions not implemented yet")
@@ -1366,13 +1353,13 @@ fn run_wast_command(
 }
 
 fn run_wast_test_file_inner(
-    test_dir: PathBuf,
+    test_dir: &Path,
     test_name: &str,
     host_modules: HostModuleFactory,
-    wast_line: Arc<Mutex<Option<u32>>>,
-    subtest_log: SubtestLogType,
+    wast_line: &Arc<Mutex<Option<u32>>>,
+    subtest_log: &SubtestLogType,
 ) {
-    let json_path = test_dir.join(format!("{}.json", test_name));
+    let json_path = test_dir.join(format!("{test_name}.json"));
 
     let json_content = std::fs::read_to_string(&json_path)
         .unwrap_or_else(|e| panic!("Failed to read JSON file: {}: {e}", json_path.display()));
@@ -1398,7 +1385,7 @@ fn run_wast_test_file_inner(
             | Command::AssertUnlinkable { line, .. } => Some(*line),
         };
 
-        run_wast_command(command, &test_dir, &mut ctx, test_log);
+        run_wast_command(command, test_dir, &mut ctx, &test_log);
 
         *subtest_log.lock().unwrap() = None;
         *wast_line.lock().unwrap() = None;
@@ -1413,7 +1400,7 @@ pub fn run_wast_test_file(test_name: &str, host_modules: HostModuleFactory) {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let source_wast_path = PathBuf::from(manifest_dir)
         .join("tests")
-        .join(format!("{}.wast", test_name));
+        .join(format!("{test_name}.wast"));
 
     // Create a temporary directory for generated files
     let temp_dir =
@@ -1432,14 +1419,14 @@ pub fn run_wast_test_file(test_name: &str, host_modules: HostModuleFactory) {
         .arg(&source_wast_path)
         .arg("--enable-custom-page-sizes")
         .arg("-o")
-        .arg(temp_path.join(format!("{}.json", test_filename)))
+        .arg(temp_path.join(format!("{test_filename}.json")))
         .current_dir(temp_path)
         .output()
         .unwrap_or_else(|e| panic!("Failed to run wast2json: {e}"));
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        panic!("wast2json failed: {}", stderr);
+        panic!("wast2json failed: {stderr}");
     }
 
     let wast_line = Arc::new(Mutex::new(None));
@@ -1448,23 +1435,23 @@ pub fn run_wast_test_file(test_name: &str, host_modules: HostModuleFactory) {
 
     match catch_unwind(|| {
         run_wast_test_file_inner(
-            temp_path.to_path_buf(),
+            temp_path,
             &test_filename,
             host_modules,
-            wast_line.clone(),
-            subtest_log.clone(),
-        )
+            &wast_line,
+            &subtest_log,
+        );
     }) {
-        Ok(_) => {}
+        Ok(()) => {}
         Err(err) => {
             if let Some(log) = &*subtest_log.lock().unwrap() {
                 let log_lines: Vec<String> = log.borrow().clone().into();
                 if !log_lines.is_empty() {
                     eprintln!("Subtest failed, dumping invoke log");
-                    for line in log_lines.iter() {
-                        eprintln!("{}", line);
+                    for line in &log_lines {
+                        eprintln!("{line}");
                     }
-                    eprintln!("========")
+                    eprintln!("========");
                 }
             }
 

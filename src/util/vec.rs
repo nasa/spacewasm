@@ -141,7 +141,7 @@ impl<T: Sized, A: Allocator> Vec<T, A> {
 
         Ok(Vec {
             inner: InnerVec {
-                ptr: ptr as *mut T,
+                ptr: ptr.cast::<T>(),
                 capacity,
                 len: 0,
             },
@@ -151,6 +151,7 @@ impl<T: Sized, A: Allocator> Vec<T, A> {
 }
 
 impl<T: Sized> Vec<T, GlobalAllocator> {
+    #[must_use]
     pub fn zero() -> Vec<T> {
         Vec {
             inner: InnerVec {
@@ -194,7 +195,7 @@ impl<T: Sized, A: Allocator> Vec<T, A> {
     ///
     /// Takes *O*(1) time.
     pub fn push(&mut self, value: T) {
-        self.inner.push(value)
+        self.inner.push(value);
     }
 
     pub fn try_push(&mut self, value: T) -> Result<(), AllocError> {
@@ -232,6 +233,7 @@ impl<T: Sized, A: Allocator> Vec<T, A> {
 
     /// # Safety
     /// The caller must ensure that all elements up to capacity have been initialized.
+    #[must_use]
     pub unsafe fn assume_init(mut self) -> Self {
         self.inner.len = self.inner.capacity;
         self
@@ -243,7 +245,7 @@ impl<T: Sized, A: Allocator> Vec<T, A> {
         unsafe {
             let ptr = self.inner.ptr;
             let cap = self.inner.capacity;
-            let alloc = core::ptr::read(&self.alloc);
+            let alloc = core::ptr::read(&raw const self.alloc);
 
             core::mem::forget(self);
 
@@ -273,7 +275,7 @@ impl<T: Sized, A: Allocator> Drop for Vec<T, A> {
             while self.pop().is_some() {}
             unsafe {
                 self.alloc.dealloc(
-                    self.inner.ptr as *mut u8,
+                    self.inner.ptr.cast::<u8>(),
                     Layout::array::<T>(self.inner.capacity as usize).unwrap(),
                 );
             }
@@ -340,7 +342,7 @@ impl<T, A: Allocator> Iterator for IntoIter<T, A> {
         } else {
             unsafe {
                 let result = core::ptr::read(self.start);
-                self.start = self.start.offset(1);
+                self.start = self.start.add(1);
                 Some(result)
             }
         }
@@ -358,7 +360,7 @@ impl<T, A: Allocator> DoubleEndedIterator for IntoIter<T, A> {
             None
         } else {
             unsafe {
-                self.end = self.end.offset(-1);
+                self.end = self.end.sub(1);
                 Some(core::ptr::read(self.end))
             }
         }
@@ -372,7 +374,7 @@ impl<T, A: Allocator> Drop for IntoIter<T, A> {
             for _ in &mut *self {}
             let layout = Layout::array::<T>(self.cap).unwrap();
             unsafe {
-                self.alloc.dealloc(self.buf as *mut u8, layout);
+                self.alloc.dealloc(self.buf.cast::<u8>(), layout);
             }
         }
     }
@@ -445,7 +447,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
+    #[should_panic(expected = "attempting to push beyond Vec capacity")]
     fn test_push_exceeds_capacity() {
         let mut vec = Vec::new(2).unwrap();
         vec.push(1);
@@ -618,7 +620,7 @@ mod tests {
     #[test]
     fn test_debug() {
         let vec = Vec::from_array([1, 2, 3]).unwrap();
-        let s = std::format!("{:?}", vec);
+        let s = std::format!("{vec:?}");
         assert_eq!(s, "[1, 2, 3]");
     }
 
@@ -626,7 +628,7 @@ mod tests {
     fn test_new_from() {
         let capacity = 3u32;
         let layout = Layout::array::<i32>(capacity as usize).unwrap();
-        let ptr = unsafe { GlobalAllocator.alloc(layout).unwrap() as *mut i32 };
+        let ptr = unsafe { GlobalAllocator.alloc(layout).unwrap().cast::<i32>() };
 
         let mut vec = Vec::new_from(ptr, capacity);
         assert_eq!(vec.capacity(), 3);
@@ -644,7 +646,7 @@ mod tests {
 
         let capacity = 2u32;
         let layout = Layout::array::<i32>(capacity as usize).unwrap();
-        let ptr = unsafe { RustSystemAllocator.alloc(layout).unwrap() as *mut i32 };
+        let ptr = unsafe { RustSystemAllocator.alloc(layout).unwrap().cast::<i32>() };
 
         let mut vec = Vec::new_from_with_alloc(ptr, capacity, RustSystemAllocator);
         assert_eq!(vec.capacity(), 2);
@@ -668,7 +670,7 @@ mod tests {
     fn test_assume_init() {
         let capacity = 3u32;
         let layout = Layout::array::<i32>(capacity as usize).unwrap();
-        let ptr = unsafe { GlobalAllocator.alloc(layout).unwrap() as *mut i32 };
+        let ptr = unsafe { GlobalAllocator.alloc(layout).unwrap().cast::<i32>() };
 
         // Initialize every slot up to capacity before calling assume_init.
         unsafe {

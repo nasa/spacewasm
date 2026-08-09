@@ -58,6 +58,7 @@ impl CallbackStream {
     }
 
     /// Whether the callback reported an I/O error during reading.
+    #[must_use]
     pub fn errored(&self) -> bool {
         self.errored
     }
@@ -69,7 +70,7 @@ impl WasmStream for CallbackStream {
         let mut out_len: usize = 0;
         // SAFETY: `read` is a valid C function pointer; `out_buf`/`out_len` are
         // valid locals the callback writes.
-        let result = unsafe { (self.read)(self.userdata, &mut out_buf, &mut out_len) };
+        let result = unsafe { (self.read)(self.userdata, &raw mut out_buf, &raw mut out_len) };
 
         match result {
             spacewasm_read_result_t::SPACEWASM_READ_ERROR => {
@@ -86,7 +87,7 @@ impl WasmStream for CallbackStream {
                 // `capacity: 0` ensures the `Chunk` drop assertion holds and no
                 // deallocation of borrowed memory is attempted.
                 Ok(Some(InnerVec {
-                    ptr: out_buf as *mut u8,
+                    ptr: out_buf.cast_mut(),
                     capacity: 0,
                     len: out_len as u32,
                 }))

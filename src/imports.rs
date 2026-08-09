@@ -1,4 +1,4 @@
-use crate::*;
+use crate::{HostModuleRef, ModuleRef, Store, FuncType, ValidationError, ValType, ExportDesc, Ref, GlobalType, TableType, TableKind, ElemType, MemType, MemoryKind, Reader, Module, ImportDesc};
 
 /// A general purpose reference to a symbol in a host module
 #[derive(Debug, Clone, Copy)]
@@ -416,10 +416,10 @@ impl Import {
         module: &Module,
         store: &Store,
     ) -> Result<Import, ValidationError> {
-        let module_raw = wasm.read_vec_stack::<32, _>(|r| r.read_u8())?;
+        let module_raw = wasm.read_vec_stack::<32, _>(super::reader::Reader::read_u8)?;
         let module_name = (&module_raw).try_into()?;
 
-        let name_raw = wasm.read_vec_stack::<32, _>(|r| r.read_u8())?;
+        let name_raw = wasm.read_vec_stack::<32, _>(super::reader::Reader::read_u8)?;
         let name = (&name_raw).try_into()?;
 
         let desc = ImportDesc::read(wasm)?;

@@ -122,13 +122,13 @@ fn main() {
     eprintln!("Starting execution...");
     let mut result = InterpreterResult::OutOfFuel;
     while result == InterpreterResult::OutOfFuel {
-        result = spacewasm::Interpreter.run(text, &mut state, usize::MAX)
+        result = spacewasm::Interpreter.run(text, &mut state, usize::MAX);
     }
     let elapsed = bench_start.elapsed();
 
-    eprintln!("Execution completed with result: {:?}", result);
+    eprintln!("Execution completed with result: {result:?}");
     let total_calls = CLOCK_CALL_COUNT.load(Ordering::Relaxed);
-    eprintln!("Total clock_ms calls: {}", total_calls);
+    eprintln!("Total clock_ms calls: {total_calls}");
     eprintln!(
         "Final PC: {:?}, SP: {}, FP: {}",
         state.pc, state.sp, state.fp
@@ -138,40 +138,36 @@ fn main() {
     // According to https://github.com/wasm3/wasm-coremark:
     // "Call f32 run() function. It should take 12..20 seconds to execute and return a CoreMark result."
     // "if res > 1: print(f'Result: {res:.3f}') else: print('Error')"
-    match result {
-        InterpreterResult::Finished => {
-            // The run function returns f32, so interpret the bits as float
-            let coremark_score = state.result.unwrap_or(RawValue::from_32(0)).read_f32();
+    if result == InterpreterResult::Finished {
+        // The run function returns f32, so interpret the bits as float
+        let coremark_score = state.result.unwrap_or(RawValue::from_32(0)).read_f32();
 
-            println!("Execution time: {:.3}s", elapsed.as_secs_f64());
-            println!("Return value: {:.3}", coremark_score);
-            println!();
+        println!("Execution time: {:.3}s", elapsed.as_secs_f64());
+        println!("Return value: {coremark_score:.3}");
+        println!();
 
-            if coremark_score > 1.0 {
-                println!("=== CoreMark Results ===");
-                println!("CoreMark Score: {:.3}", coremark_score);
-                println!("CoreMark/MHz: {:.3}", coremark_score);
-                println!(
-                    "Iterations/sec: {:.2}",
-                    coremark_score as f64 / elapsed.as_secs_f64()
-                );
-                println!("========================");
-            } else {
-                println!(
-                    "Error: CoreMark returned {:.3} (expected > 1.0)",
-                    coremark_score
-                );
-                println!("This typically means:");
-                println!("  - The benchmark didn't run for at least 10 seconds");
-                println!("  - The clock_ms function is not working correctly");
-                println!("  - There was an error during execution");
-                std::process::exit(1);
-            }
-        }
-        _ => {
-            eprintln!("Error: Unexpected interpreter result: {:?}", result);
+        if coremark_score > 1.0 {
+            println!("=== CoreMark Results ===");
+            println!("CoreMark Score: {coremark_score:.3}");
+            println!("CoreMark/MHz: {coremark_score:.3}");
+            println!(
+                "Iterations/sec: {:.2}",
+                f64::from(coremark_score) / elapsed.as_secs_f64()
+            );
+            println!("========================");
+        } else {
+            println!(
+                "Error: CoreMark returned {coremark_score:.3} (expected > 1.0)"
+            );
+            println!("This typically means:");
+            println!("  - The benchmark didn't run for at least 10 seconds");
+            println!("  - The clock_ms function is not working correctly");
+            println!("  - There was an error during execution");
             std::process::exit(1);
         }
+    } else {
+        eprintln!("Error: Unexpected interpreter result: {result:?}");
+        std::process::exit(1);
     }
 
     println!("\n");

@@ -30,8 +30,8 @@ pub struct Debugger<'a, ST: OutputStream, S, E, T: BaseVisitor<State = S, Error 
     pub out: ST,
 }
 
-impl<'a, ST: OutputStream, S, E, T: BaseVisitor<State = S, Error = E>> BaseVisitor
-    for Debugger<'a, ST, S, E, T>
+impl<ST: OutputStream, S, E, T: BaseVisitor<State = S, Error = E>> BaseVisitor
+    for Debugger<'_, ST, S, E, T>
 {
     type Error = E;
     type State = S;
@@ -217,8 +217,8 @@ impl<'a, ST: OutputStream, S, E, T: BaseVisitor<State = S, Error = E>> BaseVisit
     visit_fn!(f64_promote_f32);
 }
 
-impl<'a, ST: OutputStream, S, E, T: BaseVisitor<State = S, Error = E> + WasmVisitor> WasmVisitor
-    for Debugger<'a, ST, S, E, T>
+impl<ST: OutputStream, S, E, T: BaseVisitor<State = S, Error = E> + WasmVisitor> WasmVisitor
+    for Debugger<'_, ST, S, E, T>
 {
     // Parametric instructions
     visit_fn!(drop);
@@ -254,8 +254,8 @@ impl<'a, ST: OutputStream, S, E, T: BaseVisitor<State = S, Error = E> + WasmVisi
     visit_fn!(f64_reinterpret_i64);
 }
 
-impl<'a, ST: OutputStream, S, E, T: BaseVisitor<State = S, Error = E> + IrVisitor> IrVisitor
-    for Debugger<'a, ST, S, E, T>
+impl<ST: OutputStream, S, E, T: BaseVisitor<State = S, Error = E> + IrVisitor> IrVisitor
+    for Debugger<'_, ST, S, E, T>
 {
     // Parametric instructions
     visit_fn!(drop, ty: ValType);
@@ -270,7 +270,7 @@ impl<'a, ST: OutputStream, S, E, T: BaseVisitor<State = S, Error = E> + IrVisito
         cases: impl FnOnce(u32) -> LabelTarget,
         state: &mut Self::State,
     ) -> Result<(), Self::Error> {
-        self.out.write(format!("br_table(n={:?})", n));
+        self.out.write(format!("br_table(n={n:?})"));
         self.v.br_table(n, cases, state)
     }
 

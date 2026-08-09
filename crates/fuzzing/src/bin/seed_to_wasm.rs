@@ -9,8 +9,8 @@
 //! produced it. Select it with `--target` (default: `no_traps`).
 //!
 //! Usage:
-//!   seed_to_wasm [--target no_traps|validate] <seed-file> [output.wasm]
-//!   seed_to_wasm [--target no_traps|validate] <seed-file> --stdout
+//!   `seed_to_wasm` [--target `no_traps|validate`] <seed-file> [output.wasm]
+//!   `seed_to_wasm` [--target `no_traps|validate`] <seed-file> --stdout
 
 use spacewasm_fuzzing::generators::{wasm_from_seed, Target};
 use std::env;

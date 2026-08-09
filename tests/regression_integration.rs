@@ -10,6 +10,7 @@ use util::{run_wast_test_file, spectest_host_module};
 use crate::util::MutableStaticGlobal;
 
 /// Extra host module used only by the regression integration tests.
+#[must_use]
 pub fn regression_host_module() -> HostModule {
     HostModule {
         name: "regression".into(),

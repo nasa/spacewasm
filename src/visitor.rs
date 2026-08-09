@@ -23,7 +23,7 @@ macro_rules! visit_fn {
 /// on decoded WebAssembly instructions.
 ///
 /// Note: This visitor does not handle the control-flow instructions since those are
-///       IR-specific. See [WasmVisitor] and [IrVisitor]
+///       IR-specific. See [`WasmVisitor`] and [`IrVisitor`]
 pub trait BaseVisitor {
     type Error;
     type State;
@@ -268,6 +268,7 @@ pub struct HostModuleRef(pub u8);
 
 impl HostModuleRef {
     /// Construct a new module reference given the absolute index to the module and the store.
+    #[must_use]
     pub fn new(module_index: usize) -> HostModuleRef {
         HostModuleRef(module_index as u8)
     }

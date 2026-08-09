@@ -21,6 +21,7 @@ pub struct CircularBuffer<T, const N: usize> {
 
 impl<T, const N: usize> CircularBuffer<T, N> {
     /// Creates a new empty circular buffer.
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             size: 0,
@@ -203,7 +204,7 @@ impl<'a, T, const N: usize> Iterator for Iter<'a, T, N> {
     }
 }
 
-impl<'a, T, const N: usize> ExactSizeIterator for Iter<'a, T, N> {}
+impl<T, const N: usize> ExactSizeIterator for Iter<'_, T, N> {}
 
 /// A mutable iterator over the elements of a `CircularBuffer`.
 pub struct IterMut<'a, T, const N: usize> {
@@ -232,7 +233,7 @@ impl<'a, T, const N: usize> Iterator for IterMut<'a, T, N> {
     }
 }
 
-impl<'a, T, const N: usize> ExactSizeIterator for IterMut<'a, T, N> {}
+impl<T, const N: usize> ExactSizeIterator for IterMut<'_, T, N> {}
 
 impl<'a, T, const N: usize> IntoIterator for &'a CircularBuffer<T, N> {
     type Item = &'a T;
@@ -467,7 +468,7 @@ mod tests {
         buffer.push(2);
         buffer.push(3);
 
-        for val in buffer.iter_mut() {
+        for val in &mut buffer {
             *val *= 10;
         }
 
@@ -540,7 +541,7 @@ mod tests {
             counter: &'a Cell<usize>,
         }
 
-        impl<'a> Drop for DropCounter<'a> {
+        impl Drop for DropCounter<'_> {
             fn drop(&mut self) {
                 self.counter.set(self.counter.get() + 1);
             }
@@ -566,7 +567,7 @@ mod tests {
             counter: &'a Cell<usize>,
         }
 
-        impl<'a> Drop for DropCounter<'a> {
+        impl Drop for DropCounter<'_> {
             fn drop(&mut self) {
                 self.counter.set(self.counter.get() + 1);
             }
@@ -632,7 +633,7 @@ mod tests {
 
     #[test]
     fn test_default() {
-        let buffer: CircularBuffer<i32, 5> = Default::default();
+        let buffer: CircularBuffer<i32, 5> = CircularBuffer::default();
         assert!(buffer.is_empty());
         assert_eq!(buffer.capacity(), 5);
     }

@@ -1,4 +1,4 @@
-use crate::*;
+use crate::{Vec, Module, HostModule, Rc, Memory, TableElement, AllocError, ModuleRef, MemoryKind, TableKind, Engine, MemoryError, JumpTarget, Stack, Ref, WasmRef, HostFunctionResult, HostFunctionBreak, TrapReason, InvokeError, HostModuleRef, Value};
 
 /// Holds ownership of all the loaded modules. As new modules are loaded,
 /// imports/exports are referenced through the store.
@@ -33,6 +33,7 @@ impl Store {
     }
 
     #[inline(always)]
+    #[must_use]
     pub fn modules(&self) -> &[Module] {
         &self.modules
     }
@@ -43,6 +44,7 @@ impl Store {
     }
 
     #[inline(always)]
+    #[must_use]
     pub fn host_modules(&self) -> &[HostModule] {
         &self.host_modules
     }
@@ -175,7 +177,7 @@ impl Engine {
 
     /// Append a module to the store without running its start function.
     /// Note: The start function still needs to be run (if there is one)
-    /// Returns the ModuleRef of the new module
+    /// Returns the `ModuleRef` of the new module
     pub fn push_module(&mut self, module: Module) -> Result<ModuleRef, AllocError> {
         self.store.modules.try_push(module)?;
         Ok(ModuleRef((self.store.modules.len() - 1) as u8))
@@ -183,12 +185,14 @@ impl Engine {
 
     /// Returns `true` if the engine is idle (not currently executing)
     #[inline(always)]
+    #[must_use]
     pub fn is_idle(&self) -> bool {
         self.pc == JumpTarget::SENTINEL
     }
 
     /// Returns `true` if the module at `module_ref` declares a start function
     /// that must be run before the module is used.
+    #[must_use]
     pub fn needs_start(&self, module_ref: ModuleRef) -> bool {
         self.store.modules()[module_ref.0 as usize].start.is_some()
     }

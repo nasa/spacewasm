@@ -37,7 +37,10 @@ const MAX_CONTROL_FRAMES: usize = 0x1_000;
 const MAX_STACK_DEPTH: usize = 0x400;
 const STACK_SIZE: usize = 0x100_000;
 
-/// Execute WASI-compatible WASM modules with SpaceWasm
+/// Execute WASI-compatible WASM modules with `SpaceWasm`
+// Field names map directly to CLI argument names via clap; renaming to satisfy
+// `struct_field_names` would change the user-facing interface.
+#[allow(clippy::struct_field_names)]
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args {
@@ -97,8 +100,8 @@ fn main() {
         };
     }
     for env in args.env {
-        if env.contains("=") {
-            let mut split = env.splitn(2, "=");
+        if env.contains('=') {
+            let mut split = env.splitn(2, '=');
             let Ok(_) =
                 wasi_ctx_builder.env(split.next().unwrap_or(""), split.next().unwrap_or(""))
             else {
@@ -106,7 +109,7 @@ fn main() {
                 std::process::exit(1);
             };
         } else {
-            let Ok(_) = wasi_ctx_builder.env(&env, &std::env::var(&env).unwrap_or("".to_owned()))
+            let Ok(_) = wasi_ctx_builder.env(&env, &std::env::var(&env).unwrap_or(String::new()))
             else {
                 eprintln!("error setting env");
                 std::process::exit(1);
@@ -115,7 +118,7 @@ fn main() {
     }
 
     if args.raw_tty.unwrap_or(false) {
-        let Ok(_) = crossterm::terminal::enable_raw_mode() else {
+        let Ok(()) = crossterm::terminal::enable_raw_mode() else {
             eprintln!("error enabling raw terminal mode");
             std::process::exit(1);
         };
@@ -124,14 +127,15 @@ fn main() {
     wasi_ctx_builder.inherit_stdio();
 
     for dir in args.dir {
-        let mut host_dir = dir.clone();
-        let mut guest_dir = dir.clone();
-
-        if dir.contains("::") {
+        let (host_dir, guest_dir) = if dir.contains("::") {
             let mut split = dir.splitn(2, "::");
-            host_dir = split.next().unwrap_or("").to_owned();
-            guest_dir = split.next().unwrap_or("").to_owned();
-        }
+            (
+                split.next().unwrap_or("").to_owned(),
+                split.next().unwrap_or("").to_owned(),
+            )
+        } else {
+            (dir.clone(), dir.clone())
+        };
 
         match Dir::open_ambient_dir(&host_dir, ambient_authority()) {
             Ok(opened_dir) => {
@@ -246,18 +250,18 @@ fn main() {
 
     let mut result = InterpreterResult::OutOfFuel;
     while result == InterpreterResult::OutOfFuel {
-        result = Interpreter.run(code_builder.pages(), &mut engine, usize::MAX)
+        result = Interpreter.run(code_builder.pages(), &mut engine, usize::MAX);
     }
 
     if args.raw_tty.unwrap_or(false) {
-        let Ok(_) = crossterm::terminal::disable_raw_mode() else {
+        let Ok(()) = crossterm::terminal::disable_raw_mode() else {
             eprintln!("error disabling raw terminal mode");
             std::process::exit(1);
         };
     }
 
     let InterpreterResult::Finished = result else {
-        eprintln!("interpreter failed: {:?}", result);
+        eprintln!("interpreter failed: {result:?}");
         std::process::exit(1);
     };
 }

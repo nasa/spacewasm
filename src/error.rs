@@ -10,6 +10,7 @@ pub struct ParseError {
 }
 
 impl ParseError {
+    #[must_use]
     pub fn new(offset: u32, err: SectionDecodeError) -> Self {
         Self { offset, err }
     }
@@ -22,6 +23,7 @@ pub struct SectionDecodeError {
 }
 
 impl SectionDecodeError {
+    #[must_use]
     pub fn new_with_section(section: SectionKind, err: ValidationError) -> SectionDecodeError {
         SectionDecodeError {
             section: Some(section),
@@ -29,6 +31,7 @@ impl SectionDecodeError {
         }
     }
 
+    #[must_use]
     pub fn new(err: ValidationError) -> SectionDecodeError {
         SectionDecodeError { section: None, err }
     }
@@ -156,6 +159,7 @@ impl From<ValidationError> for SectionDecodeError {
 }
 
 impl ValidationError {
+    #[must_use]
     pub fn with_section(self, section: SectionKind) -> SectionDecodeError {
         SectionDecodeError::new_with_section(section, self)
     }

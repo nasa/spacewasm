@@ -1,9 +1,9 @@
-use crate::*;
+use crate::{LocalVariable, Engine, WasmRef, Value, JumpTarget, ValType, ResultType, JumpOffset, LabelTarget, IrVisitor, LabelArity, Box, TextPage, IrReader, MemoryError, HostFunctionBreak, BaseVisitor, MemArg, Memory, ModuleRef, RawValue, HostModuleRef, StaticVec, MAX_HOST_FUNCTION_PARAMS, TypeIdx, TableElement};
 use core::ops::ControlFlow;
 
 impl LocalVariable {
     fn addr(&self, fp: u32) -> usize {
-        (fp as i32 + self.frame_offset as i32) as usize
+        (fp as i32 + i32::from(self.frame_offset)) as usize
     }
 }
 
@@ -237,7 +237,7 @@ impl Interpreter {
     ///
     /// Label targets use a relative offset from their location in the IR. The program
     /// counter is not in the same position as the label target offset is assuming.
-    /// For this reason there is an additional label_pc_offset needed to compute the final
+    /// For this reason there is an additional `label_pc_offset` needed to compute the final
     /// program counter to jump to.
     ///
     /// # Arguments
@@ -247,7 +247,7 @@ impl Interpreter {
     /// * `addr`: Resolved label target to jump to
     /// * `state`: Current interpreter state
     ///
-    /// returns: Result<(), InterpreterBreak>
+    /// returns: Result<(), `InterpreterBreak`>
     fn br_impl(
         &self,
         label_pc_offset: JumpOffset,
@@ -287,10 +287,10 @@ impl Interpreter {
     }
 }
 
-/// This is a meta-trait that provides an auto implementation of run() for all IrVisitors
+/// This is a meta-trait that provides an auto implementation of `run()` for all `IrVisitors`
 /// of a certain shape.
 ///
-/// For all types that implement [IrVisitor<State = Engine, Error = InstructionError>],
+/// For all types that implement [`IrVisitor`<State = Engine, Error = `InstructionError`>],
 /// this trait will be implemented to execute instructions given the state and store.
 pub trait InterpreterRunner {
     /// Run the interpreter for a fixed number of cycles or until a trap/host pause.
@@ -331,7 +331,7 @@ impl<T: IrVisitor<State = Engine, Error = InterpreterBreak>> InterpreterRunner f
             }
 
             match i_res {
-                Ok(_) => {}
+                Ok(()) => {}
                 Err(InterpreterBreak::Trap(trap_reason)) => {
                     // TODO(tumbar) How do we expose a backtrace?
                     // We trapped, we need to unwind and reset the state
@@ -447,6 +447,8 @@ macro_rules! instruction {
         }
     };
     ($name:ident, f32, f32 -> bool, $a:ident, $b:ident, $( $t:tt )*) => {
+        // Wasm float comparisons mandate exact IEEE-754 equality semantics.
+        #[allow(clippy::float_cmp)]
         fn $name(&self, state: &mut Self::State) -> Result<(), Self::Error> {
             state.sp -= 1;
             let $b = state.stack.read_f32(state.sp);
@@ -483,6 +485,8 @@ macro_rules! instruction {
         }
     };
     ($name:ident, f64, f64 -> bool, $a:ident, $b:ident, $( $t:tt )*) => {
+        // Wasm float comparisons mandate exact IEEE-754 equality semantics.
+        #[allow(clippy::float_cmp)]
         fn $name(&self, state: &mut Self::State) -> Result<(), Self::Error> {
             state.sp -= 3;
             let $b = state.stack.read_f64(state.sp + 1);
@@ -537,35 +541,35 @@ impl BaseVisitor for Interpreter {
 
     fn i32_load8_s(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
         let addr = Memory::effective_address(state.stack.read_u32(state.sp - 1), m.offset)?;
-        let val = state.memory.load_u8(addr)? as i8 as i32;
+        let val = i32::from(state.memory.load_u8(addr)? as i8);
         state.stack.write_u32(state.sp - 1, val as u32);
         Ok(())
     }
 
     fn i32_load8_u(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
         let addr = Memory::effective_address(state.stack.read_u32(state.sp - 1), m.offset)?;
-        let val = state.memory.load_u8(addr)? as u32;
+        let val = u32::from(state.memory.load_u8(addr)?);
         state.stack.write_u32(state.sp - 1, val);
         Ok(())
     }
 
     fn i32_load16_s(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
         let addr = Memory::effective_address(state.stack.read_u32(state.sp - 1), m.offset)?;
-        let val = state.memory.load_u16(addr)? as i16 as i32;
+        let val = i32::from(state.memory.load_u16(addr)? as i16);
         state.stack.write_u32(state.sp - 1, val as u32);
         Ok(())
     }
 
     fn i32_load16_u(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
         let addr = Memory::effective_address(state.stack.read_u32(state.sp - 1), m.offset)?;
-        let val = state.memory.load_u16(addr)? as u32;
+        let val = u32::from(state.memory.load_u16(addr)?);
         state.stack.write_u32(state.sp - 1, val);
         Ok(())
     }
 
     fn i64_load8_s(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
         let addr = Memory::effective_address(state.stack.read_u32(state.sp - 1), m.offset)?;
-        let val = state.memory.load_u8(addr)? as i8 as i64 as u64;
+        let val = i64::from(state.memory.load_u8(addr)? as i8) as u64;
         state.stack.write_u64(state.sp - 1, val);
         state.sp += 1;
         Ok(())
@@ -573,7 +577,7 @@ impl BaseVisitor for Interpreter {
 
     fn i64_load8_u(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
         let addr = Memory::effective_address(state.stack.read_u32(state.sp - 1), m.offset)?;
-        let val = state.memory.load_u8(addr)? as u64;
+        let val = u64::from(state.memory.load_u8(addr)?);
         state.stack.write_u64(state.sp - 1, val);
         state.sp += 1;
         Ok(())
@@ -581,7 +585,7 @@ impl BaseVisitor for Interpreter {
 
     fn i64_load16_s(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
         let addr = Memory::effective_address(state.stack.read_u32(state.sp - 1), m.offset)?;
-        let val = state.memory.load_u16(addr)? as i16 as i64 as u64;
+        let val = i64::from(state.memory.load_u16(addr)? as i16) as u64;
         state.stack.write_u64(state.sp - 1, val);
         state.sp += 1;
         Ok(())
@@ -589,7 +593,7 @@ impl BaseVisitor for Interpreter {
 
     fn i64_load16_u(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
         let addr = Memory::effective_address(state.stack.read_u32(state.sp - 1), m.offset)?;
-        let val = state.memory.load_u16(addr)? as u64;
+        let val = u64::from(state.memory.load_u16(addr)?);
         state.stack.write_u64(state.sp - 1, val);
         state.sp += 1;
         Ok(())
@@ -597,7 +601,7 @@ impl BaseVisitor for Interpreter {
 
     fn i64_load32_s(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
         let addr = Memory::effective_address(state.stack.read_u32(state.sp - 1), m.offset)?;
-        let val = state.memory.load_u32(addr)? as i32 as i64 as u64;
+        let val = i64::from(state.memory.load_u32(addr)? as i32) as u64;
         state.stack.write_u64(state.sp - 1, val);
         state.sp += 1;
         Ok(())
@@ -605,7 +609,7 @@ impl BaseVisitor for Interpreter {
 
     fn i64_load32_u(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
         let addr = Memory::effective_address(state.stack.read_u32(state.sp - 1), m.offset)?;
-        let val = state.memory.load_u32(addr)? as u64;
+        let val = u64::from(state.memory.load_u32(addr)?);
         state.stack.write_u64(state.sp - 1, val);
         state.sp += 1;
         Ok(())
@@ -809,23 +813,20 @@ impl BaseVisitor for Interpreter {
     instruction!(i32_div_u, i32, i32 -> i32, a, b, {
         if b == 0 {
             return Err(InterpreterBreak::Trap(TrapReason::DivideByZero))
-        } else {
-           ((a as u32) / (b as u32)) as i32
         }
+        ((a as u32) / (b as u32)) as i32
     });
     instruction!(i32_rem_s, i32, i32 -> i32, a, b, {
         if b == 0 {
             return Err(InterpreterBreak::Trap(TrapReason::DivideByZero))
-        } else {
-            a.wrapping_rem(b)
         }
+        a.wrapping_rem(b)
     });
     instruction!(i32_rem_u, i32, i32 -> i32, a, b, {
         if b == 0 {
             return Err(InterpreterBreak::Trap(TrapReason::DivideByZero))
-        } else {
-            (a as u32).wrapping_rem(b as u32) as i32
         }
+        (a as u32).wrapping_rem(b as u32) as i32
     });
     instruction!(i32_and, i32, i32 -> i32, a, b, a & b);
     instruction!(i32_or, i32, i32 -> i32, a, b, a | b);
@@ -835,9 +836,9 @@ impl BaseVisitor for Interpreter {
     instruction!(i32_shr_u, i32, i32 -> i32, a, b, (a as u32).wrapping_shr(b as u32) as i32);
     instruction!(i32_rotl, i32, i32 -> i32, a, b, a.rotate_left(b as u32));
     instruction!(i32_rotr, i32, i32 -> i32, a, b, a.rotate_right(b as u32));
-    instruction!(i64_clz, i64 -> i64, i, i.leading_zeros() as i64);
-    instruction!(i64_ctz, i64 -> i64, i, i.trailing_zeros() as i64);
-    instruction!(i64_popcnt, i64 -> i64, i, i.count_ones() as i64);
+    instruction!(i64_clz, i64 -> i64, i, i64::from(i.leading_zeros()));
+    instruction!(i64_ctz, i64 -> i64, i, i64::from(i.trailing_zeros()));
+    instruction!(i64_popcnt, i64 -> i64, i, i64::from(i.count_ones()));
     instruction!(i64_add, i64, i64 -> i64, a, b, a.wrapping_add(b));
     instruction!(i64_sub, i64, i64 -> i64, a, b, a.wrapping_sub(b));
     instruction!(i64_mul, i64, i64 -> i64, a, b, a.wrapping_mul(b));
@@ -854,23 +855,20 @@ impl BaseVisitor for Interpreter {
     instruction!(i64_div_u, i64, i64 -> i64, a, b, {
         if b == 0 {
             return Err(InterpreterBreak::Trap(TrapReason::DivideByZero))
-        } else {
-            (a as u64).wrapping_div(b as u64) as i64
         }
+        (a as u64).wrapping_div(b as u64) as i64
     });
     instruction!(i64_rem_s, i64, i64 -> i64, a, b, {
         if b == 0 {
             return Err(InterpreterBreak::Trap(TrapReason::DivideByZero))
-        } else {
-            a.wrapping_rem(b)
         }
+        a.wrapping_rem(b)
     });
     instruction!(i64_rem_u, i64, i64 -> i64, a, b, {
         if b == 0 {
             return Err(InterpreterBreak::Trap(TrapReason::DivideByZero))
-        } else {
-            (a as u64).wrapping_rem(b as u64) as i64
         }
+        (a as u64).wrapping_rem(b as u64) as i64
     });
     instruction!(i64_and, i64, i64 -> i64, a, b, a & b);
     instruction!(i64_or, i64, i64 -> i64, a, b, a | b);
@@ -1079,7 +1077,7 @@ impl BaseVisitor for Interpreter {
 
     fn i64_extend_i32_s(&self, state: &mut Self::State) -> Result<(), Self::Error> {
         let i = state.stack.read_u32(state.sp - 1) as i32;
-        let extended = i as i64 as u64;
+        let extended = i64::from(i) as u64;
         state.stack.write_u64(state.sp - 1, extended);
         state.sp += 1;
         Ok(())
@@ -1198,14 +1196,14 @@ impl BaseVisitor for Interpreter {
 
     fn f64_convert_i32_s(&self, state: &mut Self::State) -> Result<(), Self::Error> {
         let i = state.stack.read_u32(state.sp - 1) as i32;
-        state.stack.write_f64(state.sp - 1, i as f64);
+        state.stack.write_f64(state.sp - 1, f64::from(i));
         state.sp += 1;
         Ok(())
     }
 
     fn f64_convert_i32_u(&self, state: &mut Self::State) -> Result<(), Self::Error> {
         let u = state.stack.read_u32(state.sp - 1);
-        state.stack.write_f64(state.sp - 1, u as f64);
+        state.stack.write_f64(state.sp - 1, f64::from(u));
         state.sp += 1;
         Ok(())
     }
@@ -1224,7 +1222,7 @@ impl BaseVisitor for Interpreter {
 
     fn f64_promote_f32(&self, state: &mut Self::State) -> Result<(), Self::Error> {
         let f = state.stack.read_f32(state.sp - 1);
-        state.stack.write_f64(state.sp - 1, f as f64);
+        state.stack.write_f64(state.sp - 1, f64::from(f));
         state.sp += 1;
         Ok(())
     }
@@ -1332,7 +1330,7 @@ impl IrVisitor for Interpreter {
 
         // The frame pointer on the stack actually encodes ((sp - fp) << 16) | prm_size
         let call_frame = CallFrame::from_bits(state.stack.read_u32(state.fp as usize));
-        let return_fp = (fp as u32) - (call_frame.frame_length as u32);
+        let return_fp = (fp as u32) - u32::from(call_frame.frame_length);
         let parameter_start = fp - (call_frame.parameter_size as usize);
 
         // Copy the return value over the parameters/frame information
@@ -1378,6 +1376,9 @@ impl IrVisitor for Interpreter {
         state.call_impl(0, x)
     }
 
+    // Short locals (`x` operand index, `f` func, `r`/`v` results) follow the
+    // Wasm spec's own instruction notation.
+    #[allow(clippy::many_single_char_names)]
     fn call_host(
         &self,
         module: HostModuleRef,
@@ -1389,7 +1390,7 @@ impl IrVisitor for Interpreter {
         let f = &state.store.host_modules_mut()[module.0 as usize].functions[x as usize];
         state.sp -= f.param_size();
         let mut offset = 0;
-        for p_ty in f.params().iter() {
+        for p_ty in &f.params() {
             match p_ty {
                 ValType::I32 => {
                     sv.push(Value::I32(state.stack.read_u32(state.sp + offset) as i32))
@@ -1447,9 +1448,7 @@ impl IrVisitor for Interpreter {
             }
             ControlFlow::Break(HostFunctionBreak::Pause) => {
                 let other = state.host_pause_result.replace(f.returns());
-                if other.is_some() {
-                    panic!("Unexpected paused engine state");
-                }
+                assert!(other.is_none(), "Unexpected paused engine state");
 
                 Err(InterpreterBreak::Pause)
             }
@@ -1471,6 +1470,9 @@ impl IrVisitor for Interpreter {
         })
     }
 
+    // Short locals (`x` type index, `i` table index, `m` module, `f` func)
+    // follow the Wasm spec's own instruction notation.
+    #[allow(clippy::many_single_char_names)]
     fn call_indirect(&self, x: TypeIdx, state: &mut Self::State) -> Result<(), Self::Error> {
         // Pop the table pointer off the stack
         state.sp -= 1;
@@ -1627,7 +1629,7 @@ impl IrVisitor for Interpreter {
                 state.stack.write_f64(state.sp, f);
                 state.sp += 2;
             }
-        };
+        }
 
         Ok(())
     }

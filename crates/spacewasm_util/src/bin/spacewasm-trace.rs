@@ -169,14 +169,14 @@ fn main() {
     let wasm_bytes: Vec<u8> = if use_stdin {
         let mut buffer = Vec::new();
         io::stdin().read_to_end(&mut buffer).unwrap_or_else(|e| {
-            eprintln!("Failed to read from stdin: {}", e);
+            eprintln!("Failed to read from stdin: {e}");
             process::exit(1);
         });
         buffer
     } else {
         let file = input_file.unwrap();
         fs::read(&file).unwrap_or_else(|e| {
-            eprintln!("Failed to read '{}': {}", file, e);
+            eprintln!("Failed to read '{file}': {e}");
             process::exit(1);
         })
     };
@@ -185,7 +185,7 @@ fn main() {
 
     // Create the engine (owns the store + execution state).
     let mut state = Engine::new(512, 16, WasmVec::zero()).unwrap_or_else(|e| {
-        eprintln!("Failed to create engine: {:?}", e);
+        eprintln!("Failed to create engine: {e:?}");
         process::exit(1);
     });
 
@@ -208,7 +208,7 @@ fn main() {
             .into_wasm_memory_allocator(),
     )
     .unwrap_or_else(|e| {
-        eprintln!("Failed to compile module: {:?}", e);
+        eprintln!("Failed to compile module: {e:?}");
         process::exit(1);
     });
 
@@ -301,7 +301,7 @@ fn main() {
                             index,
                         },
                         Ref::Extern { module, index } => WasmRef { module, index },
-                        _ => return None,
+                        Ref::Host { .. } => return None,
                     };
 
                     // Generate default parameters based on the function signature
@@ -355,7 +355,7 @@ fn main() {
                 eprintln!("\nResult: Completed successfully");
             }
             Ok(InterpreterResult::Trap(reason)) => {
-                eprintln!("\nResult: Trapped - {:?}", reason);
+                eprintln!("\nResult: Trapped - {reason:?}");
                 process::exit(1);
             }
             Ok(InterpreterResult::Pause) => {

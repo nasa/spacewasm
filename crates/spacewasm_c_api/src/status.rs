@@ -196,6 +196,7 @@ pub enum spacewasm_trap_t {
 
 pub use spacewasm_trap_t::*;
 
+#[must_use]
 pub fn trap_reason_code(t: TrapReason) -> spacewasm_trap_t {
     match t {
         TrapReason::Unreachable => SPACEWASM_TRAP_UNREACHABLE,
@@ -216,6 +217,9 @@ pub fn trap_reason_code(t: TrapReason) -> spacewasm_trap_t {
     }
 }
 
+// Taken by value so it can be used directly as a `Result::map_err` adapter.
+#[allow(clippy::needless_pass_by_value)]
+#[must_use]
 pub fn alloc_status(e: AllocError) -> spacewasm_status_t {
     match e {
         AllocError::AllocationFailed => SPACEWASM_ERR_ALLOC_FAILED,
@@ -224,6 +228,9 @@ pub fn alloc_status(e: AllocError) -> spacewasm_status_t {
     }
 }
 
+// Taken by value so it can be used directly as a `Result::map_err` adapter.
+#[allow(clippy::needless_pass_by_value)]
+#[must_use]
 pub fn memory_status(e: MemoryError) -> spacewasm_status_t {
     match e {
         MemoryError::OutOfBounds => SPACEWASM_ERR_MEM_OUT_OF_BOUNDS,
@@ -233,6 +240,7 @@ pub fn memory_status(e: MemoryError) -> spacewasm_status_t {
     }
 }
 
+#[must_use]
 pub fn invoke_status(e: InvokeError) -> spacewasm_status_t {
     match e {
         InvokeError::ParamLenMismatch => SPACEWASM_ERR_PARAM_LEN_MISMATCH,
@@ -241,6 +249,7 @@ pub fn invoke_status(e: InvokeError) -> spacewasm_status_t {
     }
 }
 
+#[must_use]
 pub fn validation_status(e: &ValidationError) -> spacewasm_status_t {
     match e {
         ValidationError::Eof => SPACEWASM_ERR_EOF,
@@ -341,6 +350,7 @@ pub fn validation_status(e: &ValidationError) -> spacewasm_status_t {
     }
 }
 
+#[must_use]
 pub fn constant_expr_status(e: &ConstantExprError) -> spacewasm_status_t {
     match e {
         ConstantExprError::InvalidConstantInstruction => SPACEWASM_ERR_INVALID_CONST_INSTRUCTION,
@@ -350,19 +360,23 @@ pub fn constant_expr_status(e: &ConstantExprError) -> spacewasm_status_t {
     }
 }
 
+#[must_use]
 pub fn parse_status(e: &ParseError) -> spacewasm_status_t {
     validation_status(&e.err.err)
 }
 
+#[must_use]
 pub fn host_name_status(_e: HostNameError) -> spacewasm_status_t {
     SPACEWASM_ERR_NAME_TOO_LONG
 }
 
+#[must_use]
 pub fn host_val_list_status(_e: HostValListError) -> spacewasm_status_t {
     SPACEWASM_ERR_BAD_SIGNATURE
 }
 
 /// Translate an [`InterpreterResult`] into a run status + trap code.
+#[must_use]
 pub fn run_status(r: &InterpreterResult) -> (spacewasm_run_status_t, spacewasm_trap_t) {
     match r {
         InterpreterResult::Finished => (

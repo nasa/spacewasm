@@ -104,6 +104,7 @@ pub fn allocator_new(
 ///
 /// # Safety
 /// `handle` must be null or a live pointer from [`allocator_new`].
+#[must_use]
 pub unsafe fn allocator_clone_rc(handle: *const CAllocator) -> Option<Rc<dyn WasmMemoryAllocator>> {
     if handle.is_null() {
         return None;

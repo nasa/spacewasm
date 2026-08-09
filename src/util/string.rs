@@ -146,13 +146,13 @@ mod tests {
     #[test]
     fn test_display() {
         let s = String::try_from("display me").unwrap();
-        assert_eq!(std::format!("{}", s), "display me");
+        assert_eq!(std::format!("{s}"), "display me");
     }
 
     #[test]
     fn test_debug() {
         let s = String::try_from("debug me").unwrap();
-        assert_eq!(std::format!("{:?}", s), "debug me");
+        assert_eq!(std::format!("{s:?}"), "debug me");
     }
 
     #[test]

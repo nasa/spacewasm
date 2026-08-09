@@ -23,6 +23,7 @@ pub trait WasmMemoryAllocator {
 }
 
 impl<T: WasmMemoryAllocator> Rc<T> {
+    #[must_use]
     pub fn into_wasm_memory_allocator(self) -> Rc<dyn WasmMemoryAllocator>
     where
         T: WasmMemoryAllocator + 'static,
@@ -69,6 +70,7 @@ impl Default for Memory {
 }
 
 impl Memory {
+    #[must_use]
     pub fn zero() -> Memory {
         Memory {
             ptr: core::ptr::null_mut(),
@@ -79,13 +81,12 @@ impl Memory {
     }
 
     pub fn new(ty: MemType, allocator: Rc<dyn WasmMemoryAllocator>) -> Result<Memory, AllocError> {
-        let size = if let Some(size) = (ty.min() as u64).checked_mul(ty.page_size() as u64) {
+        let size = if let Some(size) = u64::from(ty.min()).checked_mul(ty.page_size() as u64) {
             if size > usize::MAX as u64 {
                 // Make sure this platform can actually do this allocation
                 return Err(AllocError::AllocationFailed);
-            } else {
-                size as usize
             }
+            size as usize
         } else {
             return Err(AllocError::AllocationFailed);
         };
@@ -136,7 +137,7 @@ impl Memory {
     /// operations.
     #[inline]
     pub fn effective_address(base: u32, offset: u32) -> Result<usize, MemoryError> {
-        usize::try_from(base as u64 + offset as u64).map_err(|_| MemoryError::OutOfBounds)
+        usize::try_from(u64::from(base) + u64::from(offset)).map_err(|_| MemoryError::OutOfBounds)
     }
 
     pub fn store_u8(&self, addr: usize, i: u8) -> Result<(), MemoryError> {
@@ -256,19 +257,23 @@ impl Memory {
         Ok(old_pages)
     }
 
+    #[must_use]
     pub fn mem_type(&self) -> MemType {
         self.ty
     }
 
+    #[must_use]
     pub fn size(&self) -> u32 {
         (self.size / self.ty.page_size()) as u32
     }
 
     /// Returns whether this is the absent-memory sentinel created by [`Memory::zero`].
+    #[must_use]
     pub fn is_zero(&self) -> bool {
         self.ptr.is_null() && self.allocator.is_none()
     }
 
+    #[must_use]
     pub fn get_slice(&self) -> &[u8] {
         if self.ptr.is_null() {
             &[]
@@ -285,7 +290,7 @@ impl Drop for Memory {
             allocator.deallocate(
                 NonNull::new(self.ptr).unwrap(),
                 Layout::from_size_align(self.size, self.ty.page_alignment()).unwrap(),
-            )
+            );
         }
     }
 }
