@@ -15,7 +15,6 @@
 
 use spacewasm::*;
 use std::alloc::Layout;
-use std::cell::RefCell;
 use std::ptr::NonNull;
 
 static ORACLE_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -153,22 +152,31 @@ unsafe impl Allocator for SystemAllocator {
     }
 }
 
-pub(crate) struct FuzzAllocator {
-    allocated: RefCell<usize>,
-    limit: usize,
-}
+/// Largest single allocation the fuzz allocator will service, in bytes.
+///
+/// A malformed module can decode a bogus size field (e.g. a memory or table
+/// count) into an enormous single allocation request. Handing that straight to
+/// the system allocator makes the process OOM/abort -- which libFuzzer reports
+/// as a crash even though it's just an unreasonable request, not a bug in the
+/// decoder. Bounding each request to a fixed cap turns that into a clean
+/// `AllocError::OutOfMemory` that the loader is expected to handle.
+const MAX_ALLOCATION_BYTES: usize = 1024 * 1024 * 64; // 64 MiB
+
+/// A model of the production `PageAllocator` for fuzzing.
+///
+/// Like the `RustSystemAllocator` used by the integration tests, this is a thin
+/// passthrough to the system allocator with no running-total bookkeeping. The
+/// only policy it adds is a fixed per-allocation size cap ([`MAX_ALLOCATION_BYTES`])
+/// so a single unreasonable request from a corrupted module is rejected rather
+/// than aborting the fuzzer.
+pub(crate) struct FuzzAllocator;
 
 impl WasmMemoryAllocator for FuzzAllocator {
     fn allocate(&self, layout: Layout) -> Result<NonNull<u8>, AllocError> {
-        let new_size = *self.allocated.borrow() + layout.size();
-        if new_size <= self.limit {
-            *(self.allocated.borrow_mut()) = new_size;
-            unsafe {
-                Ok(NonNull::new(std::alloc::alloc(layout)).ok_or(AllocError::AllocationFailed)?)
-            }
-        } else {
-            Err(AllocError::OutOfMemory)
+        if layout.size() > MAX_ALLOCATION_BYTES {
+            return Err(AllocError::OutOfMemory);
         }
+        unsafe { NonNull::new(std::alloc::alloc(layout)).ok_or(AllocError::AllocationFailed) }
     }
 
     fn reallocate(
@@ -177,22 +185,16 @@ impl WasmMemoryAllocator for FuzzAllocator {
         old_layout: Layout,
         layout: Layout,
     ) -> Result<NonNull<u8>, AllocError> {
-        let new_size = *self.allocated.borrow() - old_layout.size() + layout.size();
-        if new_size <= self.limit {
-            *(self.allocated.borrow_mut()) = new_size;
-            unsafe {
-                Ok(
-                    NonNull::new(std::alloc::realloc(ptr.as_ptr(), old_layout, layout.size()))
-                        .ok_or(AllocError::AllocationFailed)?,
-                )
-            }
-        } else {
-            Err(AllocError::OutOfMemory)
+        if layout.size() > MAX_ALLOCATION_BYTES {
+            return Err(AllocError::OutOfMemory);
+        }
+        unsafe {
+            NonNull::new(std::alloc::realloc(ptr.as_ptr(), old_layout, layout.size()))
+                .ok_or(AllocError::AllocationFailed)
         }
     }
 
     fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
-        *self.allocated.borrow_mut() -= layout.size();
         unsafe { std::alloc::dealloc(ptr.as_ptr(), layout) }
     }
 }
@@ -234,12 +236,9 @@ fn load_module(wasm: &[u8]) -> bool {
     .unwrap();
     let mut stream = ByteStream::new(wasm);
 
-    let allocator = spacewasm::Rc::new(FuzzAllocator {
-        limit: 1024 * 1024 * 64, // 64MiB,
-        allocated: RefCell::new(0),
-    })
-    .unwrap()
-    .into_wasm_memory_allocator();
+    let allocator = spacewasm::Rc::new(FuzzAllocator)
+        .unwrap()
+        .into_wasm_memory_allocator();
 
     // Attempt to decode and validate the module.
     let result = Module::new::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
@@ -318,12 +317,9 @@ pub fn no_traps(wasm: &[u8]) {
     .unwrap();
     let mut stream = ByteStream::new(wasm);
 
-    let allocator = Rc::new(FuzzAllocator {
-        limit: 1024 * 1024 * 64, // 64MiB,
-        allocated: RefCell::new(0),
-    })
-    .unwrap()
-    .into_wasm_memory_allocator();
+    let allocator = Rc::new(FuzzAllocator)
+        .unwrap()
+        .into_wasm_memory_allocator();
 
     let module = match Module::new::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
         "",
