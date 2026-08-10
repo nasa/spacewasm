@@ -2,9 +2,10 @@
 #
 # Parallelizes the integration tests when running with Miri#
 #
-# Usage: .github/scripts/miri-integration-tests.sh
+# Usage: .github/scripts/run-tests-with-miri.sh
 # Env:   MIRI_TEST_TIMEOUT_SECS (default 300)
 #        MIRI_TEST_JOBS (default: nproc)
+#        MIRI_TEST_TARGETS (default: all targets, space-separated)
 #        MIRIFLAGS (passed to `cargo miri test`)
 set -uo pipefail
 
@@ -24,7 +25,8 @@ target_flag() {
 }
 export -f target_flag
 
-targets=(lib core_integration regression_integration custom_page_sizes_integration statistics_integration)
+# shellcheck disable=SC2206
+targets=(${MIRI_TEST_TARGETS:-lib core_integration regression_integration custom_page_sizes_integration statistics_integration})
 
 pairs_file="$(mktemp)"
 results_file="$(mktemp)"
