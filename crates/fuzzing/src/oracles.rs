@@ -86,61 +86,40 @@ impl WasmStream for ByteStream {
     }
 }
 
-pub(crate) struct SystemAllocator;
-
-/// Ceiling on the decoder's *internal* bookkeeping allocations (module tables,
-/// `Vec`s of parsed entries, ...). This is distinct from guest memory, which is
-/// bounded separately by [`FuzzAllocator`].
+/// Largest single allocation either fuzz allocator will service, in bytes.
 ///
-/// A real embedding always drives the decoder through a bounded allocator --
-/// fixed, measured memory is the whole point of running Wasm on-board. Leaving
-/// this global allocator unbounded does not model any real deployment and lets
-/// a malformed length prefix (e.g. a function-section count of `0x0FFFFFFF`)
-/// drive a multi-gigabyte `malloc`. That `malloc` trips libFuzzer's OOM guard
-/// and aborts the run *before* the decoder can reject the module -- a harness
-/// artifact, not a SpaceWasm bug. Capping the total here lets an absurd length
-/// surface as a graceful `AllocError` (which the decoder already turns into a
-/// clean `ValidationError`), keeping the fuzzer hunting for real defects.
-const SYSTEM_ALLOC_LIMIT: usize = 512 * 1024 * 1024; // 512 MiB
+/// A malformed module can decode a bogus length prefix -- a function-section
+/// count, a memory or table size, and so on -- into an enormous single
+/// allocation request (a `0x0FFFFFFF` function count drives a ~8.6 GiB `Vec`,
+/// for example). Handing that straight to the system allocator makes the
+/// process OOM/abort, which libFuzzer reports as a crash even though it is just
+/// an unreasonable request, not a bug in the decoder. Bounding each request to
+/// a fixed cap turns that into a clean `AllocError::OutOfMemory`, which the
+/// decoder already converts into a `ValidationError`, so the fuzzer keeps
+/// hunting for real defects instead of tripping over absurd sizes.
+///
+/// This models a real embedding, which always drives the decoder through a
+/// bounded allocator -- fixed, measured memory is the whole point of running
+/// Wasm on-board. Cumulative growth across many allocations is left to
+/// libFuzzer's own `-rss_limit_mb` guard.
+const MAX_ALLOCATION_BYTES: usize = 1024 * 1024 * 64; // 64 MiB
 
-/// Total bytes currently handed out by [`SystemAllocator`]. The global
-/// allocator is a ZST wired in via `global_allocator!`, so the running total
-/// lives in a static counter rather than in the allocator value itself.
-static SYSTEM_ALLOCATED: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(0);
+/// The global allocator for fuzzing, backing the decoder's internal bookkeeping
+/// (module tables, `Vec`s of parsed entries, ...) via `global_allocator!`.
+///
+/// A thin passthrough to the system allocator whose only policy is the shared
+/// per-allocation cap ([`MAX_ALLOCATION_BYTES`]).
+pub(crate) struct SystemAllocator;
 
 unsafe impl Allocator for SystemAllocator {
     unsafe fn alloc(&self, layout: Layout) -> Result<*mut u8, AllocError> {
-        use std::sync::atomic::Ordering;
-
-        // Reserve the space against the budget first, backing out if it would
-        // overflow the limit, so an oversized request never reaches `malloc`.
-        let mut current = SYSTEM_ALLOCATED.load(Ordering::Relaxed);
-        loop {
-            if current + layout.size() > SYSTEM_ALLOC_LIMIT {
-                return Err(AllocError::OutOfMemory);
-            }
-            match SYSTEM_ALLOCATED.compare_exchange_weak(
-                current,
-                current + layout.size(),
-                Ordering::Relaxed,
-                Ordering::Relaxed,
-            ) {
-                Ok(_) => break,
-                Err(observed) => current = observed,
-            }
+        if layout.size() > MAX_ALLOCATION_BYTES {
+            return Err(AllocError::OutOfMemory);
         }
-
-        let ptr = unsafe { std::alloc::alloc(layout) };
-        if ptr.is_null() {
-            SYSTEM_ALLOCATED.fetch_sub(layout.size(), Ordering::Relaxed);
-            return Err(AllocError::AllocationFailed);
-        }
-        Ok(ptr)
+        unsafe { Ok(std::alloc::alloc(layout)) }
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        SYSTEM_ALLOCATED.fetch_sub(layout.size(), std::sync::atomic::Ordering::Relaxed);
         unsafe { std::alloc::dealloc(ptr, layout) }
     }
 
@@ -152,23 +131,13 @@ unsafe impl Allocator for SystemAllocator {
     }
 }
 
-/// Largest single allocation the fuzz allocator will service, in bytes.
-///
-/// A malformed module can decode a bogus size field (e.g. a memory or table
-/// count) into an enormous single allocation request. Handing that straight to
-/// the system allocator makes the process OOM/abort -- which libFuzzer reports
-/// as a crash even though it's just an unreasonable request, not a bug in the
-/// decoder. Bounding each request to a fixed cap turns that into a clean
-/// `AllocError::OutOfMemory` that the loader is expected to handle.
-const MAX_ALLOCATION_BYTES: usize = 1024 * 1024 * 64; // 64 MiB
-
-/// A model of the production `PageAllocator` for fuzzing.
+/// A model of the production `PageAllocator` for fuzzing, backing guest memory.
 ///
 /// Like the `RustSystemAllocator` used by the integration tests, this is a thin
-/// passthrough to the system allocator with no running-total bookkeeping. The
-/// only policy it adds is a fixed per-allocation size cap ([`MAX_ALLOCATION_BYTES`])
-/// so a single unreasonable request from a corrupted module is rejected rather
-/// than aborting the fuzzer.
+/// passthrough to the system allocator with no running-total bookkeeping. Its
+/// only policy is the same per-allocation size cap ([`MAX_ALLOCATION_BYTES`])
+/// applied by [`SystemAllocator`], so a single unreasonable request from a
+/// corrupted module is rejected rather than aborting the fuzzer.
 pub(crate) struct FuzzAllocator;
 
 impl WasmMemoryAllocator for FuzzAllocator {
