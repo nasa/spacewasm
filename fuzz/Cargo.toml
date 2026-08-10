@@ -26,6 +26,13 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "malformed"
+path = "fuzz_targets/malformed.rs"
+test = false
+doc = false
+bench = false
+
 [profile.release]
 debug = 1
 

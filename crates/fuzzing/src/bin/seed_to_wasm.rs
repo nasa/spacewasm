@@ -4,13 +4,14 @@
 //! wasm-smith to generate valid Wasm. This tool converts seeds to Wasm
 //! for analysis with other tools (disassemblers, trace utilities, etc.).
 //!
-//! The `no_traps` and `validate` fuzz targets configure wasm-smith
-//! differently, so a seed must be decoded with the same generator that
-//! produced it. Select it with `--target` (default: `no_traps`).
+//! The `no_traps`, `validate`, and `malformed` fuzz targets configure
+//! wasm-smith differently (and `malformed` corrupts the output), so a seed
+//! must be decoded with the same generator that produced it. Select it with
+//! `--target` (default: `no_traps`).
 //!
 //! Usage:
-//!   seed_to_wasm [--target no_traps|validate] <seed-file> [output.wasm]
-//!   seed_to_wasm [--target no_traps|validate] <seed-file> --stdout
+//!   seed_to_wasm [--target no_traps|validate|malformed] <seed-file> [output.wasm]
+//!   seed_to_wasm [--target no_traps|validate|malformed] <seed-file> --stdout
 
 use spacewasm_fuzzing::generators::{wasm_from_seed, Target};
 use std::env;
@@ -19,14 +20,14 @@ use std::io::{self, Write};
 use std::process;
 
 fn usage(program: &str) -> ! {
-    eprintln!("Usage: {program} [--target no_traps|validate] <seed-file> [output.wasm]");
-    eprintln!("       {program} [--target no_traps|validate] <seed-file> --stdout");
+    eprintln!("Usage: {program} [--target no_traps|validate|malformed] <seed-file> [output.wasm]");
+    eprintln!("       {program} [--target no_traps|validate|malformed] <seed-file> --stdout");
     eprintln!();
     eprintln!("Convert fuzzer seed artifacts to Wasm binaries.");
     eprintln!();
     eprintln!("Options:");
     eprintln!(
-        "  --target <no_traps|validate>  Generator to decode the seed with (default: no_traps)"
+        "  --target <no_traps|validate|malformed>  Generator to decode the seed with (default: no_traps)"
     );
     eprintln!();
     eprintln!("Examples:");
@@ -54,9 +55,10 @@ fn main() {
             target = match args.get(i + 1).map(String::as_str) {
                 Some("no_traps") => Target::NoTraps,
                 Some("validate") => Target::Validate,
+                Some("malformed") => Target::Malformed,
                 other => {
                     eprintln!(
-                        "Invalid --target '{}' (expected no_traps or validate)",
+                        "Invalid --target '{}' (expected no_traps, validate, or malformed)",
                         other.unwrap_or("")
                     );
                     usage(&program);

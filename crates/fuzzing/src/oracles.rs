@@ -161,18 +161,21 @@ const MAX_CODE_PAGES: u32 = 128;
 const MAX_CONTROL_FRAMES: usize = 128;
 const MAX_STACK_DEPTH: usize = 256;
 
-/// Oracle: Validate a Wasm module.
+/// Decode and validate a Wasm module, discarding the outcome.
 ///
-/// This tests the decoder by attempting to validate the given Wasm bytes.
-/// It checks that the module is structurally valid according to Wasm spec.
-pub fn validate(wasm: &[u8]) {
-    log_wasm(wasm);
-
+/// Both `Ok` and `Err` are acceptable results: a graceful decode error is a
+/// correct rejection, not a bug. The only failures this surfaces are *implicit*
+/// -- a `panic!` (including the `strict-assertions` checks), an abort, a
+/// segfault, or a sanitizer trip during `Module::new`. libFuzzer treats all of
+/// those as crashes.
+///
+/// Returns `true` if decoding succeeded, for callers that want to log it.
+fn load_module(wasm: &[u8]) -> bool {
     let mut store = match Store::from_host_modules(256, Vec::zero()) {
         Ok(s) => s,
         Err(e) => {
             log::debug!("store creation failed: {e:?}");
-            return;
+            return false;
         }
     };
 
@@ -191,7 +194,7 @@ pub fn validate(wasm: &[u8]) {
     .unwrap()
     .into_wasm_memory_allocator();
 
-    // Attempt to decode and validate the module
+    // Attempt to decode and validate the module.
     let result = Module::new::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
         "",
         &mut stream,
@@ -200,13 +203,42 @@ pub fn validate(wasm: &[u8]) {
         allocator.clone(),
     );
 
-    match result {
-        Ok(_) => {
-            log::debug!("validation succeeded");
-        }
-        Err(e) => {
-            log::debug!("validation failed (expected for invalid modules): {e:?}");
-        }
+    result.is_ok()
+}
+
+/// Oracle: Validate a Wasm module.
+///
+/// This tests the decoder by attempting to validate the given Wasm bytes.
+/// It checks that the module is structurally valid according to Wasm spec.
+///
+/// Inputs come from wasm-smith and are therefore expected to be valid, so a
+/// decode error here points at SpaceWasm being stricter than the generator
+/// (e.g. code-page or stack limits) rather than at malformed input.
+pub fn validate(wasm: &[u8]) {
+    log_wasm(wasm);
+
+    if load_module(wasm) {
+        log::debug!("validation succeeded");
+    } else {
+        log::debug!("validation failed (expected for invalid modules)");
+    }
+}
+
+/// Oracle: Decode a possibly-malformed Wasm module.
+///
+/// This tests the decoder against intentionally corrupted input (see
+/// [`crate::generators::MalformedModule`]). A clean `Err` is the correct
+/// outcome for garbage input; the bug we are hunting is a *reachable panic* --
+/// an out-of-bounds read, an unchecked index, an arithmetic overflow, or a
+/// `strict-assertions` violation -- on the load path. The decoder must reject
+/// bad modules gracefully, never crash on them.
+pub fn decode(wasm: &[u8]) {
+    log_wasm(wasm);
+
+    if load_module(wasm) {
+        log::debug!("decode succeeded (mutation happened to stay valid)");
+    } else {
+        log::debug!("decode rejected malformed module (expected)");
     }
 }
 
