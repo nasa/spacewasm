@@ -89,12 +89,59 @@ impl WasmStream for ByteStream {
 
 pub(crate) struct SystemAllocator;
 
+/// Ceiling on the decoder's *internal* bookkeeping allocations (module tables,
+/// `Vec`s of parsed entries, ...). This is distinct from guest memory, which is
+/// bounded separately by [`FuzzAllocator`].
+///
+/// A real embedding always drives the decoder through a bounded allocator --
+/// fixed, measured memory is the whole point of running Wasm on-board. Leaving
+/// this global allocator unbounded does not model any real deployment and lets
+/// a malformed length prefix (e.g. a function-section count of `0x0FFFFFFF`)
+/// drive a multi-gigabyte `malloc`. That `malloc` trips libFuzzer's OOM guard
+/// and aborts the run *before* the decoder can reject the module -- a harness
+/// artifact, not a SpaceWasm bug. Capping the total here lets an absurd length
+/// surface as a graceful `AllocError` (which the decoder already turns into a
+/// clean `ValidationError`), keeping the fuzzer hunting for real defects.
+const SYSTEM_ALLOC_LIMIT: usize = 512 * 1024 * 1024; // 512 MiB
+
+/// Total bytes currently handed out by [`SystemAllocator`]. The global
+/// allocator is a ZST wired in via `global_allocator!`, so the running total
+/// lives in a static counter rather than in the allocator value itself.
+static SYSTEM_ALLOCATED: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
 unsafe impl Allocator for SystemAllocator {
     unsafe fn alloc(&self, layout: Layout) -> Result<*mut u8, AllocError> {
-        unsafe { Ok(std::alloc::alloc(layout)) }
+        use std::sync::atomic::Ordering;
+
+        // Reserve the space against the budget first, backing out if it would
+        // overflow the limit, so an oversized request never reaches `malloc`.
+        let mut current = SYSTEM_ALLOCATED.load(Ordering::Relaxed);
+        loop {
+            if current + layout.size() > SYSTEM_ALLOC_LIMIT {
+                return Err(AllocError::OutOfMemory);
+            }
+            match SYSTEM_ALLOCATED.compare_exchange_weak(
+                current,
+                current + layout.size(),
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => break,
+                Err(observed) => current = observed,
+            }
+        }
+
+        let ptr = unsafe { std::alloc::alloc(layout) };
+        if ptr.is_null() {
+            SYSTEM_ALLOCATED.fetch_sub(layout.size(), Ordering::Relaxed);
+            return Err(AllocError::AllocationFailed);
+        }
+        Ok(ptr)
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        SYSTEM_ALLOCATED.fetch_sub(layout.size(), std::sync::atomic::Ordering::Relaxed);
         unsafe { std::alloc::dealloc(ptr, layout) }
     }
 
