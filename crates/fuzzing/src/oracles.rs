@@ -286,9 +286,7 @@ pub fn no_traps(wasm: &[u8]) {
     .unwrap();
     let mut stream = ByteStream::new(wasm);
 
-    let allocator = Rc::new(FuzzAllocator)
-        .unwrap()
-        .into_wasm_memory_allocator();
+    let allocator = Rc::new(FuzzAllocator).unwrap().into_wasm_memory_allocator();
 
     let module = match Module::new::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
         "",
