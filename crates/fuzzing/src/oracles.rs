@@ -15,7 +15,6 @@
 
 use spacewasm::*;
 use std::alloc::Layout;
-use std::cell::RefCell;
 use std::ptr::NonNull;
 
 static ORACLE_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -87,10 +86,36 @@ impl WasmStream for ByteStream {
     }
 }
 
+/// Largest single allocation either fuzz allocator will service, in bytes.
+///
+/// A malformed module can decode a bogus length prefix -- a function-section
+/// count, a memory or table size, and so on -- into an enormous single
+/// allocation request (a `0x0FFFFFFF` function count drives a ~8.6 GiB `Vec`,
+/// for example). Handing that straight to the system allocator makes the
+/// process OOM/abort, which libFuzzer reports as a crash even though it is just
+/// an unreasonable request, not a bug in the decoder. Bounding each request to
+/// a fixed cap turns that into a clean `AllocError::OutOfMemory`, which the
+/// decoder already converts into a `ValidationError`, so the fuzzer keeps
+/// hunting for real defects instead of tripping over absurd sizes.
+///
+/// This models a real embedding, which always drives the decoder through a
+/// bounded allocator -- fixed, measured memory is the whole point of running
+/// Wasm on-board. Cumulative growth across many allocations is left to
+/// libFuzzer's own `-rss_limit_mb` guard.
+const MAX_ALLOCATION_BYTES: usize = 1024 * 1024 * 64; // 64 MiB
+
+/// The global allocator for fuzzing, backing the decoder's internal bookkeeping
+/// (module tables, `Vec`s of parsed entries, ...) via `global_allocator!`.
+///
+/// A thin passthrough to the system allocator whose only policy is the shared
+/// per-allocation cap ([`MAX_ALLOCATION_BYTES`]).
 pub(crate) struct SystemAllocator;
 
 unsafe impl Allocator for SystemAllocator {
     unsafe fn alloc(&self, layout: Layout) -> Result<*mut u8, AllocError> {
+        if layout.size() > MAX_ALLOCATION_BYTES {
+            return Err(AllocError::OutOfMemory);
+        }
         unsafe { Ok(std::alloc::alloc(layout)) }
     }
 
@@ -106,22 +131,21 @@ unsafe impl Allocator for SystemAllocator {
     }
 }
 
-pub(crate) struct FuzzAllocator {
-    allocated: RefCell<usize>,
-    limit: usize,
-}
+/// A model of the production `PageAllocator` for fuzzing, backing guest memory.
+///
+/// Like the `RustSystemAllocator` used by the integration tests, this is a thin
+/// passthrough to the system allocator with no running-total bookkeeping. Its
+/// only policy is the same per-allocation size cap ([`MAX_ALLOCATION_BYTES`])
+/// applied by [`SystemAllocator`], so a single unreasonable request from a
+/// corrupted module is rejected rather than aborting the fuzzer.
+pub(crate) struct FuzzAllocator;
 
 impl WasmMemoryAllocator for FuzzAllocator {
     fn allocate(&self, layout: Layout) -> Result<NonNull<u8>, AllocError> {
-        let new_size = *self.allocated.borrow() + layout.size();
-        if new_size <= self.limit {
-            *(self.allocated.borrow_mut()) = new_size;
-            unsafe {
-                Ok(NonNull::new(std::alloc::alloc(layout)).ok_or(AllocError::AllocationFailed)?)
-            }
-        } else {
-            Err(AllocError::OutOfMemory)
+        if layout.size() > MAX_ALLOCATION_BYTES {
+            return Err(AllocError::OutOfMemory);
         }
+        unsafe { NonNull::new(std::alloc::alloc(layout)).ok_or(AllocError::AllocationFailed) }
     }
 
     fn reallocate(
@@ -130,22 +154,16 @@ impl WasmMemoryAllocator for FuzzAllocator {
         old_layout: Layout,
         layout: Layout,
     ) -> Result<NonNull<u8>, AllocError> {
-        let new_size = *self.allocated.borrow() - old_layout.size() + layout.size();
-        if new_size <= self.limit {
-            *(self.allocated.borrow_mut()) = new_size;
-            unsafe {
-                Ok(
-                    NonNull::new(std::alloc::realloc(ptr.as_ptr(), old_layout, layout.size()))
-                        .ok_or(AllocError::AllocationFailed)?,
-                )
-            }
-        } else {
-            Err(AllocError::OutOfMemory)
+        if layout.size() > MAX_ALLOCATION_BYTES {
+            return Err(AllocError::OutOfMemory);
+        }
+        unsafe {
+            NonNull::new(std::alloc::realloc(ptr.as_ptr(), old_layout, layout.size()))
+                .ok_or(AllocError::AllocationFailed)
         }
     }
 
     fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
-        *self.allocated.borrow_mut() -= layout.size();
         unsafe { std::alloc::dealloc(ptr.as_ptr(), layout) }
     }
 }
@@ -161,18 +179,21 @@ const MAX_CODE_PAGES: u32 = 128;
 const MAX_CONTROL_FRAMES: usize = 128;
 const MAX_STACK_DEPTH: usize = 256;
 
-/// Oracle: Validate a Wasm module.
+/// Decode and validate a Wasm module, discarding the outcome.
 ///
-/// This tests the decoder by attempting to validate the given Wasm bytes.
-/// It checks that the module is structurally valid according to Wasm spec.
-pub fn validate(wasm: &[u8]) {
-    log_wasm(wasm);
-
+/// Both `Ok` and `Err` are acceptable results: a graceful decode error is a
+/// correct rejection, not a bug. The only failures this surfaces are *implicit*
+/// -- a `panic!` (including the `strict-assertions` checks), an abort, a
+/// segfault, or a sanitizer trip during `Module::new`. libFuzzer treats all of
+/// those as crashes.
+///
+/// Returns `true` if decoding succeeded, for callers that want to log it.
+fn load_module(wasm: &[u8]) -> bool {
     let mut store = match Store::from_host_modules(256, Vec::zero()) {
         Ok(s) => s,
         Err(e) => {
             log::debug!("store creation failed: {e:?}");
-            return;
+            return false;
         }
     };
 
@@ -184,14 +205,11 @@ pub fn validate(wasm: &[u8]) {
     .unwrap();
     let mut stream = ByteStream::new(wasm);
 
-    let allocator = spacewasm::Rc::new(FuzzAllocator {
-        limit: 1024 * 1024 * 64, // 64MiB,
-        allocated: RefCell::new(0),
-    })
-    .unwrap()
-    .into_wasm_memory_allocator();
+    let allocator = spacewasm::Rc::new(FuzzAllocator)
+        .unwrap()
+        .into_wasm_memory_allocator();
 
-    // Attempt to decode and validate the module
+    // Attempt to decode and validate the module.
     let result = Module::new::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
         "",
         &mut stream,
@@ -200,13 +218,42 @@ pub fn validate(wasm: &[u8]) {
         allocator.clone(),
     );
 
-    match result {
-        Ok(_) => {
-            log::debug!("validation succeeded");
-        }
-        Err(e) => {
-            log::debug!("validation failed (expected for invalid modules): {e:?}");
-        }
+    result.is_ok()
+}
+
+/// Oracle: Validate a Wasm module.
+///
+/// This tests the decoder by attempting to validate the given Wasm bytes.
+/// It checks that the module is structurally valid according to Wasm spec.
+///
+/// Inputs come from wasm-smith and are therefore expected to be valid, so a
+/// decode error here points at SpaceWasm being stricter than the generator
+/// (e.g. code-page or stack limits) rather than at malformed input.
+pub fn validate(wasm: &[u8]) {
+    log_wasm(wasm);
+
+    if load_module(wasm) {
+        log::debug!("validation succeeded");
+    } else {
+        log::debug!("validation failed (expected for invalid modules)");
+    }
+}
+
+/// Oracle: Decode a possibly-malformed Wasm module.
+///
+/// This tests the decoder against intentionally corrupted input (see
+/// [`crate::generators::MalformedModule`]). A clean `Err` is the correct
+/// outcome for garbage input; the bug we are hunting is a *reachable panic* --
+/// an out-of-bounds read, an unchecked index, an arithmetic overflow, or a
+/// `strict-assertions` violation -- on the load path. The decoder must reject
+/// bad modules gracefully, never crash on them.
+pub fn decode(wasm: &[u8]) {
+    log_wasm(wasm);
+
+    if load_module(wasm) {
+        log::debug!("decode succeeded (mutation happened to stay valid)");
+    } else {
+        log::debug!("decode rejected malformed module (expected)");
     }
 }
 
@@ -239,12 +286,7 @@ pub fn no_traps(wasm: &[u8]) {
     .unwrap();
     let mut stream = ByteStream::new(wasm);
 
-    let allocator = Rc::new(FuzzAllocator {
-        limit: 1024 * 1024 * 64, // 64MiB,
-        allocated: RefCell::new(0),
-    })
-    .unwrap()
-    .into_wasm_memory_allocator();
+    let allocator = Rc::new(FuzzAllocator).unwrap().into_wasm_memory_allocator();
 
     let module = match Module::new::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
         "",
