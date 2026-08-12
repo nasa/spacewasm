@@ -308,11 +308,15 @@ pub fn no_traps(wasm: &[u8]) {
     let text = code_builder.pages();
 
     let module_ref = state.push_module(module).unwrap();
-    let start_result = match state.invoke_start(module_ref) {
-        StartInvocation::Finished => InterpreterResult::Finished,
-        StartInvocation::Trap(t) => InterpreterResult::Trap(t),
-        StartInvocation::Pause => InterpreterResult::Pause,
-        StartInvocation::Running => Interpreter.run(text, &mut state, 10000),
+    let start_result = match state.module_start(module_ref) {
+        None => InterpreterResult::Finished,
+        Some(start) => match state.invoke(start, &[]) {
+            Ok(()) => Interpreter.run(text, &mut state, 10000),
+            Err(InvokeError::StackOverflow) => InterpreterResult::Trap(TrapReason::StackOverflow),
+            // The start function is validated to be `[] -> []`, so parameter
+            // length/type mismatches cannot occur.
+            Err(_) => unreachable!(),
+        },
     };
     match start_result {
         InterpreterResult::Finished => {}

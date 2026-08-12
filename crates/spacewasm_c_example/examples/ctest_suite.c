@@ -187,19 +187,30 @@ static spacewasm_status_t load_module_onto(spacewasm_allocator_t* alloc, spacewa
         return st;
     }
 
-    spacewasm_run_status_t rs = spacewasm_invoke_start(store, *out_idx);
+    /* Resolve the start function (if any) and drive it to completion. A module
+     * without a start function reports NOT_FOUND and needs no initialization. */
+    uint32_t start_mod = 0;
+    uint32_t start_func = 0;
+    spacewasm_status_t start_st = spacewasm_module_start(store, *out_idx, &start_mod, &start_func);
+    if (start_st == SPACEWASM_ERR_NOT_FOUND) {
+        return SPACEWASM_OK;
+    }
+    if (start_st != SPACEWASM_OK) {
+        return start_st;
+    }
+
+    st = spacewasm_invoke(store, start_mod, start_func, NULL, 0);
+    if (st != SPACEWASM_OK) {
+        return st;
+    }
+
     spacewasm_trap_t trap = SPACEWASM_TRAP_NONE;
+    spacewasm_run_status_t rs = SPACEWASM_RUN_OUT_OF_FUEL;
     while (rs == SPACEWASM_RUN_OUT_OF_FUEL) {
         rs = spacewasm_run(store, 1000, &trap);
     }
 
-    if (rs != SPACEWASM_RUN_FINISHED) {
-        st = SPACEWASM_ERR_WRONG_STATE;
-    } else {
-        st = SPACEWASM_OK;
-    }
-
-    return st;
+    return rs == SPACEWASM_RUN_FINISHED ? SPACEWASM_OK : SPACEWASM_ERR_WRONG_STATE;
 }
 
 static spacewasm_run_status_t run_to_completion(spacewasm_t* store,
@@ -548,7 +559,9 @@ static int test_pause_and_resume_no_value(void) {
           "load_module");
 
     /* No start function */
-    CHECK(spacewasm_invoke_start(store, idx) == SPACEWASM_RUN_FINISHED,
+    uint32_t start_mod = 0;
+    uint32_t start_func = 0;
+    CHECK(spacewasm_module_start(store, idx, &start_mod, &start_func) == SPACEWASM_ERR_NOT_FOUND,
           "no start");
 
     uint32_t func;
@@ -602,7 +615,9 @@ static int test_pause_and_resume_with_value(void) {
           "load_module");
 
     /* No start function */
-    CHECK(spacewasm_invoke_start(store, idx) == SPACEWASM_RUN_FINISHED,
+    uint32_t start_mod = 0;
+    uint32_t start_func = 0;
+    CHECK(spacewasm_module_start(store, idx, &start_mod, &start_func) == SPACEWASM_ERR_NOT_FOUND,
           "no start");
 
     uint32_t func;

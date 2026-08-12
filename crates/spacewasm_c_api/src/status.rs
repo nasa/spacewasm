@@ -131,6 +131,7 @@ pub enum spacewasm_status_t {
     SPACEWASM_ERR_GLOBAL_TYPE_MISMATCH = 164,
     SPACEWASM_ERR_ALIGNMENT_LARGER_THAN_TYPE = 165,
     SPACEWASM_ERR_INVALID_START_FUNCTION_SIGNATURE = 166,
+    SPACEWASM_ERR_INVALID_HOST_START_FUNCTION = 167,
 
     // Parse / validation errors - Constant expression validation
     SPACEWASM_ERR_CONST_ALREADY_HAS_VALUE = 176,
@@ -333,6 +334,7 @@ pub fn validation_status(e: &ValidationError) -> spacewasm_status_t {
         ValidationError::InvalidStartFunctionSignature => {
             SPACEWASM_ERR_INVALID_START_FUNCTION_SIGNATURE
         }
+        ValidationError::InvalidHostStartFunction => SPACEWASM_ERR_INVALID_HOST_START_FUNCTION,
         ValidationError::InvalidConstantExpr(ce) => constant_expr_status(ce),
         ValidationError::GuestMemoryAllocationFailure => SPACEWASM_ERR_GUEST_MEMORY_ALLOC_FAILED,
         ValidationError::AllocError(ae) => alloc_status(ae.clone()),

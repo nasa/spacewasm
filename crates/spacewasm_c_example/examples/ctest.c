@@ -157,15 +157,28 @@ int main(void) {
     }
 
     /* Run the module's start function if it declares one. This module does not,
-     * but a well-behaved loader always checks. */
-    spacewasm_run_status_t start_rs = spacewasm_invoke_start(store, mod_idx);
+     * but a well-behaved loader always checks. A NOT_FOUND result means there is
+     * no start function to run. */
     spacewasm_trap_t start_trap = SPACEWASM_TRAP_NONE;
-    while (start_rs == SPACEWASM_RUN_OUT_OF_FUEL) {
-        start_rs = spacewasm_run(store, 1000, &start_trap);
-    }
-
-    if (start_rs != SPACEWASM_RUN_FINISHED) {
-        fprintf(stderr, "run_start: status=%d trap=%d\n", (int)start_rs, (int)start_trap);
+    uint32_t start_mod = 0;
+    uint32_t start_func = 0;
+    spacewasm_status_t start_st = spacewasm_module_start(store, mod_idx, &start_mod, &start_func);
+    if (start_st == SPACEWASM_OK) {
+        st = spacewasm_invoke(store, start_mod, start_func, NULL, 0);
+        if (st != SPACEWASM_OK) {
+            fprintf(stderr, "invoke start: status=%d\n", (int)st);
+            return 1;
+        }
+        spacewasm_run_status_t start_rs = SPACEWASM_RUN_OUT_OF_FUEL;
+        while (start_rs == SPACEWASM_RUN_OUT_OF_FUEL) {
+            start_rs = spacewasm_run(store, 1000, &start_trap);
+        }
+        if (start_rs != SPACEWASM_RUN_FINISHED) {
+            fprintf(stderr, "run_start: status=%d trap=%d\n", (int)start_rs, (int)start_trap);
+            return 1;
+        }
+    } else if (start_st != SPACEWASM_ERR_NOT_FOUND) {
+        fprintf(stderr, "module_start: status=%d\n", (int)start_st);
         return 1;
     }
 

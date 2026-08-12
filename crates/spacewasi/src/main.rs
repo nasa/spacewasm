@@ -18,7 +18,7 @@
 /// Portions of this file are derived from <https://github.com/crossterm-rs/crossterm>
 use spacewasm::{
     CodeBuilder, CompilerOptions, Engine, ExportDesc, Interpreter, InterpreterResult,
-    InterpreterRunner, ModuleRef, PageAllocator, Ref, StartInvocation, WasmRef,
+    InterpreterRunner, InvokeError, ModuleRef, PageAllocator, Ref, TrapReason, WasmRef,
 };
 mod wasi_preview1;
 use crate::wasi_preview1::make_wasi_preview1_module;
@@ -194,11 +194,13 @@ fn main() {
     // Append the module and run its start function (if any). The interpreter
     // reads code directly from the builder's pages.
     let module_ref = engine.push_module(module).unwrap();
-    let init_result = match engine.invoke_start(module_ref) {
-        StartInvocation::Finished => InterpreterResult::Finished,
-        StartInvocation::Trap(t) => InterpreterResult::Trap(t),
-        StartInvocation::Pause => InterpreterResult::Pause,
-        StartInvocation::Running => Interpreter.run(code_builder.pages(), &mut engine, usize::MAX),
+    let init_result = match engine.module_start(module_ref) {
+        None => InterpreterResult::Finished,
+        Some(start) => match engine.invoke(start, &[]) {
+            Ok(()) => Interpreter.run(code_builder.pages(), &mut engine, usize::MAX),
+            Err(InvokeError::StackOverflow) => InterpreterResult::Trap(TrapReason::StackOverflow),
+            Err(_) => unreachable!(),
+        },
     };
     match init_result {
         InterpreterResult::Finished => {}

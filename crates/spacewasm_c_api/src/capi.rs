@@ -5,7 +5,7 @@ use core::ffi::c_void;
 
 use spacewasm::{
     CodeBuilder, CompilerOptions, Engine, ExportDesc, HostFunction, HostModule, Interpreter,
-    InterpreterRunner, Module, ModuleRef, Ref, StartInvocation, ValType, Value, Vec, WasmRef,
+    InterpreterRunner, Module, ModuleRef, Ref, ValType, Value, Vec, WasmRef,
 };
 
 use crate::SpacewasmCaller;
@@ -238,7 +238,8 @@ pub unsafe extern "C" fn spacewasm_add_host_function(
 /// Load a guest module named `name` onto an existing engine by streaming its
 /// bytes through the `read` callback. The callback owns the buffer backing each
 /// chunk (see [`spacewasm_read_fn_t`]). This does not run the module's start
-/// function; use [`spacewasm_invoke_start`] for that. `allocator` supplies the
+/// function; resolve it with [`spacewasm_module_start`] and invoke it with
+/// [`spacewasm_invoke`] for that. `allocator` supplies the
 /// guest linear memory (see [`spacewasm_allocator_new`]). Writes the new module's
 /// index to `out_module_idx` (if non-null). May be called repeatedly to load
 /// several modules onto the same engine.
@@ -448,38 +449,51 @@ pub unsafe extern "C" fn spacewasm_find_export_func(
     status::SPACEWASM_ERR_NOT_FOUND
 }
 
-/// Invoke the start function of a module.
+/// Look up the start function of module `module_idx` and write its location to
+/// `out_module_idx` and `out_func_index`.
 ///
-/// If there is no start function, return [`spacewasm_run_status_t::SPACEWASM_RUN_FINISHED`]
-/// If there is a start function, return [`spacewasm_run_status_t::SPACEWASM_RUN_OUT_OF_FUEL`]
+/// Start functions are never host functions (that is rejected at load time), so
+/// the result is always a directly-invokable Wasm function. The written indices
+/// can be passed straight to [`spacewasm_invoke`] followed by [`spacewasm_run`],
+/// exactly as you would an exported function. Note that `out_module_idx` may
+/// differ from `module_idx` when the start is an imported (cross-module)
+/// function.
 ///
-/// If there are any bad arguments or the start function is a host function that traps,
-/// return [`spacewasm_run_status_t::SPACEWASM_RUN_TRAP`]
+/// Returns [`spacewasm_status_t::SPACEWASM_OK`] and populates the outputs when
+/// the module declares a start function. Returns
+/// [`spacewasm_status_t::SPACEWASM_ERR_NOT_FOUND`] when `module_idx` is out of
+/// range or the module has no start function, in which case there is nothing to
+/// invoke.
 ///
 /// # Safety
-/// `engine` must be live
+/// `engine` must be live; `out_module_idx` and `out_func_index` valid.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn spacewasm_invoke_start(
+pub unsafe extern "C" fn spacewasm_module_start(
     engine: *mut CEngine,
     module_idx: u32,
-) -> spacewasm_run_status_t {
-    let Some(cengine) = (unsafe { engine.as_mut() }) else {
-        return spacewasm_run_status_t::SPACEWASM_RUN_TRAP;
+    out_module_idx: *mut u32,
+    out_func_index: *mut u32,
+) -> spacewasm_status_t {
+    let Some(cengine) = (unsafe { engine.as_ref() }) else {
+        return status::SPACEWASM_ERR_NULL_ARG;
     };
-
-    if !cengine.engine.is_idle() {
-        return spacewasm_run_status_t::SPACEWASM_RUN_TRAP;
+    if out_module_idx.is_null() || out_func_index.is_null() {
+        return status::SPACEWASM_ERR_NULL_ARG;
     }
 
     if module_idx as usize >= cengine.engine.store.modules().len() {
-        return spacewasm_run_status_t::SPACEWASM_RUN_TRAP;
+        return status::SPACEWASM_ERR_NOT_FOUND;
     }
 
-    match cengine.engine.invoke_start(ModuleRef(module_idx as u8)) {
-        StartInvocation::Finished => spacewasm_run_status_t::SPACEWASM_RUN_FINISHED,
-        StartInvocation::Trap(_) => spacewasm_run_status_t::SPACEWASM_RUN_TRAP,
-        StartInvocation::Pause => spacewasm_run_status_t::SPACEWASM_RUN_PAUSE,
-        StartInvocation::Running => spacewasm_run_status_t::SPACEWASM_RUN_OUT_OF_FUEL,
+    match cengine.engine.module_start(ModuleRef(module_idx as u8)) {
+        Some(start) => {
+            unsafe {
+                *out_module_idx = start.module.0 as u32;
+                *out_func_index = start.index as u32;
+            }
+            status::SPACEWASM_OK
+        }
+        None => status::SPACEWASM_ERR_NOT_FOUND,
     }
 }
 
