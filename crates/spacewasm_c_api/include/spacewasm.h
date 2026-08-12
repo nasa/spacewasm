@@ -622,6 +622,32 @@ spacewasm_status_t spacewasm_module_start(struct spacewasm_t *engine,
                                           uint32_t *out_func_index);
 
 /*
+ Check that function `func_index` of module `module_idx` has the signature
+ described by `params_sig` and `returns_sig`.
+
+ Signatures use the same alphabet as [`spacewasm_add_host_function`]:
+ `i` (i32), `I` (i64), `f` (f32), `d` (f64). For example, a function
+ `(i32, i32) -> i32` matches `params_sig = "ii"`, `returns_sig = "i"`.
+
+ Returns [`spacewasm_status_t::SPACEWASM_OK`] when the signature matches.
+ Returns [`spacewasm_status_t::SPACEWASM_ERR_PARAM_LEN_MISMATCH`] when the
+ parameter or return count differs, and
+ [`spacewasm_status_t::SPACEWASM_ERR_PARAM_TYPE_MISMATCH`] when a type at some
+ position differs. Returns [`spacewasm_status_t::SPACEWASM_ERR_NOT_FOUND`]
+ when `module_idx` or `func_index` is out of range, and
+ [`spacewasm_status_t::SPACEWASM_ERR_BAD_SIGNATURE`] when a signature string
+ contains a character other than `iIfd` or is too long.
+
+ # Safety
+ `engine` must be live; all C strings valid and NUL-terminated.
+ */
+spacewasm_status_t spacewasm_check_func_signature(struct spacewasm_t *engine,
+                                                  uint32_t module_idx,
+                                                  uint32_t func_index,
+                                                  const char *params_sig,
+                                                  const char *returns_sig);
+
+/*
  Set up a call to exported function `func_index` of module `module_idx` with
  the `n` arguments in `params`. Does not run the function; drive execution
  with [`spacewasm_run`].
