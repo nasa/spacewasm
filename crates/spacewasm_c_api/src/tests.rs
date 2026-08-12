@@ -285,25 +285,30 @@ fn load_module_onto(
         return Err(st);
     }
 
-    let run = unsafe { spacewasm_invoke_start(store, idx) };
+    // Resolve the start function (if any) and drive it to completion. A module
+    // without a start function reports NOT_FOUND and needs no initialization.
+    let mut start_mod = 0u32;
+    let mut start_func = 0u32;
+    match unsafe { spacewasm_module_start(store, idx, &mut start_mod, &mut start_func) } {
+        status::SPACEWASM_OK => {}
+        status::SPACEWASM_ERR_NOT_FOUND => return Ok(idx),
+        e => return Err(e),
+    }
 
-    // The error codes don't really matter, just spin the start function
-    match run {
-        spacewasm_run_status_t::SPACEWASM_RUN_FINISHED => Ok(idx),
-        spacewasm_run_status_t::SPACEWASM_RUN_OUT_OF_FUEL => {
-            // We must spin the start function
-            loop {
-                let mut trap = spacewasm_trap_t::SPACEWASM_TRAP_NONE;
-                let run = unsafe { spacewasm_run(store, 10000, &mut trap) };
-                if run == spacewasm_run_status_t::SPACEWASM_RUN_FINISHED {
-                    break Ok(idx);
-                } else if run != spacewasm_run_status_t::SPACEWASM_RUN_OUT_OF_FUEL {
-                    break Err(status::SPACEWASM_ERR_WRONG_STATE);
-                }
-            }
+    let st = unsafe { spacewasm_invoke(store, start_mod, start_func, core::ptr::null(), 0) };
+    if st != status::SPACEWASM_OK {
+        return Err(st);
+    }
+
+    // Spin the start function to completion.
+    loop {
+        let mut trap = spacewasm_trap_t::SPACEWASM_TRAP_NONE;
+        let run = unsafe { spacewasm_run(store, 10000, &mut trap) };
+        if run == spacewasm_run_status_t::SPACEWASM_RUN_FINISHED {
+            break Ok(idx);
+        } else if run != spacewasm_run_status_t::SPACEWASM_RUN_OUT_OF_FUEL {
+            break Err(status::SPACEWASM_ERR_WRONG_STATE);
         }
-        spacewasm_run_status_t::SPACEWASM_RUN_PAUSE => Err(status::SPACEWASM_ERR_WRONG_STATE),
-        spacewasm_run_status_t::SPACEWASM_RUN_TRAP => Err(status::SPACEWASM_ERR_WRONG_STATE),
     }
 }
 
@@ -1082,6 +1087,10 @@ fn validation_error_codes_map() {
             InvalidStartFunctionSignature,
             status::SPACEWASM_ERR_INVALID_START_FUNCTION_SIGNATURE,
         ),
+        (
+            InvalidHostStartFunction,
+            status::SPACEWASM_ERR_INVALID_HOST_START_FUNCTION,
+        ),
         // Constant expression validation
         (
             InvalidConstantExpr(ConstantExprError::InvalidConstantInstruction),
@@ -1352,7 +1361,7 @@ fn module_with_start_runs() {
     let alloc = new_guest_allocator();
 
     // Stream in without auto-running the start function, so we can observe
-    // `module_needs_start` and drive `run_start` explicitly.
+    // `spacewasm_module_start` and drive the start invocation explicitly.
     let mut cursor = Cursor {
         data: START_WASM,
         pos: 0,
@@ -1374,9 +1383,17 @@ fn module_with_start_runs() {
         "load"
     );
 
+    // Resolve the start function location, then invoke it like any other
+    // exported function.
+    let mut start_mod = 0u32;
+    let mut start_func = 0u32;
     assert_eq!(
-        unsafe { spacewasm_invoke_start(store, idx) },
-        spacewasm_run_status_t::SPACEWASM_RUN_OUT_OF_FUEL
+        unsafe { spacewasm_module_start(store, idx, &mut start_mod, &mut start_func) },
+        status::SPACEWASM_OK
+    );
+    assert_eq!(
+        unsafe { spacewasm_invoke(store, start_mod, start_func, core::ptr::null(), 0) },
+        status::SPACEWASM_OK
     );
 
     // Drive the start function in small fuel slices to also exercise the
@@ -1417,7 +1434,7 @@ fn module_with_start_runs() {
 }
 
 #[test]
-fn no_start_module_reports_false() {
+fn no_start_module_reports_none() {
     let _guard = ALLOC_LOCK.lock().unwrap();
     ensure_global_allocator();
 
@@ -1425,10 +1442,12 @@ fn no_start_module_reports_false() {
     let alloc = new_guest_allocator();
     let idx = load_module_onto(alloc, store, c"main", ADD_WASM, 0).expect("load");
 
-    // No start function should return finished
+    // A module with no start function has no start location to resolve.
+    let mut start_mod = 0u32;
+    let mut start_func = 0u32;
     assert_eq!(
-        unsafe { spacewasm_invoke_start(store, idx) },
-        spacewasm_run_status_t::SPACEWASM_RUN_FINISHED
+        unsafe { spacewasm_module_start(store, idx, &mut start_mod, &mut start_func) },
+        status::SPACEWASM_ERR_NOT_FOUND
     );
 
     unsafe {
@@ -1899,9 +1918,15 @@ fn start_function_traps() {
         status::SPACEWASM_OK
     );
 
+    let mut start_mod = 0u32;
+    let mut start_func = 0u32;
     assert_eq!(
-        unsafe { spacewasm_invoke_start(store, idx) },
-        spacewasm_run_status_t::SPACEWASM_RUN_OUT_OF_FUEL
+        unsafe { spacewasm_module_start(store, idx, &mut start_mod, &mut start_func) },
+        status::SPACEWASM_OK
+    );
+    assert_eq!(
+        unsafe { spacewasm_invoke(store, start_mod, start_func, core::ptr::null(), 0) },
+        status::SPACEWASM_OK
     );
 
     let mut trap = spacewasm_trap_t::SPACEWASM_TRAP_NONE;
@@ -1924,13 +1949,15 @@ fn engine_rejects_out_of_range_module() {
     let alloc = new_guest_allocator();
     let _ = load_module_onto(alloc, store, c"main", ADD_WASM, 0).expect("load");
 
-    // module_needs_start on an out-of-range module is trap.
+    // spacewasm_module_start on an out-of-range module is NOT_FOUND.
+    let mut start_mod = 0u32;
+    let mut start_func = 0u32;
     assert_eq!(
-        unsafe { spacewasm_invoke_start(store, 99) },
-        spacewasm_run_status_t::SPACEWASM_RUN_TRAP
+        unsafe { spacewasm_module_start(store, 99, &mut start_mod, &mut start_func) },
+        status::SPACEWASM_ERR_NOT_FOUND
     );
 
-    // run_start on an out-of-range module traps (no such module to seed).
+    // run on an out-of-range module traps (no such module to seed).
     let mut trap = spacewasm_trap_t::SPACEWASM_TRAP_NONE;
     assert_eq!(
         unsafe { spacewasm_run(store, 0, &mut trap) },

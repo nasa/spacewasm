@@ -1,7 +1,7 @@
 use spacewasm::{
     CodeBuilder, CompilerOptions, ExportDesc, HostFunction, HostFunctionBreak, HostModule,
-    InterpreterResult, InterpreterRunner, ModuleRef, PageAllocator, Ref, SectionKind,
-    StartInvocation, ValType, Value, WasmRef, vec,
+    InterpreterResult, InterpreterRunner, ModuleRef, PageAllocator, Ref, SectionKind, ValType,
+    Value, WasmRef, vec,
 };
 use spacewasm_util::{FileStream, RustSystemAllocator};
 use std::ops::ControlFlow;
@@ -153,17 +153,13 @@ fn main() {
     let final_page_offset = code_builder.offset();
 
     let module_ref = state.push_module(module).unwrap();
-    match state.invoke_start(module_ref) {
-        StartInvocation::Finished => {}
-        StartInvocation::Trap(t) => panic!("trap during initialization {t:?}"),
-        StartInvocation::Pause => panic!("pause during init"),
-        StartInvocation::Running => {
-            match spacewasm::Interpreter.run(text, &mut state, usize::MAX) {
-                InterpreterResult::Finished => {}
-                InterpreterResult::OutOfFuel => panic!("insufficient fuel for initialization"),
-                InterpreterResult::Trap(t) => panic!("trap during initialization {t:?}"),
-                InterpreterResult::Pause => panic!("pause during init"),
-            }
+    if let Some(start) = state.module_start(module_ref) {
+        state.invoke(start, &[]).unwrap();
+        match spacewasm::Interpreter.run(text, &mut state, usize::MAX) {
+            InterpreterResult::Finished => {}
+            InterpreterResult::OutOfFuel => panic!("insufficient fuel for initialization"),
+            InterpreterResult::Trap(t) => panic!("trap during initialization {t:?}"),
+            InterpreterResult::Pause => panic!("pause during init"),
         }
     }
 
