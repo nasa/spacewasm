@@ -990,8 +990,10 @@ fn check_decode_error(err: ParseError, text: String) {
         (ValidationError::InvalidNegativeMemOffset, "data segment does not fit") => {}
         (ValidationError::InvalidMemOffsetType, "type mismatch") => {}
         (ValidationError::InvalidStartFunctionSignature, "start function") => {}
-        (ValidationError::InvalidHostStartFunction, "start function must not be a host function") => {
-        }
+        (
+            ValidationError::InvalidHostStartFunction,
+            "start function must not be a host function",
+        ) => {}
         (ValidationError::DuplicateExportName, "duplicate export name") => {}
         (ValidationError::InvalidTableIndex, "unknown table") => {}
         (ValidationError::MemoryError(MemoryError::OutOfBounds), "data segment does not fit") => {}
