@@ -407,6 +407,97 @@ fn add_module_invoke() {
 }
 
 #[test]
+fn check_func_signature() {
+    let _guard = ALLOC_LOCK.lock().unwrap();
+    ensure_global_allocator();
+
+    let store = new_store(1024, 1, 256);
+    let alloc = new_guest_allocator();
+
+    let idx = load_module_onto(alloc, store, c"main", ADD_WASM, 0).expect("load");
+    let mut func = 0u32;
+    let st = unsafe { spacewasm_find_export_func(store, idx, c"add".as_ptr(), &mut func) };
+    assert_eq!(st, status::SPACEWASM_OK, "find");
+
+    // `add` is `(i32, i32) -> i32`.
+    unsafe {
+        // Correct signature matches.
+        assert_eq!(
+            spacewasm_check_func_signature(store, idx, func, c"ii".as_ptr(), c"i".as_ptr()),
+            status::SPACEWASM_OK,
+            "matching signature"
+        );
+
+        // Wrong parameter count.
+        assert_eq!(
+            spacewasm_check_func_signature(store, idx, func, c"i".as_ptr(), c"i".as_ptr()),
+            status::SPACEWASM_ERR_PARAM_LEN_MISMATCH,
+            "too few params"
+        );
+
+        // Wrong return count.
+        assert_eq!(
+            spacewasm_check_func_signature(store, idx, func, c"ii".as_ptr(), c"".as_ptr()),
+            status::SPACEWASM_ERR_PARAM_LEN_MISMATCH,
+            "missing return"
+        );
+
+        // Right arity, wrong parameter type (i64 instead of i32).
+        assert_eq!(
+            spacewasm_check_func_signature(store, idx, func, c"iI".as_ptr(), c"i".as_ptr()),
+            status::SPACEWASM_ERR_PARAM_TYPE_MISMATCH,
+            "wrong param type"
+        );
+
+        // Right arity, wrong return type (f32 instead of i32).
+        assert_eq!(
+            spacewasm_check_func_signature(store, idx, func, c"ii".as_ptr(), c"f".as_ptr()),
+            status::SPACEWASM_ERR_PARAM_TYPE_MISMATCH,
+            "wrong return type"
+        );
+
+        // Malformed signature string.
+        assert_eq!(
+            spacewasm_check_func_signature(store, idx, func, c"ix".as_ptr(), c"i".as_ptr()),
+            status::SPACEWASM_ERR_BAD_SIGNATURE,
+            "bad signature char"
+        );
+
+        // Out-of-range function index.
+        assert_eq!(
+            spacewasm_check_func_signature(store, idx, 999, c"ii".as_ptr(), c"i".as_ptr()),
+            status::SPACEWASM_ERR_NOT_FOUND,
+            "func out of range"
+        );
+
+        // Out-of-range module index.
+        assert_eq!(
+            spacewasm_check_func_signature(store, 999, func, c"ii".as_ptr(), c"i".as_ptr()),
+            status::SPACEWASM_ERR_NOT_FOUND,
+            "module out of range"
+        );
+
+        // NULL engine.
+        assert_eq!(
+            spacewasm_check_func_signature(
+                core::ptr::null_mut(),
+                idx,
+                func,
+                c"ii".as_ptr(),
+                c"i".as_ptr()
+            ),
+            status::SPACEWASM_ERR_NULL_ARG,
+            "null engine"
+        );
+    }
+
+    unsafe {
+        spacewasm_destroy(store);
+        spacewasm_allocator_destroy(alloc);
+    }
+}
+
+#[test]
 fn two_modules_on_one_store() {
     let _guard = ALLOC_LOCK.lock().unwrap();
     ensure_global_allocator();

@@ -497,6 +497,70 @@ pub unsafe extern "C" fn spacewasm_module_start(
     }
 }
 
+/// Check that function `func_index` of module `module_idx` has the signature
+/// described by `params_sig` and `returns_sig`.
+///
+/// Signatures use the same alphabet as [`spacewasm_add_host_function`]:
+/// `i` (i32), `I` (i64), `f` (f32), `d` (f64). For example, a function
+/// `(i32, i32) -> i32` matches `params_sig = "ii"`, `returns_sig = "i"`.
+///
+/// Returns [`spacewasm_status_t::SPACEWASM_OK`] when the signature matches.
+/// Returns [`spacewasm_status_t::SPACEWASM_ERR_PARAM_LEN_MISMATCH`] when the
+/// parameter or return count differs, and
+/// [`spacewasm_status_t::SPACEWASM_ERR_PARAM_TYPE_MISMATCH`] when a type at some
+/// position differs. Returns [`spacewasm_status_t::SPACEWASM_ERR_NOT_FOUND`]
+/// when `module_idx` or `func_index` is out of range, and
+/// [`spacewasm_status_t::SPACEWASM_ERR_BAD_SIGNATURE`] when a signature string
+/// contains a character other than `iIfd` or is too long.
+///
+/// # Safety
+/// `engine` must be live; all C strings valid and NUL-terminated.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn spacewasm_check_func_signature(
+    engine: *mut CEngine,
+    module_idx: u32,
+    func_index: u32,
+    params_sig: *const c_char,
+    returns_sig: *const c_char,
+) -> spacewasm_status_t {
+    let Some(cengine) = (unsafe { engine.as_ref() }) else {
+        return status::SPACEWASM_ERR_NULL_ARG;
+    };
+
+    let params_sig = check!(unsafe { cstr(params_sig) });
+    let returns_sig = check!(unsafe { cstr(returns_sig) });
+
+    let params =
+        check!(spacewasm::HostValList::try_new(params_sig).map_err(status::host_val_list_status));
+    let returns =
+        check!(spacewasm::HostValList::try_new(returns_sig).map_err(status::host_val_list_status));
+
+    let module = match cengine.engine.store.modules().get(module_idx as usize) {
+        Some(m) => m,
+        None => return status::SPACEWASM_ERR_NOT_FOUND,
+    };
+
+    let func = match module.functions.get(func_index as usize) {
+        Some(f) => f,
+        None => return status::SPACEWASM_ERR_NOT_FOUND,
+    };
+
+    let ty = match module.types.get(func.ty.0 as usize) {
+        Some(t) => t,
+        None => return status::SPACEWASM_ERR_NOT_FOUND,
+    };
+
+    if params.len() != ty.params.len() || returns.len() != ty.returns.len() {
+        return status::SPACEWASM_ERR_PARAM_LEN_MISMATCH;
+    }
+
+    if params.as_slice() != &ty.params[..] || returns.as_slice() != &ty.returns[..] {
+        return status::SPACEWASM_ERR_PARAM_TYPE_MISMATCH;
+    }
+
+    status::SPACEWASM_OK
+}
+
 /// Set up a call to exported function `func_index` of module `module_idx` with
 /// the `n` arguments in `params`. Does not run the function; drive execution
 /// with [`spacewasm_run`].
