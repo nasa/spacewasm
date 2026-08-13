@@ -3,12 +3,20 @@
 # Target Configuration (auto-detect if not set)
 SPACEWASM_TARGET ?= $(shell rustc -vV | grep 'host:' | cut -d' ' -f2)
 
+# rustc ships no AddressSanitizer runtime for 32-bit x86, so `cargo fuzz`'s
+# default `-s address` fails at link time on i686 looking for
+# `librustc-*_rt.asan.a`. libFuzzer is built from source by `libfuzzer-sys` and
+# does not need it, so drop the sanitizer for that target.
+SPACEWASM_FUZZ_SANITIZER ?= $(if $(findstring i686,$(SPACEWASM_TARGET)),none,address)
+FUZZ_FLAGS = --sanitizer $(SPACEWASM_FUZZ_SANITIZER) --target $(SPACEWASM_TARGET)
+
 # Default target
 help:
 	@echo "SpaceWasm Fuzzing Targets"
 	@echo ""
 	@echo "Configuration:"
-	@echo "  SPACEWASM_TARGET=<triple>   Target architecture (default: $(SPACEWASM_TARGET))"
+	@echo "  SPACEWASM_TARGET=<triple>          Target architecture (default: $(SPACEWASM_TARGET))"
+	@echo "  SPACEWASM_FUZZ_SANITIZER=<name>    Sanitizer for the fuzz targets (default: $(SPACEWASM_FUZZ_SANITIZER))"
 	@echo ""
 	@echo "Fuzzing:"
 	@echo "  make fuzz                          Run the no_traps fuzzer"
@@ -33,13 +41,13 @@ help:
 
 # Run fuzzer
 fuzz:
-	cargo +nightly fuzz run no_traps --target $(SPACEWASM_TARGET)
+	cargo +nightly fuzz run no_traps $(FUZZ_FLAGS)
 
 fuzz-validate:
-	cargo +nightly fuzz run validate --target $(SPACEWASM_TARGET)
+	cargo +nightly fuzz run validate $(FUZZ_FLAGS)
 
 fuzz-malformed:
-	cargo +nightly fuzz run malformed --target $(SPACEWASM_TARGET)
+	cargo +nightly fuzz run malformed $(FUZZ_FLAGS)
 
 # Convert seed to Wasm and trace execution (release mode)
 trace:

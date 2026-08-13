@@ -144,6 +144,95 @@ jobs:
         if: matrix.profile == 'release'
         run: cargo test -p spacewasm --release --target i686-unknown-linux-gnu --verbose
 
+  fuzz:
+    name: Fuzz (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            # `cargo fuzz`'s default.
+            sanitizer: address
+          - target: i686-unknown-linux-gnu
+            # rustc ships no AddressSanitizer runtime for 32-bit x86
+            # (`librustc-*_rt.asan.a` exists only for the 64-bit targets), so the
+            # default `-s address` fails at link time. libFuzzer itself is built
+            # from source by `libfuzzer-sys` and works fine without it.
+            sanitizer: none
+
+    env:
+      # Wall-clock budget per fuzz target. Long enough for libFuzzer to get past
+      # the header/section framing and into the decoder proper; short enough that
+      # the job stays comparable to the other checks.
+      FUZZ_SECONDS: 60
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install 32-bit system libraries
+        if: matrix.target == 'i686-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-multilib g++-multilib
+
+      # cargo-fuzz requires nightly for `-Z sanitizer` and the sancov passes.
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cargo-fuzz
+        # Pinned so a cargo-fuzz release cannot change what this job runs. This
+        # is the same tool the Makefile's fuzzing targets already drive; nothing
+        # new is added to the interpreter's dependency graph.
+        run: cargo install cargo-fuzz --locked --version 0.13.2
+
+      - name: Cache Rust dependencies
+        # Pinned commit resolved from the annotated Swatinem/rust-cache@v2 tag.
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          # `fuzz` is excluded from the root workspace and carries its own lockfile.
+          workspaces: fuzz
+          key: ${{ matrix.target }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-bin: false
+
+      # Nothing else in CI compiles `fuzz/` -- it is excluded from the workspace,
+      # so `cargo build --workspace --all-targets` and clippy both skip it. This
+      # step alone keeps the fuzz targets from rotting.
+      - name: Build fuzz targets
+        run: cargo fuzz build --sanitizer ${{ matrix.sanitizer }} --target ${{ matrix.target }}
+
+      - name: Run fuzz targets
+        # The 32-bit leg currently reproduces #158 (a decoder panic that only
+        # exists when `usize` is 32 bits) within ~100 s, which is the whole point
+        # of fuzzing this target -- but it also means a red job on every PR until
+        # that is fixed. Report it without blocking; drop the `continue-on-error`
+        # below once #158 is closed.
+        continue-on-error: ${{ matrix.target == 'i686-unknown-linux-gnu' }}
+        run: |
+          for target in $(cargo fuzz list); do
+            echo "::group::$target"
+            cargo fuzz run "$target" \
+              --sanitizer ${{ matrix.sanitizer }} \
+              --target ${{ matrix.target }} -- \
+              -max_total_time=${FUZZ_SECONDS} \
+              -rss_limit_mb=4096 \
+              -print_final_stats=1
+            echo "::endgroup::"
+          done
+
+      - name: Upload crash artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-artifacts-${{ matrix.target }}
+          path: fuzz/artifacts
+          if-no-files-found: ignore
+          retention-days: 7
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
