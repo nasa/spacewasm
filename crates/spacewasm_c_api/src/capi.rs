@@ -682,6 +682,24 @@ pub unsafe extern "C" fn spacewasm_resume_value(
     status::SPACEWASM_OK
 }
 
+/// Reset the engine back to an idle state, discarding any in-progress or
+/// completed call: the program counter, stack pointers, and pending result are
+/// cleared, and guest linear memory and the table are reset to their zero
+/// state. Loaded modules remain loaded. Use this to abandon a paused or
+/// out-of-fuel call, or to run a fresh invocation from a clean slate.
+///
+/// # Safety
+/// `engine` must be a live handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn spacewasm_reset(engine: *mut CEngine) -> spacewasm_status_t {
+    let Some(cengine) = (unsafe { engine.as_mut() }) else {
+        return status::SPACEWASM_ERR_NULL_ARG;
+    };
+
+    cengine.engine.reset();
+    status::SPACEWASM_OK
+}
+
 /// Fetch the result of the last completed call, coerced to `expected`, into
 /// `out`.
 ///

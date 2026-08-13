@@ -692,6 +692,18 @@ spacewasm_status_t spacewasm_resume_value(struct spacewasm_t *engine,
                                           struct spacewasm_value_t resume_value);
 
 /*
+ Reset the engine back to an idle state, discarding any in-progress or
+ completed call: the program counter, stack pointers, and pending result are
+ cleared, and guest linear memory and the table are reset to their zero
+ state. Loaded modules remain loaded. Use this to abandon a paused or
+ out-of-fuel call, or to run a fresh invocation from a clean slate.
+
+ # Safety
+ `engine` must be a live handle.
+ */
+spacewasm_status_t spacewasm_reset(struct spacewasm_t *engine);
+
+/*
  Fetch the result of the last completed call, coerced to `expected`, into
  `out`.
 

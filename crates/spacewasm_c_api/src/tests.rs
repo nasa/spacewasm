@@ -1595,6 +1595,76 @@ fn run_slices_out_of_fuel_then_resumes() {
     }
 }
 
+#[test]
+fn reset_abandons_in_progress_call() {
+    let _guard = ALLOC_LOCK.lock().unwrap();
+    ensure_global_allocator();
+
+    let store = new_store(1024, 1, 256);
+    let alloc = new_guest_allocator();
+    let idx = load_module_onto(alloc, store, c"main", LOOP_WASM, 0).expect("load");
+
+    let mut func = 0u32;
+    assert_eq!(
+        unsafe { spacewasm_find_export_func(store, idx, c"spin".as_ptr(), &mut func) },
+        status::SPACEWASM_OK
+    );
+
+    // Start a long-running call and run a single small slice so it pauses
+    // mid-execution (out of fuel) without finishing.
+    let params = [i32_val(5000)];
+    assert_eq!(
+        unsafe { spacewasm_invoke(store, idx, func, params.as_ptr(), params.len()) },
+        status::SPACEWASM_OK
+    );
+    let mut trap = spacewasm_trap_t::SPACEWASM_TRAP_NONE;
+    assert_eq!(
+        unsafe { spacewasm_run(store, 64, &mut trap) },
+        spacewasm_run_status_t::SPACEWASM_RUN_OUT_OF_FUEL
+    );
+
+    // While the call is in progress the engine is not idle, so a fresh invoke
+    // is rejected.
+    assert_eq!(
+        unsafe { spacewasm_invoke(store, idx, func, params.as_ptr(), params.len()) },
+        status::SPACEWASM_ERR_WRONG_STATE,
+        "invoke while running"
+    );
+
+    // Reset returns the engine to idle, discarding the in-progress call.
+    assert_eq!(unsafe { spacewasm_reset(store) }, status::SPACEWASM_OK);
+
+    // A fresh invocation now succeeds and runs to completion from a clean slate.
+    let params = [i32_val(10)];
+    assert_eq!(
+        unsafe { spacewasm_invoke(store, idx, func, params.as_ptr(), params.len()) },
+        status::SPACEWASM_OK,
+        "invoke after reset"
+    );
+    assert_eq!(
+        run_to_completion(store, &mut trap),
+        spacewasm_run_status_t::SPACEWASM_RUN_FINISHED
+    );
+    let mut out = i32_val(0);
+    assert_eq!(
+        unsafe { spacewasm_get_result(store, spacewasm_valtype_t::SPACEWASM_I32, &mut out) },
+        status::SPACEWASM_OK
+    );
+    assert_eq!(unsafe { out.u.i32_ }, 10, "spin(10) after reset");
+
+    // Reset on a null engine is rejected.
+    assert_eq!(
+        unsafe { spacewasm_reset(core::ptr::null_mut()) },
+        status::SPACEWASM_ERR_NULL_ARG,
+        "null engine"
+    );
+
+    unsafe {
+        spacewasm_destroy(store);
+        spacewasm_allocator_destroy(alloc);
+    }
+}
+
 /// Host implementation of `env.sink`: a void host function (no result type). It
 /// asserts it received exactly one argument and returns `SPACEWASM_CONTINUE_NONE`
 /// *while still writing to `out`*, to prove the interpreter honours the "no
