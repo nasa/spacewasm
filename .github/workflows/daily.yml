@@ -1,9 +1,8 @@
-name: PR Review
+name: Daily CI Jobs
 
 on:
-  pull_request_review:
-    types: [submitted]
-  workflow_dispatch:
+  schedule:
+    - cron: "0 0 * * *"
 
 permissions:
   contents: read
@@ -17,10 +16,10 @@ jobs:
     name: Miri Integration Tests
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout PR head
+      - name: Checkout main
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: main
           fetch-depth: 0
 
       - name: Install Rust toolchain
