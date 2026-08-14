@@ -38,7 +38,6 @@ fn local_get() {
 }
 
 #[test]
-#[cfg_attr(miri, ignore = "libm too slow")]
 fn names() {
     run("core/names");
 }
@@ -59,13 +58,11 @@ fn align() {
 }
 
 #[test]
-#[cfg_attr(miri, ignore = "stack recursion")]
 fn call_indirect() {
     run("core/call_indirect");
 }
 
 #[test]
-#[cfg_attr(miri, ignore = "libm too slow")]
 fn f32() {
     run("core/f32");
 }
@@ -111,13 +108,11 @@ fn comments() {
 }
 
 #[test]
-#[cfg_attr(miri, ignore = "libm too slow")]
 fn f32_bitwise() {
     run("core/f32_bitwise");
 }
 
 #[test]
-#[cfg_attr(miri, ignore = "libm too slow")]
 fn float_misc() {
     run("core/float_misc");
 }
@@ -148,13 +143,11 @@ fn binary_leb128() {
 }
 
 #[test]
-#[cfg_attr(miri, ignore = "libm too slow")]
 fn const_() {
     run("core/const");
 }
 
 #[test]
-#[cfg_attr(miri, ignore = "libm too slow")]
 fn f32_cmp() {
     run("core/f32_cmp");
 }
@@ -170,7 +163,6 @@ fn int_exprs() {
 }
 
 #[test]
-#[cfg_attr(miri, ignore = "long runtime")]
 fn loop_() {
     run("core/loop");
 }
@@ -191,13 +183,11 @@ fn block() {
 }
 
 #[test]
-#[cfg_attr(miri, ignore = "libm too slow")]
 fn conversions() {
     run("core/conversions");
 }
 
 #[test]
-#[cfg_attr(miri, ignore = "libm too slow")]
 fn f64() {
     run("core/f64");
 }
@@ -239,7 +229,6 @@ fn custom() {
 }
 
 #[test]
-#[cfg_attr(miri, ignore = "libm too slow")]
 fn f64_bitwise() {
     run("core/f64_bitwise");
 }
@@ -281,7 +270,6 @@ fn data() {
 }
 
 #[test]
-#[cfg_attr(miri, ignore = "libm too slow")]
 fn f64_cmp() {
     run("core/f64_cmp");
 }
@@ -312,7 +300,6 @@ fn unwind() {
 }
 
 #[test]
-#[cfg_attr(miri, ignore = "long runtime")]
 fn br_table() {
     run("core/br_table");
 }
@@ -329,7 +316,6 @@ fn fac() {
 }
 
 #[test]
-#[cfg_attr(miri, ignore = "libm too slow")]
 fn i32() {
     run("core/i32");
 }
@@ -365,13 +351,11 @@ fn endianness() {
 }
 
 #[test]
-#[cfg_attr(miri, ignore = "libm too slow")]
 fn float_exprs() {
     run("core/float_exprs");
 }
 
 #[test]
-#[cfg_attr(miri, ignore = "libm too slow")]
 fn i64() {
     run("core/i64");
 }
