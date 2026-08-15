@@ -96,8 +96,8 @@ impl Drop for Stack {
 #[cfg(kani)]
 mod kani_proofs {
     use super::*;
-    use crate::test_support::RustSystemAllocator;
     use crate::alloc::Allocator;
+    use crate::test_support::RustSystemAllocator;
 
     /// Verify that u32 write/read round-trips correctly for all valid addresses.
     /// This confirms `ptr.add(addr)` stays in-bounds for the entire valid range.

@@ -241,7 +241,63 @@ mod kani_proofs {
         assert_eq!(vec.pop(), None, "popping empty vector should return None");
     }
 
-    /// Verify StaticVec IntoIterator yields values in correct order and drops properly.
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn proof_push_step_invariant() {
+        const N: usize = 4;
+        let mut vec: StaticVec<u32, N> = StaticVec::new();
+
+        let len: u32 = kani::any();
+        kani::assume((len as usize) <= N);
+        vec.len = len;
+        for i in 0..N {
+            vec.data[i].write(kani::any());
+        }
+
+        let value: u32 = kani::any();
+        let old_len = vec.len;
+        let result = vec.push(value);
+
+        assert!((vec.len as usize) <= N, "len must never exceed capacity");
+        if (old_len as usize) < N {
+            assert!(result.is_ok(), "push must succeed below capacity");
+            assert_eq!(vec.len, old_len + 1, "len must increase by 1");
+        } else {
+            assert!(result.is_err(), "push must fail at capacity");
+            assert_eq!(vec.len, old_len, "len must not change on a failed push");
+        }
+
+        core::mem::forget(vec);
+    }
+
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn proof_pop_step_invariant() {
+        const N: usize = 4;
+        let mut vec: StaticVec<u32, N> = StaticVec::new();
+
+        let len: u32 = kani::any();
+        kani::assume((len as usize) <= N);
+        vec.len = len;
+        for i in 0..N {
+            vec.data[i].write(kani::any());
+        }
+
+        let old_len = vec.len;
+        let result = vec.pop();
+
+        assert!((vec.len as usize) <= N, "len must never exceed capacity");
+        if old_len == 0 {
+            assert!(result.is_none(), "pop must return None when empty");
+            assert_eq!(vec.len, 0, "len must stay 0 when popping an empty vec");
+        } else {
+            assert!(result.is_some(), "pop must return Some when non-empty");
+            assert_eq!(vec.len, old_len - 1, "len must decrease by 1");
+        }
+
+        core::mem::forget(vec);
+    }
+
     #[kani::proof]
     #[kani::unwind(5)]
     fn proof_into_iter_correctness() {

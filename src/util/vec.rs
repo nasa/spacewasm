@@ -441,7 +441,11 @@ mod kani_proofs {
 
         // Verify equal length and capacity
         assert_eq!(cloned.len(), vec.len(), "Clone must have same length");
-        assert_eq!(cloned.capacity(), vec.capacity(), "Clone must have same capacity");
+        assert_eq!(
+            cloned.capacity(),
+            vec.capacity(),
+            "Clone must have same capacity"
+        );
 
         // Verify equal contents by comparing the slices directly
         for i in 0..original_len {
@@ -469,7 +473,10 @@ mod kani_proofs {
         }
 
         let len = vec.len();
-        assert_eq!(len, capacity as usize, "Vec must be full for into_boxed_slice");
+        assert_eq!(
+            len, capacity as usize,
+            "Vec must be full for into_boxed_slice"
+        );
 
         let boxed_slice = vec.into_boxed_slice();
 

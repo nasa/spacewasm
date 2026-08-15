@@ -642,112 +642,162 @@ mod tests {
 mod kani_proofs {
     use super::*;
 
-    /// Verify push, pop_front, and pop_back operations maintain safety invariants.
-    /// This proves:
-    /// - Index calculations stay in bounds
-    /// - Push on full buffer drops old element before writing new
-    /// - Pops only read initialized memory
-    /// - Size tracking remains consistent
+    /// Verify write operations stay in bounds and sizes stay consistent
     #[kani::proof]
-    #[kani::unwind(10)]
-    fn proof_push_pop_correctness() {
+    fn proof_new_satisfies_invariant() {
         const N: usize = 4;
-        let mut buffer: CircularBuffer<u32, N> = CircularBuffer::new();
+        let buffer: CircularBuffer<u32, N> = CircularBuffer::new();
 
         assert!(buffer.start < N, "start index should stay within capacity");
         assert!(buffer.size <= N, "size should never exceed capacity");
         assert_eq!(buffer.len(), 0, "new buffer should be empty");
-
-        let num_ops: usize = kani::any();
-        kani::assume(num_ops <= 8);
-
-        for _ in 0..num_ops {
-            let op: u8 = kani::any();
-
-            match op % 3 {
-                0 => {
-                    let value: u32 = kani::any();
-                    let old_size = buffer.size;
-                    buffer.push(value);
-
-                    assert!(buffer.start < N, "start index should stay within capacity");
-                    assert!(buffer.size <= N, "size should never exceed capacity");
-                    if old_size < N {
-                        assert_eq!(
-                            buffer.size,
-                            old_size + 1,
-                            "size should increase by 1 when pushing to non-full buffer"
-                        );
-                    } else {
-                        assert_eq!(
-                            buffer.size, N,
-                            "size should remain at capacity when buffer is full"
-                        );
-                    }
-                }
-                1 => {
-                    let old_size = buffer.size;
-                    let result = buffer.pop_front();
-
-                    assert!(buffer.start < N, "start index should stay within capacity");
-                    assert!(buffer.size <= N, "size should never exceed capacity");
-                    if old_size == 0 {
-                        assert!(
-                            result.is_none(),
-                            "pop_front should return None on empty buffer"
-                        );
-                        assert_eq!(
-                            buffer.size, 0,
-                            "size should remain 0 when popping from empty buffer"
-                        );
-                    } else {
-                        assert!(
-                            result.is_some(),
-                            "pop_front should return Some on non-empty buffer"
-                        );
-                        assert_eq!(
-                            buffer.size,
-                            old_size - 1,
-                            "size should decrease by 1 after pop_front"
-                        );
-                    }
-                }
-                _ => {
-                    let old_size = buffer.size;
-                    let result = buffer.pop_back();
-
-                    assert!(buffer.start < N, "start index should stay within capacity");
-                    assert!(buffer.size <= N, "size should never exceed capacity");
-                    if old_size == 0 {
-                        assert!(
-                            result.is_none(),
-                            "pop_back should return None on empty buffer"
-                        );
-                        assert_eq!(
-                            buffer.size, 0,
-                            "size should remain 0 when popping from empty buffer"
-                        );
-                    } else {
-                        assert!(
-                            result.is_some(),
-                            "pop_back should return Some on non-empty buffer"
-                        );
-                        assert_eq!(
-                            buffer.size,
-                            old_size - 1,
-                            "size should decrease by 1 after pop_back"
-                        );
-                    }
-                }
-            }
-        }
     }
 
-    /// Verify random access operations (front, back, get) maintain safety invariants.
-    /// This proves:
-    /// - Index calculations for arbitrary positions stay in bounds
-    /// - Only access initialized slots
-    /// - Works correctly when buffer has wrapped
+    /// Verify `push` preserves invariants
+    #[kani::proof]
+    #[kani::unwind(4)]
+    fn proof_push_step_invariant() {
+        const N: usize = 3;
+
+        let start: usize = kani::any();
+        let size: usize = kani::any();
+        kani::assume(start < N);
+        kani::assume(size <= N);
+
+        let mut buffer: CircularBuffer<u32, N> = CircularBuffer::new();
+        buffer.start = start;
+        buffer.size = size;
+        for i in 0..N {
+            buffer.items[i].write(kani::any());
+        }
+
+        let value: u32 = kani::any();
+        let old_size = buffer.size;
+        let old_start = buffer.start;
+        buffer.push(value);
+
+        assert!(buffer.start < N, "start index should stay within capacity");
+        assert!(buffer.size <= N, "size should never exceed capacity");
+        if old_size < N {
+            assert_eq!(
+                buffer.size,
+                old_size + 1,
+                "size should increase by 1 when pushing to non-full buffer"
+            );
+            assert_eq!(
+                buffer.start, old_start,
+                "start must not move when pushing to a non-full buffer"
+            );
+        } else {
+            assert_eq!(
+                buffer.size, N,
+                "size should remain at capacity when buffer is full"
+            );
+            assert_eq!(
+                buffer.start,
+                (old_start + 1) % N,
+                "start must advance by exactly one slot (wrapping) when overwriting the oldest element"
+            );
+        }
+
+        core::mem::forget(buffer);
+    }
+
+    /// Verify `pop_front` preserves invariants
+    #[kani::proof]
+    #[kani::unwind(4)]
+    fn proof_pop_front_step_invariant() {
+        const N: usize = 3;
+
+        let start: usize = kani::any();
+        let size: usize = kani::any();
+        kani::assume(start < N);
+        kani::assume(size <= N);
+
+        let mut buffer: CircularBuffer<u32, N> = CircularBuffer::new();
+        buffer.start = start;
+        buffer.size = size;
+        for i in 0..N {
+            buffer.items[i].write(kani::any());
+        }
+
+        let old_size = buffer.size;
+        let result = buffer.pop_front();
+
+        assert!(buffer.start < N, "start index should stay within capacity");
+        assert!(buffer.size <= N, "size should never exceed capacity");
+        if old_size == 0 {
+            assert!(
+                result.is_none(),
+                "pop_front should return None on empty buffer"
+            );
+            assert_eq!(
+                buffer.size, 0,
+                "size should remain 0 when popping from empty buffer"
+            );
+        } else {
+            assert!(
+                result.is_some(),
+                "pop_front should return Some on non-empty buffer"
+            );
+            assert_eq!(
+                buffer.size,
+                old_size - 1,
+                "size should decrease by 1 after pop_front"
+            );
+        }
+
+        core::mem::forget(buffer);
+    }
+
+    /// Verify `pop_back` preserves invariants from any arbitrary valid state.
+    #[kani::proof]
+    #[kani::unwind(4)]
+    fn proof_pop_back_step_invariant() {
+        const N: usize = 3;
+
+        let start: usize = kani::any();
+        let size: usize = kani::any();
+        kani::assume(start < N);
+        kani::assume(size <= N);
+
+        let mut buffer: CircularBuffer<u32, N> = CircularBuffer::new();
+        buffer.start = start;
+        buffer.size = size;
+        for i in 0..N {
+            buffer.items[i].write(kani::any());
+        }
+
+        let old_size = buffer.size;
+        let result = buffer.pop_back();
+
+        assert!(buffer.start < N, "start index should stay within capacity");
+        assert!(buffer.size <= N, "size should never exceed capacity");
+        if old_size == 0 {
+            assert!(
+                result.is_none(),
+                "pop_back should return None on empty buffer"
+            );
+            assert_eq!(
+                buffer.size, 0,
+                "size should remain 0 when popping from empty buffer"
+            );
+        } else {
+            assert!(
+                result.is_some(),
+                "pop_back should return Some on non-empty buffer"
+            );
+            assert_eq!(
+                buffer.size,
+                old_size - 1,
+                "size should decrease by 1 after pop_back"
+            );
+        }
+
+        core::mem::forget(buffer);
+    }
+
+    /// Verify random access operations stay in bounds and wrap correctly
     #[kani::proof]
     #[kani::unwind(10)]
     fn proof_random_access_safety() {
@@ -862,12 +912,7 @@ mod kani_proofs {
         }
     }
 
-    /// Verify iterator operations are memory safe.
-    /// This proves:
-    /// - Iterator index stays within valid range
-    /// - Sequential access doesn't access uninitialized memory
-    /// - IterMut raw pointer dereference is safe
-    /// - Works correctly with wrapped buffer
+    /// Verify iterator operations are in range and only access initialized memory
     #[kani::proof]
     #[kani::unwind(10)]
     fn proof_iterator_safety() {
@@ -929,11 +974,7 @@ mod kani_proofs {
         );
     }
 
-    /// Verify drop behavior is safe and correct.
-    /// This proves:
-    /// - Every initialized element is dropped exactly once
-    /// - No double-drops
-    /// - Works correctly regardless of buffer state (empty, partial, full, wrapped)
+    /// Verify every element is dropped exactly once
     #[kani::proof]
     #[kani::unwind(8)]
     fn proof_drop_safety() {
@@ -989,11 +1030,7 @@ mod kani_proofs {
         }
     }
 
-    /// Verify overflow behavior when buffer wraps around.
-    /// This proves:
-    /// - Overwriting oldest element works correctly
-    /// - Old element is dropped before new one is written
-    /// - Wrapping arithmetic is correct
+    /// Verify buffer wrapping works correctly
     #[kani::proof]
     #[kani::unwind(8)]
     fn proof_overflow_wrapping() {
