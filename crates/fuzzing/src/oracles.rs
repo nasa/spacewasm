@@ -532,7 +532,7 @@ mod validate_differential_tests {
         let garbage = [0x00u8, 0x61, 0x73, 0x6d, 0xff, 0xff, 0xff, 0xff, 0x13, 0x37];
         validate_differential(&garbage);
         assert!(!with_wasmi_validate_engine(|e| wasmi::Module::new(
-            e, &garbage
+            e, garbage
         )
         .is_ok()));
 
