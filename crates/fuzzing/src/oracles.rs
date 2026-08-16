@@ -518,17 +518,23 @@ mod validate_differential_tests {
     /// on: a well-formed MVP module (both accept) and garbage (both reject).
     #[test]
     fn validate_agrees_on_valid_and_garbage() {
-        let valid = wat::parse_str(r#"(module (func (export "f") (result i32) i32.const 1))"#)
-            .unwrap();
+        let valid =
+            wat::parse_str(r#"(module (func (export "f") (result i32) i32.const 1))"#).unwrap();
         // Both accept -> no panic.
         validate_differential(&valid);
         assert!(load_module(&valid));
-        assert!(with_wasmi_validate_engine(|e| wasmi::Module::new(e, &valid).is_ok()));
+        assert!(with_wasmi_validate_engine(|e| wasmi::Module::new(
+            e, &valid
+        )
+        .is_ok()));
 
         // Random garbage: both reject -> no panic, and neither validator accepts.
         let garbage = [0x00u8, 0x61, 0x73, 0x6d, 0xff, 0xff, 0xff, 0xff, 0x13, 0x37];
         validate_differential(&garbage);
-        assert!(!with_wasmi_validate_engine(|e| wasmi::Module::new(e, &garbage).is_ok()));
+        assert!(!with_wasmi_validate_engine(|e| wasmi::Module::new(
+            e, &garbage
+        )
+        .is_ok()));
 
         // A module using a disabled proposal (multi-value result) must be
         // rejected by both, so the oracle stays quiet.
@@ -538,6 +544,9 @@ mod validate_differential_tests {
         .unwrap();
         validate_differential(&multi);
         assert!(!load_module(&multi));
-        assert!(!with_wasmi_validate_engine(|e| wasmi::Module::new(e, &multi).is_ok()));
+        assert!(!with_wasmi_validate_engine(|e| wasmi::Module::new(
+            e, &multi
+        )
+        .is_ok()));
     }
 }
