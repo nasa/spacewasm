@@ -437,3 +437,107 @@ pub fn no_traps(wasm: &[u8]) {
         }
     }
 }
+
+/// Build the wasmi `Engine` used for *validation* differential testing.
+///
+/// Matched to SpaceWasm's accepted language: Wasm 1.0 MVP **plus custom page
+/// sizes** (SpaceWasm's one supported post-MVP proposal). Feature parity matters
+/// here -- a feature one validator enables and the other doesn't would make them
+/// disagree for reasons that are not bugs. Fuel is irrelevant to validation.
+#[cfg(feature = "differential")]
+fn build_wasmi_validate_engine() -> wasmi::Engine {
+    let mut config = wasmi::Config::default();
+    config
+        .wasm_mutable_global(true)
+        .floats(true)
+        // SpaceWasm supports custom page sizes; enable it so the two validators
+        // agree on modules that use them.
+        .wasm_custom_page_sizes(true)
+        // Everything else post-MVP: off.
+        .wasm_multi_value(false)
+        .wasm_multi_memory(false)
+        .wasm_sign_extension(false)
+        .wasm_saturating_float_to_int(false)
+        .wasm_bulk_memory(false)
+        .wasm_reference_types(false)
+        .wasm_tail_call(false)
+        .wasm_extended_const(false)
+        .wasm_memory64(false)
+        .wasm_wide_arithmetic(false);
+    wasmi::Engine::new(&config)
+}
+
+#[cfg(feature = "differential")]
+fn with_wasmi_validate_engine<R>(f: impl FnOnce(&wasmi::Engine) -> R) -> R {
+    thread_local! {
+        static ENGINE: wasmi::Engine = build_wasmi_validate_engine();
+    }
+    ENGINE.with(f)
+}
+
+/// Oracle: differentially test the *validator*.
+///
+/// Decodes+validates the same bytes with both engines and checks the accept /
+/// reject decisions. We assert only the **soundness** direction: if SpaceWasm
+/// *accepts* a module that wasmi (a conformant validator with a matched feature
+/// set) *rejects* as invalid, that is a potential soundness bug -- SpaceWasm
+/// admitting a module it should have refused -- and is reported by panicking.
+///
+/// The reverse direction (SpaceWasm rejects what wasmi accepts) is intentionally
+/// **not** flagged: SpaceWasm is an embedded engine with stricter resource
+/// limits (bounded code pages, control-frame and operand-stack depth, allocation
+/// size), so it legitimately rejects large-but-valid modules that wasmi accepts.
+/// Distinguishing those limit rejections from true completeness bugs needs error
+/// classification and is left to a future refinement.
+///
+/// Best driven with the [`crate::generators::MalformedModule`] generator, whose
+/// byte-level mutations of valid modules densely exercise the accept/reject
+/// boundary.
+#[cfg(feature = "differential")]
+pub fn validate_differential(wasm: &[u8]) {
+    crate::init_fuzzing();
+
+    // `load_module` runs SpaceWasm's full decode + validate and returns whether
+    // it accepted the module.
+    let space_ok = load_module(wasm);
+    let wasmi_ok = with_wasmi_validate_engine(|engine| wasmi::Module::new(engine, wasm).is_ok());
+
+    if space_ok && !wasmi_ok {
+        log_wasm(wasm);
+        panic!(
+            "validation soundness divergence: SpaceWasm accepted a module that wasmi rejected as invalid"
+        );
+    }
+}
+
+#[cfg(all(test, feature = "differential"))]
+mod validate_differential_tests {
+    use super::*;
+
+    /// The validation oracle must not fire on modules the two validators agree
+    /// on: a well-formed MVP module (both accept) and garbage (both reject).
+    #[test]
+    fn validate_agrees_on_valid_and_garbage() {
+        let valid = wat::parse_str(r#"(module (func (export "f") (result i32) i32.const 1))"#)
+            .unwrap();
+        // Both accept -> no panic.
+        validate_differential(&valid);
+        assert!(load_module(&valid));
+        assert!(with_wasmi_validate_engine(|e| wasmi::Module::new(e, &valid).is_ok()));
+
+        // Random garbage: both reject -> no panic, and neither validator accepts.
+        let garbage = [0x00u8, 0x61, 0x73, 0x6d, 0xff, 0xff, 0xff, 0xff, 0x13, 0x37];
+        validate_differential(&garbage);
+        assert!(!with_wasmi_validate_engine(|e| wasmi::Module::new(e, &garbage).is_ok()));
+
+        // A module using a disabled proposal (multi-value result) must be
+        // rejected by both, so the oracle stays quiet.
+        let multi = wat::parse_str(
+            r#"(module (func (export "f") (result i32 i32) i32.const 1 i32.const 2))"#,
+        )
+        .unwrap();
+        validate_differential(&multi);
+        assert!(!load_module(&multi));
+        assert!(!with_wasmi_validate_engine(|e| wasmi::Module::new(e, &multi).is_ok()));
+    }
+}
