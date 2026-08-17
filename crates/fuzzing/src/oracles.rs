@@ -237,8 +237,9 @@ fn load_module(wasm: &[u8]) -> bool {
 /// not. The fuzzer's configured limits funnel here: the code-page, control-frame,
 /// and operand-stack bounds surface as `AllocError`; oversized decoded vectors as
 /// `VecTooLong`; over-range branch offsets as `LabelJumpTooLarge`; the 16-bit
-/// local cap as `TooManyLocals`; and a table larger than `MAX_TABLE_ELEMENTS`
-/// (10M, well under the spec's 2^32-1) as `TableTooLarge`.
+/// local cap as `TooManyLocals`; a table larger than `MAX_TABLE_ELEMENTS`
+/// (10M, well under the spec's 2^32-1) as `TableTooLarge`; and a function with
+/// more than 255 parameter slots as `FunctionParametersTooLarge`.
 ///
 /// **Instantiation-time checks.** SpaceWasm's `Module::new` decodes, validates,
 /// *and* instantiates in one pass (it allocates guest memory and eagerly
@@ -273,6 +274,7 @@ fn is_benign_rejection(err: &ValidationError) -> bool {
             | ValidationError::LabelJumpTooLarge
             | ValidationError::TooManyLocals
             | ValidationError::TableTooLarge
+            | ValidationError::FunctionParametersTooLarge
             // Instantiation-time checks (deferred past validation by the spec).
             | ValidationError::MemoryError(_)
             | ValidationError::GuestMemoryAllocationFailure
@@ -769,6 +771,29 @@ mod validate_differential_tests {
 
         let err = validate_module(&wasm).expect_err("table exceeds the embedded cap");
         assert_eq!(err, ValidationError::TableTooLarge);
+        assert!(is_benign_rejection(&err));
+
+        assert!(with_wasmi_validate_engine(|e| wasmi::Module::validate(
+            e, &wasm
+        )
+        .is_ok()));
+
+        validate_differential(&wasm);
+    }
+
+    /// Regression: a function type with more than 255 parameter slots is valid
+    /// per the Wasm spec (wasmi accepts it), but exceeds SpaceWasm's embedded
+    /// parameter cap and is rejected as `FunctionParametersTooLarge`. That
+    /// resource-limit rejection must be filtered out of the completeness
+    /// direction rather than reported as a divergence.
+    #[test]
+    fn validate_ignores_oversized_function_params() {
+        // 300 i32 params = 300 four-byte slots, past the 255-slot cap.
+        let params = "i32 ".repeat(300);
+        let wasm = wat::parse_str(&format!(r#"(module (func (param {params})))"#)).unwrap();
+
+        let err = validate_module(&wasm).expect_err("param count exceeds the embedded cap");
+        assert_eq!(err, ValidationError::FunctionParametersTooLarge);
         assert!(is_benign_rejection(&err));
 
         assert!(with_wasmi_validate_engine(|e| wasmi::Module::validate(
