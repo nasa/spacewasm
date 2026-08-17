@@ -179,23 +179,21 @@ const MAX_CODE_PAGES: u32 = 128;
 const MAX_CONTROL_FRAMES: usize = 128;
 const MAX_STACK_DEPTH: usize = 256;
 
-/// Decode and validate a Wasm module, discarding the outcome.
+/// Decode and validate a Wasm module, returning SpaceWasm's classified outcome.
 ///
-/// Both `Ok` and `Err` are acceptable results: a graceful decode error is a
-/// correct rejection, not a bug. The only failures this surfaces are *implicit*
-/// -- a `panic!` (including the `strict-assertions` checks), an abort, a
-/// segfault, or a sanitizer trip during `Module::new`. libFuzzer treats all of
-/// those as crashes.
+/// `Ok(())` means SpaceWasm accepted the module; `Err(validation_error)` is a
+/// graceful rejection carrying the concrete [`ValidationError`] so callers can
+/// classify *why* SpaceWasm refused it (see [`is_benign_rejection`]). Neither is a
+/// bug on its own. The only failures this surfaces implicitly are a `panic!`
+/// (including the `strict-assertions` checks), an abort, a segfault, or a
+/// sanitizer trip during `Module::new`; libFuzzer treats those as crashes.
 ///
-/// Returns `true` if decoding succeeded, for callers that want to log it.
-fn load_module(wasm: &[u8]) -> bool {
-    let mut store = match Store::from_host_modules(256, Vec::zero()) {
-        Ok(s) => s,
-        Err(e) => {
-            log::debug!("store creation failed: {e:?}");
-            return false;
-        }
-    };
+/// Store and `CodeBuilder` setup use fixed sizes independent of the fuzz input,
+/// so a failure there is an infrastructure problem, not a module rejection --
+/// hence the `.expect(...)`s rather than a spurious `Err`.
+fn validate_module(wasm: &[u8]) -> Result<(), ValidationError> {
+    let mut store =
+        Store::from_host_modules(256, Vec::zero()).expect("fuzz store creation must not fail");
 
     let mut code_builder = CodeBuilder::new(CompilerOptions {
         allow_memory_grow: true,
@@ -209,16 +207,77 @@ fn load_module(wasm: &[u8]) -> bool {
         .unwrap()
         .into_wasm_memory_allocator();
 
-    // Attempt to decode and validate the module.
-    let result = Module::new::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
+    // Attempt to decode and validate the module. `ParseError` wraps a
+    // `SectionDecodeError`, which in turn carries the innermost `ValidationError`.
+    Module::new::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
         "",
         &mut stream,
         &mut store,
         &mut code_builder,
         allocator.clone(),
-    );
+    )
+    .map(|_| ())
+    .map_err(|e: ParseError| e.err.err)
+}
 
-    result.is_ok()
+/// Decode and validate a Wasm module, discarding the outcome.
+///
+/// Returns `true` if decoding succeeded, for callers that only need the
+/// accept/reject bit (see [`validate_module`] for the classified variant).
+fn load_module(wasm: &[u8]) -> bool {
+    validate_module(wasm).is_ok()
+}
+
+/// Rejections that are *not* evidence of a SpaceWasm validation-completeness bug,
+/// even though wasmi's validator accepted the same module. The completeness
+/// direction of [`validate_differential`] must not treat these as divergences.
+/// They fall into three groups:
+///
+/// **Embedded resource limits.** SpaceWasm bounds what a general validator does
+/// not. The fuzzer's configured limits funnel here: the code-page, control-frame,
+/// and operand-stack bounds surface as `AllocError`; oversized decoded vectors as
+/// `VecTooLong`; over-range branch offsets as `LabelJumpTooLarge`; the 16-bit
+/// local cap as `TooManyLocals`.
+///
+/// **Instantiation-time checks.** SpaceWasm's `Module::new` decodes, validates,
+/// *and* instantiates in one pass (it allocates guest memory and eagerly
+/// initializes tables and data), whereas `wasmi::Module::validate` only validates.
+/// Conditions the Wasm MVP spec defers to instantiation therefore make SpaceWasm
+/// reject at load while wasmi's validator accepts: guest-memory allocation
+/// (`GuestMemoryAllocationFailure`, bounded to 64 MiB here), out-of-bounds active
+/// element segments (`InvalidElementOffset`, `InvalidElementOutOfBounds`), and
+/// out-of-bounds active data segments (`InvalidNegativeMemOffset`, or a
+/// `MemoryError` from the eager memory write).
+///
+/// **wasmi feature-gating leniency.** SpaceWasm enforces the MVP section set
+/// strictly, but wasmi -- even with the corresponding proposal disabled -- accepts
+/// a `DataCount` section (id 12, from the bulk-memory proposal); its parser does
+/// not gate the section's mere presence. SpaceWasm rightly rejects it as
+/// `MalformedSectionId(12)`, and there is no wasmi config knob to match.
+///
+/// Variant granularity is sound here because this classifier is only consulted
+/// when wasmi *accepted* the module: the validation-error subcases that share
+/// these variants (e.g. a non-`i32` element/data offset expression, or an
+/// unknown section id other than 12) make wasmi reject too, so they never reach
+/// this check.
+#[cfg(feature = "differential")]
+fn is_benign_rejection(err: &ValidationError) -> bool {
+    matches!(
+        err,
+        // Embedded resource limits.
+        ValidationError::AllocError(_)
+            | ValidationError::VecTooLong
+            | ValidationError::LabelJumpTooLarge
+            | ValidationError::TooManyLocals
+            // Instantiation-time checks (deferred past validation by the spec).
+            | ValidationError::MemoryError(_)
+            | ValidationError::GuestMemoryAllocationFailure
+            | ValidationError::InvalidElementOffset
+            | ValidationError::InvalidElementOutOfBounds
+            | ValidationError::InvalidNegativeMemOffset
+            // wasmi feature-gating leniency: DataCount section (bulk-memory).
+            | ValidationError::MalformedSectionId(12)
+    )
 }
 
 /// Oracle: Validate a Wasm module.
@@ -478,17 +537,18 @@ fn with_wasmi_validate_engine<R>(f: impl FnOnce(&wasmi::Engine) -> R) -> R {
 /// Oracle: differentially test the *validator*.
 ///
 /// Decodes+validates the same bytes with both engines and checks the accept /
-/// reject decisions. We assert only the **soundness** direction: if SpaceWasm
-/// *accepts* a module that wasmi (a conformant validator with a matched feature
-/// set) *rejects* as invalid, that is a potential soundness bug -- SpaceWasm
-/// admitting a module it should have refused -- and is reported by panicking.
+/// reject decisions against wasmi (a conformant validator with a matched feature
+/// set). Both directions are asserted:
 ///
-/// The reverse direction (SpaceWasm rejects what wasmi accepts) is intentionally
-/// **not** flagged: SpaceWasm is an embedded engine with stricter resource
-/// limits (bounded code pages, control-frame and operand-stack depth, allocation
-/// size), so it legitimately rejects large-but-valid modules that wasmi accepts.
-/// Distinguishing those limit rejections from true completeness bugs needs error
-/// classification and is left to a future refinement.
+/// * **Soundness** -- SpaceWasm *accepts* what wasmi *rejects*: a module SpaceWasm
+///   should have refused. Reported by panicking.
+/// * **Completeness** -- SpaceWasm *rejects* what wasmi *accepts*: a module
+///   SpaceWasm should have admitted. Reported by panicking, *unless* the rejection
+///   is not a Wasm-validation failure ([`is_benign_rejection`]) -- an
+///   embedded resource limit, or an instantiation-time check that SpaceWasm's
+///   combined decode+validate+instantiate pass performs at load but the spec (and
+///   thus wasmi's validator) defers. Those rejections are legitimate and filtered
+///   out rather than flagged.
 ///
 /// Best driven with the [`crate::generators::MalformedModule`] generator, whose
 /// byte-level mutations of valid modules densely exercise the accept/reject
@@ -497,16 +557,35 @@ fn with_wasmi_validate_engine<R>(f: impl FnOnce(&wasmi::Engine) -> R) -> R {
 pub fn validate_differential(wasm: &[u8]) {
     crate::init_fuzzing();
 
-    // `load_module` runs SpaceWasm's full decode + validate and returns whether
-    // it accepted the module.
-    let space_ok = load_module(wasm);
-    let wasmi_ok = with_wasmi_validate_engine(|engine| wasmi::Module::new(engine, wasm).is_ok());
+    // `validate_module` runs SpaceWasm's full decode + validate and reports
+    // whether it accepted the module, and if not, the concrete rejection reason.
+    let space_result = validate_module(wasm);
+    // Use `Module::validate`, not `Module::new`: the latter compiles lazily by
+    // default and defers (or skips) validation for inputs it never fully parses,
+    // so it leniently reports `Ok` on truncated/headerless garbage that is not
+    // actually valid. `validate` eagerly validates the whole module, matching
+    // what SpaceWasm's decoder does.
+    let wasmi_ok =
+        with_wasmi_validate_engine(|engine| wasmi::Module::validate(engine, wasm).is_ok());
 
-    if space_ok && !wasmi_ok {
-        log_wasm(wasm);
-        panic!(
-            "validation soundness divergence: SpaceWasm accepted a module that wasmi rejected as invalid"
-        );
+    match space_result {
+        // Soundness: SpaceWasm accepted a module wasmi rejects as invalid.
+        Ok(()) if !wasmi_ok => {
+            log_wasm(wasm);
+            panic!(
+                "validation soundness divergence: SpaceWasm accepted a module that wasmi rejected as invalid"
+            );
+        }
+        // Completeness: SpaceWasm rejected -- for a genuine validation reason, not
+        // a resource limit or instantiation-time check -- a module wasmi accepts.
+        Err(err) if wasmi_ok && !is_benign_rejection(&err) => {
+            log_wasm(wasm);
+            panic!(
+                "validation completeness divergence: SpaceWasm rejected ({err:?}) a module that wasmi accepted as valid"
+            );
+        }
+        // Agreement, or an allow-listed resource-limit rejection: not a bug.
+        _ => {}
     }
 }
 
@@ -523,7 +602,7 @@ mod validate_differential_tests {
         // Both accept -> no panic.
         validate_differential(&valid);
         assert!(load_module(&valid));
-        assert!(with_wasmi_validate_engine(|e| wasmi::Module::new(
+        assert!(with_wasmi_validate_engine(|e| wasmi::Module::validate(
             e, &valid
         )
         .is_ok()));
@@ -531,8 +610,8 @@ mod validate_differential_tests {
         // Random garbage: both reject -> no panic, and neither validator accepts.
         let garbage = [0x00u8, 0x61, 0x73, 0x6d, 0xff, 0xff, 0xff, 0xff, 0x13, 0x37];
         validate_differential(&garbage);
-        assert!(!with_wasmi_validate_engine(|e| wasmi::Module::new(
-            e, garbage
+        assert!(!with_wasmi_validate_engine(|e| wasmi::Module::validate(
+            e, &garbage
         )
         .is_ok()));
 
@@ -544,9 +623,133 @@ mod validate_differential_tests {
         .unwrap();
         validate_differential(&multi);
         assert!(!load_module(&multi));
-        assert!(!with_wasmi_validate_engine(|e| wasmi::Module::new(
+        assert!(!with_wasmi_validate_engine(|e| wasmi::Module::validate(
             e, &multi
         )
         .is_ok()));
+    }
+
+    /// A spec-valid module that trips one of SpaceWasm's embedded resource limits
+    /// must be filtered out of the completeness direction, not reported as a
+    /// divergence. Here the operand stack is grown past `MAX_STACK_DEPTH` (256)
+    /// with a run of `i32.const`s that are then dropped, so the function is valid
+    /// per spec (wasmi accepts) but SpaceWasm rejects with an `AllocError` when
+    /// its fixed-size operand stack overflows.
+    #[test]
+    fn validate_ignores_resource_limit_rejections() {
+        // Push more values than the operand-stack bound, then drop them all so the
+        // function's result type is empty and the module stays spec-valid.
+        let depth = MAX_STACK_DEPTH + 64;
+        let mut body = String::new();
+        for _ in 0..depth {
+            body.push_str("i32.const 0 ");
+        }
+        for _ in 0..depth {
+            body.push_str("drop ");
+        }
+        let wasm = wat::parse_str(format!(r#"(module (func (export "f") {body}))"#)).unwrap();
+
+        // SpaceWasm rejects, and the rejection is an allow-listed resource limit.
+        let err = validate_module(&wasm).expect_err("operand stack must overflow the limit");
+        assert!(
+            is_benign_rejection(&err),
+            "expected a resource-limit rejection, got {err:?}"
+        );
+
+        // wasmi accepts the same module as valid.
+        assert!(with_wasmi_validate_engine(|e| wasmi::Module::validate(
+            e, &wasm
+        )
+        .is_ok()));
+
+        // The two therefore disagree, but the oracle must stay quiet (no panic).
+        validate_differential(&wasm);
+    }
+
+    /// Regression: a short, header-less blob is invalid and both validators must
+    /// reject it. wasmi's lazily-compiling `Module::new` leniently reports `Ok`
+    /// here (it never fully parses the input), which would spuriously trip the
+    /// completeness direction; `Module::validate` -- what the oracle uses -- does
+    /// not. This case was found by the fuzzer.
+    #[test]
+    fn validate_rejects_headerless_blob_like_wasmi_validate() {
+        let blob = [10u8, 10, 40, 64, 37, 41];
+
+        // SpaceWasm rejects (no `\0asm` magic).
+        assert_eq!(validate_module(&blob), Err(ValidationError::MalformedMagic));
+
+        // wasmi's eager validator also rejects it...
+        assert!(!with_wasmi_validate_engine(|e| wasmi::Module::validate(
+            e, &blob
+        )
+        .is_ok()));
+        // ...even though its lazy `Module::new` leniently accepts it.
+        assert!(with_wasmi_validate_engine(
+            |e| wasmi::Module::new(e, blob).is_ok()
+        ));
+
+        // Both reject -> the oracle stays quiet.
+        validate_differential(&blob);
+    }
+
+    /// Regression: an active element segment whose offset lies past the table's
+    /// size is *valid* per the Wasm MVP spec (it fails at instantiation, which a
+    /// pure validator like wasmi does not perform), but SpaceWasm's combined
+    /// decode+validate+instantiate pass rejects it eagerly at load. That
+    /// instantiation-time rejection must be filtered out of the completeness
+    /// direction rather than reported as a divergence. This class of divergence
+    /// was found by the fuzzer.
+    #[test]
+    fn validate_ignores_instantiation_time_rejections() {
+        // Table holds 1 element; the element segment targets offset 5 -> out of
+        // bounds at instantiation, but structurally valid.
+        let wasm =
+            wat::parse_str(r#"(module (func) (table 1 funcref) (elem (i32.const 5) 0))"#).unwrap();
+
+        // SpaceWasm rejects with an instantiation-time check that is filtered out.
+        let err = validate_module(&wasm).expect_err("element segment is out of bounds");
+        assert_eq!(err, ValidationError::InvalidElementOffset);
+        assert!(is_benign_rejection(&err));
+
+        // wasmi's validator accepts it (the spec defers the bounds check).
+        assert!(with_wasmi_validate_engine(|e| wasmi::Module::validate(
+            e, &wasm
+        )
+        .is_ok()));
+
+        // They disagree, but the oracle must stay quiet (no panic).
+        validate_differential(&wasm);
+    }
+
+    /// Regression: a `DataCount` section (id 12, from the bulk-memory proposal) is
+    /// not part of the Wasm MVP, so SpaceWasm rejects it as `MalformedSectionId(12)`.
+    /// wasmi accepts it even with bulk memory disabled -- its parser does not gate
+    /// the section's presence -- so this feature-gating leniency must be filtered
+    /// out of the completeness direction. This case was found by the fuzzer.
+    #[test]
+    fn validate_ignores_wasmi_datacount_leniency() {
+        // A minimal MVP module (one `() -> ()` function) with a `DataCount 0`
+        // section spliced in before the code section.
+        let wasm = [
+            0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, // magic + version
+            0x01, 0x04, 0x01, 0x60, 0x00, 0x00, // type: () -> ()
+            0x03, 0x02, 0x01, 0x00, // function: 1 func, type 0
+            0x0c, 0x01, 0x00, // DataCount section (id 12), value 0
+            0x0a, 0x04, 0x01, 0x02, 0x00, 0x0b, // code: 1 func, empty body
+        ];
+
+        // SpaceWasm rejects the post-MVP section; the rejection is filtered out.
+        let err = validate_module(&wasm).expect_err("DataCount is not an MVP section");
+        assert_eq!(err, ValidationError::MalformedSectionId(12));
+        assert!(is_benign_rejection(&err));
+
+        // wasmi accepts it despite `wasm_bulk_memory(false)`.
+        assert!(with_wasmi_validate_engine(|e| wasmi::Module::validate(
+            e, &wasm
+        )
+        .is_ok()));
+
+        // They disagree, but the oracle must stay quiet (no panic).
+        validate_differential(&wasm);
     }
 }
