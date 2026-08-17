@@ -237,7 +237,8 @@ fn load_module(wasm: &[u8]) -> bool {
 /// not. The fuzzer's configured limits funnel here: the code-page, control-frame,
 /// and operand-stack bounds surface as `AllocError`; oversized decoded vectors as
 /// `VecTooLong`; over-range branch offsets as `LabelJumpTooLarge`; the 16-bit
-/// local cap as `TooManyLocals`.
+/// local cap as `TooManyLocals`; and a table larger than `MAX_TABLE_ELEMENTS`
+/// (10M, well under the spec's 2^32-1) as `TableTooLarge`.
 ///
 /// **Instantiation-time checks.** SpaceWasm's `Module::new` decodes, validates,
 /// *and* instantiates in one pass (it allocates guest memory and eagerly
@@ -249,17 +250,19 @@ fn load_module(wasm: &[u8]) -> bool {
 /// out-of-bounds active data segments (`InvalidNegativeMemOffset`, or a
 /// `MemoryError` from the eager memory write).
 ///
-/// **wasmi feature-gating leniency.** SpaceWasm enforces the MVP section set
-/// strictly, but wasmi -- even with the corresponding proposal disabled -- accepts
-/// a `DataCount` section (id 12, from the bulk-memory proposal); its parser does
-/// not gate the section's mere presence. SpaceWasm rightly rejects it as
-/// `MalformedSectionId(12)`, and there is no wasmi config knob to match.
+/// **wasmi feature-gating leniency.** wasmi -- even with the bulk-memory proposal
+/// disabled -- accepts encodings SpaceWasm's strict MVP decoder rejects: a
+/// `DataCount` section (id 12) surfaces as `MalformedSectionId(12)`, and a data
+/// segment using the bulk-memory flag byte (`0x01` passive / `0x02` explicit
+/// memidx) is read by SpaceWasm as a nonzero memory index, surfacing as
+/// `InvalidMemIndex`. wasmi does not gate these on the feature flag, and there is
+/// no wasmi config knob to match.
 ///
 /// Variant granularity is sound here because this classifier is only consulted
 /// when wasmi *accepted* the module: the validation-error subcases that share
-/// these variants (e.g. a non-`i32` element/data offset expression, or an
-/// unknown section id other than 12) make wasmi reject too, so they never reach
-/// this check.
+/// these variants (e.g. a non-`i32` element/data offset expression, an unknown
+/// section id other than 12, or an export of a nonexistent memory index) make
+/// wasmi reject too, so they never reach this check.
 #[cfg(feature = "differential")]
 fn is_benign_rejection(err: &ValidationError) -> bool {
     matches!(
@@ -269,14 +272,17 @@ fn is_benign_rejection(err: &ValidationError) -> bool {
             | ValidationError::VecTooLong
             | ValidationError::LabelJumpTooLarge
             | ValidationError::TooManyLocals
+            | ValidationError::TableTooLarge
             // Instantiation-time checks (deferred past validation by the spec).
             | ValidationError::MemoryError(_)
             | ValidationError::GuestMemoryAllocationFailure
             | ValidationError::InvalidElementOffset
             | ValidationError::InvalidElementOutOfBounds
             | ValidationError::InvalidNegativeMemOffset
-            // wasmi feature-gating leniency: DataCount section (bulk-memory).
+            // wasmi feature-gating leniency (bulk-memory encodings it accepts
+            // even with the proposal disabled).
             | ValidationError::MalformedSectionId(12)
+            | ValidationError::InvalidMemIndex
     )
 }
 
@@ -750,6 +756,55 @@ mod validate_differential_tests {
         .is_ok()));
 
         // They disagree, but the oracle must stay quiet (no panic).
+        validate_differential(&wasm);
+    }
+
+    /// Regression: a table larger than `MAX_TABLE_ELEMENTS` (10M) is within the
+    /// Wasm spec's 2^32-1 limit, so wasmi accepts it, but exceeds SpaceWasm's
+    /// embedded cap. That resource-limit rejection must be filtered out of the
+    /// completeness direction. This case was found by the fuzzer.
+    #[test]
+    fn validate_ignores_oversized_table_limit() {
+        let wasm = wat::parse_str(r#"(module (table 16400383 funcref))"#).unwrap();
+
+        let err = validate_module(&wasm).expect_err("table exceeds the embedded cap");
+        assert_eq!(err, ValidationError::TableTooLarge);
+        assert!(is_benign_rejection(&err));
+
+        assert!(with_wasmi_validate_engine(|e| wasmi::Module::validate(
+            e, &wasm
+        )
+        .is_ok()));
+
+        validate_differential(&wasm);
+    }
+
+    /// Regression: a data segment encoded with the bulk-memory flag byte `0x02`
+    /// (active, explicit memidx) is accepted by wasmi even with bulk memory
+    /// disabled, but SpaceWasm's MVP decoder reads the flag as the memory index
+    /// and rejects it as `InvalidMemIndex`. That wasmi feature-gating leniency
+    /// must be filtered out of the completeness direction. Built as raw bytes
+    /// because `wat` will not emit the bulk-memory encoding for an MVP module.
+    /// This case was found by the fuzzer.
+    #[test]
+    fn validate_ignores_wasmi_bulk_data_flag_leniency() {
+        let wasm = [
+            0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, // magic + version
+            0x05, 0x03, 0x01, 0x00, 0x01, // memory: 1 memory, min 1 page
+            // data section: 1 segment, flag 0x02 (active + explicit memidx),
+            // memidx 0, offset (i32.const 0) (end), 0 bytes.
+            0x0b, 0x07, 0x01, 0x02, 0x00, 0x41, 0x00, 0x0b, 0x00,
+        ];
+
+        let err = validate_module(&wasm).expect_err("bulk-memory data flag is not MVP");
+        assert_eq!(err, ValidationError::InvalidMemIndex);
+        assert!(is_benign_rejection(&err));
+
+        assert!(with_wasmi_validate_engine(|e| wasmi::Module::validate(
+            e, &wasm
+        )
+        .is_ok()));
+
         validate_differential(&wasm);
     }
 }
