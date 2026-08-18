@@ -70,6 +70,19 @@ jobs:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          generate_release_notes: true
+        # Do NOT use an action that regenerates notes unconditionally: if the
+        # release already exists (e.g. created from the GitHub UI, which also
+        # creates the tag that triggers this workflow), generate_release_notes
+        # *appends* a second copy of the changelog to the existing body
+        # (softprops/action-gh-release#827). Generate notes only when creating a
+        # brand-new release so the changelog is written exactly once.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release $tag already exists; leaving its notes untouched."
+          else
+            gh release create "$tag" --generate-notes --verify-tag
+          fi
