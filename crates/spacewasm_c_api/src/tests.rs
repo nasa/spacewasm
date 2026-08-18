@@ -892,19 +892,31 @@ fn global_get_set_all_types() {
     // Initial values, one per type, confirming the tag and payload read back.
     unsafe {
         let mut out = i32_val(0);
-        assert_eq!(spacewasm_get_global(store, idx, gi, &mut out), status::SPACEWASM_OK);
+        assert_eq!(
+            spacewasm_get_global(store, idx, gi, &mut out),
+            status::SPACEWASM_OK
+        );
         assert_eq!(out.tag, spacewasm_valtype_t::SPACEWASM_I32);
         assert_eq!(out.u.i32_, 10, "gi init");
 
-        assert_eq!(spacewasm_get_global(store, idx, gi64, &mut out), status::SPACEWASM_OK);
+        assert_eq!(
+            spacewasm_get_global(store, idx, gi64, &mut out),
+            status::SPACEWASM_OK
+        );
         assert_eq!(out.tag, spacewasm_valtype_t::SPACEWASM_I64);
         assert_eq!(out.u.i64_, 20, "gI init");
 
-        assert_eq!(spacewasm_get_global(store, idx, gf, &mut out), status::SPACEWASM_OK);
+        assert_eq!(
+            spacewasm_get_global(store, idx, gf, &mut out),
+            status::SPACEWASM_OK
+        );
         assert_eq!(out.tag, spacewasm_valtype_t::SPACEWASM_F32);
         assert_eq!(out.u.f32_, 1.5, "gf init");
 
-        assert_eq!(spacewasm_get_global(store, idx, gd, &mut out), status::SPACEWASM_OK);
+        assert_eq!(
+            spacewasm_get_global(store, idx, gd, &mut out),
+            status::SPACEWASM_OK
+        );
         assert_eq!(out.tag, spacewasm_valtype_t::SPACEWASM_F64);
         assert_eq!(out.u.f64_, 2.5, "gd init");
     }
@@ -925,15 +937,24 @@ fn global_get_set_all_types() {
         );
 
         let mut out = i32_val(0);
-        assert_eq!(spacewasm_get_global(store, idx, gi64, &mut out), status::SPACEWASM_OK);
+        assert_eq!(
+            spacewasm_get_global(store, idx, gi64, &mut out),
+            status::SPACEWASM_OK
+        );
         assert_eq!(out.u.i64_, -9_000_000_000, "i64 round-trip");
 
-        assert_eq!(spacewasm_get_global(store, idx, gf, &mut out), status::SPACEWASM_OK);
+        assert_eq!(
+            spacewasm_get_global(store, idx, gf, &mut out),
+            status::SPACEWASM_OK
+        );
         // -0.0 == 0.0 by value, so compare the bit pattern to prove the sign
         // bit survived the round trip through RawValue.
         assert_eq!(out.u.f32_.to_bits(), (-0.0f32).to_bits(), "f32 -0.0 bits");
 
-        assert_eq!(spacewasm_get_global(store, idx, gd, &mut out), status::SPACEWASM_OK);
+        assert_eq!(
+            spacewasm_get_global(store, idx, gd, &mut out),
+            status::SPACEWASM_OK
+        );
         assert!(out.u.f64_.is_nan(), "f64 NaN round-trip");
     }
 
@@ -962,7 +983,11 @@ fn global_get_set_all_types() {
         status::SPACEWASM_OK,
         "result get_gI"
     );
-    assert_eq!(unsafe { out.u.i64_ }, -9_000_000_000, "get_gI observes set_global");
+    assert_eq!(
+        unsafe { out.u.i64_ },
+        -9_000_000_000,
+        "get_gI observes set_global"
+    );
 
     unsafe {
         spacewasm_destroy(store);
@@ -997,7 +1022,10 @@ fn global_find_skips_imports() {
         status::SPACEWASM_OK,
         "find ag"
     );
-    assert_eq!(ag, 0, "ag resolves to the module-local index, not index-space 1");
+    assert_eq!(
+        ag, 0,
+        "ag resolves to the module-local index, not index-space 1"
+    );
 
     // The re-exported import resolves to a global owned by module `b`, so
     // finding it *through module a* misses — mirroring find_export_func.
@@ -1012,11 +1040,20 @@ fn global_find_skips_imports() {
     // init value (11), independent of module b's global (55).
     unsafe {
         let mut out = i32_val(0);
-        assert_eq!(spacewasm_get_global(store, a, ag, &mut out), status::SPACEWASM_OK);
+        assert_eq!(
+            spacewasm_get_global(store, a, ag, &mut out),
+            status::SPACEWASM_OK
+        );
         assert_eq!(out.u.i32_, 11, "ag init");
 
-        assert_eq!(spacewasm_set_global(store, a, ag, i32_val(77)), status::SPACEWASM_OK);
-        assert_eq!(spacewasm_get_global(store, a, ag, &mut out), status::SPACEWASM_OK);
+        assert_eq!(
+            spacewasm_set_global(store, a, ag, i32_val(77)),
+            status::SPACEWASM_OK
+        );
+        assert_eq!(
+            spacewasm_get_global(store, a, ag, &mut out),
+            status::SPACEWASM_OK
+        );
         assert_eq!(out.u.i32_, 77, "ag after set");
 
         // Module b's own global is reachable directly and untouched by the above.
@@ -1027,7 +1064,10 @@ fn global_find_skips_imports() {
             "find bg"
         );
         assert_eq!(bg, 0, "bg module-local index");
-        assert_eq!(spacewasm_get_global(store, b, bg, &mut out), status::SPACEWASM_OK);
+        assert_eq!(
+            spacewasm_get_global(store, b, bg, &mut out),
+            status::SPACEWASM_OK
+        );
         assert_eq!(out.u.i32_, 55, "bg unchanged");
     }
 

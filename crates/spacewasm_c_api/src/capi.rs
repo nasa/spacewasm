@@ -677,7 +677,12 @@ pub unsafe extern "C" fn spacewasm_set_global(
         return status::SPACEWASM_ERR_NULL_ARG;
     };
 
-    let module = match cengine.engine.store.modules_mut().get_mut(module_idx as usize) {
+    let module = match cengine
+        .engine
+        .store
+        .modules_mut()
+        .get_mut(module_idx as usize)
+    {
         Some(m) => m,
         None => return status::SPACEWASM_ERR_NOT_FOUND,
     };
