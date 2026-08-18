@@ -790,7 +790,7 @@ mod validate_differential_tests {
     fn validate_ignores_oversized_function_params() {
         // 300 i32 params = 300 four-byte slots, past the 255-slot cap.
         let params = "i32 ".repeat(300);
-        let wasm = wat::parse_str(&format!(r#"(module (func (param {params})))"#)).unwrap();
+        let wasm = wat::parse_str(format!(r#"(module (func (param {params})))"#)).unwrap();
 
         let err = validate_module(&wasm).expect_err("param count exceeds the embedded cap");
         assert_eq!(err, ValidationError::FunctionParametersTooLarge);
