@@ -176,6 +176,9 @@ and [wasm-smith](https://github.com/bytecodealliance/wasm-tools/tree/main/crates
 # Run fuzzer
 make fuzz
 
+# Differentially test the validator against wasmi (SpaceWasm vs a reference)
+make fuzz-validate-differential
+
 # Analyze crashes with execution traces
 make trace CRASH=fuzz/artifacts/no_traps/crash-xxx
 ```

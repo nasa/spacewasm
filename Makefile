@@ -1,4 +1,4 @@
-.PHONY: help fuzz fuzz-validate fuzz-malformed seed-to-wasm trace-wasm trace trace-debug clean-artifacts install-tools
+.PHONY: help fuzz fuzz-validate fuzz-validate-differential fuzz-malformed seed-to-wasm trace-wasm trace trace-debug clean-artifacts install-tools
 
 # Target Configuration (auto-detect if not set)
 SPACEWASM_TARGET ?= $(shell rustc -vV | grep 'host:' | cut -d' ' -f2)
@@ -13,6 +13,7 @@ help:
 	@echo "Fuzzing:"
 	@echo "  make fuzz                          Run the no_traps fuzzer"
 	@echo "  make fuzz-validate                 Run the validate fuzzer"
+	@echo "  make fuzz-validate-differential    Run the validate differential fuzzer (SpaceWasm vs wasmi)"
 	@echo "  make fuzz-malformed                Run the malformed-input decoder fuzzer"
 	@echo ""
 	@echo "Crash Analysis:"
@@ -37,6 +38,9 @@ fuzz:
 
 fuzz-validate:
 	cargo +nightly fuzz run validate --target $(SPACEWASM_TARGET)
+
+fuzz-validate-differential:
+	cargo +nightly fuzz run validate_differential --target $(SPACEWASM_TARGET)
 
 fuzz-malformed:
 	cargo +nightly fuzz run malformed --target $(SPACEWASM_TARGET)

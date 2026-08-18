@@ -10,11 +10,18 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 spacewasm = { path = "..", features = ["strict-assertions"] }
-spacewasm-fuzzing = { path = "../crates/fuzzing", features = [] }
+spacewasm-fuzzing = { path = "../crates/fuzzing", features = ["differential"] }
 
 [[bin]]
 name = "validate"
 path = "fuzz_targets/validate.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "validate_differential"
+path = "fuzz_targets/validate_differential.rs"
 test = false
 doc = false
 bench = false
