@@ -195,7 +195,7 @@ impl JumpTarget {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum BlockKind {
     Loop,  // Loops
     Block, // Block, Else
@@ -938,8 +938,13 @@ impl<'a, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize>
         // Read validation data from the frame without popping it yet
         let (out, height) = {
             let Some(last) = self.control_frames.last() else {
-                return Err(ValidationError::InvalidEndBlock);
+                return Err(ValidationError::InvalidElseBlock);
             };
+
+            if last.kind != BlockKind::If {
+                return Err(ValidationError::InvalidElseBlock);
+            }
+
             (last.out, last.height)
         };
 
