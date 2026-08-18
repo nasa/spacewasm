@@ -5,7 +5,7 @@ use core::ffi::c_void;
 
 use spacewasm::{
     CodeBuilder, CompilerOptions, Engine, ExportDesc, HostFunction, HostModule, Interpreter,
-    InterpreterRunner, Module, ModuleRef, Ref, ValType, Value, Vec, WasmRef,
+    InterpreterRunner, Module, ModuleRef, RawValue, Ref, ValType, Value, Vec, WasmRef,
 };
 
 use crate::SpacewasmCaller;
@@ -558,6 +558,149 @@ pub unsafe extern "C" fn spacewasm_check_func_signature(
         return status::SPACEWASM_ERR_PARAM_TYPE_MISMATCH;
     }
 
+    status::SPACEWASM_OK
+}
+
+/// Look up the global exported as `name` in module `module_idx` and write its
+/// index to `out_index`. The written index addresses the module's own globals
+/// and can be passed straight to [`spacewasm_get_global`] and
+/// [`spacewasm_set_global`].
+///
+/// Only globals defined by module `module_idx` itself are resolvable this way:
+/// if the export re-exports a global imported from another (guest or host)
+/// module, this returns [`spacewasm_status_t::SPACEWASM_ERR_NOT_FOUND`], exactly
+/// as [`spacewasm_find_export_func`] does for imported functions. Reach such a
+/// global through the module that defines it.
+///
+/// Returns [`spacewasm_status_t::SPACEWASM_ERR_NOT_FOUND`] when `module_idx` is
+/// out of range or the module exports no matching, locally-defined global.
+///
+/// # Safety
+/// `engine` must be live; `name` valid; `out_index` valid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn spacewasm_find_global(
+    engine: *mut CEngine,
+    module_idx: u32,
+    name: *const c_char,
+    out_index: *mut u32,
+) -> spacewasm_status_t {
+    let Some(cengine) = (unsafe { engine.as_ref() }) else {
+        return status::SPACEWASM_ERR_NULL_ARG;
+    };
+    if out_index.is_null() {
+        return status::SPACEWASM_ERR_NULL_ARG;
+    }
+    let name = check!(unsafe { cstr(name) });
+
+    let module = match cengine.engine.store.modules().get(module_idx as usize) {
+        Some(m) => m,
+        None => return status::SPACEWASM_ERR_NOT_FOUND,
+    };
+
+    for e in &module.exports {
+        if e.name == name {
+            if let ExportDesc::Global(gi) = e.desc {
+                return match module.get_global_ref(gi) {
+                    Some(Ref::Module(idx)) => {
+                        unsafe { *out_index = idx as u32 };
+                        status::SPACEWASM_OK
+                    }
+                    _ => status::SPACEWASM_ERR_NOT_FOUND,
+                };
+            }
+        }
+    }
+    status::SPACEWASM_ERR_NOT_FOUND
+}
+
+/// Read global `global_index` of module `module_idx` into `out`, tagged with the
+/// global's declared value type. `global_index` addresses the module's own
+/// globals, as returned by [`spacewasm_find_global`].
+///
+/// Returns [`spacewasm_status_t::SPACEWASM_ERR_NOT_FOUND`] when `module_idx` or
+/// `global_index` is out of range.
+///
+/// # Safety
+/// `engine` must be live; `out` valid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn spacewasm_get_global(
+    engine: *mut CEngine,
+    module_idx: u32,
+    global_index: u32,
+    out: *mut spacewasm_value_t,
+) -> spacewasm_status_t {
+    let Some(cengine) = (unsafe { engine.as_ref() }) else {
+        return status::SPACEWASM_ERR_NULL_ARG;
+    };
+    if out.is_null() {
+        return status::SPACEWASM_ERR_NULL_ARG;
+    }
+
+    let module = match cengine.engine.store.modules().get(module_idx as usize) {
+        Some(m) => m,
+        None => return status::SPACEWASM_ERR_NOT_FOUND,
+    };
+
+    let global = match module.globals.get(global_index as usize) {
+        Some(g) => g,
+        None => return status::SPACEWASM_ERR_NOT_FOUND,
+    };
+
+    unsafe { *out = global.value().into() };
+    status::SPACEWASM_OK
+}
+
+/// Write `value` into global `global_index` of module `module_idx`.
+/// `global_index` addresses the module's own globals, as returned by
+/// [`spacewasm_find_global`].
+///
+/// The tag of `value` must match the global's declared value type, and the
+/// global must be mutable.
+///
+/// Returns [`spacewasm_status_t::SPACEWASM_ERR_NOT_FOUND`] when `module_idx` or
+/// `global_index` is out of range,
+/// [`spacewasm_status_t::SPACEWASM_ERR_GLOBAL_TYPE_MISMATCH`] when the value type
+/// does not match the global, and
+/// [`spacewasm_status_t::SPACEWASM_ERR_GLOBAL_IS_NOT_MUTABLE`] when the global is
+/// declared `const`.
+///
+/// # Safety
+/// `engine` must be a live handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn spacewasm_set_global(
+    engine: *mut CEngine,
+    module_idx: u32,
+    global_index: u32,
+    value: spacewasm_value_t,
+) -> spacewasm_status_t {
+    let Some(cengine) = (unsafe { engine.as_mut() }) else {
+        return status::SPACEWASM_ERR_NULL_ARG;
+    };
+
+    let module = match cengine.engine.store.modules_mut().get_mut(module_idx as usize) {
+        Some(m) => m,
+        None => return status::SPACEWASM_ERR_NOT_FOUND,
+    };
+
+    let global = match module.globals.get_mut(global_index as usize) {
+        Some(g) => g,
+        None => return status::SPACEWASM_ERR_NOT_FOUND,
+    };
+
+    if ValType::from(value.tag) != global.type_.ty {
+        return status::SPACEWASM_ERR_GLOBAL_TYPE_MISMATCH;
+    }
+
+    if !global.type_.mutable {
+        return status::SPACEWASM_ERR_GLOBAL_IS_NOT_MUTABLE;
+    }
+
+    global.value = match value.to_value() {
+        Value::I32(i) => RawValue::from_i32(i),
+        Value::I64(i) => RawValue::from_i64(i),
+        Value::F32(f) => RawValue::from_f32(f),
+        Value::F64(f) => RawValue::from_f64(f),
+    };
     status::SPACEWASM_OK
 }
 
