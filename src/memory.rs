@@ -150,7 +150,7 @@ impl Memory {
     pub fn store_u16(&self, addr: usize, i: u16) -> Result<(), MemoryError> {
         self.check_in_bounds(addr, 2)?;
         unsafe {
-            self.ptr.add(addr).cast::<u16>().write_unaligned(i);
+            self.ptr.add(addr).cast::<u16>().write_unaligned(i.to_le());
         }
         Ok(())
     }
@@ -158,7 +158,7 @@ impl Memory {
     pub fn store_u32(&self, addr: usize, i: u32) -> Result<(), MemoryError> {
         self.check_in_bounds(addr, 4)?;
         unsafe {
-            self.ptr.add(addr).cast::<u32>().write_unaligned(i);
+            self.ptr.add(addr).cast::<u32>().write_unaligned(i.to_le());
         }
         Ok(())
     }
@@ -166,7 +166,7 @@ impl Memory {
     pub fn store_u64(&self, addr: usize, i: u64) -> Result<(), MemoryError> {
         self.check_in_bounds(addr, 8)?;
         unsafe {
-            self.ptr.add(addr).cast::<u64>().write_unaligned(i);
+            self.ptr.add(addr).cast::<u64>().write_unaligned(i.to_le());
         }
         Ok(())
     }
@@ -190,17 +190,17 @@ impl Memory {
 
     pub fn load_u16(&self, addr: usize) -> Result<u16, MemoryError> {
         self.check_in_bounds(addr, 2)?;
-        unsafe { Ok(self.ptr.add(addr).cast::<u16>().read_unaligned()) }
+        unsafe { Ok(u16::from_le(self.ptr.add(addr).cast::<u16>().read_unaligned())) }
     }
 
     pub fn load_u32(&self, addr: usize) -> Result<u32, MemoryError> {
         self.check_in_bounds(addr, 4)?;
-        unsafe { Ok(self.ptr.add(addr).cast::<u32>().read_unaligned()) }
+        unsafe { Ok(u32::from_le(self.ptr.add(addr).cast::<u32>().read_unaligned())) }
     }
 
     pub fn load_u64(&self, addr: usize) -> Result<u64, MemoryError> {
         self.check_in_bounds(addr, 8)?;
-        unsafe { Ok(self.ptr.add(addr).cast::<u64>().read_unaligned()) }
+        unsafe { Ok(u64::from_le(self.ptr.add(addr).cast::<u64>().read_unaligned())) }
     }
 
     pub fn load(&self, addr: usize, len: usize) -> Result<&[u8], MemoryError> {
@@ -376,6 +376,41 @@ mod tests {
         assert_eq!(mem.load(0, 1), Ok(&[0][..]));
         assert_eq!(mem.store(0, &[0xA5]), Ok(()));
         assert_eq!(mem.load(0, 1), Ok(&[0xA5][..]));
+    }
+
+    #[test]
+    fn stores_are_little_endian() {
+        // Wasm mandates little-endian memory regardless of host byte order.
+        // Assert the actual byte layout, which round-trip tests cannot catch.
+        let mem = Memory::new(mem_type(1, None), allocator()).unwrap();
+
+        mem.store_u16(0, 0x1122).unwrap();
+        assert_eq!(mem.load(0, 2).unwrap(), &[0x22, 0x11][..]);
+
+        mem.store_u32(8, 0x1122_3344).unwrap();
+        assert_eq!(mem.load(8, 4).unwrap(), &[0x44, 0x33, 0x22, 0x11][..]);
+
+        mem.store_u64(16, 0x1122_3344_5566_7788).unwrap();
+        assert_eq!(
+            mem.load(16, 8).unwrap(),
+            &[0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11][..]
+        );
+    }
+
+    #[test]
+    fn loads_are_little_endian() {
+        // A little-endian byte pattern must decode to the expected value.
+        let mem = Memory::new(mem_type(1, None), allocator()).unwrap();
+
+        mem.store(0, &[0x22, 0x11]).unwrap();
+        assert_eq!(mem.load_u16(0).unwrap(), 0x1122);
+
+        mem.store(8, &[0x44, 0x33, 0x22, 0x11]).unwrap();
+        assert_eq!(mem.load_u32(8).unwrap(), 0x1122_3344);
+
+        mem.store(16, &[0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11])
+            .unwrap();
+        assert_eq!(mem.load_u64(16).unwrap(), 0x1122_3344_5566_7788);
     }
 
     #[test]
