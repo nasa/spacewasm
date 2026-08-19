@@ -78,17 +78,57 @@ jobs:
               const baselineScore = parseFloat(benchmark.baselineScore);
 
               let comment = '## CoreMark Benchmark Results\n\n';
+
+              // Instruction counts, when the CI run that produced this artifact
+              // was new enough to measure them.
+              const currentInsns = parseInt(benchmark.currentInstructions, 10);
+              const baselineInsns = parseInt(benchmark.baselineInstructions, 10);
+
+              if (currentInsns) {
+                comment += `**Instructions:** ${currentInsns.toLocaleString('en-US')}\n`;
+
+                if (baselineInsns) {
+                  const diff = currentInsns - baselineInsns;
+                  const percentChange = (diff / baselineInsns) * 100;
+
+                  comment += `**Baseline Instructions (main):** ` +
+                    `${baselineInsns.toLocaleString('en-US')}\n`;
+                  comment += `**Difference:** ${diff >= 0 ? '+' : ''}` +
+                    `${diff.toLocaleString('en-US')} (${percentChange.toFixed(2)}%)\n\n`;
+
+                  // The count is exact, so this is a reading aid rather than a
+                  // threshold: it puts a large difference in front of a reviewer
+                  // instead of leaving it to be picked out of the figures.
+                  if (percentChange >= 1.0) {
+                    comment += '**Note:** this PR executes more than 1% more instructions ' +
+                      'than the baseline.\n\n';
+                  }
+                } else {
+                  comment += '\n_No baseline available for comparison_\n\n';
+                }
+
+                comment += '_Read off the CPU performance counter, with the same benchmark ' +
+                  'harness on both sides and a workload pinned by `COREMARK_FIXED_CLOCK`. ' +
+                  'This is a repeatable count of the work done, not a timing measurement; ' +
+                  'it says nothing about cache or branch behaviour._\n\n';
+              }
+
               comment += `**Current Score:** ${currentScore.toFixed(3)}\n`;
 
               if (baselineScore && !isNaN(baselineScore)) {
-                const diff = currentScore - baselineScore;
-                const percentChange = ((diff / baselineScore) * 100).toFixed(2);
-
                 comment += `**Baseline Score (main):** ${baselineScore.toFixed(3)}\n`;
-                comment += `**Difference:** ${diff >= 0 ? '+' : ''}${diff.toFixed(3)} (${percentChange}%)\n\n`;
               } else {
                 comment += '\n_No baseline available for comparison_\n';
               }
+
+              comment += currentInsns
+                ? '\n_One timed run each. On a shared runner the score is worth a few percent ' +
+                  'either way, which is why no difference is quoted for it: read the ' +
+                  'instruction count above instead._\n'
+                : '\n_One timed run each, and worth a few percent either way on a shared ' +
+                  'runner, so no difference is quoted for it._\n';
+              comment += '\n_Scores are only comparable within a single run, which measures ' +
+                'both sides on one runner._\n';
 
               await upsertComment(
                 parseInt(benchmark.prNumber, 10),
