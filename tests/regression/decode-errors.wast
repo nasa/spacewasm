@@ -149,3 +149,16 @@
         (then
           (unreachable)))))
   "result-typed if without else")
+
+;; ---------------------------------------------------------------------------
+;; An `else` opcode (0x05) with no enclosing `if` is invalid and must be
+;; rejected. wat cannot express a stray `else`, so the upstream suite never
+;; covers it; a differential-validation fuzzer (SpaceWasm vs wasmi) found that
+;; SpaceWasm used to accept this and mis-compile the `else` into a branch to the
+;; block end. Regression for that fix.
+;; type (id 1): [] -> []   func (id 3): type 0
+;; code (id 10): one body = `else end`  (0x05 0x0b)
+;; ---------------------------------------------------------------------------
+(assert_invalid
+  (module binary "\00asm\01\00\00\00\01\04\01\60\00\00\03\02\01\00\0a\05\01\03\00\05\0b")
+  "else without matching if")

@@ -947,6 +947,7 @@ fn check_decode_error(err: ParseError, text: String) {
         }
         (ValidationError::TypeMismatch, "type mismatch") => {}
         (ValidationError::BlockResultTypeMismatch, "type mismatch") => {}
+        (ValidationError::InvalidElseBlock, "else without matching if") => {}
         (ValidationError::InvalidLabelIndex, "unknown label") => {}
         (ValidationError::MalformedSectionSize, "unexpected end") => {}
         (ValidationError::GlobalIdxOutOfRange, "unknown global") => {}
