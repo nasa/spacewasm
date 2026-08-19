@@ -190,17 +190,29 @@ impl Memory {
 
     pub fn load_u16(&self, addr: usize) -> Result<u16, MemoryError> {
         self.check_in_bounds(addr, 2)?;
-        unsafe { Ok(u16::from_le(self.ptr.add(addr).cast::<u16>().read_unaligned())) }
+        unsafe {
+            Ok(u16::from_le(
+                self.ptr.add(addr).cast::<u16>().read_unaligned(),
+            ))
+        }
     }
 
     pub fn load_u32(&self, addr: usize) -> Result<u32, MemoryError> {
         self.check_in_bounds(addr, 4)?;
-        unsafe { Ok(u32::from_le(self.ptr.add(addr).cast::<u32>().read_unaligned())) }
+        unsafe {
+            Ok(u32::from_le(
+                self.ptr.add(addr).cast::<u32>().read_unaligned(),
+            ))
+        }
     }
 
     pub fn load_u64(&self, addr: usize) -> Result<u64, MemoryError> {
         self.check_in_bounds(addr, 8)?;
-        unsafe { Ok(u64::from_le(self.ptr.add(addr).cast::<u64>().read_unaligned())) }
+        unsafe {
+            Ok(u64::from_le(
+                self.ptr.add(addr).cast::<u64>().read_unaligned(),
+            ))
+        }
     }
 
     pub fn load(&self, addr: usize, len: usize) -> Result<&[u8], MemoryError> {
