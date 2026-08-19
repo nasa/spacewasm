@@ -231,7 +231,7 @@ fn load_module(wasm: &[u8]) -> bool {
 /// Rejections that are *not* evidence of a SpaceWasm validation-completeness bug,
 /// even though wasmi's validator accepted the same module. The completeness
 /// direction of [`validate_differential`] must not treat these as divergences.
-/// They fall into three groups:
+/// They fall into four groups:
 ///
 /// **Embedded resource limits.** SpaceWasm bounds what a general validator does
 /// not. The fuzzer's configured limits funnel here: the code-page, control-frame,
@@ -259,11 +259,32 @@ fn load_module(wasm: &[u8]) -> bool {
 /// `InvalidMemIndex`. wasmi does not gate these on the feature flag, and there is
 /// no wasmi config knob to match.
 ///
-/// Variant granularity is sound here because this classifier is only consulted
-/// when wasmi *accepted* the module: the validation-error subcases that share
-/// these variants (e.g. a non-`i32` element/data offset expression, an unknown
-/// section id other than 12, or an export of a nonexistent memory index) make
-/// wasmi reject too, so they never reach this check.
+/// **Spec-version differences.** wasmi implements the Wasm 2.0 validation rules,
+/// which relax some checks relative to the Wasm 1.0 rules SpaceWasm targets
+/// (REQ-13). The one that surfaces here is `br_table`: Wasm 1.0 requires every
+/// target label to have the *same* result type, whereas 2.0 lets the target types
+/// differ (each need only match its label under subtyping). A `br_table` in
+/// unreachable code whose targets share arity but differ in type is therefore
+/// valid under 2.0 (wasmi accepts) and invalid under 1.0 (SpaceWasm rejects with
+/// `BlockResultTypeMismatch`).
+/// See <https://github.com/nasa/spacewasm/issues/171#issuecomment-5333770458>.
+///
+/// Variant granularity is sound for the first three groups because this classifier
+/// is only consulted when wasmi *accepted* the module: the validation-error
+/// subcases that share those variants (e.g. a non-`i32` element/data offset
+/// expression, an unknown section id other than 12, or an export of a nonexistent
+/// memory index) make wasmi reject too, so they never reach this check.
+///
+/// `BlockResultTypeMismatch` is coarser. SpaceWasm also emits it for block-end
+/// stack-height mismatches and a result-typed `if` without an `else` -- errors
+/// invalid under *both* spec versions, so wasmi rejects them too and they do not
+/// reach this check today. But that safety rests on SpaceWasm and wasmi agreeing,
+/// not on a spec relaxation, so allow-listing the whole variant gives up the
+/// fuzzer's ability to flag a *hypothetical* SpaceWasm over-strictness bug that
+/// rejected an otherwise-1.0-valid module with this same variant (e.g. a dead-code
+/// stack-height check). Narrowing it to only the `br_table` subcase would require
+/// a dedicated error variant in the production validator; this classifier can only
+/// discriminate on the variant it is handed.
 #[cfg(feature = "differential")]
 fn is_benign_rejection(err: &ValidationError) -> bool {
     matches!(
@@ -285,6 +306,11 @@ fn is_benign_rejection(err: &ValidationError) -> bool {
             // even with the proposal disabled).
             | ValidationError::MalformedSectionId(12)
             | ValidationError::InvalidMemIndex
+            // Spec-version difference: a `br_table` whose targets share arity but
+            // differ in type is valid under wasm 2.0 (wasmi) and invalid under wasm
+            // 1.0 (SpaceWasm). Coarse -- this variant also covers block-end checks
+            // invalid under both versions; see the doc comment above.
+            | ValidationError::BlockResultTypeMismatch
     )
 }
 
