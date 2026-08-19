@@ -935,18 +935,12 @@ impl<'a, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize>
     pub(crate) fn pop_control_and_patch_if(
         &mut self,
     ) -> Result<(ResultType, JumpTarget), ValidationError> {
-        // Read validation data from the frame without popping it yet
-        let (out, height) = {
-            let Some(last) = self.control_frames.last() else {
-                return Err(ValidationError::InvalidElseBlock);
-            };
-
-            if last.kind != BlockKind::If {
-                return Err(ValidationError::InvalidElseBlock);
-            }
-
-            (last.out, last.height)
-        };
+        // Make sure our current frame is an if
+        let last = self.control_frames.last().unwrap();
+        if last.kind != BlockKind::If {
+            return Err(ValidationError::InvalidElseBlock);
+        }
+        let (out, height) = (last.out, last.height);
 
         // Pop the expected end types while the frame is still on the stack
         self.pop_result_type(out)?;
@@ -1016,9 +1010,7 @@ impl<'a, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize>
         // Read validation data from the frame without popping it yet
         // (needed for unreachable handling in pop_result_type)
         let (out, height) = {
-            let Some(last) = self.control_frames.last() else {
-                return Err(ValidationError::InvalidEndBlock);
-            };
+            let last = self.control_frames.last().unwrap();
             (last.out, last.height)
         };
 
