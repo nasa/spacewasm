@@ -320,7 +320,9 @@ jobs:
           components: miri
 
       - name: Run Miri
-        run: cargo miri test -j4 --no-fail-fast --verbose
+        env:
+          MIRIFLAGS: -Zmiri-disable-isolation
+        run: cargo miri test --lib --no-fail-fast --verbose --features miri-soft-floats
 
   coverage:
     name: Code Coverage

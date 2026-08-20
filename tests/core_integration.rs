@@ -1,5 +1,3 @@
-#![cfg(not(miri))]
-
 mod util;
 use spacewasm::vec;
 use util::{run_wast_test_file, spectest_host_module};
@@ -14,6 +12,7 @@ fn address() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "stack recursion")]
 fn call() {
     run("core/call");
 }
@@ -209,6 +208,7 @@ fn memory() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "stack recursion")]
 fn skip_stack_guard_page() {
     run("core/skip-stack-guard-page");
 }
@@ -244,6 +244,7 @@ fn labels() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "malloc too slow")]
 fn memory_grow() {
     run("core/memory_grow");
 }
@@ -309,6 +310,7 @@ fn elem() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "stack recursion")]
 fn fac() {
     run("core/fac");
 }

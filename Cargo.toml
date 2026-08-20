@@ -39,6 +39,9 @@ default = []
 # by the verifier. Useful for fuzzing/regression testing
 strict-assertions = []
 
+# Disables inline asm (e.g. x86 `sqrtss`) for Miri
+miri-soft-floats = ["libm/force-soft-floats"]
+
 [dependencies]
 libm = "0.2.16"
 
@@ -65,3 +68,6 @@ panic = "abort"
 opt-level = 3
 lto = "thin"
 codegen-units = 1
+
+[target.'cfg(miri)'.dependencies]
+libm = { version = "0.2.16", features = ["force-soft-floats"] }
