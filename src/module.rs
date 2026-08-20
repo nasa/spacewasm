@@ -352,11 +352,10 @@ impl Module {
                             return Err(ValidationError::InvalidStartFunctionSignature);
                         }
                     }
-                    Ref::Host { module, index } => {
-                        let f = &store.host_modules()[module.0 as usize].functions[index as usize];
-                        if !f.params().is_empty() || f.returns().0.is_some() {
-                            return Err(ValidationError::InvalidStartFunctionSignature);
-                        }
+                    Ref::Host { .. } => {
+                        // We explicitely do not support start mapped to host functions
+                        // It decreases the state space. Just write a wrapper function!
+                        return Err(ValidationError::InvalidHostStartFunction);
                     }
                     Ref::Extern { module, index } => {
                         let m = &store.modules()[module.0 as usize];

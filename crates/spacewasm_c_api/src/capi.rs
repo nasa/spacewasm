@@ -5,7 +5,7 @@ use core::ffi::c_void;
 
 use spacewasm::{
     CodeBuilder, CompilerOptions, Engine, ExportDesc, HostFunction, HostModule, Interpreter,
-    InterpreterRunner, Module, ModuleRef, Ref, StartInvocation, ValType, Value, Vec, WasmRef,
+    InterpreterRunner, Module, ModuleRef, RawValue, Ref, ValType, Value, Vec, WasmRef,
 };
 
 use crate::SpacewasmCaller;
@@ -238,7 +238,8 @@ pub unsafe extern "C" fn spacewasm_add_host_function(
 /// Load a guest module named `name` onto an existing engine by streaming its
 /// bytes through the `read` callback. The callback owns the buffer backing each
 /// chunk (see [`spacewasm_read_fn_t`]). This does not run the module's start
-/// function; use [`spacewasm_invoke_start`] for that. `allocator` supplies the
+/// function; resolve it with [`spacewasm_module_start`] and invoke it with
+/// [`spacewasm_invoke`] for that. `allocator` supplies the
 /// guest linear memory (see [`spacewasm_allocator_new`]). Writes the new module's
 /// index to `out_module_idx` (if non-null). May be called repeatedly to load
 /// several modules onto the same engine.
@@ -448,39 +449,264 @@ pub unsafe extern "C" fn spacewasm_find_export_func(
     status::SPACEWASM_ERR_NOT_FOUND
 }
 
-/// Invoke the start function of a module.
+/// Look up the start function of module `module_idx` and write its location to
+/// `out_module_idx` and `out_func_index`.
 ///
-/// If there is no start function, return [`spacewasm_run_status_t::SPACEWASM_RUN_FINISHED`]
-/// If there is a start function, return [`spacewasm_run_status_t::SPACEWASM_RUN_OUT_OF_FUEL`]
+/// Start functions are never host functions (that is rejected at load time), so
+/// the result is always a directly-invokable Wasm function. The written indices
+/// can be passed straight to [`spacewasm_invoke`] followed by [`spacewasm_run`],
+/// exactly as you would an exported function. Note that `out_module_idx` may
+/// differ from `module_idx` when the start is an imported (cross-module)
+/// function.
 ///
-/// If there are any bad arguments or the start function is a host function that traps,
-/// return [`spacewasm_run_status_t::SPACEWASM_RUN_TRAP`]
+/// Returns [`spacewasm_status_t::SPACEWASM_OK`] and populates the outputs when
+/// the module declares a start function. Returns
+/// [`spacewasm_status_t::SPACEWASM_ERR_NOT_FOUND`] when `module_idx` is out of
+/// range or the module has no start function, in which case there is nothing to
+/// invoke.
 ///
 /// # Safety
-/// `engine` must be live
+/// `engine` must be live; `out_module_idx` and `out_func_index` valid.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn spacewasm_invoke_start(
+pub unsafe extern "C" fn spacewasm_module_start(
     engine: *mut CEngine,
     module_idx: u32,
-) -> spacewasm_run_status_t {
-    let Some(cengine) = (unsafe { engine.as_mut() }) else {
-        return spacewasm_run_status_t::SPACEWASM_RUN_TRAP;
+    out_module_idx: *mut u32,
+    out_func_index: *mut u32,
+) -> spacewasm_status_t {
+    let Some(cengine) = (unsafe { engine.as_ref() }) else {
+        return status::SPACEWASM_ERR_NULL_ARG;
     };
-
-    if !cengine.engine.is_idle() {
-        return spacewasm_run_status_t::SPACEWASM_RUN_TRAP;
+    if out_module_idx.is_null() || out_func_index.is_null() {
+        return status::SPACEWASM_ERR_NULL_ARG;
     }
 
     if module_idx as usize >= cengine.engine.store.modules().len() {
-        return spacewasm_run_status_t::SPACEWASM_RUN_TRAP;
+        return status::SPACEWASM_ERR_NOT_FOUND;
     }
 
-    match cengine.engine.invoke_start(ModuleRef(module_idx as u8)) {
-        StartInvocation::Finished => spacewasm_run_status_t::SPACEWASM_RUN_FINISHED,
-        StartInvocation::Trap(_) => spacewasm_run_status_t::SPACEWASM_RUN_TRAP,
-        StartInvocation::Pause => spacewasm_run_status_t::SPACEWASM_RUN_PAUSE,
-        StartInvocation::Running => spacewasm_run_status_t::SPACEWASM_RUN_OUT_OF_FUEL,
+    match cengine.engine.module_start(ModuleRef(module_idx as u8)) {
+        Some(start) => {
+            unsafe {
+                *out_module_idx = start.module.0 as u32;
+                *out_func_index = start.index as u32;
+            }
+            status::SPACEWASM_OK
+        }
+        None => status::SPACEWASM_ERR_NOT_FOUND,
     }
+}
+
+/// Check that function `func_index` of module `module_idx` has the signature
+/// described by `params_sig` and `returns_sig`.
+///
+/// Signatures use the same alphabet as [`spacewasm_add_host_function`]:
+/// `i` (i32), `I` (i64), `f` (f32), `d` (f64). For example, a function
+/// `(i32, i32) -> i32` matches `params_sig = "ii"`, `returns_sig = "i"`.
+///
+/// Returns [`spacewasm_status_t::SPACEWASM_OK`] when the signature matches.
+/// Returns [`spacewasm_status_t::SPACEWASM_ERR_PARAM_LEN_MISMATCH`] when the
+/// parameter or return count differs, and
+/// [`spacewasm_status_t::SPACEWASM_ERR_PARAM_TYPE_MISMATCH`] when a type at some
+/// position differs. Returns [`spacewasm_status_t::SPACEWASM_ERR_NOT_FOUND`]
+/// when `module_idx` or `func_index` is out of range, and
+/// [`spacewasm_status_t::SPACEWASM_ERR_BAD_SIGNATURE`] when a signature string
+/// contains a character other than `iIfd` or is too long.
+///
+/// # Safety
+/// `engine` must be live; all C strings valid and NUL-terminated.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn spacewasm_check_func_signature(
+    engine: *mut CEngine,
+    module_idx: u32,
+    func_index: u32,
+    params_sig: *const c_char,
+    returns_sig: *const c_char,
+) -> spacewasm_status_t {
+    let Some(cengine) = (unsafe { engine.as_ref() }) else {
+        return status::SPACEWASM_ERR_NULL_ARG;
+    };
+
+    let params_sig = check!(unsafe { cstr(params_sig) });
+    let returns_sig = check!(unsafe { cstr(returns_sig) });
+
+    let params =
+        check!(spacewasm::HostValList::try_new(params_sig).map_err(status::host_val_list_status));
+    let returns =
+        check!(spacewasm::HostValList::try_new(returns_sig).map_err(status::host_val_list_status));
+
+    let module = match cengine.engine.store.modules().get(module_idx as usize) {
+        Some(m) => m,
+        None => return status::SPACEWASM_ERR_NOT_FOUND,
+    };
+
+    let func = match module.functions.get(func_index as usize) {
+        Some(f) => f,
+        None => return status::SPACEWASM_ERR_NOT_FOUND,
+    };
+
+    let ty = match module.types.get(func.ty.0 as usize) {
+        Some(t) => t,
+        None => return status::SPACEWASM_ERR_NOT_FOUND,
+    };
+
+    if params.len() != ty.params.len() || returns.len() != ty.returns.len() {
+        return status::SPACEWASM_ERR_PARAM_LEN_MISMATCH;
+    }
+
+    if params.as_slice() != &ty.params[..] || returns.as_slice() != &ty.returns[..] {
+        return status::SPACEWASM_ERR_PARAM_TYPE_MISMATCH;
+    }
+
+    status::SPACEWASM_OK
+}
+
+/// Look up the global exported as `name` in module `module_idx` and write its
+/// index to `out_index`. The written index addresses the module's own globals
+/// and can be passed straight to [`spacewasm_get_global`] and
+/// [`spacewasm_set_global`].
+///
+/// Only globals defined by module `module_idx` itself are resolvable this way:
+/// if the export re-exports a global imported from another (guest or host)
+/// module, this returns [`spacewasm_status_t::SPACEWASM_ERR_NOT_FOUND`], exactly
+/// as [`spacewasm_find_export_func`] does for imported functions. Reach such a
+/// global through the module that defines it.
+///
+/// Returns [`spacewasm_status_t::SPACEWASM_ERR_NOT_FOUND`] when `module_idx` is
+/// out of range or the module exports no matching, locally-defined global.
+///
+/// # Safety
+/// `engine` must be live; `name` valid; `out_index` valid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn spacewasm_find_global(
+    engine: *mut CEngine,
+    module_idx: u32,
+    name: *const c_char,
+    out_index: *mut u32,
+) -> spacewasm_status_t {
+    let Some(cengine) = (unsafe { engine.as_ref() }) else {
+        return status::SPACEWASM_ERR_NULL_ARG;
+    };
+    if out_index.is_null() {
+        return status::SPACEWASM_ERR_NULL_ARG;
+    }
+    let name = check!(unsafe { cstr(name) });
+
+    let module = match cengine.engine.store.modules().get(module_idx as usize) {
+        Some(m) => m,
+        None => return status::SPACEWASM_ERR_NOT_FOUND,
+    };
+
+    for e in &module.exports {
+        if e.name == name {
+            if let ExportDesc::Global(gi) = e.desc {
+                return match module.get_global_ref(gi) {
+                    Some(Ref::Module(idx)) => {
+                        unsafe { *out_index = idx as u32 };
+                        status::SPACEWASM_OK
+                    }
+                    _ => status::SPACEWASM_ERR_NOT_FOUND,
+                };
+            }
+        }
+    }
+    status::SPACEWASM_ERR_NOT_FOUND
+}
+
+/// Read global `global_index` of module `module_idx` into `out`, tagged with the
+/// global's declared value type. `global_index` addresses the module's own
+/// globals, as returned by [`spacewasm_find_global`].
+///
+/// Returns [`spacewasm_status_t::SPACEWASM_ERR_NOT_FOUND`] when `module_idx` or
+/// `global_index` is out of range.
+///
+/// # Safety
+/// `engine` must be live; `out` valid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn spacewasm_get_global(
+    engine: *mut CEngine,
+    module_idx: u32,
+    global_index: u32,
+    out: *mut spacewasm_value_t,
+) -> spacewasm_status_t {
+    let Some(cengine) = (unsafe { engine.as_ref() }) else {
+        return status::SPACEWASM_ERR_NULL_ARG;
+    };
+    if out.is_null() {
+        return status::SPACEWASM_ERR_NULL_ARG;
+    }
+
+    let module = match cengine.engine.store.modules().get(module_idx as usize) {
+        Some(m) => m,
+        None => return status::SPACEWASM_ERR_NOT_FOUND,
+    };
+
+    let global = match module.globals.get(global_index as usize) {
+        Some(g) => g,
+        None => return status::SPACEWASM_ERR_NOT_FOUND,
+    };
+
+    unsafe { *out = global.value().into() };
+    status::SPACEWASM_OK
+}
+
+/// Write `value` into global `global_index` of module `module_idx`.
+/// `global_index` addresses the module's own globals, as returned by
+/// [`spacewasm_find_global`].
+///
+/// The tag of `value` must match the global's declared value type, and the
+/// global must be mutable.
+///
+/// Returns [`spacewasm_status_t::SPACEWASM_ERR_NOT_FOUND`] when `module_idx` or
+/// `global_index` is out of range,
+/// [`spacewasm_status_t::SPACEWASM_ERR_GLOBAL_TYPE_MISMATCH`] when the value type
+/// does not match the global, and
+/// [`spacewasm_status_t::SPACEWASM_ERR_GLOBAL_IS_NOT_MUTABLE`] when the global is
+/// declared `const`.
+///
+/// # Safety
+/// `engine` must be a live handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn spacewasm_set_global(
+    engine: *mut CEngine,
+    module_idx: u32,
+    global_index: u32,
+    value: spacewasm_value_t,
+) -> spacewasm_status_t {
+    let Some(cengine) = (unsafe { engine.as_mut() }) else {
+        return status::SPACEWASM_ERR_NULL_ARG;
+    };
+
+    let module = match cengine
+        .engine
+        .store
+        .modules_mut()
+        .get_mut(module_idx as usize)
+    {
+        Some(m) => m,
+        None => return status::SPACEWASM_ERR_NOT_FOUND,
+    };
+
+    let global = match module.globals.get_mut(global_index as usize) {
+        Some(g) => g,
+        None => return status::SPACEWASM_ERR_NOT_FOUND,
+    };
+
+    if ValType::from(value.tag) != global.type_.ty {
+        return status::SPACEWASM_ERR_GLOBAL_TYPE_MISMATCH;
+    }
+
+    if !global.type_.mutable {
+        return status::SPACEWASM_ERR_GLOBAL_IS_NOT_MUTABLE;
+    }
+
+    global.value = match value.to_value() {
+        Value::I32(i) => RawValue::from_i32(i),
+        Value::I64(i) => RawValue::from_i64(i),
+        Value::F32(f) => RawValue::from_f32(f),
+        Value::F64(f) => RawValue::from_f64(f),
+    };
+    status::SPACEWASM_OK
 }
 
 /// Set up a call to exported function `func_index` of module `module_idx` with
@@ -601,6 +827,24 @@ pub unsafe extern "C" fn spacewasm_resume_value(
     };
 
     cengine.engine.resume(Some(resume_value.into()));
+    status::SPACEWASM_OK
+}
+
+/// Reset the engine back to an idle state, discarding any in-progress or
+/// completed call: the program counter, stack pointers, and pending result are
+/// cleared, and guest linear memory and the table are reset to their zero
+/// state. Loaded modules remain loaded. Use this to abandon a paused or
+/// out-of-fuel call, or to run a fresh invocation from a clean slate.
+///
+/// # Safety
+/// `engine` must be a live handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn spacewasm_reset(engine: *mut CEngine) -> spacewasm_status_t {
+    let Some(cengine) = (unsafe { engine.as_mut() }) else {
+        return status::SPACEWASM_ERR_NULL_ARG;
+    };
+
+    cengine.engine.reset();
     status::SPACEWASM_OK
 }
 

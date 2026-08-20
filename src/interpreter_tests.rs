@@ -4,8 +4,7 @@
 mod tests {
     use crate::{
         AllocError, BaseVisitor, Engine, Interpreter, InterpreterResult, InterpreterRunner,
-        IrVisitor, MemArg, MemType, Memory, MemoryKind, Module, ModuleRef, StartInvocation,
-        ValType,
+        IrVisitor, MemArg, MemType, Memory, MemoryKind, Module, ModuleRef, ValType,
     };
 
     extern crate std;
@@ -76,16 +75,14 @@ mod tests {
         };
 
         let module_ref = engine.push_module(module).unwrap();
-        match engine.invoke_start(module_ref) {
-            StartInvocation::Finished => {}
-            StartInvocation::Trap(t) => panic!("trap during initialization {t:?}"),
-            StartInvocation::Pause => panic!("pause during init"),
-            StartInvocation::Running => match Interpreter.run(&[], &mut engine, usize::MAX) {
+        if let Some(start) = engine.module_start(module_ref) {
+            engine.invoke(start, &[]).unwrap();
+            match Interpreter.run(&[], &mut engine, usize::MAX) {
                 InterpreterResult::Finished => {}
                 InterpreterResult::OutOfFuel => panic!("insufficient fuel for initialization"),
                 InterpreterResult::Trap(t) => panic!("trap during initialization {t:?}"),
                 InterpreterResult::Pause => panic!("pause during init"),
-            },
+            }
         }
 
         engine.memory = engine.store.get_memory(ModuleRef(0)).clone();

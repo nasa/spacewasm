@@ -115,6 +115,56 @@ static const uint8_t PAUSE_I32_WASM[] = {
     0x61, 0x75, 0x73, 0x65, 0x5f, 0x69, 0x33, 0x32, 0x00, 0x01, 0x0a, 0x06,
     0x01, 0x04, 0x00, 0x10, 0x00, 0x0b};
 
+/* (module
+ *   (global $g (export "g") (mut i32) (i32.const 7))
+ *   (global $c (export "c") i32 (i32.const 42))
+ *   (func (export "get_g") (result i32) global.get $g)
+ *   (func (export "set_g") (param i32) local.get 0 global.set $g)) */
+static const uint8_t GLOBALS_WASM[] = {
+    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x09, 0x02, 0x60,
+    0x00, 0x01, 0x7f, 0x60, 0x01, 0x7f, 0x00, 0x03, 0x03, 0x02, 0x00, 0x01,
+    0x06, 0x0b, 0x02, 0x7f, 0x01, 0x41, 0x07, 0x0b, 0x7f, 0x00, 0x41, 0x2a,
+    0x0b, 0x07, 0x19, 0x04, 0x01, 0x67, 0x03, 0x00, 0x01, 0x63, 0x03, 0x01,
+    0x05, 0x67, 0x65, 0x74, 0x5f, 0x67, 0x00, 0x00, 0x05, 0x73, 0x65, 0x74,
+    0x5f, 0x67, 0x00, 0x01, 0x0a, 0x0d, 0x02, 0x04, 0x00, 0x23, 0x00, 0x0b,
+    0x06, 0x00, 0x20, 0x00, 0x24, 0x00, 0x0b};
+
+/* (module
+ *   (global $gi (export "gi") (mut i32) (i32.const 10))
+ *   (global $gI (export "gI") (mut i64) (i64.const 20))
+ *   (global $gf (export "gf") (mut f32) (f32.const 1.5))
+ *   (global $gd (export "gd") (mut f64) (f64.const 2.5))
+ *   (func (export "get_gI") (result i64) global.get $gI)) */
+static const uint8_t GLOBALS_MULTI_WASM[] = {
+    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x05, 0x01, 0x60,
+    0x00, 0x01, 0x7e, 0x03, 0x02, 0x01, 0x00, 0x06, 0x1f, 0x04, 0x7f, 0x01,
+    0x41, 0x0a, 0x0b, 0x7e, 0x01, 0x42, 0x14, 0x0b, 0x7d, 0x01, 0x43, 0x00,
+    0x00, 0xc0, 0x3f, 0x0b, 0x7c, 0x01, 0x44, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x04, 0x40, 0x0b, 0x07, 0x1e, 0x05, 0x02, 0x67, 0x69, 0x03, 0x00,
+    0x02, 0x67, 0x49, 0x03, 0x01, 0x02, 0x67, 0x66, 0x03, 0x02, 0x02, 0x67,
+    0x64, 0x03, 0x03, 0x06, 0x67, 0x65, 0x74, 0x5f, 0x67, 0x49, 0x00, 0x00,
+    0x0a, 0x06, 0x01, 0x04, 0x00, 0x23, 0x01, 0x0b};
+
+/* Exporter half of the imported-global pair, module "b":
+ * (module (global (export "bg") (mut i32) (i32.const 55))) */
+static const uint8_t GLOBAL_EXPORTER_WASM[] = {
+    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x06, 0x06, 0x01, 0x7f,
+    0x01, 0x41, 0x37, 0x0b, 0x07, 0x06, 0x01, 0x02, 0x62, 0x67, 0x03, 0x00};
+
+/* Importer half, module "a": imports b.bg (index-space global 0), then defines
+ * and exports its own mutable i32 `ag` (module-local global 0, index-space 1),
+ * and re-exports the import as `reexport`. Proves find_global returns the
+ * module-local index (0 for `ag`), and that a re-exported import misses.
+ * (module
+ *   (import "b" "bg" (global $ig (mut i32)))
+ *   (global $ag (export "ag") (mut i32) (i32.const 11))
+ *   (export "reexport" (global $ig))) */
+static const uint8_t GLOBAL_IMPORTER_WASM[] = {
+    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x02, 0x09, 0x01, 0x01,
+    0x62, 0x02, 0x62, 0x67, 0x03, 0x7f, 0x01, 0x06, 0x06, 0x01, 0x7f, 0x01,
+    0x41, 0x0b, 0x0b, 0x07, 0x11, 0x02, 0x02, 0x61, 0x67, 0x03, 0x01, 0x08,
+    0x72, 0x65, 0x65, 0x78, 0x70, 0x6f, 0x72, 0x74, 0x03, 0x00};
+
 /* ---- helpers ------------------------------------------------------------- */
 
 #define CHECK(cond, ...)                                                                           \
@@ -187,19 +237,30 @@ static spacewasm_status_t load_module_onto(spacewasm_allocator_t* alloc, spacewa
         return st;
     }
 
-    spacewasm_run_status_t rs = spacewasm_invoke_start(store, *out_idx);
+    /* Resolve the start function (if any) and drive it to completion. A module
+     * without a start function reports NOT_FOUND and needs no initialization. */
+    uint32_t start_mod = 0;
+    uint32_t start_func = 0;
+    spacewasm_status_t start_st = spacewasm_module_start(store, *out_idx, &start_mod, &start_func);
+    if (start_st == SPACEWASM_ERR_NOT_FOUND) {
+        return SPACEWASM_OK;
+    }
+    if (start_st != SPACEWASM_OK) {
+        return start_st;
+    }
+
+    st = spacewasm_invoke(store, start_mod, start_func, NULL, 0);
+    if (st != SPACEWASM_OK) {
+        return st;
+    }
+
     spacewasm_trap_t trap = SPACEWASM_TRAP_NONE;
+    spacewasm_run_status_t rs = SPACEWASM_RUN_OUT_OF_FUEL;
     while (rs == SPACEWASM_RUN_OUT_OF_FUEL) {
         rs = spacewasm_run(store, 1000, &trap);
     }
 
-    if (rs != SPACEWASM_RUN_FINISHED) {
-        st = SPACEWASM_ERR_WRONG_STATE;
-    } else {
-        st = SPACEWASM_OK;
-    }
-
-    return st;
+    return rs == SPACEWASM_RUN_FINISHED ? SPACEWASM_OK : SPACEWASM_ERR_WRONG_STATE;
 }
 
 static spacewasm_run_status_t run_to_completion(spacewasm_t* store,
@@ -388,6 +449,222 @@ static int test_host_function_and_memory(void) {
     return 0;
 }
 
+static int test_globals(void) {
+    spacewasm_host_t host;
+    CHECK(spacewasm_host_new(0, &host) == SPACEWASM_OK, "host_new");
+    spacewasm_t* store = NULL;
+    CHECK(spacewasm_new(&host, 1024, 1, opts(256), &store) == SPACEWASM_OK, "store_new");
+
+    spacewasm_allocator_t* alloc =
+        spacewasm_allocator_new(mem_alloc, mem_realloc, mem_dealloc, NULL);
+
+    uint32_t mod_idx = 0;
+    CHECK(load_module_onto(alloc, store, "main", GLOBALS_WASM, sizeof(GLOBALS_WASM), 0, &mod_idx) ==
+              SPACEWASM_OK,
+          "load");
+
+    /* Resolve the exported mutable global `g` and const global `c`. */
+    uint32_t g = 0, c = 0;
+    CHECK(spacewasm_find_global(store, mod_idx, "g", &g) == SPACEWASM_OK, "find g");
+    CHECK(spacewasm_find_global(store, mod_idx, "c", &c) == SPACEWASM_OK, "find c");
+
+    /* A missing global, and a function export looked up as a global, both miss. */
+    uint32_t sink = 0;
+    CHECK(spacewasm_find_global(store, mod_idx, "nope", &sink) == SPACEWASM_ERR_NOT_FOUND,
+          "missing global");
+    CHECK(spacewasm_find_global(store, mod_idx, "get_g", &sink) == SPACEWASM_ERR_NOT_FOUND,
+          "function is not a global");
+
+    /* Initial values. */
+    spacewasm_value_t out = i32_val(0);
+    CHECK(spacewasm_get_global(store, mod_idx, g, &out) == SPACEWASM_OK, "get g");
+    CHECK(out.tag == SPACEWASM_I32 && out.u.i32_ == 7, "g init = %d", out.u.i32_);
+    CHECK(spacewasm_get_global(store, mod_idx, c, &out) == SPACEWASM_OK, "get c");
+    CHECK(out.u.i32_ == 42, "c init = %d", out.u.i32_);
+
+    /* Writing `g` is visible both through get_global and through executing get_g. */
+    CHECK(spacewasm_set_global(store, mod_idx, g, i32_val(100)) == SPACEWASM_OK, "set g");
+    CHECK(spacewasm_get_global(store, mod_idx, g, &out) == SPACEWASM_OK, "get g after set");
+    CHECK(out.u.i32_ == 100, "g after set = %d", out.u.i32_);
+
+    uint32_t get_g = 0;
+    CHECK(spacewasm_find_export_func(store, mod_idx, "get_g", &get_g) == SPACEWASM_OK, "find get_g");
+    CHECK(spacewasm_invoke(store, mod_idx, get_g, NULL, 0) == SPACEWASM_OK, "invoke get_g");
+    spacewasm_trap_t trap = SPACEWASM_TRAP_NONE;
+    CHECK(run_to_completion(store, &trap) == SPACEWASM_RUN_FINISHED, "run get_g");
+    CHECK(spacewasm_get_result(store, SPACEWASM_I32, &out) == SPACEWASM_OK, "result get_g");
+    CHECK(out.u.i32_ == 100, "get_g observes set_global = %d", out.u.i32_);
+
+    /* Conversely, `set_g` from Wasm is observable through get_global. */
+    uint32_t set_g = 0;
+    CHECK(spacewasm_find_export_func(store, mod_idx, "set_g", &set_g) == SPACEWASM_OK, "find set_g");
+    spacewasm_value_t arg = i32_val(5);
+    CHECK(spacewasm_invoke(store, mod_idx, set_g, &arg, 1) == SPACEWASM_OK, "invoke set_g");
+    CHECK(run_to_completion(store, &trap) == SPACEWASM_RUN_FINISHED, "run set_g");
+    CHECK(spacewasm_get_global(store, mod_idx, g, &out) == SPACEWASM_OK, "get g after wasm set");
+    CHECK(out.u.i32_ == 5, "get_global observes set_g = %d", out.u.i32_);
+
+    /* Writing a const global is rejected and leaves it unchanged. */
+    CHECK(spacewasm_set_global(store, mod_idx, c, i32_val(1)) == SPACEWASM_ERR_GLOBAL_IS_NOT_MUTABLE,
+          "set const");
+    CHECK(spacewasm_get_global(store, mod_idx, c, &out) == SPACEWASM_OK, "get c after reject");
+    CHECK(out.u.i32_ == 42, "c unchanged = %d", out.u.i32_);
+
+    /* A type-mismatched value is rejected and leaves the global unchanged. */
+    spacewasm_value_t i64v = {SPACEWASM_I64, {.i64_ = 9}};
+    CHECK(spacewasm_set_global(store, mod_idx, g, i64v) == SPACEWASM_ERR_GLOBAL_TYPE_MISMATCH,
+          "type mismatch");
+    CHECK(spacewasm_get_global(store, mod_idx, g, &out) == SPACEWASM_OK, "get g after mismatch");
+    CHECK(out.u.i32_ == 5, "g unchanged after mismatch = %d", out.u.i32_);
+
+    /* The type check runs before the mutability check: a doubly-invalid write
+     * (wrong type into a const global) reports the type mismatch. */
+    CHECK(spacewasm_set_global(store, mod_idx, c, i64v) == SPACEWASM_ERR_GLOBAL_TYPE_MISMATCH,
+          "type check precedes mutability check");
+
+    /* Out-of-range indices miss. */
+    CHECK(spacewasm_get_global(store, mod_idx, 999, &out) == SPACEWASM_ERR_NOT_FOUND,
+          "get oob global");
+    CHECK(spacewasm_set_global(store, mod_idx, 999, i32_val(0)) == SPACEWASM_ERR_NOT_FOUND,
+          "set oob global");
+    CHECK(spacewasm_get_global(store, 999, g, &out) == SPACEWASM_ERR_NOT_FOUND, "get oob module");
+    CHECK(spacewasm_set_global(store, 999, g, i32_val(0)) == SPACEWASM_ERR_NOT_FOUND,
+          "set oob module");
+    CHECK(spacewasm_find_global(store, 999, "g", &sink) == SPACEWASM_ERR_NOT_FOUND,
+          "find oob module");
+
+    /* NULL argument handling. */
+    CHECK(spacewasm_find_global(NULL, mod_idx, "g", &sink) == SPACEWASM_ERR_NULL_ARG,
+          "find null engine");
+    CHECK(spacewasm_find_global(store, mod_idx, NULL, &sink) == SPACEWASM_ERR_NULL_ARG,
+          "find null name");
+    CHECK(spacewasm_find_global(store, mod_idx, "g", NULL) == SPACEWASM_ERR_NULL_ARG,
+          "find null out_index");
+    CHECK(spacewasm_get_global(NULL, mod_idx, g, &out) == SPACEWASM_ERR_NULL_ARG,
+          "get null engine");
+    CHECK(spacewasm_get_global(store, mod_idx, g, NULL) == SPACEWASM_ERR_NULL_ARG, "get null out");
+    CHECK(spacewasm_set_global(NULL, mod_idx, g, i32_val(0)) == SPACEWASM_ERR_NULL_ARG,
+          "set null engine");
+
+    spacewasm_destroy(store);
+    spacewasm_allocator_destroy(alloc);
+    return 0;
+}
+
+/* Round-trips each value type through set_global/get_global and proves the i64
+ * write is visible to Wasm. */
+static int test_globals_all_types(void) {
+    spacewasm_host_t host;
+    CHECK(spacewasm_host_new(0, &host) == SPACEWASM_OK, "host_new");
+    spacewasm_t* store = NULL;
+    CHECK(spacewasm_new(&host, 1024, 1, opts(256), &store) == SPACEWASM_OK, "store_new");
+
+    spacewasm_allocator_t* alloc =
+        spacewasm_allocator_new(mem_alloc, mem_realloc, mem_dealloc, NULL);
+
+    uint32_t mod_idx = 0;
+    CHECK(load_module_onto(alloc, store, "main", GLOBALS_MULTI_WASM, sizeof(GLOBALS_MULTI_WASM), 0,
+                           &mod_idx) == SPACEWASM_OK,
+          "load");
+
+    uint32_t gi = 0, gi64 = 0, gf = 0, gd = 0;
+    CHECK(spacewasm_find_global(store, mod_idx, "gi", &gi) == SPACEWASM_OK, "find gi");
+    CHECK(spacewasm_find_global(store, mod_idx, "gI", &gi64) == SPACEWASM_OK, "find gI");
+    CHECK(spacewasm_find_global(store, mod_idx, "gf", &gf) == SPACEWASM_OK, "find gf");
+    CHECK(spacewasm_find_global(store, mod_idx, "gd", &gd) == SPACEWASM_OK, "find gd");
+
+    /* Initial values, with tag checks per type. */
+    spacewasm_value_t out = i32_val(0);
+    CHECK(spacewasm_get_global(store, mod_idx, gi, &out) == SPACEWASM_OK, "get gi");
+    CHECK(out.tag == SPACEWASM_I32 && out.u.i32_ == 10, "gi init = %d", out.u.i32_);
+    CHECK(spacewasm_get_global(store, mod_idx, gi64, &out) == SPACEWASM_OK, "get gI");
+    CHECK(out.tag == SPACEWASM_I64 && out.u.i64_ == 20, "gI init");
+    CHECK(spacewasm_get_global(store, mod_idx, gf, &out) == SPACEWASM_OK, "get gf");
+    CHECK(out.tag == SPACEWASM_F32 && out.u.f32_ == 1.5f, "gf init");
+    CHECK(spacewasm_get_global(store, mod_idx, gd, &out) == SPACEWASM_OK, "get gd");
+    CHECK(out.tag == SPACEWASM_F64 && out.u.f64_ == 2.5, "gd init");
+
+    /* Round-trip a value of each type, including a negative i64 and -0.0f. */
+    spacewasm_value_t iv = {SPACEWASM_I64, {.i64_ = -9000000000LL}};
+    spacewasm_value_t fv = {SPACEWASM_F32, {.f32_ = -0.0f}};
+    spacewasm_value_t dv = {SPACEWASM_F64, {.f64_ = 3.25}};
+    CHECK(spacewasm_set_global(store, mod_idx, gi64, iv) == SPACEWASM_OK, "set gI");
+    CHECK(spacewasm_set_global(store, mod_idx, gf, fv) == SPACEWASM_OK, "set gf");
+    CHECK(spacewasm_set_global(store, mod_idx, gd, dv) == SPACEWASM_OK, "set gd");
+
+    CHECK(spacewasm_get_global(store, mod_idx, gi64, &out) == SPACEWASM_OK, "get gI back");
+    CHECK(out.u.i64_ == -9000000000LL, "i64 round-trip");
+    CHECK(spacewasm_get_global(store, mod_idx, gf, &out) == SPACEWASM_OK, "get gf back");
+    /* -0.0 compares equal to 0.0; check the sign bit survived via 1/x = -inf. */
+    CHECK(out.u.f32_ == 0.0f && 1.0f / out.u.f32_ < 0.0f, "f32 -0.0 round-trip");
+    CHECK(spacewasm_get_global(store, mod_idx, gd, &out) == SPACEWASM_OK, "get gd back");
+    CHECK(out.u.f64_ == 3.25, "f64 round-trip");
+
+    /* The i64 write is observable from Wasm. */
+    uint32_t get_gi64 = 0;
+    CHECK(spacewasm_find_export_func(store, mod_idx, "get_gI", &get_gi64) == SPACEWASM_OK,
+          "find get_gI");
+    CHECK(spacewasm_invoke(store, mod_idx, get_gi64, NULL, 0) == SPACEWASM_OK, "invoke get_gI");
+    spacewasm_trap_t trap = SPACEWASM_TRAP_NONE;
+    CHECK(run_to_completion(store, &trap) == SPACEWASM_RUN_FINISHED, "run get_gI");
+    CHECK(spacewasm_get_result(store, SPACEWASM_I64, &out) == SPACEWASM_OK, "result get_gI");
+    CHECK(out.u.i64_ == -9000000000LL, "get_gI observes set_global");
+
+    spacewasm_destroy(store);
+    spacewasm_allocator_destroy(alloc);
+    return 0;
+}
+
+/* Proves find_global returns the module-local index (skipping imported globals)
+ * and that a re-exported imported global misses. */
+static int test_globals_imported(void) {
+    spacewasm_host_t host;
+    CHECK(spacewasm_host_new(0, &host) == SPACEWASM_OK, "host_new");
+    spacewasm_t* store = NULL;
+    CHECK(spacewasm_new(&host, 1024, 2, opts(256), &store) == SPACEWASM_OK, "store_new");
+
+    spacewasm_allocator_t* alloc =
+        spacewasm_allocator_new(mem_alloc, mem_realloc, mem_dealloc, NULL);
+
+    /* The exporter (`b`) must load before the importer (`a`). */
+    uint32_t b = 0, a = 0;
+    CHECK(load_module_onto(alloc, store, "b", GLOBAL_EXPORTER_WASM, sizeof(GLOBAL_EXPORTER_WASM), 0,
+                           &b) == SPACEWASM_OK,
+          "load b");
+    CHECK(load_module_onto(alloc, store, "a", GLOBAL_IMPORTER_WASM, sizeof(GLOBAL_IMPORTER_WASM), 0,
+                           &a) == SPACEWASM_OK,
+          "load a");
+    CHECK(b == 0 && a == 1, "module indices b=%u a=%u", b, a);
+
+    /* `ag` is index-space slot 1 (after the import) but module-local global 0. */
+    uint32_t ag = 999;
+    CHECK(spacewasm_find_global(store, a, "ag", &ag) == SPACEWASM_OK, "find ag");
+    CHECK(ag == 0, "ag module-local index = %u (expected 0)", ag);
+
+    /* The re-exported import belongs to module b, so it misses through a. */
+    uint32_t sink = 999;
+    CHECK(spacewasm_find_global(store, a, "reexport", &sink) == SPACEWASM_ERR_NOT_FOUND,
+          "re-exported import misses");
+
+    spacewasm_value_t out = i32_val(0);
+    CHECK(spacewasm_get_global(store, a, ag, &out) == SPACEWASM_OK, "get ag");
+    CHECK(out.u.i32_ == 11, "ag init = %d", out.u.i32_);
+    CHECK(spacewasm_set_global(store, a, ag, i32_val(77)) == SPACEWASM_OK, "set ag");
+    CHECK(spacewasm_get_global(store, a, ag, &out) == SPACEWASM_OK, "get ag back");
+    CHECK(out.u.i32_ == 77, "ag after set = %d", out.u.i32_);
+
+    /* Module b's own global is reachable directly and untouched. */
+    uint32_t bg = 999;
+    CHECK(spacewasm_find_global(store, b, "bg", &bg) == SPACEWASM_OK, "find bg");
+    CHECK(bg == 0, "bg module-local index = %u", bg);
+    CHECK(spacewasm_get_global(store, b, bg, &out) == SPACEWASM_OK, "get bg");
+    CHECK(out.u.i32_ == 55, "bg unchanged = %d", out.u.i32_);
+
+    spacewasm_destroy(store);
+    spacewasm_allocator_destroy(alloc);
+    return 0;
+}
+
 static int test_error_paths(void) {
     /* max_modules > 256 -> store_new returns ERR_BAD_ARG (consumes the host). */
     spacewasm_host_t host;
@@ -548,7 +825,9 @@ static int test_pause_and_resume_no_value(void) {
           "load_module");
 
     /* No start function */
-    CHECK(spacewasm_invoke_start(store, idx) == SPACEWASM_RUN_FINISHED,
+    uint32_t start_mod = 0;
+    uint32_t start_func = 0;
+    CHECK(spacewasm_module_start(store, idx, &start_mod, &start_func) == SPACEWASM_ERR_NOT_FOUND,
           "no start");
 
     uint32_t func;
@@ -602,7 +881,9 @@ static int test_pause_and_resume_with_value(void) {
           "load_module");
 
     /* No start function */
-    CHECK(spacewasm_invoke_start(store, idx) == SPACEWASM_RUN_FINISHED,
+    uint32_t start_mod = 0;
+    uint32_t start_func = 0;
+    CHECK(spacewasm_module_start(store, idx, &start_mod, &start_func) == SPACEWASM_ERR_NOT_FOUND,
           "no start");
 
     uint32_t func;
@@ -650,6 +931,9 @@ int main(void) {
         {"streaming_load", test_streaming_load},
         {"streaming_read_error", test_streaming_read_error},
         {"host_function_and_memory", test_host_function_and_memory},
+        {"globals", test_globals},
+        {"globals_all_types", test_globals_all_types},
+        {"globals_imported", test_globals_imported},
         {"error_paths", test_error_paths},
         {"null_arg_handling", test_null_arg_handling},
         {"statistics_available", test_statistics_available},

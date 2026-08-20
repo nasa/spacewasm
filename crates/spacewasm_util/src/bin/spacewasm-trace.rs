@@ -9,8 +9,8 @@
 
 use spacewasm::{
     AllocError, Allocator, CodeBuilder, CompilerOptions, Engine, ExportDesc, InnerVec, Interpreter,
-    InterpreterResult, InterpreterRunner, MemoryStatistics, Module, ModuleRef, Ref,
-    StartInvocation, Vec as WasmVec, WasmMemoryAllocator, WasmRef, WasmStream,
+    InterpreterResult, InterpreterRunner, InvokeError, MemoryStatistics, Module, ModuleRef, Ref,
+    TrapReason, Vec as WasmVec, WasmMemoryAllocator, WasmRef, WasmStream,
 };
 use spacewasm::{ValType, Value};
 use spacewasm_util::StateTracer;
@@ -219,11 +219,15 @@ fn main() {
     // Catch panics (e.g., from strict-assertions) during initialization
     let module_ref = state.push_module(module).unwrap();
     let init_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        match state.invoke_start(module_ref) {
-            StartInvocation::Finished => InterpreterResult::Finished,
-            StartInvocation::Trap(t) => InterpreterResult::Trap(t),
-            StartInvocation::Pause => InterpreterResult::Pause,
-            StartInvocation::Running => Interpreter.run(text, &mut state, 10000),
+        match state.module_start(module_ref) {
+            None => InterpreterResult::Finished,
+            Some(start) => match state.invoke(start, &[]) {
+                Ok(()) => Interpreter.run(text, &mut state, 10000),
+                Err(InvokeError::StackOverflow) => {
+                    InterpreterResult::Trap(TrapReason::StackOverflow)
+                }
+                Err(_) => unreachable!(),
+            },
         }
     }));
 

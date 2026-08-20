@@ -193,46 +193,30 @@ impl Engine {
         self.store.modules()[module_ref.0 as usize].start.is_some()
     }
 
-    /// Invoke the module's start function for execution, if it declares one.
-    ///
-    /// The interpreter must be idle (no invocation in flight), matching the
-    /// preconditions of [`Engine::invoke`].
-    pub fn invoke_start(&mut self, module_ref: ModuleRef) -> StartInvocation {
-        let Some(start) = self
+    /// Get the reference to a module's start function
+    /// If the module does not have a start function, return None
+    pub fn module_start(&self, module_ref: ModuleRef) -> Option<WasmRef> {
+        if let Some(start) = self
             .store
             .modules()
             .get(module_ref.0 as usize)
             .and_then(|m| m.start)
-        else {
-            return StartInvocation::Finished;
-        };
-
-        match start {
-            // A local or cross-module Wasm start function is seeded like a
-            // normal invocation; the caller runs the interpreter to drive it.
-            Ref::Module(index) => self.setup_start_invoke(WasmRef {
-                module: module_ref,
-                index,
-            }),
-            Ref::Extern { module, index } => self.setup_start_invoke(WasmRef { module, index }),
-            // Host start functions run immediately; no interpreter loop needed.
-            Ref::Host { module, index } => match self.call_host_fn(module, index, &[]) {
-                HostFunctionResult::Continue(_) => StartInvocation::Finished,
-                HostFunctionResult::Break(HostFunctionBreak::Trap) => {
-                    StartInvocation::Trap(TrapReason::Host)
-                }
-                HostFunctionResult::Break(HostFunctionBreak::Pause) => StartInvocation::Pause,
-            },
-        }
-    }
-
-    fn setup_start_invoke(&mut self, f_ref: WasmRef) -> StartInvocation {
-        match self.invoke(f_ref, &[]) {
-            Ok(()) => StartInvocation::Running,
-            Err(InvokeError::StackOverflow) => StartInvocation::Trap(TrapReason::StackOverflow),
-            // The start function is validated to be `[] -> []`, so parameter
-            // length/type mismatches cannot occur.
-            Err(_) => unreachable!(),
+        {
+            // Unwrap the Ref -> WasmRef since we do not allow start mapped to host functions
+            match start {
+                // A local or cross-module Wasm start function is seeded like a
+                // normal invocation; the caller runs the interpreter to drive it.
+                Ref::Module(index) => Some(WasmRef {
+                    module: module_ref,
+                    index,
+                }),
+                Ref::Extern { module, index } => Some(WasmRef { module, index }),
+                // Mapping start to host functions is not supported in spacewasm
+                // This should have already been checked in the loader
+                Ref::Host { .. } => unreachable!(),
+            }
+        } else {
+            None
         }
     }
 
@@ -247,16 +231,4 @@ impl Engine {
         self.store.host_modules[module.0 as usize].functions[index as usize].finish_call(f);
         r
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum StartInvocation {
-    /// There was no start function, or a host start function completed.
-    Finished,
-    /// A Wasm start function was invoked, need to spin the interpreter
-    Running,
-    /// A host start function trapped.
-    Trap(TrapReason),
-    /// A host start function paused
-    Pause,
 }

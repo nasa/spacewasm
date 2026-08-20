@@ -103,6 +103,27 @@ fn i32_val(x: i32) -> spacewasm_value_t {
     }
 }
 
+fn i64_val(x: i64) -> spacewasm_value_t {
+    spacewasm_value_t {
+        tag: spacewasm_valtype_t::SPACEWASM_I64,
+        u: spacewasm_value_payload_t { i64_: x },
+    }
+}
+
+fn f32_val(x: f32) -> spacewasm_value_t {
+    spacewasm_value_t {
+        tag: spacewasm_valtype_t::SPACEWASM_F32,
+        u: spacewasm_value_payload_t { f32_: x },
+    }
+}
+
+fn f64_val(x: f64) -> spacewasm_value_t {
+    spacewasm_value_t {
+        tag: spacewasm_valtype_t::SPACEWASM_F64,
+        u: spacewasm_value_payload_t { f64_: x },
+    }
+}
+
 // ---- streaming reader (a cursor over a byte slice) --------------------------
 
 /// A cursor over a byte slice, handing out `step` bytes per read (0 => the whole
@@ -229,6 +250,89 @@ static TRAP_START_WASM: &[u8] = &[
     0x03, 0x02, 0x01, 0x00, 0x08, 0x01, 0x00, 0x0a, 0x05, 0x01, 0x03, 0x00, 0x00, 0x0b,
 ];
 
+/// A module exporting a mutable global `g` (i32, init 7) and a const global `c`
+/// (i32, init 42), plus `get_g` / `set_g` accessors that read and write `g`
+/// through `global.get` / `global.set`. Used to drive the global C API and to
+/// prove `set_global` mutates the same storage the interpreter observes.
+///
+/// ```wat
+/// (module
+///   (global $g (export "g") (mut i32) (i32.const 7))
+///   (global $c (export "c") i32 (i32.const 42))
+///   (func (export "get_g") (result i32) global.get $g)
+///   (func (export "set_g") (param i32) local.get 0 global.set $g))
+/// ```
+#[rustfmt::skip]
+static GLOBALS_WASM: &[u8] = &[
+    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x09, 0x02, 0x60,
+    0x00, 0x01, 0x7f, 0x60, 0x01, 0x7f, 0x00, 0x03, 0x03, 0x02, 0x00, 0x01,
+    0x06, 0x0b, 0x02, 0x7f, 0x01, 0x41, 0x07, 0x0b, 0x7f, 0x00, 0x41, 0x2a,
+    0x0b, 0x07, 0x19, 0x04, 0x01, 0x67, 0x03, 0x00, 0x01, 0x63, 0x03, 0x01,
+    0x05, 0x67, 0x65, 0x74, 0x5f, 0x67, 0x00, 0x00, 0x05, 0x73, 0x65, 0x74,
+    0x5f, 0x67, 0x00, 0x01, 0x0a, 0x0d, 0x02, 0x04, 0x00, 0x23, 0x00, 0x0b,
+    0x06, 0x00, 0x20, 0x00, 0x24, 0x00, 0x0b,
+];
+
+/// A module exporting one mutable global of each value type, plus a `get_gI`
+/// accessor that reads the i64 global. Exercises the get/set C API across all
+/// four `RawValue` representations, not just i32.
+///
+/// ```wat
+/// (module
+///   (global $gi (export "gi") (mut i32) (i32.const 10))
+///   (global $gI (export "gI") (mut i64) (i64.const 20))
+///   (global $gf (export "gf") (mut f32) (f32.const 1.5))
+///   (global $gd (export "gd") (mut f64) (f64.const 2.5))
+///   (func (export "get_gI") (result i64) global.get $gI))
+/// ```
+#[rustfmt::skip]
+static GLOBALS_MULTI_WASM: &[u8] = &[
+    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x05, 0x01, 0x60,
+    0x00, 0x01, 0x7e, 0x03, 0x02, 0x01, 0x00, 0x06, 0x1f, 0x04, 0x7f, 0x01,
+    0x41, 0x0a, 0x0b, 0x7e, 0x01, 0x42, 0x14, 0x0b, 0x7d, 0x01, 0x43, 0x00,
+    0x00, 0xc0, 0x3f, 0x0b, 0x7c, 0x01, 0x44, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x04, 0x40, 0x0b, 0x07, 0x1e, 0x05, 0x02, 0x67, 0x69, 0x03, 0x00,
+    0x02, 0x67, 0x49, 0x03, 0x01, 0x02, 0x67, 0x66, 0x03, 0x02, 0x02, 0x67,
+    0x64, 0x03, 0x03, 0x06, 0x67, 0x65, 0x74, 0x5f, 0x67, 0x49, 0x00, 0x00,
+    0x0a, 0x06, 0x01, 0x04, 0x00, 0x23, 0x01, 0x0b,
+];
+
+/// Exporter half of the imported-global pair: a module named `b` exporting a
+/// single mutable i32 global `bg` (init 55).
+///
+/// ```wat
+/// (module (global (export "bg") (mut i32) (i32.const 55)))
+/// ```
+#[rustfmt::skip]
+static GLOBAL_EXPORTER_WASM: &[u8] = &[
+    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x06, 0x06, 0x01, 0x7f,
+    0x01, 0x41, 0x37, 0x0b, 0x07, 0x06, 0x01, 0x02, 0x62, 0x67, 0x03, 0x00,
+];
+
+/// Importer half of the imported-global pair: a module importing `b.bg` (global
+/// index 0 in its own index space), then defining and exporting its own mutable
+/// i32 global `ag` (init 11, module-local index 0), and re-exporting the import
+/// under the name `reexport`. Loading it requires the exporter above be present.
+///
+/// This distinguishes the WebAssembly global *index space* (where `ag` is index
+/// 1, after the one imported global) from the module-local `globals` index
+/// (where `ag` is 0). `find_global("ag")` must return the module-local `0`, and
+/// `find_global("reexport")` must miss, since the target is an imported global.
+///
+/// ```wat
+/// (module
+///   (import "b" "bg" (global $ig (mut i32)))
+///   (global $ag (export "ag") (mut i32) (i32.const 11))
+///   (export "reexport" (global $ig)))
+/// ```
+#[rustfmt::skip]
+static GLOBAL_IMPORTER_WASM: &[u8] = &[
+    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x02, 0x09, 0x01, 0x01,
+    0x62, 0x02, 0x62, 0x67, 0x03, 0x7f, 0x01, 0x06, 0x06, 0x01, 0x7f, 0x01,
+    0x41, 0x0b, 0x0b, 0x07, 0x11, 0x02, 0x02, 0x61, 0x67, 0x03, 0x01, 0x08,
+    0x72, 0x65, 0x65, 0x78, 0x70, 0x6f, 0x72, 0x74, 0x03, 0x00,
+];
+
 // ---- shared driving helpers -------------------------------------------------
 
 /// Default compiler options bounding a test store to `max_code_pages` pages.
@@ -285,25 +389,30 @@ fn load_module_onto(
         return Err(st);
     }
 
-    let run = unsafe { spacewasm_invoke_start(store, idx) };
+    // Resolve the start function (if any) and drive it to completion. A module
+    // without a start function reports NOT_FOUND and needs no initialization.
+    let mut start_mod = 0u32;
+    let mut start_func = 0u32;
+    match unsafe { spacewasm_module_start(store, idx, &mut start_mod, &mut start_func) } {
+        status::SPACEWASM_OK => {}
+        status::SPACEWASM_ERR_NOT_FOUND => return Ok(idx),
+        e => return Err(e),
+    }
 
-    // The error codes don't really matter, just spin the start function
-    match run {
-        spacewasm_run_status_t::SPACEWASM_RUN_FINISHED => Ok(idx),
-        spacewasm_run_status_t::SPACEWASM_RUN_OUT_OF_FUEL => {
-            // We must spin the start function
-            loop {
-                let mut trap = spacewasm_trap_t::SPACEWASM_TRAP_NONE;
-                let run = unsafe { spacewasm_run(store, 10000, &mut trap) };
-                if run == spacewasm_run_status_t::SPACEWASM_RUN_FINISHED {
-                    break Ok(idx);
-                } else if run != spacewasm_run_status_t::SPACEWASM_RUN_OUT_OF_FUEL {
-                    break Err(status::SPACEWASM_ERR_WRONG_STATE);
-                }
-            }
+    let st = unsafe { spacewasm_invoke(store, start_mod, start_func, core::ptr::null(), 0) };
+    if st != status::SPACEWASM_OK {
+        return Err(st);
+    }
+
+    // Spin the start function to completion.
+    loop {
+        let mut trap = spacewasm_trap_t::SPACEWASM_TRAP_NONE;
+        let run = unsafe { spacewasm_run(store, 10000, &mut trap) };
+        if run == spacewasm_run_status_t::SPACEWASM_RUN_FINISHED {
+            break Ok(idx);
+        } else if run != spacewasm_run_status_t::SPACEWASM_RUN_OUT_OF_FUEL {
+            break Err(status::SPACEWASM_ERR_WRONG_STATE);
         }
-        spacewasm_run_status_t::SPACEWASM_RUN_PAUSE => Err(status::SPACEWASM_ERR_WRONG_STATE),
-        spacewasm_run_status_t::SPACEWASM_RUN_TRAP => Err(status::SPACEWASM_ERR_WRONG_STATE),
     }
 }
 
@@ -394,6 +503,573 @@ fn add_module_invoke() {
     assert_eq!(st, status::SPACEWASM_OK, "find");
 
     assert_eq!(invoke_add(store, idx, func, 20, 22).expect("invoke"), 42);
+
+    unsafe {
+        spacewasm_destroy(store);
+        spacewasm_allocator_destroy(alloc);
+    }
+}
+
+#[test]
+fn check_func_signature() {
+    let _guard = ALLOC_LOCK.lock().unwrap();
+    ensure_global_allocator();
+
+    let store = new_store(1024, 1, 256);
+    let alloc = new_guest_allocator();
+
+    let idx = load_module_onto(alloc, store, c"main", ADD_WASM, 0).expect("load");
+    let mut func = 0u32;
+    let st = unsafe { spacewasm_find_export_func(store, idx, c"add".as_ptr(), &mut func) };
+    assert_eq!(st, status::SPACEWASM_OK, "find");
+
+    // `add` is `(i32, i32) -> i32`.
+    unsafe {
+        // Correct signature matches.
+        assert_eq!(
+            spacewasm_check_func_signature(store, idx, func, c"ii".as_ptr(), c"i".as_ptr()),
+            status::SPACEWASM_OK,
+            "matching signature"
+        );
+
+        // Wrong parameter count.
+        assert_eq!(
+            spacewasm_check_func_signature(store, idx, func, c"i".as_ptr(), c"i".as_ptr()),
+            status::SPACEWASM_ERR_PARAM_LEN_MISMATCH,
+            "too few params"
+        );
+
+        // Wrong return count.
+        assert_eq!(
+            spacewasm_check_func_signature(store, idx, func, c"ii".as_ptr(), c"".as_ptr()),
+            status::SPACEWASM_ERR_PARAM_LEN_MISMATCH,
+            "missing return"
+        );
+
+        // Right arity, wrong parameter type (i64 instead of i32).
+        assert_eq!(
+            spacewasm_check_func_signature(store, idx, func, c"iI".as_ptr(), c"i".as_ptr()),
+            status::SPACEWASM_ERR_PARAM_TYPE_MISMATCH,
+            "wrong param type"
+        );
+
+        // Right arity, wrong return type (f32 instead of i32).
+        assert_eq!(
+            spacewasm_check_func_signature(store, idx, func, c"ii".as_ptr(), c"f".as_ptr()),
+            status::SPACEWASM_ERR_PARAM_TYPE_MISMATCH,
+            "wrong return type"
+        );
+
+        // Malformed signature string.
+        assert_eq!(
+            spacewasm_check_func_signature(store, idx, func, c"ix".as_ptr(), c"i".as_ptr()),
+            status::SPACEWASM_ERR_BAD_SIGNATURE,
+            "bad signature char"
+        );
+
+        // Out-of-range function index.
+        assert_eq!(
+            spacewasm_check_func_signature(store, idx, 999, c"ii".as_ptr(), c"i".as_ptr()),
+            status::SPACEWASM_ERR_NOT_FOUND,
+            "func out of range"
+        );
+
+        // Out-of-range module index.
+        assert_eq!(
+            spacewasm_check_func_signature(store, 999, func, c"ii".as_ptr(), c"i".as_ptr()),
+            status::SPACEWASM_ERR_NOT_FOUND,
+            "module out of range"
+        );
+
+        // NULL engine.
+        assert_eq!(
+            spacewasm_check_func_signature(
+                core::ptr::null_mut(),
+                idx,
+                func,
+                c"ii".as_ptr(),
+                c"i".as_ptr()
+            ),
+            status::SPACEWASM_ERR_NULL_ARG,
+            "null engine"
+        );
+    }
+
+    unsafe {
+        spacewasm_destroy(store);
+        spacewasm_allocator_destroy(alloc);
+    }
+}
+
+#[test]
+fn global_get_set() {
+    let _guard = ALLOC_LOCK.lock().unwrap();
+    ensure_global_allocator();
+
+    let store = new_store(1024, 1, 256);
+    let alloc = new_guest_allocator();
+
+    let idx = load_module_onto(alloc, store, c"main", GLOBALS_WASM, 0).expect("load");
+
+    // Resolve the exported globals to their module-local indices. `g` is the
+    // mutable global (defined first, index 0); `c` is the const global (index 1).
+    let mut g = u32::MAX;
+    let mut c = u32::MAX;
+    unsafe {
+        assert_eq!(
+            spacewasm_find_global(store, idx, c"g".as_ptr(), &mut g),
+            status::SPACEWASM_OK,
+            "find g"
+        );
+        assert_eq!(
+            spacewasm_find_global(store, idx, c"c".as_ptr(), &mut c),
+            status::SPACEWASM_OK,
+            "find c"
+        );
+    }
+    assert_eq!((g, c), (0, 1), "global indices");
+
+    // A missing export reports NOT_FOUND, as does looking up a function export
+    // as a global (`get_g` is a function, not a global).
+    unsafe {
+        let mut sink = 0u32;
+        assert_eq!(
+            spacewasm_find_global(store, idx, c"nope".as_ptr(), &mut sink),
+            status::SPACEWASM_ERR_NOT_FOUND,
+            "missing global"
+        );
+        assert_eq!(
+            spacewasm_find_global(store, idx, c"get_g".as_ptr(), &mut sink),
+            status::SPACEWASM_ERR_NOT_FOUND,
+            "function export is not a global"
+        );
+    }
+
+    // Read the initial values.
+    unsafe {
+        let mut out = i32_val(0);
+        assert_eq!(
+            spacewasm_get_global(store, idx, g, &mut out),
+            status::SPACEWASM_OK,
+            "get g"
+        );
+        assert_eq!(out.tag, spacewasm_valtype_t::SPACEWASM_I32, "g tag");
+        assert_eq!(out.u.i32_, 7, "g init");
+
+        assert_eq!(
+            spacewasm_get_global(store, idx, c, &mut out),
+            status::SPACEWASM_OK,
+            "get c"
+        );
+        assert_eq!(out.u.i32_, 42, "c init");
+    }
+
+    // Write the mutable global and read it back, both through the C API and by
+    // invoking `get_g`, proving `set_global` mutates the storage the
+    // interpreter reads.
+    unsafe {
+        assert_eq!(
+            spacewasm_set_global(store, idx, g, i32_val(100)),
+            status::SPACEWASM_OK,
+            "set g"
+        );
+        let mut out = i32_val(0);
+        assert_eq!(
+            spacewasm_get_global(store, idx, g, &mut out),
+            status::SPACEWASM_OK,
+            "get g after set"
+        );
+        assert_eq!(out.u.i32_, 100, "g after set");
+    }
+
+    let mut get_g = 0u32;
+    assert_eq!(
+        unsafe { spacewasm_find_export_func(store, idx, c"get_g".as_ptr(), &mut get_g) },
+        status::SPACEWASM_OK,
+        "find get_g"
+    );
+    let params: [spacewasm_value_t; 0] = [];
+    assert_eq!(
+        unsafe { spacewasm_invoke(store, idx, get_g, params.as_ptr(), 0) },
+        status::SPACEWASM_OK,
+        "invoke get_g"
+    );
+    let mut trap = spacewasm_trap_t::SPACEWASM_TRAP_NONE;
+    assert_eq!(
+        run_to_completion(store, &mut trap),
+        spacewasm_run_status_t::SPACEWASM_RUN_FINISHED,
+        "run get_g"
+    );
+    let mut out = i32_val(0);
+    assert_eq!(
+        unsafe { spacewasm_get_result(store, spacewasm_valtype_t::SPACEWASM_I32, &mut out) },
+        status::SPACEWASM_OK,
+        "result get_g"
+    );
+    assert_eq!(unsafe { out.u.i32_ }, 100, "get_g observes set_global");
+
+    // Conversely, `set_g` from Wasm is observable through `get_global`.
+    let mut set_g = 0u32;
+    assert_eq!(
+        unsafe { spacewasm_find_export_func(store, idx, c"set_g".as_ptr(), &mut set_g) },
+        status::SPACEWASM_OK,
+        "find set_g"
+    );
+    let args = [i32_val(5)];
+    assert_eq!(
+        unsafe { spacewasm_invoke(store, idx, set_g, args.as_ptr(), 1) },
+        status::SPACEWASM_OK,
+        "invoke set_g"
+    );
+    assert_eq!(
+        run_to_completion(store, &mut trap),
+        spacewasm_run_status_t::SPACEWASM_RUN_FINISHED,
+        "run set_g"
+    );
+    unsafe {
+        let mut out = i32_val(0);
+        assert_eq!(
+            spacewasm_get_global(store, idx, g, &mut out),
+            status::SPACEWASM_OK,
+            "get g after wasm set"
+        );
+        assert_eq!(out.u.i32_, 5, "get_global observes set_g");
+    }
+
+    // Error cases.
+    unsafe {
+        // Writing a const global is rejected.
+        assert_eq!(
+            spacewasm_set_global(store, idx, c, i32_val(1)),
+            status::SPACEWASM_ERR_GLOBAL_IS_NOT_MUTABLE,
+            "set const global"
+        );
+        // The const global keeps its value.
+        let mut out = i32_val(0);
+        assert_eq!(
+            spacewasm_get_global(store, idx, c, &mut out),
+            status::SPACEWASM_OK,
+            "get c after rejected set"
+        );
+        assert_eq!(out.u.i32_, 42, "c unchanged");
+
+        // A value whose type does not match the global is rejected (i64 into an
+        // i32 global). The mutable global's value is unchanged.
+        let i64v = spacewasm_value_t {
+            tag: spacewasm_valtype_t::SPACEWASM_I64,
+            u: spacewasm_value_payload_t { i64_: 9 },
+        };
+        assert_eq!(
+            spacewasm_set_global(store, idx, g, i64v),
+            status::SPACEWASM_ERR_GLOBAL_TYPE_MISMATCH,
+            "type mismatch"
+        );
+        let mut out = i32_val(0);
+        assert_eq!(
+            spacewasm_get_global(store, idx, g, &mut out),
+            status::SPACEWASM_OK,
+            "get g after mismatch"
+        );
+        assert_eq!(out.u.i32_, 5, "g unchanged after mismatch");
+
+        // Check ordering: a value that is BOTH the wrong type AND targets a
+        // const global reports the type mismatch first (the type check runs
+        // before the mutability check). `c` is const i32, so an i64 is doubly
+        // invalid.
+        let i64v = spacewasm_value_t {
+            tag: spacewasm_valtype_t::SPACEWASM_I64,
+            u: spacewasm_value_payload_t { i64_: 1 },
+        };
+        assert_eq!(
+            spacewasm_set_global(store, idx, c, i64v),
+            status::SPACEWASM_ERR_GLOBAL_TYPE_MISMATCH,
+            "type check precedes mutability check"
+        );
+
+        // Out-of-range global and module indices.
+        assert_eq!(
+            spacewasm_get_global(store, idx, 999, &mut out),
+            status::SPACEWASM_ERR_NOT_FOUND,
+            "get out-of-range global"
+        );
+        assert_eq!(
+            spacewasm_set_global(store, idx, 999, i32_val(0)),
+            status::SPACEWASM_ERR_NOT_FOUND,
+            "set out-of-range global"
+        );
+        assert_eq!(
+            spacewasm_get_global(store, 999, g, &mut out),
+            status::SPACEWASM_ERR_NOT_FOUND,
+            "get out-of-range module"
+        );
+        assert_eq!(
+            spacewasm_set_global(store, 999, g, i32_val(0)),
+            status::SPACEWASM_ERR_NOT_FOUND,
+            "set out-of-range module"
+        );
+        assert_eq!(
+            spacewasm_find_global(store, 999, c"g".as_ptr(), &mut g),
+            status::SPACEWASM_ERR_NOT_FOUND,
+            "find in out-of-range module"
+        );
+
+        // NULL argument handling across all three entry points.
+        assert_eq!(
+            spacewasm_find_global(core::ptr::null_mut(), idx, c"g".as_ptr(), &mut g),
+            status::SPACEWASM_ERR_NULL_ARG,
+            "find null engine"
+        );
+        assert_eq!(
+            spacewasm_find_global(store, idx, core::ptr::null(), &mut g),
+            status::SPACEWASM_ERR_NULL_ARG,
+            "find null name"
+        );
+        assert_eq!(
+            spacewasm_find_global(store, idx, c"g".as_ptr(), core::ptr::null_mut()),
+            status::SPACEWASM_ERR_NULL_ARG,
+            "find null out_index"
+        );
+        assert_eq!(
+            spacewasm_get_global(core::ptr::null_mut(), idx, g, &mut out),
+            status::SPACEWASM_ERR_NULL_ARG,
+            "get null engine"
+        );
+        assert_eq!(
+            spacewasm_get_global(store, idx, g, core::ptr::null_mut()),
+            status::SPACEWASM_ERR_NULL_ARG,
+            "get null out"
+        );
+        assert_eq!(
+            spacewasm_set_global(core::ptr::null_mut(), idx, g, i32_val(0)),
+            status::SPACEWASM_ERR_NULL_ARG,
+            "set null engine"
+        );
+    }
+
+    unsafe {
+        spacewasm_destroy(store);
+        spacewasm_allocator_destroy(alloc);
+    }
+}
+
+/// Round-trip each of the four value types through `set_global`/`get_global`,
+/// including a negative i64 and float bit patterns (negative zero, NaN), to
+/// prove the non-i32 `RawValue` conversions are wired through the API correctly.
+#[test]
+fn global_get_set_all_types() {
+    let _guard = ALLOC_LOCK.lock().unwrap();
+    ensure_global_allocator();
+
+    let store = new_store(1024, 1, 256);
+    let alloc = new_guest_allocator();
+
+    let idx = load_module_onto(alloc, store, c"main", GLOBALS_MULTI_WASM, 0).expect("load");
+
+    // Resolve the four exported globals.
+    let mut gi = u32::MAX;
+    let mut gi64 = u32::MAX;
+    let mut gf = u32::MAX;
+    let mut gd = u32::MAX;
+    unsafe {
+        assert_eq!(
+            spacewasm_find_global(store, idx, c"gi".as_ptr(), &mut gi),
+            status::SPACEWASM_OK
+        );
+        assert_eq!(
+            spacewasm_find_global(store, idx, c"gI".as_ptr(), &mut gi64),
+            status::SPACEWASM_OK
+        );
+        assert_eq!(
+            spacewasm_find_global(store, idx, c"gf".as_ptr(), &mut gf),
+            status::SPACEWASM_OK
+        );
+        assert_eq!(
+            spacewasm_find_global(store, idx, c"gd".as_ptr(), &mut gd),
+            status::SPACEWASM_OK
+        );
+    }
+
+    // Initial values, one per type, confirming the tag and payload read back.
+    unsafe {
+        let mut out = i32_val(0);
+        assert_eq!(
+            spacewasm_get_global(store, idx, gi, &mut out),
+            status::SPACEWASM_OK
+        );
+        assert_eq!(out.tag, spacewasm_valtype_t::SPACEWASM_I32);
+        assert_eq!(out.u.i32_, 10, "gi init");
+
+        assert_eq!(
+            spacewasm_get_global(store, idx, gi64, &mut out),
+            status::SPACEWASM_OK
+        );
+        assert_eq!(out.tag, spacewasm_valtype_t::SPACEWASM_I64);
+        assert_eq!(out.u.i64_, 20, "gI init");
+
+        assert_eq!(
+            spacewasm_get_global(store, idx, gf, &mut out),
+            status::SPACEWASM_OK
+        );
+        assert_eq!(out.tag, spacewasm_valtype_t::SPACEWASM_F32);
+        assert_eq!(out.u.f32_, 1.5, "gf init");
+
+        assert_eq!(
+            spacewasm_get_global(store, idx, gd, &mut out),
+            status::SPACEWASM_OK
+        );
+        assert_eq!(out.tag, spacewasm_valtype_t::SPACEWASM_F64);
+        assert_eq!(out.u.f64_, 2.5, "gd init");
+    }
+
+    // Write a representative (and tricky) value of each type and read it back.
+    unsafe {
+        assert_eq!(
+            spacewasm_set_global(store, idx, gi64, i64_val(-9_000_000_000)),
+            status::SPACEWASM_OK
+        );
+        assert_eq!(
+            spacewasm_set_global(store, idx, gf, f32_val(-0.0)),
+            status::SPACEWASM_OK
+        );
+        assert_eq!(
+            spacewasm_set_global(store, idx, gd, f64_val(f64::NAN)),
+            status::SPACEWASM_OK
+        );
+
+        let mut out = i32_val(0);
+        assert_eq!(
+            spacewasm_get_global(store, idx, gi64, &mut out),
+            status::SPACEWASM_OK
+        );
+        assert_eq!(out.u.i64_, -9_000_000_000, "i64 round-trip");
+
+        assert_eq!(
+            spacewasm_get_global(store, idx, gf, &mut out),
+            status::SPACEWASM_OK
+        );
+        // -0.0 == 0.0 by value, so compare the bit pattern to prove the sign
+        // bit survived the round trip through RawValue.
+        assert_eq!(out.u.f32_.to_bits(), (-0.0f32).to_bits(), "f32 -0.0 bits");
+
+        assert_eq!(
+            spacewasm_get_global(store, idx, gd, &mut out),
+            status::SPACEWASM_OK
+        );
+        assert!(out.u.f64_.is_nan(), "f64 NaN round-trip");
+    }
+
+    // The i64 write is observable from Wasm through `get_gI`, proving set_global
+    // writes the same storage the interpreter reads for a 64-bit global.
+    let mut get_gi64 = 0u32;
+    assert_eq!(
+        unsafe { spacewasm_find_export_func(store, idx, c"get_gI".as_ptr(), &mut get_gi64) },
+        status::SPACEWASM_OK,
+        "find get_gI"
+    );
+    assert_eq!(
+        unsafe { spacewasm_invoke(store, idx, get_gi64, core::ptr::null(), 0) },
+        status::SPACEWASM_OK,
+        "invoke get_gI"
+    );
+    let mut trap = spacewasm_trap_t::SPACEWASM_TRAP_NONE;
+    assert_eq!(
+        run_to_completion(store, &mut trap),
+        spacewasm_run_status_t::SPACEWASM_RUN_FINISHED,
+        "run get_gI"
+    );
+    let mut out = i64_val(0);
+    assert_eq!(
+        unsafe { spacewasm_get_result(store, spacewasm_valtype_t::SPACEWASM_I64, &mut out) },
+        status::SPACEWASM_OK,
+        "result get_gI"
+    );
+    assert_eq!(
+        unsafe { out.u.i64_ },
+        -9_000_000_000,
+        "get_gI observes set_global"
+    );
+
+    unsafe {
+        spacewasm_destroy(store);
+        spacewasm_allocator_destroy(alloc);
+    }
+}
+
+/// A module whose exported global sits *after* an imported global in the
+/// WebAssembly global index space. `find_global` must resolve to the
+/// module-local `globals` index (0), not the index-space index (1), and a
+/// re-exported *imported* global must report NOT_FOUND. This guards the
+/// import-offset resolution in `find_global` that a naive `*out_index = gi.0`
+/// would break.
+#[test]
+fn global_find_skips_imports() {
+    let _guard = ALLOC_LOCK.lock().unwrap();
+    ensure_global_allocator();
+
+    let store = new_store(1024, 2, 256);
+    let alloc = new_guest_allocator();
+
+    // The exporter (`b`) must load first so the importer (`a`) can resolve it.
+    let b = load_module_onto(alloc, store, c"b", GLOBAL_EXPORTER_WASM, 0).expect("load b");
+    let a = load_module_onto(alloc, store, c"a", GLOBAL_IMPORTER_WASM, 0).expect("load a");
+    assert_eq!((b, a), (0, 1), "module indices");
+
+    // `ag` is at index-space slot 1 (after the one imported global) but is the
+    // module's own global 0. find_global must return the module-local 0.
+    let mut ag = u32::MAX;
+    assert_eq!(
+        unsafe { spacewasm_find_global(store, a, c"ag".as_ptr(), &mut ag) },
+        status::SPACEWASM_OK,
+        "find ag"
+    );
+    assert_eq!(
+        ag, 0,
+        "ag resolves to the module-local index, not index-space 1"
+    );
+
+    // The re-exported import resolves to a global owned by module `b`, so
+    // finding it *through module a* misses — mirroring find_export_func.
+    let mut sink = u32::MAX;
+    assert_eq!(
+        unsafe { spacewasm_find_global(store, a, c"reexport".as_ptr(), &mut sink) },
+        status::SPACEWASM_ERR_NOT_FOUND,
+        "re-exported import is not a's own global"
+    );
+
+    // get/set on module a's own global use that module-local index and see its
+    // init value (11), independent of module b's global (55).
+    unsafe {
+        let mut out = i32_val(0);
+        assert_eq!(
+            spacewasm_get_global(store, a, ag, &mut out),
+            status::SPACEWASM_OK
+        );
+        assert_eq!(out.u.i32_, 11, "ag init");
+
+        assert_eq!(
+            spacewasm_set_global(store, a, ag, i32_val(77)),
+            status::SPACEWASM_OK
+        );
+        assert_eq!(
+            spacewasm_get_global(store, a, ag, &mut out),
+            status::SPACEWASM_OK
+        );
+        assert_eq!(out.u.i32_, 77, "ag after set");
+
+        // Module b's own global is reachable directly and untouched by the above.
+        let mut bg = u32::MAX;
+        assert_eq!(
+            spacewasm_find_global(store, b, c"bg".as_ptr(), &mut bg),
+            status::SPACEWASM_OK,
+            "find bg"
+        );
+        assert_eq!(bg, 0, "bg module-local index");
+        assert_eq!(
+            spacewasm_get_global(store, b, bg, &mut out),
+            status::SPACEWASM_OK
+        );
+        assert_eq!(out.u.i32_, 55, "bg unchanged");
+    }
 
     unsafe {
         spacewasm_destroy(store);
@@ -1082,6 +1758,10 @@ fn validation_error_codes_map() {
             InvalidStartFunctionSignature,
             status::SPACEWASM_ERR_INVALID_START_FUNCTION_SIGNATURE,
         ),
+        (
+            InvalidHostStartFunction,
+            status::SPACEWASM_ERR_INVALID_HOST_START_FUNCTION,
+        ),
         // Constant expression validation
         (
             InvalidConstantExpr(ConstantExprError::InvalidConstantInstruction),
@@ -1352,7 +2032,7 @@ fn module_with_start_runs() {
     let alloc = new_guest_allocator();
 
     // Stream in without auto-running the start function, so we can observe
-    // `module_needs_start` and drive `run_start` explicitly.
+    // `spacewasm_module_start` and drive the start invocation explicitly.
     let mut cursor = Cursor {
         data: START_WASM,
         pos: 0,
@@ -1374,9 +2054,17 @@ fn module_with_start_runs() {
         "load"
     );
 
+    // Resolve the start function location, then invoke it like any other
+    // exported function.
+    let mut start_mod = 0u32;
+    let mut start_func = 0u32;
     assert_eq!(
-        unsafe { spacewasm_invoke_start(store, idx) },
-        spacewasm_run_status_t::SPACEWASM_RUN_OUT_OF_FUEL
+        unsafe { spacewasm_module_start(store, idx, &mut start_mod, &mut start_func) },
+        status::SPACEWASM_OK
+    );
+    assert_eq!(
+        unsafe { spacewasm_invoke(store, start_mod, start_func, core::ptr::null(), 0) },
+        status::SPACEWASM_OK
     );
 
     // Drive the start function in small fuel slices to also exercise the
@@ -1417,7 +2105,7 @@ fn module_with_start_runs() {
 }
 
 #[test]
-fn no_start_module_reports_false() {
+fn no_start_module_reports_none() {
     let _guard = ALLOC_LOCK.lock().unwrap();
     ensure_global_allocator();
 
@@ -1425,10 +2113,12 @@ fn no_start_module_reports_false() {
     let alloc = new_guest_allocator();
     let idx = load_module_onto(alloc, store, c"main", ADD_WASM, 0).expect("load");
 
-    // No start function should return finished
+    // A module with no start function has no start location to resolve.
+    let mut start_mod = 0u32;
+    let mut start_func = 0u32;
     assert_eq!(
-        unsafe { spacewasm_invoke_start(store, idx) },
-        spacewasm_run_status_t::SPACEWASM_RUN_FINISHED
+        unsafe { spacewasm_module_start(store, idx, &mut start_mod, &mut start_func) },
+        status::SPACEWASM_ERR_NOT_FOUND
     );
 
     unsafe {
@@ -1478,6 +2168,76 @@ fn run_slices_out_of_fuel_then_resumes() {
         status::SPACEWASM_OK
     );
     assert_eq!(unsafe { out.u.i32_ }, 5000, "spin(5000)");
+
+    unsafe {
+        spacewasm_destroy(store);
+        spacewasm_allocator_destroy(alloc);
+    }
+}
+
+#[test]
+fn reset_abandons_in_progress_call() {
+    let _guard = ALLOC_LOCK.lock().unwrap();
+    ensure_global_allocator();
+
+    let store = new_store(1024, 1, 256);
+    let alloc = new_guest_allocator();
+    let idx = load_module_onto(alloc, store, c"main", LOOP_WASM, 0).expect("load");
+
+    let mut func = 0u32;
+    assert_eq!(
+        unsafe { spacewasm_find_export_func(store, idx, c"spin".as_ptr(), &mut func) },
+        status::SPACEWASM_OK
+    );
+
+    // Start a long-running call and run a single small slice so it pauses
+    // mid-execution (out of fuel) without finishing.
+    let params = [i32_val(5000)];
+    assert_eq!(
+        unsafe { spacewasm_invoke(store, idx, func, params.as_ptr(), params.len()) },
+        status::SPACEWASM_OK
+    );
+    let mut trap = spacewasm_trap_t::SPACEWASM_TRAP_NONE;
+    assert_eq!(
+        unsafe { spacewasm_run(store, 64, &mut trap) },
+        spacewasm_run_status_t::SPACEWASM_RUN_OUT_OF_FUEL
+    );
+
+    // While the call is in progress the engine is not idle, so a fresh invoke
+    // is rejected.
+    assert_eq!(
+        unsafe { spacewasm_invoke(store, idx, func, params.as_ptr(), params.len()) },
+        status::SPACEWASM_ERR_WRONG_STATE,
+        "invoke while running"
+    );
+
+    // Reset returns the engine to idle, discarding the in-progress call.
+    assert_eq!(unsafe { spacewasm_reset(store) }, status::SPACEWASM_OK);
+
+    // A fresh invocation now succeeds and runs to completion from a clean slate.
+    let params = [i32_val(10)];
+    assert_eq!(
+        unsafe { spacewasm_invoke(store, idx, func, params.as_ptr(), params.len()) },
+        status::SPACEWASM_OK,
+        "invoke after reset"
+    );
+    assert_eq!(
+        run_to_completion(store, &mut trap),
+        spacewasm_run_status_t::SPACEWASM_RUN_FINISHED
+    );
+    let mut out = i32_val(0);
+    assert_eq!(
+        unsafe { spacewasm_get_result(store, spacewasm_valtype_t::SPACEWASM_I32, &mut out) },
+        status::SPACEWASM_OK
+    );
+    assert_eq!(unsafe { out.u.i32_ }, 10, "spin(10) after reset");
+
+    // Reset on a null engine is rejected.
+    assert_eq!(
+        unsafe { spacewasm_reset(core::ptr::null_mut()) },
+        status::SPACEWASM_ERR_NULL_ARG,
+        "null engine"
+    );
 
     unsafe {
         spacewasm_destroy(store);
@@ -1899,9 +2659,15 @@ fn start_function_traps() {
         status::SPACEWASM_OK
     );
 
+    let mut start_mod = 0u32;
+    let mut start_func = 0u32;
     assert_eq!(
-        unsafe { spacewasm_invoke_start(store, idx) },
-        spacewasm_run_status_t::SPACEWASM_RUN_OUT_OF_FUEL
+        unsafe { spacewasm_module_start(store, idx, &mut start_mod, &mut start_func) },
+        status::SPACEWASM_OK
+    );
+    assert_eq!(
+        unsafe { spacewasm_invoke(store, start_mod, start_func, core::ptr::null(), 0) },
+        status::SPACEWASM_OK
     );
 
     let mut trap = spacewasm_trap_t::SPACEWASM_TRAP_NONE;
@@ -1924,13 +2690,15 @@ fn engine_rejects_out_of_range_module() {
     let alloc = new_guest_allocator();
     let _ = load_module_onto(alloc, store, c"main", ADD_WASM, 0).expect("load");
 
-    // module_needs_start on an out-of-range module is trap.
+    // spacewasm_module_start on an out-of-range module is NOT_FOUND.
+    let mut start_mod = 0u32;
+    let mut start_func = 0u32;
     assert_eq!(
-        unsafe { spacewasm_invoke_start(store, 99) },
-        spacewasm_run_status_t::SPACEWASM_RUN_TRAP
+        unsafe { spacewasm_module_start(store, 99, &mut start_mod, &mut start_func) },
+        status::SPACEWASM_ERR_NOT_FOUND
     );
 
-    // run_start on an out-of-range module traps (no such module to seed).
+    // run on an out-of-range module traps (no such module to seed).
     let mut trap = spacewasm_trap_t::SPACEWASM_TRAP_NONE;
     assert_eq!(
         unsafe { spacewasm_run(store, 0, &mut trap) },

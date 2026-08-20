@@ -18,9 +18,9 @@ use serde::{Deserialize, Serialize};
 use spacewasm::{
     AllocError, Allocator, CodeBuilder, CompilerOptions, ConstantExprError, Engine, ExportDesc,
     GlobalValue, GlobalValueError, HostFunction, HostGlobal, HostModule, InnerVec, Interpreter,
-    InterpreterResult, InterpreterRunner, Limit, Memory, MemoryError, MemoryStatistics, Module,
-    ModuleRef, ParseError, Ref, StartInvocation, TrapReason, ValType, ValidationError, Value,
-    WasmMemoryAllocator, WasmRef, WasmStream, global_allocator, vec,
+    InterpreterResult, InterpreterRunner, InvokeError, Limit, Memory, MemoryError,
+    MemoryStatistics, Module, ModuleRef, ParseError, Ref, TrapReason, ValType, ValidationError,
+    Value, WasmMemoryAllocator, WasmRef, WasmStream, global_allocator, vec,
 };
 use std::alloc::Layout;
 use std::cell::RefCell;
@@ -689,13 +689,15 @@ fn load_module(
     // allocate nor deallocate.
     let result = {
         let _locked = enter_locked();
-        match ctx.engine.invoke_start(module_ref) {
-            StartInvocation::Finished => InterpreterResult::Finished,
-            StartInvocation::Trap(t) => InterpreterResult::Trap(t),
-            StartInvocation::Pause => InterpreterResult::Pause,
-            StartInvocation::Running => {
-                Interpreter.run(ctx.code_builder.pages(), &mut ctx.engine, usize::MAX)
-            }
+        match ctx.engine.module_start(module_ref) {
+            None => InterpreterResult::Finished,
+            Some(start) => match ctx.engine.invoke(start, &[]) {
+                Ok(()) => Interpreter.run(ctx.code_builder.pages(), &mut ctx.engine, usize::MAX),
+                Err(InvokeError::StackOverflow) => {
+                    InterpreterResult::Trap(TrapReason::StackOverflow)
+                }
+                Err(_) => unreachable!(),
+            },
         }
     };
     match result {
@@ -945,6 +947,7 @@ fn check_decode_error(err: ParseError, text: String) {
         }
         (ValidationError::TypeMismatch, "type mismatch") => {}
         (ValidationError::BlockResultTypeMismatch, "type mismatch") => {}
+        (ValidationError::InvalidElseBlock, "else without matching if") => {}
         (ValidationError::InvalidLabelIndex, "unknown label") => {}
         (ValidationError::MalformedSectionSize, "unexpected end") => {}
         (ValidationError::GlobalIdxOutOfRange, "unknown global") => {}
@@ -988,6 +991,10 @@ fn check_decode_error(err: ParseError, text: String) {
         (ValidationError::InvalidNegativeMemOffset, "data segment does not fit") => {}
         (ValidationError::InvalidMemOffsetType, "type mismatch") => {}
         (ValidationError::InvalidStartFunctionSignature, "start function") => {}
+        (
+            ValidationError::InvalidHostStartFunction,
+            "start function must not be a host function",
+        ) => {}
         (ValidationError::DuplicateExportName, "duplicate export name") => {}
         (ValidationError::InvalidTableIndex, "unknown table") => {}
         (ValidationError::MemoryError(MemoryError::OutOfBounds), "data segment does not fit") => {}

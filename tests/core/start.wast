@@ -89,9 +89,14 @@
   (start $main)
 )
 
-(module
-  (func $print (import "spectest" "print"))
-  (start $print)
+;; spacewasm does not allow a module's start function to be mapped directly to
+;; an imported (host) function. Wrap the call in a local function instead.
+(assert_invalid
+  (module
+    (func $print (import "spectest" "print"))
+    (start $print)
+  )
+  "start function must not be a host function"
 )
 
 (assert_trap

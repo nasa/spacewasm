@@ -118,6 +118,7 @@ pub enum ValidationError {
     GlobalTypeMismatch,
     AlignmentLargerThanType,
     InvalidStartFunctionSignature,
+    InvalidHostStartFunction,
     InvalidConstantExpr(ConstantExprError),
     GuestMemoryAllocationFailure,
     AllocError(AllocError),

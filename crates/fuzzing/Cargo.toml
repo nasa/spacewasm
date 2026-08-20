@@ -1,6 +1,6 @@
 [package]
 name = "spacewasm-fuzzing"
-version = "0.1.0"
+version = "0.0.0"
 edition = "2021"
 publish = false
 
@@ -11,3 +11,11 @@ log = "0.4"
 wasm-smith = "0.220.0"
 wasmprinter = "0.220.0"
 env_logger = "0.11"
+wasmi = { version = "1", optional = true }
+
+[features]
+# Differential validator testing against wasmi as a reference implementation.
+differential = ["dep:wasmi"]
+
+[dev-dependencies]
+wat = "1"

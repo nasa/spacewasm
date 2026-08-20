@@ -172,18 +172,143 @@ impl<'a> Arbitrary<'a> for NoTrapsModule {
     }
 }
 
+/// A generated WebAssembly module that has been intentionally corrupted.
+///
+/// Unlike [`FuzzModule`] and [`NoTrapsModule`], which only ever produce
+/// structurally valid modules, this generator builds a valid wasm-smith module
+/// and then applies byte-level mutations to it. The result is *mostly* valid
+/// Wasm with localized damage -- truncated sections, flipped bytes, spliced
+/// garbage -- which exercises the decoder/validator's error paths far more
+/// densely than raw random bytes would (those are almost always rejected at the
+/// magic/version header).
+///
+/// A small fraction of inputs are left as raw, unstructured bytes so the
+/// earliest parse stages (magic number, version, section framing) still get
+/// coverage.
+#[derive(Debug)]
+pub struct MalformedModule {
+    /// The (corrupted) Wasm bytes.
+    pub wasm: Vec<u8>,
+}
+
+impl MalformedModule {
+    /// Generate a new malformed module from unstructured input.
+    pub fn new(u: &mut Unstructured<'_>) -> Result<Self> {
+        // Reserve a leading byte to decide the generation strategy. Roughly
+        // 1 in 8 inputs is passed through raw so the header/early-parse paths
+        // are still exercised; the rest corrupt a valid wasm-smith module.
+        let raw = u.arbitrary::<u8>()? % 8 == 0;
+
+        if raw {
+            // Feed the remaining bytes directly to the decoder. `bytes` borrows
+            // the tail of the input (we can't `take_rest` through a `&mut`), so
+            // copy it out.
+            let len = u.len();
+            let wasm = u.bytes(len)?.to_vec();
+            return Ok(Self { wasm });
+        }
+
+        if u.len() < 4 {
+            return Err(arbitrary::Error::NotEnoughData);
+        }
+
+        let config = ModuleConfig::arbitrary(u)?;
+        let module = config.generate(u)?;
+        let mut wasm = module.to_bytes();
+
+        // Apply a handful of mutations driven by the remaining input bytes.
+        // The count is bounded so we don't shred the module into unrecognizable
+        // noise -- the goal is localized damage that still reaches deep parse
+        // states. `int_in_range` gracefully returns the low bound when the
+        // input is exhausted, so this always terminates.
+        let mutations = u.int_in_range(1..=8u32)?;
+        for _ in 0..mutations {
+            apply_mutation(&mut wasm, u)?;
+        }
+
+        Ok(Self { wasm })
+    }
+
+    /// Get the (corrupted) Wasm bytes.
+    pub fn wasm(&self) -> &[u8] {
+        &self.wasm
+    }
+}
+
+/// Apply a single byte-level mutation to `wasm`, driven by `u`.
+///
+/// Every branch is a no-op on an empty buffer, so mutations are safe to apply
+/// to modules of any size (including the raw-bytes path's leftovers).
+fn apply_mutation(wasm: &mut Vec<u8>, u: &mut Unstructured<'_>) -> Result<()> {
+    if wasm.is_empty() {
+        return Ok(());
+    }
+
+    // `int_in_range` returns the low bound once the input is exhausted, so an
+    // empty `u` degrades to a deterministic FlipByte at index 0 rather than
+    // erroring -- the mutation loop still makes progress.
+    let kind = u.int_in_range(0..=5u32)?;
+    let idx = u.int_in_range(0..=wasm.len() - 1)?;
+
+    match kind {
+        // Flip a single bit in one byte.
+        0 => {
+            let bit = u.int_in_range(0..=7u32)?;
+            wasm[idx] ^= 1 << bit;
+        }
+        // Overwrite one byte with an arbitrary value.
+        1 => {
+            wasm[idx] = u.arbitrary::<u8>()?;
+        }
+        // Truncate the module at some offset.
+        2 => {
+            wasm.truncate(idx);
+        }
+        // Delete a byte, shifting subsequent bytes down (desyncs LEB128 /
+        // section lengths -- good at reaching length-mismatch error paths).
+        3 => {
+            wasm.remove(idx);
+        }
+        // Insert an arbitrary byte, shifting subsequent bytes up.
+        4 => {
+            wasm.insert(idx, u.arbitrary::<u8>()?);
+        }
+        // Splice a short run of arbitrary bytes over the existing contents.
+        _ => {
+            let len = u.int_in_range(1..=8usize)?;
+            for offset in 0..len {
+                let at = idx + offset;
+                if at >= wasm.len() {
+                    break;
+                }
+                wasm[at] = u.arbitrary::<u8>()?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+impl<'a> Arbitrary<'a> for MalformedModule {
+    fn arbitrary(u: &mut Unstructured<'a>) -> Result<Self> {
+        Self::new(u)
+    }
+}
+
 /// Which fuzz target's generator produced a seed.
 ///
-/// The `no_traps` and `validate` targets configure wasm-smith differently
-/// ([`NoTrapsModule`] sets `disallow_traps`), so they consume input bytes
-/// differently and produce different modules from the same seed. A seed must be
-/// decoded with the generator that produced it.
+/// The targets configure wasm-smith differently ([`NoTrapsModule`] sets
+/// `disallow_traps`, [`MalformedModule`] corrupts the output), so they consume
+/// input bytes differently and produce different modules from the same seed. A
+/// seed must be decoded with the generator that produced it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Target {
     /// The `no_traps` target, which uses [`NoTrapsModule`].
     NoTraps,
     /// The `validate` target, which uses [`FuzzModule`].
     Validate,
+    /// The `malformed` target, which uses [`MalformedModule`].
+    Malformed,
 }
 
 /// Generate the Wasm module a fuzz `target` would produce from `seed`.
@@ -195,6 +320,7 @@ pub fn wasm_from_seed(seed: &[u8], target: Target) -> Result<Vec<u8>> {
     match target {
         Target::NoTraps => NoTrapsModule::new(&mut u).map(|m| m.wasm),
         Target::Validate => FuzzModule::new(&mut u).map(|m| m.wasm),
+        Target::Malformed => MalformedModule::new(&mut u).map(|m| m.wasm),
     }
 }
 
@@ -223,5 +349,20 @@ mod tests {
             wasm_from_seed(&seed(), Target::Validate).unwrap(),
             wasm_from_seed(&seed(), Target::Validate).unwrap(),
         );
+    }
+
+    #[test]
+    fn malformed_is_deterministic_and_distinct() {
+        // The mutation pipeline is driven entirely by the seed, so decoding the
+        // same seed twice must reproduce the exact corrupted bytes (this is what
+        // lets seed_to_wasm recover a crashing input).
+        let a = wasm_from_seed(&seed(), Target::Malformed).unwrap();
+        let b = wasm_from_seed(&seed(), Target::Malformed).unwrap();
+        assert_eq!(a, b);
+
+        // Corruption should change the module relative to the untouched
+        // validate generator built from the same seed.
+        let clean = wasm_from_seed(&seed(), Target::Validate).unwrap();
+        assert_ne!(a, clean);
     }
 }
