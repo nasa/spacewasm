@@ -134,7 +134,9 @@ impl<T: Sized, A: Allocator> Vec<T, A> {
         }
 
         let ptr = if capacity > 0 {
-            unsafe { alloc.alloc(Layout::array::<T>(capacity as usize).unwrap())? }
+            let layout =
+                Layout::array::<T>(capacity as usize).map_err(|_| AllocError::AllocationFailed)?;
+            unsafe { alloc.alloc(layout)? }
         } else {
             core::ptr::null_mut()
         };

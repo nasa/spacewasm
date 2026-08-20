@@ -112,6 +112,7 @@ enum spacewasm_status_t
     SPACEWASM_ERR_MEMORY_IMPORT_TYPE_MISMATCH = 152,
     SPACEWASM_ERR_TABLE_IMPORT_TYPE_MISMATCH = 153,
     SPACEWASM_ERR_TABLE_IMPORT_INCOMPATIBLE_SIZE = 154,
+    SPACEWASM_ERR_TABLE_REF_NOT_UNIQUE = 155,
     SPACEWASM_ERR_FUNCTION_PARAMETERS_TOO_LARGE = 160,
     SPACEWASM_ERR_FUNCTION_RETURNS_TOO_LARGE = 161,
     SPACEWASM_ERR_TOO_MANY_LOCALS = 162,
@@ -546,8 +547,8 @@ spacewasm_status_t spacewasm_load_module(struct spacewasm_t *engine,
 
 /*
  Consume the host module vector `host` and finish it into an engine handle,
- written to `out_engine`. The engine is sized with a `stack_size`-byte guest
- stack, room for `max_modules` guest modules (<= 256), and compiles guest
+ written to `out_engine`. The engine is sized with a `stack_size`-word guest
+ stack (each word is 4 bytes), room for `max_modules` guest modules (<= 256), and compiles guest
  modules according to `options` (code-page budget, `memory.grow` support,
  backpatch bound). No guest module is loaded yet; use
  [`spacewasm_load_module`] to load one or more.

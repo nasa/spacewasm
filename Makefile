@@ -1,4 +1,4 @@
-.PHONY: help fuzz fuzz-validate fuzz-validate-differential fuzz-malformed seed-to-wasm trace-wasm trace trace-debug clean-artifacts install-tools
+.PHONY: help fuzz fuzz-validate fuzz-validate-differential fuzz-malformed seed-to-wasm trace-wasm trace trace-debug clean-artifacts
 
 # Target Configuration (auto-detect if not set)
 SPACEWASM_TARGET ?= $(shell rustc -vV | grep 'host:' | cut -d' ' -f2)
@@ -29,7 +29,6 @@ help:
 	@echo "  make trace-wasm WASM=output.wasm LIMIT=50"
 	@echo ""
 	@echo "Utilities:"
-	@echo "  make install-tools                 Install binaries to ~/.cargo/bin"
 	@echo "  make clean-artifacts               Delete all fuzzer artifacts"
 
 # Run fuzzer

@@ -304,8 +304,8 @@ pub unsafe extern "C" fn spacewasm_load_module(
 }
 
 /// Consume the host module vector `host` and finish it into an engine handle,
-/// written to `out_engine`. The engine is sized with a `stack_size`-byte guest
-/// stack, room for `max_modules` guest modules (<= 256), and compiles guest
+/// written to `out_engine`. The engine is sized with a `stack_size`-word guest
+/// stack (each word is 4 bytes), room for `max_modules` guest modules (<= 256), and compiles guest
 /// modules according to `options` (code-page budget, `memory.grow` support,
 /// backpatch bound). No guest module is loaded yet; use
 /// [`spacewasm_load_module`] to load one or more.
@@ -737,7 +737,11 @@ pub unsafe extern "C" fn spacewasm_invoke(
         return status::SPACEWASM_ERR_WRONG_STATE;
     }
 
-    if module_idx as usize >= cengine.engine.store.modules().len() {
+    let modules = cengine.engine.store.modules();
+    let Some(module) = modules.get(module_idx as usize) else {
+        return status::SPACEWASM_ERR_NOT_FOUND;
+    };
+    if func_index as usize >= module.functions.len() {
         return status::SPACEWASM_ERR_NOT_FOUND;
     }
 
