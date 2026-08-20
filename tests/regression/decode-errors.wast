@@ -162,3 +162,20 @@
 (assert_invalid
   (module binary "\00asm\01\00\00\00\01\04\01\60\00\00\03\02\01\00\0a\05\01\03\00\05\0b")
   "else without matching if")
+
+;; ---------------------------------------------------------------------------
+;; A function whose worst-case call frame overflows the 16-bit
+;; `CallFrame::frame_length` field is rejected at validation time. The frame is
+;; `2 + local_size + stack_usage`; here `local_size` = 65535 words (one
+;; run-length local group of 65535 i32) and `stack_usage` = 0, so the frame is
+;; 65537 > 0xFFFF. 65535 is deliberately just under the per-function
+;; `TooManyLocals` bound (`local_size > 0xFFFF`), so this reaches the
+;; frame-length branch rather than the locals-count branch above it. wat cannot
+;; express a run-length local count, so this is only reachable via a binary
+;; module.
+;; type (id 1): [] -> []   func (id 3): type 0
+;; code (id 10): one body, 1 local group of 65535 (LEB \ff\ff\03) i32, `end`
+;; ---------------------------------------------------------------------------
+(assert_invalid
+  (module binary "\00asm\01\00\00\00\01\04\01\60\00\00\03\02\01\00\0a\08\01\06\01\ff\ff\03\7f\0b")
+  "call frame too large")
