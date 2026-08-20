@@ -843,7 +843,9 @@ mod tests {
             // Load a full 64-bit pattern and wrap it back to i32: only the low
             // 32 bits must remain, independent of word order.
             state.memory.store_u64(208, 0x1122_3344_5566_7788).unwrap();
-            state.stack.write_u64(0, state.memory.load_u64(208).unwrap());
+            state
+                .stack
+                .write_u64(0, state.memory.load_u64(208).unwrap());
             state.sp = 2;
             Interpreter.i32_wrap_i64(state).unwrap();
             assert_eq!(state.sp, 1);
