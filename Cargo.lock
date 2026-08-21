@@ -3,15 +3,6 @@
 version = 4
 
 [[package]]
-name = "aarch64-cpu"
-version = "11.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "44171e22925ec72b63d86747bc3655c7849a5b8d865c980222128839f45ac034"
-dependencies = [
- "tock-registers",
-]
-
-[[package]]
 name = "ahash"
 version = "0.8.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1741,7 +1732,6 @@ dependencies = [
 name = "spacewasm_bench"
 version = "0.0.0"
 dependencies = [
- "aarch64-cpu",
  "cortex-m",
  "cortex-m-rt",
  "embedded-alloc",
@@ -1907,12 +1897,6 @@ dependencies = [
  "quote",
  "syn",
 ]
-
-[[package]]
-name = "tock-registers"
-version = "0.10.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8d2d250f87fb3fb6f225c907cf54381509f47b40b74b1d1f12d2dccbc915bdfe"
 
 [[package]]
 name = "toml"

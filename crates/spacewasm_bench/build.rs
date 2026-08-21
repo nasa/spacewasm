@@ -9,7 +9,7 @@ fn main() {
     let arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap();
 
     let mut memory_layout: Vec<u8> = Vec::new();
-    let _ = File::open(format!("memory_{arch}.x")).unwrap().read_to_end(&mut memory_layout);
+    let _ = File::open(format!("memory/{arch}.x")).unwrap().read_to_end(&mut memory_layout);
 
     let out = &PathBuf::from(env::var_os("OUT_DIR").unwrap());
     File::create(out.join("memory.x"))
@@ -17,8 +17,7 @@ fn main() {
         .write_all(&memory_layout)
         .unwrap();
     println!("cargo:rustc-link-search={}", out.display());
-    println!("cargo:rerun-if-changed=memory_riscv64.x");
-    println!("cargo:rerun-if-changed=memory_arm.x");
+    println!("cargo:rerun-if-changed=memory/{arch}.x");
     println!("cargo:rustc-link-arg=--nmagic");
 
     if arch == "riscv64" || arch == "riscv32" {
