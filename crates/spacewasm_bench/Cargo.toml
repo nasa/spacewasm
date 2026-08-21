@@ -1,0 +1,17 @@
+[package]
+name = "spacewasm_bench"
+
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+
+
+[dependencies]
+spacewasm = { path = "../.." }
+cortex-m = { version = "0.7.6", features = ["critical-section-single-core"] }
+cortex-m-rt = "0.7"
+cortex-m-semihosting = "0.6.0"
+rtic-monotonics = { version = "2.2.1", features = ["cortex-m-systick"] }
+panic-semihosting = "0.7.0"
+talc = "5.0.4"
+spinning_top = "0.3.0"
