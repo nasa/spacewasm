@@ -3,11 +3,40 @@
 
 use core::ops::ControlFlow;
 
-use panic_semihosting as _;
+use semihosting;
 
-use cortex_m_rt::entry;
-use cortex_m_semihosting::{debug, hprintln};
-use rtic_monotonics::systick::prelude::*;
+const CLOCK_HZ: u32 = 1_000_000_000; // 1 GHz
+
+
+#[cfg(target_arch = "arm")]
+use {cortex_m_rt::entry, rtic_monotonics::systick::prelude::*};
+
+#[cfg(target_arch = "arm")]
+systick_monotonic!(Mono, 1_000);
+#[cfg(target_arch = "arm")]
+fn clock_setup() {
+    let p = cortex_m::Peripherals::take().unwrap();
+    Mono::start(p.SYST, CLOCK_HZ);
+}
+
+#[cfg(target_arch = "arm")]
+fn clock_get_ms() -> i64 {
+    Mono::now().ticks() as i64
+}
+
+#[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
+use {riscv_rt::entry};
+
+#[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
+fn clock_setup() {
+    // nothing to do here
+}
+
+#[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
+fn clock_get_ms() -> i64 {
+    let ticks = riscv::register::time::read() as f64;
+    (ticks / ((CLOCK_HZ / 1000) as f64)) as i64
+}
 
 mod alloc;
 use alloc::*;
@@ -26,8 +55,6 @@ const MAX_PAGES: usize = 256;
 const MAX_CONTROL_FRAMES: usize = 64;
 const MAX_STACK_DEPTH: usize = 256;
 
-systick_monotonic!(Mono, 1_000);
-
 spacewasm::global_allocator!(
     PageAllocator<BareMetalAllocator, MAX_PAGES>,
     PageAllocator::new(BareMetalAllocator, 8192)
@@ -42,7 +69,7 @@ fn coremark() -> f32 {
             "".into(),
             "I".into(),
             |_, _| {
-                let ms = Mono::now().ticks() as i64;
+                let ms = clock_get_ms();
 
                 ControlFlow::Continue(Some(Value::I64(ms)))
             },
@@ -70,7 +97,7 @@ fn coremark() -> f32 {
             .unwrap()
             .into_wasm_memory_allocator(),
     )
-    .expect("failed to parse WASM module");
+    .unwrap();
 
     let module_ref = engine.push_module(module).unwrap();
     let init_result = match engine.module_start(module_ref) {
@@ -83,15 +110,7 @@ fn coremark() -> f32 {
     };
     match init_result {
         InterpreterResult::Finished => {}
-        InterpreterResult::OutOfFuel => {
-            panic!("insufficient fuel for initialization");
-        }
-        InterpreterResult::Trap(t) => {
-            panic!("trap during initialization {t:?}");
-        }
-        InterpreterResult::Pause => {
-            panic!("pause during init");
-        }
+        _ => panic!(),
     }
 
     let module: &spacewasm::Module = engine.store.modules().last().unwrap();
@@ -99,13 +118,13 @@ fn coremark() -> f32 {
     let fi = {
         let f = module.exports.iter().find(|f| &f.name == "run").unwrap();
         let ExportDesc::Func(fi) = f.desc else {
-            panic!("error: the provided wasm module does not correctly export a run function");
+            panic!()
         };
         fi
     };
 
     let Ref::Module(fi) = module.get_func_ref(fi).unwrap() else {
-        panic!("error: the provided wasm module does not correctly export a run function");
+        panic!()
     };
 
     engine
@@ -128,14 +147,13 @@ fn coremark() -> f32 {
 
 #[entry]
 fn main() -> ! {
-    let p = cortex_m::Peripherals::take().unwrap();
-    Mono::start(p.SYST, 1_000_000_000);
+    alloc::init();
+
+    semihosting::println!("starting...");
+    clock_setup();
 
     let result: f32 = coremark();
+    semihosting::println!("{result}");
 
-    hprintln!("{result}");
-
-    debug::exit(debug::EXIT_SUCCESS);
-
-    loop {}
+    semihosting::process::exit(0);
 }
