@@ -1,5 +1,6 @@
 name: PR Comments
 on:
+  workflow_dispatch:
   workflow_run:
     workflows: ["CI"]
     types:
@@ -34,95 +35,140 @@ jobs:
 
             // Reads an artifact JSON file if it was downloaded, else null.
             function readResults(name) {
-              const path = `artifacts/${name}/${name}.json`;
-              if (!fs.existsSync(path)) {
-                console.log(`No ${name} artifact found; skipping.`);
-                return null;
-              }
-              return JSON.parse(fs.readFileSync(path, 'utf8'));
+                const path = `artifacts/${name}/${name}.json`;
+                if (!fs.existsSync(path)) {
+                    console.log(`No ${name} artifact found; skipping.`);
+                    return null;
+                }
+                return JSON.parse(fs.readFileSync(path, 'utf8'));
             }
 
             // Creates a new comment or updates the existing bot comment that
             // contains `marker` in its body.
             async function upsertComment(prNumber, marker, body) {
-              const { data: comments } = await github.rest.issues.listComments({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: prNumber,
-              });
+                const { data: comments } = await github.rest.issues.listComments({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    issue_number: prNumber,
+                });
 
-              const botComment = comments.find(c =>
-                c.user.type === 'Bot' && c.body.includes(marker)
-              );
+                const botComment = comments.find(c =>
+                    c.user.type === 'Bot' && c.body.includes(marker)
+                );
 
-              if (botComment) {
+                if (botComment) {
                 await github.rest.issues.updateComment({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  comment_id: botComment.id,
-                  body,
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    comment_id: botComment.id,
+                    body,
                 });
-              } else {
+                } else {
                 await github.rest.issues.createComment({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  issue_number: prNumber,
-                  body,
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    issue_number: prNumber,
+                    body,
                 });
-              }
+                }
+            }
+
+            function colorize(new_value, old, lower_better) {
+                let color = "normalcolor";
+                let change_text = "";
+
+                if (old != new_value) {
+                    if (old == 0) {
+                        pct_change = new_value > 0 ? Infinity : -Infinity;
+                    } else {
+                        pct_change = (100 * (new_value - old) / old).toFixed(1);
+                    }
+                    if (pct_change > 0) {
+                        color = lower_better ? "red" : "green";
+                        change_text = "(↑" + String(pct_change) + "% from " + String(old) + ")";
+                    } else {
+                        color = lower_better ? "green" : "red";
+                        change_text = "(↓" + String(-pct_change) + "% from " + String(old) + ")";
+                    }
+                }
+                return "$${\\color{" + color + "}{" + String(new_value) + "}}$$<br>" + change_text;
             }
 
             const benchmark = readResults('benchmark-results');
             if (benchmark) {
-              const currentScore = parseFloat(benchmark.currentScore);
-              const baselineScore = parseFloat(benchmark.baselineScore);
+                const data = benchmark.current;
+                const old_data = benchmark.baseline;
 
-              let comment = '## CoreMark Benchmark Results\n\n';
-              comment += `**Current Score:** ${currentScore.toFixed(3)}\n`;
+                let triples = benchmark.current.triples;
+                let elf_sections = benchmark.current.elf_sections;
 
-              if (baselineScore && !isNaN(baselineScore)) {
-                const diff = currentScore - baselineScore;
-                const percentChange = ((diff / baselineScore) * 100).toFixed(2);
+                let comment = "# ELF Section Sizes\n";
+                comment += "||" + elf_sections.map(i => "`"+i+"`").join("|") + "|\n";
+                comment += "|--:|" + ":-:|".repeat(triples.length) + "\n";
+                for (let triple of triples) {
+                    comment += "|**`"+triple+"`**|";
+                    for (let section_name of elf_sections) {
+                        let size = data[triple][section_name];
+                        let old_size = (old_data[triple] ?? {})[section_name] ?? size;
 
-                comment += `**Baseline Score (main):** ${baselineScore.toFixed(3)}\n`;
-                comment += `**Difference:** ${diff >= 0 ? '+' : ''}${diff.toFixed(3)} (${percentChange}%)\n\n`;
-              } else {
-                comment += '\n_No baseline available for comparison_\n';
-              }
+                        comment += colorize(size, old_size, true) + "|";
+                    }
+                    comment += "\n";
+                }
+                comment += "\n<details><summary><i>view detailed section sizes...</i></summary>\n\n";
+                for (let triple of triples) {
+                    comment += "### `"+triple+"`\n";
+                    comment += "```\n"+data[triple]["details"]+"\n```\n";
+                }
+                comment += "</details>\n\n";
 
-              await upsertComment(
-                parseInt(benchmark.prNumber, 10),
-                'CoreMark Benchmark Results',
-                comment
-              );
+                comment += "# Coremark Scores\n";
+
+                comment += "||QEMU CPU / Board|Coremark Score|Host Time|\n";
+                comment += "|--:|:-:|:-:|:-:|\n";
+                for (let triple of triples) {
+                    let score = data[triple]["coremark"]
+                    let t = data[triple]["coremark_time"]
+                    let old_score = (old_data[triple] ?? {})["coremark"] ?? score;
+                    comment += "|**`"+triple+"`**|"+data[triple]["qemu_info"]+"|"+colorize(score, old_score, false)+"|"+t.toFixed(2)+" s|\n";
+                }
+                comment += "\n";
+
+                
+                await upsertComment(
+                    parseInt(benchmark.prNumber, 10),
+                    'Coremark Scores',
+                    comment
+                );
             }
 
             const coverage = readResults('coverage-results');
             if (coverage) {
-              const currentCoverage = parseFloat(coverage.currentCoverage);
-              const baselineCoverage = parseFloat(coverage.baselineCoverage);
+                const currentCoverage = parseFloat(coverage.currentCoverage);
+                const baselineCoverage = parseFloat(coverage.baselineCoverage);
 
-              let comment = '## Code Coverage Report\n\n';
-              comment += `**Current Coverage:** ${currentCoverage.toFixed(2)}%\n`;
+                let comment = '## Code Coverage Report\n\n';
+                comment += `**Current Coverage:** ${currentCoverage.toFixed(2)}%\n`;
 
-              if (baselineCoverage && !isNaN(baselineCoverage)) {
+                if (baselineCoverage && !isNaN(baselineCoverage)) {
                 const diff = currentCoverage - baselineCoverage;
 
                 comment += `**Baseline Coverage (main):** ${baselineCoverage.toFixed(2)}%\n`;
                 comment += `**Difference:** ${diff >= 0 ? '+' : ''}${diff.toFixed(2)}%\n\n`;
 
                 if (diff < -1.0) {
-                  comment += '**Warning:** Coverage decreased by more than 1%\n';
+                    comment += '**Warning:** Coverage decreased by more than 1%\n';
                 } else if (diff >= 1.0) {
-                  comment += '**Improvement:** Coverage increased!\n';
+                    comment += '**Improvement:** Coverage increased!\n';
                 }
-              } else {
+                } else {
                 comment += '\n_No baseline available for comparison_\n';
-              }
+                }
 
-              await upsertComment(
+                await upsertComment(
                 parseInt(coverage.prNumber, 10),
                 'Code Coverage Report',
                 comment
-              );
+                );
             }
+
