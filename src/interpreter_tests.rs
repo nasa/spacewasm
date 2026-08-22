@@ -825,6 +825,35 @@ mod tests {
     }
 
     #[test]
+    fn test_wrap_extend_memory_roundtrip_endianness() {
+        with_test_context(|state| {
+            // Push i32 0x9ABCDEF0, zero-extend to i64.
+            state.stack.write_u32(0, 0x9ABC_DEF0);
+            state.sp = 1;
+            Interpreter.i64_extend_i32_u(state).unwrap();
+            assert_eq!(state.sp, 2);
+            assert_eq!(state.stack.read_u64(0), 0x0000_0000_9ABC_DEF0);
+
+            // Store the i64 to memory@200 (addr on stack under the value), then
+            // reload it; the low word must survive the stack<->memory trip.
+            let stored = state.stack.read_u64(0);
+            state.memory.store_u64(200, stored).unwrap();
+            assert_eq!(state.memory.load_u64(200).unwrap(), 0x0000_0000_9ABC_DEF0);
+
+            // Load a full 64-bit pattern and wrap it back to i32: only the low
+            // 32 bits must remain, independent of word order.
+            state.memory.store_u64(208, 0x1122_3344_5566_7788).unwrap();
+            state
+                .stack
+                .write_u64(0, state.memory.load_u64(208).unwrap());
+            state.sp = 2;
+            Interpreter.i32_wrap_i64(state).unwrap();
+            assert_eq!(state.sp, 1);
+            assert_eq!(state.stack.read_u32(0), 0x5566_7788);
+        });
+    }
+
+    #[test]
     fn test_i64_trunc_f32_s() {
         with_test_context(|state| {
             state.stack.write_f32(0, 123.99);

@@ -61,7 +61,15 @@ macro_rules! global_allocator {
             align: usize,
             err: *mut u32,
         ) -> *mut u8 {
-            let layout = core::alloc::Layout::from_size_align(size, align).unwrap();
+            let layout = match core::alloc::Layout::from_size_align(size, align) {
+                Ok(l) => l,
+                Err(_) => {
+                    unsafe {
+                        *err = $crate::AllocError::AllocationFailed.into();
+                    }
+                    return core::ptr::null_mut();
+                }
+            };
             match unsafe { $crate::Allocator::alloc(&*GLOBAL_ALLOCATOR, layout) } {
                 Ok(ptr) => ptr,
                 Err(alloc_err) => {
@@ -75,7 +83,9 @@ macro_rules! global_allocator {
 
         #[unsafe(no_mangle)]
         pub unsafe extern "C" fn __spacewasm_dealloc(ptr: *mut u8, size: usize, align: usize) {
-            let layout = core::alloc::Layout::from_size_align(size, align).unwrap();
+            let Ok(layout) = core::alloc::Layout::from_size_align(size, align) else {
+                return;
+            };
             unsafe { $crate::Allocator::dealloc(&*GLOBAL_ALLOCATOR, ptr, layout) }
         }
 

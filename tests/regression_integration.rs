@@ -120,6 +120,32 @@ fn run(test_name: &str) {
     });
 }
 
+/// Host module `alias` exposing a single funcref table under two symbol names
+/// (`t` and `t_twin`) that share one backing `Rc`. Because the `Rc`'s strong
+/// count is permanently >= 2, any guest importing `alias`."t" and initializing
+/// it via an active element segment cannot take the unique borrow
+/// `Module::get_table` requires, so the load is rejected with
+/// `ValidationError::TableRefNotUnique`. Used only by `table_ref_not_unique`.
+fn aliased_table_host_module() -> HostModule {
+    let table: Rc<[TableElement]> = Rc::new_slice_with_default(4).unwrap();
+    HostModule {
+        name: "alias".into(),
+        globals: vec![],
+        functions: vec![],
+        memory: vec![],
+        table: vec![
+            HostSymbol {
+                name: "t".into(),
+                value: (table.clone(), Limit { min: 4, max: None }),
+            },
+            HostSymbol {
+                name: "t_twin".into(),
+                value: (table, Limit { min: 4, max: None }),
+            },
+        ],
+    }
+}
+
 #[test]
 fn host_funcs() {
     run("regression/host_funcs");
@@ -168,6 +194,13 @@ fn start_stack_overflow() {
 #[test]
 fn decode_errors() {
     run("regression/decode-errors");
+}
+
+#[test]
+fn table_ref_not_unique() {
+    run_wast_test_file("regression/table_ref_not_unique", || {
+        vec![spectest_host_module(), aliased_table_host_module()]
+    });
 }
 
 #[test]

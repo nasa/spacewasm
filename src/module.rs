@@ -138,16 +138,11 @@ impl Module {
         // Make sure that the module name is not a duplicate in the store
         // Allow multiple modules with empty names since they can't be imported
         if !name.is_empty() {
-            if store.modules().iter().find(|m| m.name == name).is_some() {
+            if store.modules().iter().any(|m| m.name == name) {
                 return Err(ValidationError::DuplicateModuleName.into());
             }
 
-            if store
-                .host_modules()
-                .iter()
-                .find(|m| m.name == name)
-                .is_some()
-            {
+            if store.host_modules().iter().any(|m| m.name == name) {
                 return Err(ValidationError::DuplicateModuleName.into());
             }
         }
@@ -823,7 +818,7 @@ impl ExportSection {
         for _ in 0..len {
             let e = Export::read(wasm, module)?;
             // Check for duplicate export name
-            if out.iter().find(|ei| *ei.name == *e.name).is_some() {
+            if out.iter().any(|ei| *ei.name == *e.name) {
                 return Err(ValidationError::DuplicateExportName);
             }
 
@@ -838,7 +833,7 @@ impl Module {
     pub(crate) fn get_table<'store>(
         &'store mut self,
         store: &'store mut Store,
-    ) -> Option<&'store mut [TableElement]> {
+    ) -> Result<Option<&'store mut [TableElement]>, ValidationError> {
         if let Some(table) = &mut self.table {
             let table = match table {
                 TableKind::Owned(table) => &mut table.0,
@@ -858,9 +853,15 @@ impl Module {
                 }
             };
 
-            Some(table.get_mut().unwrap())
+            // The table may still be aliased (e.g. an imported table kept alive
+            // by the engine's `Rc` clone, or a host-held table `Rc`). Reject
+            // such a module instead of panicking on the failed unique borrow.
+            match table.get_mut() {
+                Some(t) => Ok(Some(t)),
+                None => Err(ValidationError::TableRefNotUnique),
+            }
         } else {
-            None
+            Ok(None)
         }
     }
 }
@@ -883,7 +884,7 @@ impl Element {
         };
 
         let init_len = wasm.read_u32()?;
-        if let Some(table) = module.get_table(store) {
+        if let Some(table) = module.get_table(store)? {
             if offset < 0 || (offset as usize) > table.len() {
                 return Err(ValidationError::InvalidElementOffset);
             } else if (offset as u64 + init_len as u64) > table.len() as u64 {
@@ -911,7 +912,7 @@ impl Element {
             };
 
             let index = (offset as usize) + i;
-            if let Some(table) = module.get_table(store) {
+            if let Some(table) = module.get_table(store)? {
                 if index >= table.len() {
                     return Err(ValidationError::InvalidElementOutOfBounds);
                 }

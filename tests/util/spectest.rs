@@ -1026,6 +1026,8 @@ fn check_decode_error(err: ParseError, text: String) {
         (ValidationError::MalformedImportExportDesc(_), "malformed import kind") => {}
         (ValidationError::MalformedImportExportDesc(_), "malformed export kind") => {}
         (ValidationError::InvalidSectionOrdering(_, _), "unexpected section order") => {}
+        (ValidationError::StackTooLarge, "call frame too large") => {}
+        (ValidationError::TableRefNotUnique, "table reference not unique") => {}
         err => {
             panic!("Could not match validation error text '{text}' with error {err:?}")
         }
