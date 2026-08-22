@@ -20,7 +20,7 @@ impl ByteStream {
 
         ByteStream {
             index: 0,
-            chunks: chunks,
+            chunks,
         }
     }
 }
