@@ -46,8 +46,10 @@ def get_sizes(triple):
         capture_output=True
     )
 
-    print(proc.stderr.decode())
-    print(proc.stdout.decode())
+    sys.stderr.write(proc.stderr.decode())
+    sys.stderr.flush()
+    sys.stderr.write(proc.stdout.decode())
+    sys.stderr.flush()
 
     result = json.loads(proc.stdout.decode())
 
