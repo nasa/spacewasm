@@ -1,46 +1,26 @@
-#![no_main]
-#![no_std]
-
+#![cfg_attr(not(any(target_arch = "aarch64", target_arch = "x86_64")), no_main)]
+#![cfg_attr(not(any(target_arch = "aarch64", target_arch = "x86_64")), no_std)]
 use core::ops::ControlFlow;
 
-use semihosting;
-
-const CLOCK_HZ: u32 = 1_000_000_000; // 1 GHz
-
-
-#[cfg(target_arch = "arm")]
-use {cortex_m_rt::entry, rtic_monotonics::systick::prelude::*};
-
-#[cfg(target_arch = "arm")]
-systick_monotonic!(Mono, 1_000);
-#[cfg(target_arch = "arm")]
-fn clock_setup() {
-    let p = cortex_m::Peripherals::take().unwrap();
-    Mono::start(p.SYST, CLOCK_HZ);
-}
-
-#[cfg(target_arch = "arm")]
-fn clock_get_ms() -> i64 {
-    Mono::now().ticks() as i64
-}
-
-#[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
-use {riscv_rt::entry};
-
-#[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
-fn clock_setup() {
-    // nothing to do here
-}
-
-#[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
-fn clock_get_ms() -> i64 {
-    let ticks = riscv::register::time::read() as f64;
-    (ticks / ((CLOCK_HZ / 1000) as f64)) as i64
-}
-
-mod alloc;
-use alloc::*;
+#[cfg_attr(target_arch = "arm", path = "arm.rs")]
+#[cfg_attr(
+    any(target_arch = "riscv64", target_arch = "riscv32"),
+    path = "riscv.rs"
+)]
+#[cfg_attr(
+    any(target_arch = "aarch64", target_arch = "x86_64"),
+    path = "linux.rs"
+)]
+mod bench;
 mod bytes;
+
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
+use spacewasm_util::RustSystemAllocator as Allocator;
+
+#[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+mod alloc;
+#[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+use {alloc::BareMetalAllocator as Allocator, bench::entry, semihosting::print};
 
 use spacewasm::{
     CodeBuilder, CompilerOptions, Engine, ExportDesc, HostFunction, HostModule, Interpreter,
@@ -48,16 +28,14 @@ use spacewasm::{
     TrapReason, Value, WasmRef,
 };
 
-use crate::bytes::ByteStream;
-
 const STACK_SIZE: usize = 1024;
 const MAX_PAGES: usize = 256;
 const MAX_CONTROL_FRAMES: usize = 64;
 const MAX_STACK_DEPTH: usize = 256;
 
 spacewasm::global_allocator!(
-    PageAllocator<BareMetalAllocator, MAX_PAGES>,
-    PageAllocator::new(BareMetalAllocator, 8192)
+    PageAllocator<Allocator, MAX_PAGES>,
+    PageAllocator::new(Allocator, 8192)
 );
 
 fn coremark() -> f32 {
@@ -69,7 +47,7 @@ fn coremark() -> f32 {
             "".into(),
             "I".into(),
             |_, _| {
-                let ms = clock_get_ms();
+                let ms = bench::clock_get_ms();
 
                 ControlFlow::Continue(Some(Value::I64(ms)))
             },
@@ -86,14 +64,14 @@ fn coremark() -> f32 {
     .unwrap();
     let mut engine = Engine::new(STACK_SIZE, 1, spacewasm::vec![env]).unwrap();
 
-    let mut file_stream = ByteStream::new(include_bytes!("coremark.wasm"));
+    let mut file_stream = bytes::ByteStream::new(include_bytes!("coremark.wasm"));
 
     let module = spacewasm::Module::new::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
         "main",
         &mut file_stream,
         &mut engine.store,
         &mut code_builder,
-        spacewasm::Rc::new(BareMetalAllocator)
+        spacewasm::Rc::new(Allocator)
             .unwrap()
             .into_wasm_memory_allocator(),
     )
@@ -145,14 +123,19 @@ fn coremark() -> f32 {
     engine.result.unwrap_or(RawValue::from_32(0)).read_f32()
 }
 
-#[entry]
-fn main() -> ! {
-    alloc::init();
+#[cfg_attr(not(any(target_arch = "aarch64", target_arch = "x86_64")), entry)]
+fn entrypoint() -> ! {
+    bench::init_allocator();
 
-    clock_setup();
+    bench::clock_setup();
 
-    let result: f32 = 1.986;//coremark();
-    semihosting::print!("{result}");
+    let result: f32 = 1.986; //coremark();
+    print!("{result}");
 
-    semihosting::process::exit(0);
+    bench::exit(0);
+}
+
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
+fn main() {
+    entrypoint();
 }

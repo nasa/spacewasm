@@ -8,8 +8,14 @@ use std::path::PathBuf;
 fn main() {
     let arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap();
 
+    if arch == "aarch64" || arch == "x86_64" {
+        return;
+    }
+
     let mut memory_layout: Vec<u8> = Vec::new();
-    let _ = File::open(format!("memory/{arch}.x")).unwrap().read_to_end(&mut memory_layout);
+    let _ = File::open(format!("memory/{arch}.x"))
+        .unwrap()
+        .read_to_end(&mut memory_layout);
 
     let out = &PathBuf::from(env::var_os("OUT_DIR").unwrap());
     File::create(out.join("memory.x"))
@@ -22,8 +28,7 @@ fn main() {
 
     if arch == "riscv64" || arch == "riscv32" {
         println!("cargo:rustc-link-arg=-Tmemory.x");
-    }
-    else {
+    } else {
         println!("cargo:rustc-link-arg=-Tlink.x");
     }
 }

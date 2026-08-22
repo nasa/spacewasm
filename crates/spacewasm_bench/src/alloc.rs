@@ -3,14 +3,16 @@ use core::{
     ptr::NonNull,
 };
 
-use spacewasm::{AllocError, Allocator, MemoryStatistics, WasmMemoryAllocator};
 use embedded_alloc::LlffHeap as Heap;
+use spacewasm::{AllocError, Allocator, MemoryStatistics, WasmMemoryAllocator};
 
-#[global_allocator]
+// #[global_allocator]
 static HEAP: Heap = Heap::empty();
 
 pub fn init() {
-    unsafe {embedded_alloc::init!(HEAP, 100356);}
+    unsafe {
+        embedded_alloc::init!(HEAP, 100356);
+    }
 }
 
 pub struct BareMetalAllocator;

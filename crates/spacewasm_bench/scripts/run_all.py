@@ -26,8 +26,13 @@ def get_coremark(triple, q):
     command = [*qemu_commands[triple].split(" "), f"target/{triple}/release/spacewasm_bench"]
 
     start_time = time.time()
-    proc = subprocess.run(command, capture_output=True)
+    proc = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,)
     full_time = time.time() - start_time
+
+    # sys.stderr.write(proc.stderr.decode())
+    # sys.stderr.flush()
+    # sys.stderr.write(proc.stdout.decode())
+    # sys.stderr.flush()
 
     output = float(proc.stdout.decode())
 
@@ -37,19 +42,20 @@ def get_sizes(triple):
     out = {}
 
     command = ["cargo", "readobj", "-q", "--release", "-p", "spacewasm_bench", "--target", triple, "--", "--sections"]
-    proc = subprocess.run(command, capture_output=True)
+    proc = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
     out["details"] = proc.stdout.decode()
 
     proc = subprocess.run(
         [*command, "--elf-output-style=JSON"],
-        capture_output=True
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
     )
 
-    sys.stderr.write(proc.stderr.decode())
-    sys.stderr.flush()
-    sys.stderr.write(proc.stdout.decode())
-    sys.stderr.flush()
+    # sys.stderr.write(proc.stderr.decode())
+    # sys.stderr.flush()
+    # sys.stderr.write(proc.stdout.decode())
+    # sys.stderr.flush()
 
     result = json.loads(proc.stdout.decode())
 
@@ -79,6 +85,8 @@ def main():
 
     data["triples"] = triples
     data["elf_sections"] = elf_sections
+
+    os.set_blocking(sys.stdout.fileno(), True)
 
     print(json.dumps(data, indent=2))
     return 0
