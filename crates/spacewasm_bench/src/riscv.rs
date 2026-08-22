@@ -11,10 +11,9 @@
 /// ---
 /// Portions of this file are derived from <https://github.com/rust-embedded/riscv>
 /// and the riscv and riscv-rt crates developed by the Rust Embedded community.
-/// 
+///
 /// Portions of this file are derived from <https://github.com/taiki-e/semihosting>
 /// and the semihosting crate developed by Taiki Endo
-
 mod alloc;
 
 pub use riscv_rt::entry;

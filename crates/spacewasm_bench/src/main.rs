@@ -15,7 +15,6 @@
 /// ---
 /// Portions of this file are derived from <https://github.com/taiki-e/semihosting>
 /// and the semihosting crate developed by Taiki Endo
-
 use core::ops::ControlFlow;
 
 #[cfg_attr(target_arch = "arm", path = "arm.rs")]

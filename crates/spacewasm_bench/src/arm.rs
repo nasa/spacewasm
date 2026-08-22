@@ -11,13 +11,12 @@
 /// ---
 /// Portions of this file are derived from <https://github.com/rust-embedded/cortex-m>
 /// and the cortex-m and cortex-m-rt crates developed by the Rust Embedded community.
-/// 
+///
 /// Portions of this file are derived from <https://github.com/taiki-e/semihosting>
 /// and the semihosting crate developed by Taiki Endo
-/// 
+///
 /// Portions of this file are derived from <https://github.com/rtic-rs/rtic-monotonic>
 /// and the rtic-monotonics crate developed by the RTIC Rust community.
-
 use rtic_monotonics::systick::prelude::*;
 
 pub use cortex_m_rt::entry;

@@ -10,7 +10,6 @@
 /// <http://www.apache.org/licenses/LICENSE-2.0>
 ///
 /// ---
-
 use spacewasm::{InnerVec, Vec, WasmStream};
 pub struct ByteStream {
     index: usize,

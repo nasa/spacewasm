@@ -12,7 +12,6 @@
 /// ---
 /// Large portions of this file are derived from the Rust Embedded Book
 /// and associated examples at <https://docs.rust-embedded.org/book/start/qemu.html>
-
 use std::env;
 use std::fs::File;
 use std::io::{Read, Write};

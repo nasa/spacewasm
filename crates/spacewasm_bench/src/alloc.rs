@@ -12,7 +12,6 @@
 /// ---
 /// Portions of this file are derived from <https://github.com/rust-embedded/embedded-alloc>
 /// and the embedded-alloc crate developed by the Rust Embedded community.
-
 use core::{
     alloc::{GlobalAlloc, Layout},
     ptr::NonNull,
