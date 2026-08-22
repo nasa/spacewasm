@@ -270,10 +270,10 @@ jobs:
               echo "EOF" >> $GITHUB_OUTPUT
               echo "$output"
             else
-              echo "out=" >> $GITHUB_OUTPUT
+              echo "out={}" >> $GITHUB_OUTPUT
             fi
           else
-            echo "out=" >> $GITHUB_OUTPUT
+            echo "out={}" >> $GITHUB_OUTPUT
           fi
 
       - name: Save benchmark results
