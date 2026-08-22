@@ -130,7 +130,7 @@ jobs:
                     let score = data[triple]["coremark"]
                     let t = data[triple]["coremark_time"]
                     let old_score = (old_data[triple] ?? {})["coremark"] ?? score;
-                    comment += "|**`"+triple+"`**|"+qemu_info[triple]+"|"+colorize(score, old_score, false)+"|"+t.toFixed(2)+" s|";
+                    comment += "|**`"+triple+"`**|"+data[triple]["qemu_info"]+"|"+colorize(score, old_score, false)+"|"+t.toFixed(2)+" s|";
                 }
                 comment += "\n";
 
