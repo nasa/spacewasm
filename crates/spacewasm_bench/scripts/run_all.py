@@ -44,6 +44,10 @@ def get_coremark(triple, q):
     proc = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     full_time = time.time() - start_time
 
+
+    sys.stderr.write(proc.stderr.decode())
+    sys.stderr.flush()
+
     output = float(proc.stdout.decode())
 
     q.put((triple, output, full_time))
@@ -67,7 +71,12 @@ def get_sizes(triple):
         stderr=subprocess.PIPE,
     )
 
-    result = json.loads(proc.stdout.decode())
+    try:
+        result = json.loads(proc.stdout.decode())
+    except:
+        sys.stderr.write(proc.stderr.decode())
+        sys.stderr.flush()
+        exit(-1)
 
     for elf_section_name in elf_sections:
         section = list(filter(

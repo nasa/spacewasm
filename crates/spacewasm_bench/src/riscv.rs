@@ -14,8 +14,6 @@
 //!
 //! Portions of this file are derived from <https://github.com/taiki-e/semihosting>
 //! and the semihosting crate developed by Taiki Endo
-mod alloc;
-
 pub use riscv_rt::entry;
 
 const CLOCK_HZ: u32 = 1_000_000_000; // 1 GHz
@@ -31,8 +29,4 @@ pub fn clock_get_ms() -> i64 {
 
 pub fn exit(code: i32) -> ! {
     semihosting::process::exit(code);
-}
-
-pub fn init_allocator() {
-    alloc::init();
 }

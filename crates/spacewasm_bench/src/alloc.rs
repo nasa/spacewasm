@@ -20,11 +20,12 @@ use core::{
 use embedded_alloc::LlffHeap as Heap;
 use spacewasm::{AllocError, Allocator, MemoryStatistics, WasmMemoryAllocator};
 
+#[global_allocator]
 static HEAP: Heap = Heap::empty();
 
 pub fn init() {
     unsafe {
-        embedded_alloc::init!(HEAP, 100356);
+        embedded_alloc::init!(HEAP, 100000);
     }
 }
 

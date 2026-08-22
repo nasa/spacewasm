@@ -24,7 +24,3 @@ pub fn clock_get_ms() -> i64 {
 pub fn exit(code: i32) -> ! {
     std::process::exit(code);
 }
-
-pub fn init_allocator() {
-    // nothing to do here
-}

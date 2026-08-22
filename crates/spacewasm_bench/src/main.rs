@@ -140,7 +140,8 @@ fn coremark() -> f32 {
 
 #[cfg_attr(not(any(target_arch = "aarch64", target_arch = "x86_64")), entry)]
 fn entrypoint() -> ! {
-    bench::init_allocator();
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+    alloc::init();
 
     bench::clock_setup();
 
