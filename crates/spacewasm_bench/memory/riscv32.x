@@ -1,3 +1,8 @@
+/*
+    This file was taken from <https://github.com/rust-embedded/riscv>
+    and the riscv and riscv-rt crates developed by the Rust Embedded community.
+*/
+
 MEMORY
 {
     FLASH : ORIGIN = 0x80000000, LENGTH = 32M

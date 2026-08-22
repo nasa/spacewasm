@@ -1,5 +1,21 @@
 #![cfg_attr(not(any(target_arch = "aarch64", target_arch = "x86_64")), no_main)]
 #![cfg_attr(not(any(target_arch = "aarch64", target_arch = "x86_64")), no_std)]
+
+/// An embedding of the coremark benchmark in SpaceWasm, for desktop and embedded
+/// environments (*nix x86_64/aarch64, and bare-metal arm/riscv32/riscv64)
+///
+/// Copyright 2026 California Institute of Technology
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+/// <http://www.apache.org/licenses/LICENSE-2.0>
+///
+/// ---
+/// Portions of this file are derived from <https://github.com/taiki-e/semihosting>
+/// and the semihosting crate developed by Taiki Endo
+
 use core::ops::ControlFlow;
 
 #[cfg_attr(target_arch = "arm", path = "arm.rs")]

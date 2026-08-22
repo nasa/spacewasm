@@ -1,3 +1,18 @@
+/// An implementation of a WasmMemoryAllocator using the embedded_alloc crate
+/// for using SpaceWasm in embedded applications.
+///
+/// Copyright 2026 California Institute of Technology
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+/// <http://www.apache.org/licenses/LICENSE-2.0>
+///
+/// ---
+/// Portions of this file are derived from <https://github.com/rust-embedded/embedded-alloc>
+/// and the embedded-alloc crate developed by the Rust Embedded community.
+
 use core::{
     alloc::{GlobalAlloc, Layout},
     ptr::NonNull,
@@ -6,7 +21,6 @@ use core::{
 use embedded_alloc::LlffHeap as Heap;
 use spacewasm::{AllocError, Allocator, MemoryStatistics, WasmMemoryAllocator};
 
-// #[global_allocator]
 static HEAP: Heap = Heap::empty();
 
 pub fn init() {

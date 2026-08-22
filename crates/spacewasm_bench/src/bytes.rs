@@ -1,3 +1,16 @@
+/// An implementation of a WasmStream for directly embedding WASM modules
+/// into code using things like include_bytes!().
+///
+/// Copyright 2026 California Institute of Technology
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+/// <http://www.apache.org/licenses/LICENSE-2.0>
+///
+/// ---
+
 use spacewasm::{InnerVec, Vec, WasmStream};
 pub struct ByteStream {
     index: usize,
@@ -18,10 +31,7 @@ impl ByteStream {
             i += n;
         }
 
-        ByteStream {
-            index: 0,
-            chunks,
-        }
+        ByteStream { index: 0, chunks }
     }
 }
 
