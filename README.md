@@ -36,7 +36,8 @@ This software comes with two major components:
 1. Decoder/Validator:
 
    Reads the Wasm binary in [chunks](#streaming) and decodes it to an executable form. The decoder will use a fixed
-   amount of memory and can be measured per-Wasm binary using the `spacewasm-check` executable on the ground.
+   amount of memory and is intended to be measured per-Wasm binary using the `spacewasm-check` executable on the
+   ground (not yet developed — see the note under [Limits for Wasm Module Producers](#limits-for-wasm-module-producers)).
 
    WebAssembly is validated during the decoding process and does not require another pass of the bytecode.
 
@@ -56,6 +57,9 @@ The requirements of SpaceWasm are levied from similar work produced by [DLR](htt
 
 See [requirements](./docs/REQUIREMENTS.md).
 
+SpaceWasm uses the Rust 2024 edition; the minimum supported Rust version is **1.87** (matching `rust-version` in
+`Cargo.toml`). Older toolchains fail to build with an edition2024 error.
+
 ## Embedding
 
 Embedding the interpreter refers to instantiating it and providing implementations for the functions that are imported
@@ -74,8 +78,12 @@ flight-software standards. Dynamic allocation follows the following rules:
 5. Any allocation failures must _not_ result in panic.
 
 The standard Rust [allocation](https://doc.rust-lang.org/alloc/) does not meet these constraints even with custom
-allocators. To that end, SpaceWasm provides its own data structures that guarantee these properties. You will find these
-data-structures contain the only usage of `unsafe` Rust semantics.
+allocators. To that end, SpaceWasm provides its own data structures that guarantee these properties. These
+data-structures contain the bulk of the `unsafe` Rust semantics; the remainder lives in the performance-critical
+operand-stack, linear-memory, and IR access paths (`src/stack.rs`, `src/memory.rs`, `src/ir_reader.rs`), the
+`ValType` conversion in `src/types.rs`, and the FFI layer (`crates/spacewasm_c_api`, `crates/spacewasi`). Bounds on
+those raw accesses are established by the up-front verifier; the optional `strict-assertions` feature re-checks them
+at runtime.
 
 > [!NOTE]
 > These limitations are only enforced on the implementation of the interpreter and _not_ on the Wasm bytecode it is made to interpret.
@@ -128,12 +136,12 @@ maintaining compatibility with most standard WebAssembly modules.
 ### Limits for Wasm Module Producers
 
 Because SpaceWasm compiles bytecode into a fixed-width IR that is typically larger than the original bytecode, the
-practical ceiling on raw module size is bounded by the IR code-page limit above (~8 GiB of IR). This is far larger than
-any module expected on flight hardware; the binding constraint in practice is the peak memory configured for the
-[streaming](#streaming) decoder, which is measured per-module on the ground with `spacewasm-check`.
+practical ceiling on raw module size is bounded by the IR code-page limit in the table below (~8 GiB of IR). This is
+far larger than any module expected on flight hardware; the binding constraint in practice is the peak memory
+configured for the [streaming](#streaming) decoder, which is measured per-module on the ground with `spacewasm-check`.
 
 > [!NOTE]
-> `spacewasm-check` has not been developed yet. A similar tool can be found in `spacewasm-std`.
+> `spacewasm-check` has not been developed yet. A similar tool can be found in `spacewasm_std`.
 
 Here are a couple of limitations that may be relevant to developers of Wasm modules.
 
@@ -141,7 +149,7 @@ Here are a couple of limitations that may be relevant to developers of Wasm modu
 | ------------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Wasm page size      | 64 KiB / 1 B        | [Custom-Page-Sizes proposal](https://github.com/WebAssembly/custom-page-sizes) is supported                                                                                                                                                                   |
 | Linear memory pages | 4 GiB               | Per the Wasm 1.0 spec. A module declaring more (or a `max` above this) is rejected. Note that the embedding will definitely limit this but it is dependent on how the interpreter is deployed.                                                                |
-| IR Code             | 8 GiB               | Compiled IR, not raw bytecode. This limit is across all modules in the store. The IR / Bytecode ratio is printed in `spacewasm-std` as the "compilation ratio". It is difficult to estimate this upfront because it varies on the types of instructions used. |
+| IR Code             | 8 GiB               | Compiled IR, not raw bytecode. This limit is across all modules in the store. The IR / Bytecode ratio is printed in `spacewasm_std` as the "compilation ratio". It is difficult to estimate this upfront because it varies on the types of instructions used. |
 | Function parameters | 255 32-bit words    | Per function.                                                                                                                                                                                                                                                 |
 | Local variables     | 65,535 32-bit words | Per function.                                                                                                                                                                                                                                                 |
 

@@ -135,6 +135,10 @@ impl LabelTarget {
         JumpOffset(((u << 10) as i32) >> 10)
     }
 
+    /// A jump offset of exactly `0` is the reserved chain-terminator sentinel
+    /// (see [`JumpOffset::sentinel`]). It can never collide with a real jump:
+    /// forward jumps are strictly positive, loop back-edges strictly negative,
+    /// and a backpatch chain node never points at itself (offset 0).
     pub fn is_sentinel(&self) -> bool {
         self.jump() == JumpOffset(0)
     }
@@ -253,7 +257,7 @@ pub struct CodeBuilder {
 impl CodeBuilder {
     pub fn new(options: CompilerOptions) -> Result<CodeBuilder, AllocError> {
         if options.max_code_pages >= (1 << 24) {
-            panic!("SpaceWasm supports up to 24-bit code pages");
+            return Err(AllocError::AllocationFailed);
         }
 
         Ok(CodeBuilder {

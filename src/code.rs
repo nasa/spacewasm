@@ -26,6 +26,11 @@ impl Expr {
         module: &Module,
         ctx: &Func,
     ) -> Result<(Self, u16), ValidationError> {
+        // Each operand may occupy up to 2 words, so the high-water mark is
+        // bounded by `2 * MAX_STACK_DEPTH`. Guarantee that bound fits the u16
+        // field below so the runtime check is provably dead for sane configs.
+        const { assert!(MAX_STACK_DEPTH.saturating_mul(2) <= u16::MAX as usize) };
+
         let e = Expr(builder.pc());
         let tb = &mut TextBuilder::new(builder, store, module, ctx);
         wasm.read_code(
@@ -33,7 +38,15 @@ impl Expr {
             tb,
         )?;
 
-        Ok((e, tb.stack_usage() as u16))
+        // Reject a function whose shallow stack high-water exceeds the u16
+        // `Func::stack_usage` field rather than silently truncating it (which
+        // would let `call_impl`'s capacity check pass and write past the stack).
+        let usage = tb.stack_usage();
+        if usage > u16::MAX as usize {
+            return Err(ValidationError::StackTooLarge);
+        }
+
+        Ok((e, usage as u16))
     }
 }
 
@@ -58,7 +71,7 @@ pub struct Func {
     /// Parameter size in 32-bit words
     pub parameter_size: u8,
 
-    /// Return value size in 32-bit words
+    /// Return value type, or `None` if the function returns nothing
     pub return_ty: Option<ValType>,
 
     /// Local variables allocated in this functions frame
@@ -108,6 +121,14 @@ impl Module {
         f.local_size = size_in_words as u16;
         (f.expr, f.stack_usage) =
             Expr::read::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(wasm, builder, store, self, &f)?;
+
+        // Bound the worst-case call frame this function can produce. When a
+        // function performs a call, the frame it leaves behind is
+        // `2 (frame header) + local_size + operand height at the call site`.
+        let max_frame_length = 2 + f.local_size as usize + f.stack_usage as usize;
+        if max_frame_length > 0xFFFF {
+            return Err(ValidationError::StackTooLarge);
+        }
 
         let _ = core::mem::replace(&mut self.functions[i], f);
 
@@ -268,11 +289,11 @@ impl<'wasm> Reader<'wasm> {
                     visitor.i64_const(n, state)?;
                 }
                 F32_CONST => {
-                    let z = f32::from_bits(self.read_f32()?);
+                    let z = f32::from_bits(self.read_f32_bits()?);
                     visitor.f32_const(z, state)?;
                 }
                 F64_CONST => {
-                    let z = f64::from_bits(self.read_f64()?);
+                    let z = f64::from_bits(self.read_f64_bits()?);
                     visitor.f64_const(z, state)?;
                 }
 

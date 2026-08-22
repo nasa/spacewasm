@@ -105,6 +105,15 @@ impl Store {
         }
     }
 
+    /// Returns a mutable reference to a module's linear memory.
+    ///
+    /// # Invariant
+    /// When the module has no memory, the `None` arm returns a `&mut` to the
+    /// shared `zero_memory` sentinel (aliased by every memory-less module).
+    /// Callers MUST check [`Memory::is_zero`] before mutating through the
+    /// returned reference — the only caller, `interpreter.rs::memory_grow`,
+    /// does exactly this. Mutating the sentinel would corrupt global state
+    /// shared across all modules.
     pub fn get_memory_mut(&mut self, module_ref: ModuleRef) -> &mut Rc<Memory> {
         match &self.modules[module_ref.0 as usize].memory {
             None => &mut self.zero_memory,
@@ -161,6 +170,7 @@ impl Engine {
         self.fp = 0;
         self.jumped = false;
         self.result = None;
+        self.host_pause_result = None;
         self.clear_memory();
         self.clear_table();
     }

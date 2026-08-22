@@ -66,7 +66,10 @@ impl Engine {
         // We need to push the frame pointer and the return instruction pointer to the stack
         // We also encode the parameter size into the stack frame so that the return can unwind the stack
         let frame_length = (self.sp - self.fp as usize) as u32;
-        assert!(frame_length <= 0xFFFF);
+        // `frame_length` fits the 16-bit `CallFrame::frame_length` field by
+        // construction: validation rejects any function whose
+        // `2 + local_size + stack_usage` exceeds 0xFFFF.
+        debug_assert!(frame_length <= 0xFFFF);
         let frame = CallFrame {
             frame_length: frame_length as u16,
             module_delta,
@@ -109,6 +112,13 @@ impl Engine {
 
         if ty.params.len() != params.len() {
             return Err(InvokeError::ParamLenMismatch);
+        }
+
+        // Validate parameters fit onto stack frame before writing them
+        let params_words: usize = ty.params.iter().map(|t| t.size() / 4).sum();
+        let required = f.stack_usage as usize + 2 + f.local_size as usize;
+        if params_words + required > self.stack.len() {
+            return Err(InvokeError::StackOverflow);
         }
 
         for (pi, pd) in params.iter().zip(&ty.params) {
@@ -1006,8 +1016,9 @@ impl BaseVisitor for Interpreter {
     instruction!(f64_copysign, f64, f64 -> f64, a, b, libm::copysign(a, b));
 
     fn i32_wrap_i64(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        // i64 low word is at [sp-2], high word at [sp-1]
-        // After decrement, low word is at [sp-1] (where we want the i32)
+        // i64 stored in host-endianness, read the entire 64-bit word and truncate it
+        let v = state.stack.read_u64(state.sp - 2);
+        state.stack.write_u32(state.sp - 2, v as u32);
         state.sp -= 1;
         Ok(())
     }
@@ -1086,9 +1097,9 @@ impl BaseVisitor for Interpreter {
     }
 
     fn i64_extend_i32_u(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        // Low word is already in place at [sp-1]
-        // Just add high word as 0 for unsigned extension
-        state.stack.write_u32(state.sp, 0);
+        // Zero-extend the i32 to an i64 and write it back to the stack
+        let i = state.stack.read_u32(state.sp - 1) as u64;
+        state.stack.write_u64(state.sp - 1, i);
         state.sp += 1;
         Ok(())
     }

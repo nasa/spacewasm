@@ -56,4 +56,6 @@ WASI 0.1 functions are implemented using the [`wasi-common`](https://crates.io/c
 ## Testing
 Integration testing of example WASI WASM modules is done by `cargo test` using compiled C programs in `tests/wasm/`. As the WASI functions themselves are implemented by wasmtime, testing primarily only covers the CLI wrapper for `spacewasi`.
 
-In order to run the tests, you much have `llvm` and the WASI SDK instealled, along with `wasm-opt`.
+The integration tests run against committed `.wasm` fixtures, so no compiler toolchain is required to run them
+(`cargo test -p spacewasi`). `llvm`, the WASI SDK, and `wasm-opt` are only needed to *regenerate* those fixtures
+from the `.c` sources under `tests/wasm/`.
