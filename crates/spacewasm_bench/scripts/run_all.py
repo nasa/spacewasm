@@ -14,10 +14,10 @@ qemu_commands = {
     "thumbv7em-none-eabihf": "qemu-system-arm -icount shift=0 -cpu cortex-m4 -machine netduinoplus2 -nographic -semihosting-config enable=on,target=native -kernel",
 }
 qemu_info = {
-    "riscv32i-unknown-none-elf": "`rv32` / `virt` @ 1GHz",
-    "riscv64gc-unknown-none-elf": "`rv64` / `virt` @ 1GHz",
-    "thumbv7m-none-eabi": "`cortex-m4` / `netduinoplus2` @ 1GHz",
-    "thumbv7em-none-eabihf": "`cortex-m4` / `netduinoplus2` @ 1GHz",
+    "riscv32i-unknown-none-elf": "rv32 / virt @ 1GHz",
+    "riscv64gc-unknown-none-elf": "rv64 / virt @ 1GHz",
+    "thumbv7m-none-eabi": "cortex-m4 / netduinoplus2 @ 1GHz",
+    "thumbv7em-none-eabihf": "cortex-m4 / netduinoplus2 @ 1GHz",
 }
 triples = list(qemu_commands.keys())
 elf_sections = [".text", ".rodata", ".data", ".bss"]

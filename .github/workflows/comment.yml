@@ -99,8 +99,8 @@ jobs:
                 const data = benchmark.current;
                 const old_data = benchmark.baseline;
 
-                let triples = benchmark.currentScore.triples;
-                let elf_sections = benchmark.currentScore.elf_sections;
+                let triples = benchmark.current.triples;
+                let elf_sections = benchmark.current.elf_sections;
 
                 let comment = "# ELF Section Sizes";
                 comment += "||" + elf_sections.map(i => "`"+i+"`").join("|") + "|";
