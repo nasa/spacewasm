@@ -8,10 +8,11 @@ pub struct Stack {
 
 impl Stack {
     pub fn new(size: usize) -> Result<Self, AllocError> {
+        let bytes = size.checked_mul(4).ok_or(AllocError::AllocationFailed)?;
         Ok(Stack {
             ptr: unsafe {
                 GlobalAllocator
-                    .alloc(Layout::from_size_align(size * 4, 4).unwrap())?
+                    .alloc(Layout::from_size_align(bytes, 4).unwrap())?
                     .cast()
             },
             size,

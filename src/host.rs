@@ -5,7 +5,7 @@ use core::fmt::{Debug, Formatter};
 
 pub struct GlobalValueError;
 
-/// Error returned when a host name exceeds [`HOST_NAME_CAP`] bytes or is not
+/// Error returned when a host name exceeds its `CAPACITY` bytes or is not
 /// valid UTF-8.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HostNameError;
@@ -40,12 +40,12 @@ impl<const CAPACITY: usize> HostName<CAPACITY> {
     }
 
     /// Construct a host name from a string slice, panicking if it is longer
-    /// than [`HOST_NAME_CAP`]. Intended for compile-time string literals in
+    /// than `CAPACITY`. Intended for compile-time string literals in
     /// Rust code; use [`HostName::try_from_str`] on caller-supplied input.
     pub const fn new(s: &str) -> HostName<CAPACITY> {
         match HostName::build(s.as_bytes()) {
             Some(n) => n,
-            None => panic!("host name exceeds HOST_NAME_CAP"),
+            None => panic!("host name exceeds CAPACITY"),
         }
     }
 
@@ -212,7 +212,7 @@ impl HostValList {
     }
 
     /// Fallibly construct a signature list. Returns an error if any character
-    /// is not one of `iIfd` or the signature exceeds [`HOST_SIG_CAP`] entries.
+    /// is not one of `iIfd` or the signature exceeds [`MAX_HOST_FUNCTION_PARAMS`] entries.
     /// This is the FFI-safe constructor.
     pub fn try_new(s: &str) -> Result<Self, HostValListError> {
         let mut data = [ValType::I32; MAX_HOST_FUNCTION_PARAMS];
@@ -334,14 +334,17 @@ pub struct HostSymbol<const NAME_CAPACITY: usize, T> {
 
 pub const HOST_MODULE_NAME_CAP: usize = 31;
 
+/// Name capacity for host-provided memory and table symbols.
+pub const HOST_SYMBOL_NAME_CAP: usize = 15;
+
 #[derive(Debug)]
 pub struct HostModule {
     /// Module name
     pub name: HostName<HOST_MODULE_NAME_CAP>,
     pub globals: Vec<HostGlobal>,
     pub functions: Vec<HostFunction>,
-    pub memory: Vec<HostSymbol<15, Rc<Memory>>>,
-    pub table: Vec<HostSymbol<15, (Rc<[TableElement]>, Limit)>>,
+    pub memory: Vec<HostSymbol<HOST_SYMBOL_NAME_CAP, Rc<Memory>>>,
+    pub table: Vec<HostSymbol<HOST_SYMBOL_NAME_CAP, (Rc<[TableElement]>, Limit)>>,
 }
 
 impl HostFunction {

@@ -122,6 +122,7 @@ pub enum spacewasm_status_t {
     SPACEWASM_ERR_MEMORY_IMPORT_TYPE_MISMATCH = 152,
     SPACEWASM_ERR_TABLE_IMPORT_TYPE_MISMATCH = 153,
     SPACEWASM_ERR_TABLE_IMPORT_INCOMPATIBLE_SIZE = 154,
+    SPACEWASM_ERR_TABLE_REF_NOT_UNIQUE = 155,
 
     // Parse / validation errors - Function and global validation
     SPACEWASM_ERR_FUNCTION_PARAMETERS_TOO_LARGE = 160,
@@ -325,6 +326,7 @@ pub fn validation_status(e: &ValidationError) -> spacewasm_status_t {
         ValidationError::TableImportIncompatibleSize => {
             SPACEWASM_ERR_TABLE_IMPORT_INCOMPATIBLE_SIZE
         }
+        ValidationError::TableRefNotUnique => SPACEWASM_ERR_TABLE_REF_NOT_UNIQUE,
         ValidationError::FunctionParametersTooLarge => SPACEWASM_ERR_FUNCTION_PARAMETERS_TOO_LARGE,
         ValidationError::FunctionReturnsTooLarge => SPACEWASM_ERR_FUNCTION_RETURNS_TOO_LARGE,
         ValidationError::TooManyLocals => SPACEWASM_ERR_TOO_MANY_LOCALS,

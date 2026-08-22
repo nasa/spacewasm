@@ -1,20 +1,20 @@
-/// Wasm Reader
-/// This file implements some basic Wasm reading capabilities such
-/// as LEB128 (variable width integer encoding).
-///
-/// Copyright 2026 California Institute of Technology
-///
-/// Licensed under the Apache License, Version 2.0 (the "License");
-/// you may not use this file except in compliance with the License.
-/// You may obtain a copy of the License at
-///
-/// http://www.apache.org/licenses/LICENSE-2.0
-///
-/// ---
-/// Portions of this file are derived from https://github.com/DLR-FT/wasm-interpreter:
-/// Copyright © 2024-2026 Deutsches Zentrum für Luft- und Raumfahrt e.V.
-/// (DLR).
-/// Copyright © 2024-2025 OxidOS Automotive SRL.
+// Wasm Reader
+// This file implements some basic Wasm reading capabilities such
+// as LEB128 (variable width integer encoding).
+//
+// Copyright 2026 California Institute of Technology
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// ---
+// Portions of this file are derived from https://github.com/DLR-FT/wasm-interpreter:
+// Copyright © 2024-2026 Deutsches Zentrum für Luft- und Raumfahrt e.V.
+// (DLR).
+// Copyright © 2024-2025 OxidOS Automotive SRL.
 use crate::{
     Allocator, Chunk, CircularBuffer, GlobalAllocator, StaticVec, ValidationError, Vec, WasmStream,
 };
@@ -44,8 +44,8 @@ pub struct Reader<'wasm> {
     next: Option<Chunk>,
 
     /// A fixed size circular buffer meant to hold as much Wasm data as it can.
-    /// Wasm chunks may be of variable length, we may need to span multiple which is
-    /// Data will be copied into this circular buffer and the processing will be done here.
+    /// Wasm chunks may be of variable length, so a single value may span multiple
+    /// chunks. Data is copied into this circular buffer and processing is done here.
     buffer: CircularBuffer<u8, 64>,
 
     /// A counter keeping track of the total number of bytes we've processed in the Wasm binary
@@ -71,6 +71,12 @@ impl<'wasm> Reader<'wasm> {
     /// Fills the circular buffer from the stream chunks.
     /// This method tries to fill the buffer as much as possible from the current chunk,
     /// and fetches a new chunk from the stream if the current one is exhausted.
+    ///
+    /// The `is_empty()` early-return below is load-bearing for the copy loops:
+    /// because we only ever refill an empty buffer, the free space always equals
+    /// `capacity()`, so clamping `to_copy` to `capacity()` never overfills and
+    /// `CircularBuffer::push` (which overwrites the oldest element when full)
+    /// never actually overwrites live data.
     fn fill_buffer(&mut self) -> Result<(), ValidationError> {
         // If buffer already has data, we're done
         if !self.buffer.is_empty() {
@@ -211,7 +217,8 @@ impl<'wasm> Reader<'wasm> {
         Ok(result)
     }
 
-    pub fn read_f64(&mut self) -> Result<u64, ValidationError> {
+    /// Read a little-endian `f64` and return its raw bit pattern.
+    pub fn read_f64_bits(&mut self) -> Result<u64, ValidationError> {
         let bytes = self.strip_bytes::<8>()?;
         Ok(u64::from_le_bytes(bytes))
     }
@@ -291,7 +298,8 @@ impl<'wasm> Reader<'wasm> {
         Ok(result)
     }
 
-    pub fn read_f32(&mut self) -> Result<u32, ValidationError> {
+    /// Read a little-endian `f32` and return its raw bit pattern.
+    pub fn read_f32_bits(&mut self) -> Result<u32, ValidationError> {
         let bytes = self.strip_bytes::<4>()?;
         Ok(u32::from_le_bytes(bytes))
     }

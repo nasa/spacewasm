@@ -111,6 +111,7 @@ pub enum ValidationError {
     MemoryImportTypeMismatch,
     TableImportTypeMismatch,
     TableImportIncompatibleSize,
+    TableRefNotUnique,
     FunctionParametersTooLarge,
     FunctionReturnsTooLarge,
     TooManyLocals,
