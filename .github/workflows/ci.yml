@@ -224,6 +224,9 @@ jobs:
             qemu-kvm \
             qemu-utils
 
+      - name: Install Cargo binutils
+        run: cargo install cargo-binutils
+
       - name: Install and Setup Python 3.13
         uses: actions/setup-python@v7
         with:
