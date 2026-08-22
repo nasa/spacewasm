@@ -249,7 +249,9 @@ jobs:
           # Build and run the benchmark from workspace root, capturing output
           output=$(python3 crates/spacewasm_bench/scripts/run_all.py)
           echo "$output"
-          echo "out=$output" >> $GITHUB_OUTPUT
+          echo "out<<EOF" >> $GITHUB_OUTPUT
+          echo "$output" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Run Baseline Benchmark
         id: baseline
@@ -263,7 +265,9 @@ jobs:
             git checkout -
 
             if [ -n "$output" ]; then
-              echo "out=$output" >> $GITHUB_OUTPUT
+              echo "out<<EOF" >> $GITHUB_OUTPUT
+              echo "$output" >> $GITHUB_OUTPUT
+              echo "EOF" >> $GITHUB_OUTPUT
               echo "$output"
             else
               echo "out=" >> $GITHUB_OUTPUT
