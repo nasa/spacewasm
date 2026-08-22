@@ -85,13 +85,13 @@ jobs:
                     }
                     if (pct_change > 0) {
                         color = lower_better ? "red" : "green";
-                        change_text = "(↑" + str(pct_change) + "% from " + str(old) + ")";
+                        change_text = "(↑" + String(pct_change) + "% from " + String(old) + ")";
                     } else {
                         color = lower_better ? "green" : "red";
-                        change_text = "(↓" + str(-pct_change) + "% from " + str(old) + ")";
+                        change_text = "(↓" + String(-pct_change) + "% from " + String(old) + ")";
                     }
                 }
-                return "$${\\color{" + color + "}{" + str(new_value) + "}}$$<br>" + change_text;
+                return "$${\\color{" + color + "}{" + String(new_value) + "}}$$<br>" + change_text;
             }
 
             const benchmark = readResults('benchmark-results');
