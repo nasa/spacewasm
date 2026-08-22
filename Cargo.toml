@@ -1,7 +1,9 @@
 [workspace]
 
 members = ["crates/*"]
-exclude = ["fuzz"]
+
+#exclude spacewasm_bench crate because it will not build on non-embedded targets
+exclude = ["fuzz", "crates/spacewasm_bench"]
 
 [workspace.package]
 version = "0.0.0"

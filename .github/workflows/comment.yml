@@ -115,7 +115,7 @@ jobs:
                     }
                     comment += "\n";
                 }
-                comment += "\n<details><summary><i>view detailed section sizes...</i></summary>\n";
+                comment += "\n<details><summary><i>view detailed section sizes...</i></summary>\n\n";
                 for (let triple of triples) {
                     comment += "### `"+triple+"`\n";
                     comment += "```\n"+data[triple]["details"]+"\n```\n";
