@@ -111,13 +111,13 @@ jobs:
                         let size = data[triple][section_name];
                         let old_size = (old_data[triple] ?? {})[section_name] ?? size;
 
-                        comment += colorize(size, old_size, true);
+                        comment += colorize(size, old_size, true) + "|";
                     }
                     comment += "\n";
                 }
-                comment += "<details><summary><i>view detailed section sizes...</i></summary>\n";
+                comment += "\n<details><summary><i>view detailed section sizes...</i></summary>\n";
                 for (let triple of triples) {
-                    comment += "### `"+triple+"`";
+                    comment += "### `"+triple+"`\n";
                     comment += "```\n"+data[triple]["details"]+"\n```\n";
                 }
                 comment += "</details>\n\n";
