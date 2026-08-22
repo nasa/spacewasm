@@ -45,8 +45,11 @@ def get_sizes(triple):
         [*command, "--elf-output-style=JSON"],
         capture_output=True
     )
-    result = json.loads(proc.stdout.decode())
 
+    print(proc.stderr.decode())
+    print(proc.stdout.decode())
+
+    result = json.loads(proc.stdout.decode())
 
     for elf_section_name in elf_sections:
         section = list(filter(lambda i: i["Section"]["Name"]["Name"] == elf_section_name, result[0]["Sections"]))[0]["Section"]
