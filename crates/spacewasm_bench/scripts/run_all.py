@@ -25,6 +25,9 @@ elf_sections = [".text", ".rodata", ".data", ".bss"]
 def get_coremark(triple, q):
     command = [*qemu_commands[triple].split(" "), f"target/{triple}/release/spacewasm_bench"]
 
+    sys.stderr.write(" ".join(command) + "\n")
+    sys.stderr.flush()
+
     start_time = time.time()
     proc = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,)
     full_time = time.time() - start_time
@@ -44,6 +47,9 @@ def get_sizes(triple):
     command = ["cargo", "readobj", "-q", "--release", "-p", "spacewasm_bench", "--target", triple, "--", "--sections"]
     proc = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
+    sys.stderr.write(" ".join(command) + "\n")
+    sys.stderr.flush()
+
     out["details"] = proc.stdout.decode()
 
     proc = subprocess.run(
@@ -52,8 +58,6 @@ def get_sizes(triple):
         stderr=subprocess.PIPE,
     )
 
-    # sys.stderr.write(proc.stderr.decode())
-    # sys.stderr.flush()
     # sys.stderr.write(proc.stdout.decode())
     # sys.stderr.flush()
 

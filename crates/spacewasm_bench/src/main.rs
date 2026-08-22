@@ -129,7 +129,7 @@ fn entrypoint() -> ! {
 
     bench::clock_setup();
 
-    let result: f32 = 1.986; //coremark();
+    let result: f32 = coremark();
     print!("{result}");
 
     bench::exit(0);
