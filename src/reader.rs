@@ -465,6 +465,12 @@ impl<'wasm> Reader<'wasm> {
         VA: Allocator,
     {
         let len = self.read_u32()?;
+        // Reject lengths that cannot form a valid allocation layout. On 32-bit
+        // targets Layout::array overflows for huge declared lengths and used to
+        // panic inside Vec::new_in; return VecTooLong like the stack path (#158).
+        if core::alloc::Layout::array::<T>(len as usize).is_err() {
+            return Err(ValidationError::VecTooLong);
+        }
         let mut out = Vec::new_in(alloc, len)?;
         for _ in 0..len {
             out.push(read_element(self)?);
