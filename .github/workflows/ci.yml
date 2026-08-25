@@ -80,7 +80,13 @@ jobs:
           esac
           tarball="wabt-${WABT_VERSION}-${WABT_PLATFORM}.tar.gz"
           wget -q "https://github.com/WebAssembly/wabt/releases/download/${WABT_VERSION}/${tarball}"
-          echo "${WABT_SHA256}  ${tarball}" | sha256sum -c -
+          # macOS runners ship `shasum` (Perl) rather than GNU coreutils'
+          # `sha256sum`; both accept the same "<hash>  <file>" verify format.
+          if command -v sha256sum >/dev/null 2>&1; then
+            echo "${WABT_SHA256}  ${tarball}" | sha256sum -c -
+          else
+            echo "${WABT_SHA256}  ${tarball}" | shasum -a 256 -c -
+          fi
           tar -xzf "${tarball}"
           sudo cp wabt-${WABT_VERSION}/bin/* /usr/local/bin/
         shell: bash
