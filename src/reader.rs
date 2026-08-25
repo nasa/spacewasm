@@ -28,6 +28,14 @@ const CONTINUATION_BIT: u8 = 0b10000000;
 
 const INTEGER_BIT_FLAG: u8 = !CONTINUATION_BIT;
 
+/// Cap on the in-memory size of a single heap vector decoded from module bytes.
+/// `Vec::new_in` reserves `len * size_of::<T>()` up front, so without this a
+/// few-byte module can drive a multi-gigabyte allocation (or overflow the
+/// layout outright on 32-bit targets). A byte budget rather than an element
+/// count so wide element types are bounded the same way. Sized to match the
+/// `MAX_TABLE_ELEMENTS` bound in `types.rs`.
+const MAX_DECODE_BYTES: u64 = 10 * 1024 * 1024;
+
 /// A struct for managing and reading Wasm bytecode
 /// Its purpose is to abstract parsing basic Wasm values from the bytecode
 /// and managing the chunks from a stream as they are read.
@@ -465,6 +473,9 @@ impl<'wasm> Reader<'wasm> {
         VA: Allocator,
     {
         let len = self.read_u32()?;
+        if u64::from(len) * size_of::<T>() as u64 > MAX_DECODE_BYTES {
+            return Err(ValidationError::VecTooLong);
+        }
         let mut out = Vec::new_in(alloc, len)?;
         for _ in 0..len {
             out.push(read_element(self)?);
@@ -650,6 +661,21 @@ mod tests {
         let v = reader.read_vec(|r| r.read_u8()).unwrap();
         assert_eq!(&*v, &[0x0A, 0x0B, 0x0C]);
         assert_eq!(reader.offset(), data.len());
+    }
+
+    #[test]
+    fn read_vec_in_rejects_oversized_byte_budget() {
+        // 1_000_000 entries is far below any plausible element-count cap, but
+        // at 16 bytes each that is a 16 MiB allocation - the byte budget has
+        // to reject it before `Vec::new_in` reserves the space. The length
+        // prefix is enough; the check returns before any element is read.
+        let data = [0xC0u8, 0x84, 0x3D]; // LEB128 1_000_000
+        let mut stream = ChunkStream::new(&data, 3);
+        let mut reader = Reader::new(&mut stream);
+        assert!(matches!(
+            reader.read_vec(|r| r.strip_bytes::<16>()),
+            Err(ValidationError::VecTooLong)
+        ));
     }
 
     #[test]

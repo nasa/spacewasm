@@ -179,3 +179,7 @@
 (assert_invalid
   (module binary "\00asm\01\00\00\00\01\04\01\60\00\00\03\02\01\00\0a\08\01\06\01\ff\ff\03\7f\0b")
   "call frame too large")
+
+(assert_invalid
+  (module binary "\00asm\01\00\00\00\01\05\ff\ff\ff\ff\0f")
+  "length out of bounds")
