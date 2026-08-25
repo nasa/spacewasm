@@ -878,6 +878,53 @@ fn invoke_function_normal(
     }
 }
 
+fn get_global(ctx: &TestContext, module_name: &Option<String>, field: &str) -> Value {
+    let module_index = if let Some(name) = module_name {
+        ctx.find_module_by_name(name)
+            .unwrap_or_else(|| panic!("Module '{name}' not found"))
+    } else {
+        ctx.current_module_index()
+    };
+
+    let global_ref = {
+        let module = ctx
+            .engine
+            .store
+            .modules()
+            .get(module_index)
+            .unwrap_or_else(|| panic!("Module at index {module_index} not found"));
+
+        let export = module
+            .exports
+            .iter()
+            .find(|e| e.name == field)
+            .unwrap_or_else(|| panic!("Global export '{field}' not found"));
+
+        let global_idx = match &export.desc {
+            ExportDesc::Global(idx) => *idx,
+            _ => panic!("Export '{field}' is not a global"),
+        };
+
+        module
+            .get_global_ref(global_idx)
+            .unwrap_or_else(|| panic!("Global export '{field}' does not resolve"))
+    };
+
+    match global_ref {
+        Ref::Module(index) => {
+            ctx.engine.store.modules()[module_index].globals[index as usize].value()
+        }
+        Ref::Extern { module, index } => {
+            ctx.engine.store.modules()[module.0 as usize].globals[index as usize].value()
+        }
+        Ref::Host { module, index } => ctx.engine.store.host_modules()[module.0 as usize].globals
+            [index as usize]
+            .value
+            .read()
+            .unwrap_or_else(|_| panic!("Failed to read host global '{field}'")),
+    }
+}
+
 fn check_trap_reason(reason: TrapReason, text: &str) {
     /*
     RuntimeError::Trap(TrapError::DivideBy0) => Ok("integer divide by zero"),
@@ -1200,10 +1247,7 @@ fn run_wast_command(
                         panic!("Invoke '{field}' failed: {e:?}")
                     }
                 },
-                Action::Get { .. } => {
-                    // Skip Get actions for now as they're not fully implemented
-                    return;
-                }
+                Action::Get { module, field } => Some(get_global(ctx, &module, &field)),
             };
 
             if expected.is_empty() {
@@ -1260,8 +1304,10 @@ fn run_wast_command(
                     panic!("Expected trap '{text}', but execution succeeded")
                 }
             },
+            // A global read cannot trap, so the spec never wraps `get` in
+            // `assert_trap`.
             Action::Get { .. } => {
-                panic!("Get actions not implemented yet")
+                panic!("assert_trap does not support the `get` action")
             }
         },
         Command::AssertMalformed {
@@ -1336,8 +1382,10 @@ fn run_wast_command(
                     panic!("Expected exhaustion '{text}', but execution succeeded")
                 }
             },
+            // A global read cannot exhaust resources, so the spec never wraps
+            // `get` in `assert_exhaustion`.
             Action::Get { .. } => {
-                panic!("Get actions not implemented yet")
+                panic!("assert_exhaustion does not support the `get` action")
             }
         },
         Command::Register { name, as_name, .. } => {
@@ -1367,8 +1415,10 @@ fn run_wast_command(
             } => {
                 invoke_function(ctx, &module, &field, &args, log).unwrap();
             }
-            Action::Get { .. } => {
-                panic!("Get actions not implemented yet")
+            Action::Get { module, field } => {
+                // A bare `get` action reads the global for its side effects and
+                // discards the value.
+                let _ = get_global(ctx, &module, &field);
             }
         },
     }
