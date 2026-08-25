@@ -50,12 +50,13 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
         with:
           components: rustfmt, clippy
 
       - name: Install WABT (WebAssembly Binary Toolkit)
         run: |
+          set -euo pipefail
           WABT_VERSION=1.0.41
           if [ "$RUNNER_OS" == "macOS" ]; then
             if [ "$RUNNER_ARCH" == "ARM64" ]; then
@@ -71,8 +72,22 @@ jobs:
               WABT_PLATFORM="linux-x64"
             fi
           fi
-          wget https://github.com/WebAssembly/wabt/releases/download/${WABT_VERSION}/wabt-${WABT_VERSION}-${WABT_PLATFORM}.tar.gz
-          tar -xzf wabt-${WABT_VERSION}-${WABT_PLATFORM}.tar.gz
+          case "$WABT_PLATFORM" in
+            linux-x64)   WABT_SHA256=83f8122e924745fcd70636e3594bc01c4c47f2d4c8f3c63b5d70d3f83a482677 ;;
+            linux-arm64) WABT_SHA256=5e35416ee8725dc7cc0572e4392a8117cbf008b0e34c0db65c75506b0299cdbf ;;
+            macos-arm64) WABT_SHA256=e5269d6bbe05dfeb179e4f21111b3a641d6ccaa38b0b21d472ae5c65f8c4ff5d ;;
+            *) echo "::error::No pinned WABT checksum for platform $WABT_PLATFORM"; exit 1 ;;
+          esac
+          tarball="wabt-${WABT_VERSION}-${WABT_PLATFORM}.tar.gz"
+          wget -q "https://github.com/WebAssembly/wabt/releases/download/${WABT_VERSION}/${tarball}"
+          # macOS runners ship `shasum` (Perl) rather than GNU coreutils'
+          # `sha256sum`; both accept the same "<hash>  <file>" verify format.
+          if command -v sha256sum >/dev/null 2>&1; then
+            echo "${WABT_SHA256}  ${tarball}" | sha256sum -c -
+          else
+            echo "${WABT_SHA256}  ${tarball}" | shasum -a 256 -c -
+          fi
+          tar -xzf "${tarball}"
           sudo cp wabt-${WABT_VERSION}/bin/* /usr/local/bin/
         shell: bash
 
@@ -120,15 +135,19 @@ jobs:
           sudo apt-get install -y gcc-multilib
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
         with:
           targets: i686-unknown-linux-gnu
 
       - name: Install WABT (WebAssembly Binary Toolkit)
         run: |
+          set -euo pipefail
           WABT_VERSION=1.0.41
-          wget https://github.com/WebAssembly/wabt/releases/download/${WABT_VERSION}/wabt-${WABT_VERSION}-linux-x64.tar.gz
-          tar -xzf wabt-${WABT_VERSION}-linux-x64.tar.gz
+          WABT_SHA256=83f8122e924745fcd70636e3594bc01c4c47f2d4c8f3c63b5d70d3f83a482677
+          tarball="wabt-${WABT_VERSION}-linux-x64.tar.gz"
+          wget -q "https://github.com/WebAssembly/wabt/releases/download/${WABT_VERSION}/${tarball}"
+          echo "${WABT_SHA256}  ${tarball}" | sha256sum -c -
+          tar -xzf "${tarball}"
           sudo cp wabt-${WABT_VERSION}/bin/* /usr/local/bin/
         shell: bash
 
@@ -152,7 +171,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        # Pinned to the commit the `stable` branch resolved to (its action.yml
+        # defaults `toolchain: stable`); immutable ref for supply-chain safety.
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
         with:
           components: rustfmt, clippy
 
@@ -192,7 +213,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
 
       - name: Build all targets
         run: cargo build --workspace --all-targets --verbose
@@ -212,14 +233,18 @@ jobs:
           fetch-depth: 0
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
 
       - name: Install WABT (WebAssembly Binary Toolkit)
         run: |
+          set -euo pipefail
           WABT_VERSION=1.0.41
           WABT_PLATFORM="linux-x64"
-          wget https://github.com/WebAssembly/wabt/releases/download/${WABT_VERSION}/wabt-${WABT_VERSION}-${WABT_PLATFORM}.tar.gz
-          tar -xzf wabt-${WABT_VERSION}-${WABT_PLATFORM}.tar.gz
+          WABT_SHA256=83f8122e924745fcd70636e3594bc01c4c47f2d4c8f3c63b5d70d3f83a482677
+          tarball="wabt-${WABT_VERSION}-${WABT_PLATFORM}.tar.gz"
+          wget -q "https://github.com/WebAssembly/wabt/releases/download/${WABT_VERSION}/${tarball}"
+          echo "${WABT_SHA256}  ${tarball}" | sha256sum -c -
+          tar -xzf "${tarball}"
           sudo cp wabt-${WABT_VERSION}/bin/* /usr/local/bin/
 
       - name: Cache Rust dependencies
@@ -300,7 +325,7 @@ jobs:
       - name: Run Kani on repo
         uses: model-checking/kani-github-action@v1.1
         with:
-          args: '-j --output-format=terse'
+          args: "-j --output-format=terse"
 
   miri:
     name: Miri
@@ -334,23 +359,26 @@ jobs:
           fetch-depth: 0
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
         with:
           components: llvm-tools-preview
 
       - name: Install WABT (WebAssembly Binary Toolkit)
         run: |
+          set -euo pipefail
           WABT_VERSION=1.0.41
           WABT_PLATFORM="linux-x64"
-          wget https://github.com/WebAssembly/wabt/releases/download/${WABT_VERSION}/wabt-${WABT_VERSION}-${WABT_PLATFORM}.tar.gz
-          tar -xzf wabt-${WABT_VERSION}-${WABT_PLATFORM}.tar.gz
+          WABT_SHA256=83f8122e924745fcd70636e3594bc01c4c47f2d4c8f3c63b5d70d3f83a482677
+          tarball="wabt-${WABT_VERSION}-${WABT_PLATFORM}.tar.gz"
+          wget -q "https://github.com/WebAssembly/wabt/releases/download/${WABT_VERSION}/${tarball}"
+          echo "${WABT_SHA256}  ${tarball}" | sha256sum -c -
+          tar -xzf "${tarball}"
           sudo cp wabt-${WABT_VERSION}/bin/* /usr/local/bin/
 
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
 
       - name: Cache Rust dependencies
-        # Pinned commit resolved from the annotated Swatinem/rust-cache@v2 tag.
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}

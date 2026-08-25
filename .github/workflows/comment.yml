@@ -28,9 +28,17 @@ jobs:
 
       - name: Post benchmark and coverage comments
         uses: actions/github-script@v7
+        env:
+          TRUSTED_PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
         with:
           script: |
             const fs = require('fs');
+
+            const prNumber = parseInt(process.env.TRUSTED_PR_NUMBER, 10);
+            if (!Number.isInteger(prNumber) || prNumber <= 0) {
+              console.log('No trusted PR number on the workflow_run event; skipping comments.');
+              return;
+            }
 
             // Reads an artifact JSON file if it was downloaded, else null.
             function readResults(name) {
@@ -40,6 +48,14 @@ jobs:
                 return null;
               }
               return JSON.parse(fs.readFileSync(path, 'utf8'));
+            }
+
+            // Parses an artifact-supplied numeric field. Returns null for any
+            // value that is not a finite number so untrusted content can never
+            // reach the comment body verbatim.
+            function finiteOrNull(value) {
+              const n = parseFloat(value);
+              return Number.isFinite(n) ? n : null;
             }
 
             // Creates a new comment or updates the existing bot comment that
@@ -74,55 +90,63 @@ jobs:
 
             const benchmark = readResults('benchmark-results');
             if (benchmark) {
-              const currentScore = parseFloat(benchmark.currentScore);
-              const baselineScore = parseFloat(benchmark.baselineScore);
+              const currentScore = finiteOrNull(benchmark.currentScore);
+              const baselineScore = finiteOrNull(benchmark.baselineScore);
 
-              let comment = '## CoreMark Benchmark Results\n\n';
-              comment += `**Current Score:** ${currentScore.toFixed(3)}\n`;
-
-              if (baselineScore && !isNaN(baselineScore)) {
-                const diff = currentScore - baselineScore;
-                const percentChange = ((diff / baselineScore) * 100).toFixed(2);
-
-                comment += `**Baseline Score (main):** ${baselineScore.toFixed(3)}\n`;
-                comment += `**Difference:** ${diff >= 0 ? '+' : ''}${diff.toFixed(3)} (${percentChange}%)\n\n`;
+              if (currentScore === null) {
+                console.log('Benchmark artifact has no valid currentScore; skipping.');
               } else {
-                comment += '\n_No baseline available for comparison_\n';
-              }
+                let comment = '## CoreMark Benchmark Results\n\n';
+                comment += `**Current Score:** ${currentScore.toFixed(3)}\n`;
 
-              await upsertComment(
-                parseInt(benchmark.prNumber, 10),
-                'CoreMark Benchmark Results',
-                comment
-              );
+                if (baselineScore) {
+                  const diff = currentScore - baselineScore;
+                  const percentChange = ((diff / baselineScore) * 100).toFixed(2);
+
+                  comment += `**Baseline Score (main):** ${baselineScore.toFixed(3)}\n`;
+                  comment += `**Difference:** ${diff >= 0 ? '+' : ''}${diff.toFixed(3)} (${percentChange}%)\n\n`;
+                } else {
+                  comment += '\n_No baseline available for comparison_\n';
+                }
+
+                await upsertComment(
+                  prNumber,
+                  'CoreMark Benchmark Results',
+                  comment
+                );
+              }
             }
 
             const coverage = readResults('coverage-results');
             if (coverage) {
-              const currentCoverage = parseFloat(coverage.currentCoverage);
-              const baselineCoverage = parseFloat(coverage.baselineCoverage);
+              const currentCoverage = finiteOrNull(coverage.currentCoverage);
+              const baselineCoverage = finiteOrNull(coverage.baselineCoverage);
 
-              let comment = '## Code Coverage Report\n\n';
-              comment += `**Current Coverage:** ${currentCoverage.toFixed(2)}%\n`;
-
-              if (baselineCoverage && !isNaN(baselineCoverage)) {
-                const diff = currentCoverage - baselineCoverage;
-
-                comment += `**Baseline Coverage (main):** ${baselineCoverage.toFixed(2)}%\n`;
-                comment += `**Difference:** ${diff >= 0 ? '+' : ''}${diff.toFixed(2)}%\n\n`;
-
-                if (diff < -1.0) {
-                  comment += '**Warning:** Coverage decreased by more than 1%\n';
-                } else if (diff >= 1.0) {
-                  comment += '**Improvement:** Coverage increased!\n';
-                }
+              if (currentCoverage === null) {
+                console.log('Coverage artifact has no valid currentCoverage; skipping.');
               } else {
-                comment += '\n_No baseline available for comparison_\n';
-              }
+                let comment = '## Code Coverage Report\n\n';
+                comment += `**Current Coverage:** ${currentCoverage.toFixed(2)}%\n`;
 
-              await upsertComment(
-                parseInt(coverage.prNumber, 10),
-                'Code Coverage Report',
-                comment
-              );
+                if (baselineCoverage) {
+                  const diff = currentCoverage - baselineCoverage;
+
+                  comment += `**Baseline Coverage (main):** ${baselineCoverage.toFixed(2)}%\n`;
+                  comment += `**Difference:** ${diff >= 0 ? '+' : ''}${diff.toFixed(2)}%\n\n`;
+
+                  if (diff < -1.0) {
+                    comment += '**Warning:** Coverage decreased by more than 1%\n';
+                  } else if (diff >= 1.0) {
+                    comment += '**Improvement:** Coverage increased!\n';
+                  }
+                } else {
+                  comment += '\n_No baseline available for comparison_\n';
+                }
+
+                await upsertComment(
+                  prNumber,
+                  'Code Coverage Report',
+                  comment
+                );
+              }
             }
