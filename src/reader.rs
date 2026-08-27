@@ -465,6 +465,21 @@ impl<'wasm> Reader<'wasm> {
         VA: Allocator,
     {
         let len = self.read_u32()?;
+        // Bound the vector length before allocating. NOESIS-derived decode
+        // budget: a single vector may not ask the (host-side, flight)
+        // allocator for more than MAX_DECODE_BYTES while parsing one module.
+        // This replaces the prior magic 10M-element cap with a principled
+        // byte budget: for u8 it reproduces that cap (10MiB / 1B = 10M
+        // elements, non-regressive); for wider types it tightens the embedded
+        // DOS window (v128: 10M×16B = 160MiB is now rejected at 10MiB). A
+        // module-supplied 0xFFFFFFFF (4GiB for u8) is rejected on both 32-
+        // and 64-bit. Max bytes = u32::MAX×16 = 64GiB, compared in u64 so the
+        // product can never overflow. Returns VecTooLong (mapped to "length
+        // out of bounds" in spectest), not AllocError. Refs #158.
+        const MAX_DECODE_BYTES: u64 = 10 * 1024 * 1024; // 10 MiB flight decode budget
+        if (len as u64) * (core::mem::size_of::<T>() as u64) > MAX_DECODE_BYTES {
+            return Err(ValidationError::VecTooLong);
+        }
         let mut out = Vec::new_in(alloc, len)?;
         for _ in 0..len {
             out.push(read_element(self)?);
@@ -719,5 +734,95 @@ mod tests {
             assert_eq!(reader.offset(), total, "offset (sz={sz})");
             assert_eq!(reader.read_u8(), Err(ValidationError::Eof), "eof (sz={sz})");
         }
+    }
+
+    #[test]
+    fn read_vec_rejects_oversized_length_as_vec_too_long() {
+        // Regression for #158: a module-supplied vector length of 0xFFFFFFFF
+        // (LEB128: ff ff ff ff 0f) must be rejected with VecTooLong BEFORE any
+        // allocation, on both 32- and 64-bit hosts. With the NOESIS-derived
+        // 10MiB decode budget, 0xFFFFFFFF * 1B = 4GiB exceeds the budget and
+        // is rejected (no multi-gigabyte allocator attempt, no 32-bit panic).
+        let data = [0xFFu8, 0xFF, 0xFF, 0xFF, 0x0F];
+        let mut stream = ChunkStream::new(&data, 1);
+        let mut reader = Reader::new(&mut stream);
+        let res: Result<Vec<u8>, _> = reader.read_vec(|r| r.read_u8());
+        assert_eq!(res, Err(ValidationError::VecTooLong));
+    }
+
+    #[test]
+    fn read_vec_accepts_reasonable_length() {
+        // Sanity: a small, well-formed vector still decodes (no regression in
+        // the normal path). LEB128 length 3 + three u8 elements.
+        let data = [0x03u8, 0x0A, 0x0B, 0x0C];
+        let mut stream = ChunkStream::new(&data, 1);
+        let mut reader = Reader::new(&mut stream);
+        let v: Vec<u8> = reader.read_vec(|r| r.read_u8()).unwrap();
+        assert_eq!(&*v, &[0x0A, 0x0B, 0x0C]);
+    }
+
+    // Boundary corpus — the full input space the 10MiB decode budget admits,
+    // enumerated via NOESIS DERIVE (LEB128 length encodings). Exactly MAX is
+    // accepted; MAX+1 and every out-of-budget value is rejected as VecTooLong.
+    // MAX_DECODE_BYTES = 10MiB; for u8 that is 10_485_760 elements.
+    const MAX_U8_ELEMENTS: u32 = 10 * 1024 * 1024; // = MAX_DECODE_BYTES / size_of::<u8>()
+
+    fn leb128(mut n: u64) -> StdVec<u8> {
+        let mut out = StdVec::new();
+        loop {
+            let mut b = (n & 0x7f) as u8;
+            n >>= 7;
+            if n != 0 {
+                b |= 0x80;
+            }
+            out.push(b);
+            if n == 0 {
+                break;
+            }
+        }
+        out
+    }
+
+    // Exercises ONLY the length gate. For lengths within the 10MiB decode
+    // budget the gate passes and read_vec then runs out of payload bytes
+    // (Err(Eof)); for lengths over budget it returns Err(VecTooLong) BEFORE
+    // any allocation. So "accepted" == NOT VecTooLong, "rejected" == VecTooLong.
+    fn check_len_gate(len: u32) -> Result<Vec<u8>, ValidationError> {
+        let mut data = leb128(len as u64);
+        data.push(0x00); // one payload byte so the accepted path has something to read
+        let mut stream = ChunkStream::new(&data, 1);
+        let mut reader = Reader::new(&mut stream);
+        reader.read_vec(|r| r.read_u8())
+    }
+
+    #[test]
+    fn read_vec_budget_boundary_corpus() {
+        // Below/at budget: gate passes (decode may EOF after, but NOT VecTooLong).
+        assert_ne!(
+            check_len_gate(9_999_999),
+            Err(ValidationError::VecTooLong),
+            "max-1 within budget"
+        );
+        assert_ne!(
+            check_len_gate(MAX_U8_ELEMENTS),
+            Err(ValidationError::VecTooLong),
+            "exactly MAX within budget"
+        );
+        // Above budget: rejected as VecTooLong.
+        assert_eq!(
+            check_len_gate(MAX_U8_ELEMENTS + 1),
+            Err(ValidationError::VecTooLong),
+            "MAX+1 rejected"
+        );
+        assert_eq!(
+            check_len_gate(0x7FFF_FFFF),
+            Err(ValidationError::VecTooLong),
+            "i32 max rejected"
+        );
+        assert_eq!(
+            check_len_gate(0xFFFF_FFFF),
+            Err(ValidationError::VecTooLong),
+            "#158 value rejected"
+        );
     }
 }
