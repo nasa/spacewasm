@@ -53,7 +53,7 @@ run_one() {
   target="$(target_flag "$label")"
 
   local out status
-  out="$(timeout "$TIMEOUT_SECS" cargo miri test --features miri-soft-floats $target -- --exact "$name" 2>&1)"
+  out="$(timeout "$TIMEOUT_SECS" cargo miri test $target -- --exact "$name" 2>&1)"
   status=$?
 
   if [ "$status" -eq 0 ]; then
