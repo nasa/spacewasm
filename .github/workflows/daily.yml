@@ -1,6 +1,8 @@
 name: Daily CI Jobs
 
 on:
+  push:
+    branches: [miri-integration-tests]
   schedule:
     - cron: "0 0 * * *"
   workflow_dispatch:
@@ -17,10 +19,9 @@ jobs:
     name: Miri Integration Tests
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout main
+      - name: Checkout code
         uses: actions/checkout@v4
         with:
-          ref: main
           fetch-depth: 0
 
       - name: Install Rust toolchain
