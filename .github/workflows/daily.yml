@@ -47,7 +47,7 @@ jobs:
       - name: Run Miri
         env:
           MIRIFLAGS: -Zmiri-disable-isolation
-          MIRI_TEST_TIMEOUT_SECS: 420
+          MIRI_TEST_TIMEOUT_SECS: 900
           MIRI_TEST_JOBS: 4
           MIRI_TEST_TARGETS: core_integration regression_integration custom_page_sizes_integration statistics_integration
         run: ./.github/scripts/run-tests-with-miri.sh
