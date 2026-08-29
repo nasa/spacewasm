@@ -442,14 +442,28 @@ fn assert_nan_f32(z: f32, arithmetic: bool) {
     let payload = bits & 0x7F_FFFF;
 
     if arithmetic {
-        assert!(
-            (exponent == 0xFF) && ((payload & 0x40_0000) != 0),
-            "Expected arithmetic NaN f32 {} ({:x}) (exponent={}), (payload={:x})",
-            z,
-            bits,
-            exponent,
-            payload
-        )
+        #[cfg(feature = "miri-soft-floats")]
+        {
+            assert!(
+                (exponent == 0xFF) && (payload != 0),
+                "Expected arithmetic NaN f32 {} ({:x}) (exponent={}), (payload={:x})",
+                z,
+                bits,
+                exponent,
+                payload
+            )
+        }
+        #[cfg(not(feature = "miri-soft-floats"))]
+        {
+            assert!(
+                (exponent == 0xFF) && ((payload & 0x40_0000) != 0),
+                "Expected arithmetic NaN f32 {} ({:x}) (exponent={}), (payload={:x})",
+                z,
+                bits,
+                exponent,
+                payload
+            )
+        }
     } else {
         assert!(
             (exponent == 0xFF) && (payload == 0x400000),
@@ -469,14 +483,28 @@ fn assert_nan_f64(z: f64, arithmetic: bool) {
     let payload = bits & 0xF_FFFF_FFFF_FFFF;
 
     if arithmetic {
-        assert!(
-            (exponent == 0x7FF) && ((payload & 0x8_0000_0000_0000) != 0),
-            "Expected arithmetic NaN f64 {} ({:x}) (exponent={}), (payload={:x})",
-            z,
-            bits,
-            exponent,
-            payload
-        )
+        #[cfg(feature = "miri-soft-floats")]
+        {
+            assert!(
+                (exponent == 0x7FF) && (payload != 0),
+                "Expected arithmetic NaN f64 {} ({:x}) (exponent={}), (payload={:x})",
+                z,
+                bits,
+                exponent,
+                payload
+            )
+        }
+        #[cfg(not(feature = "miri-soft-floats"))]
+        {
+            assert!(
+                (exponent == 0x7FF) && ((payload & 0x8_0000_0000_0000) != 0),
+                "Expected arithmetic NaN f64 {} ({:x}) (exponent={}), (payload={:x})",
+                z,
+                bits,
+                exponent,
+                payload
+            )
+        }
     } else {
         assert!(
             (exponent == 0x7FF) && (payload == 0x8_0000_0000_0000),
