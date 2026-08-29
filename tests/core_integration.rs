@@ -58,11 +58,13 @@ fn align() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "expensive recursion")]
 fn call_indirect() {
     run("core/call_indirect");
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "soft-float NaN issues")]
 fn f32() {
     run("core/f32");
 }
@@ -148,6 +150,7 @@ fn const_() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "slow with soft-floats")]
 fn f32_cmp() {
     run("core/f32_cmp");
 }
@@ -183,11 +186,13 @@ fn block() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "soft-float NaN issues")]
 fn conversions() {
     run("core/conversions");
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "soft-float NaN issues")]
 fn f64() {
     run("core/f64");
 }
@@ -270,6 +275,7 @@ fn data() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "slow with soft-floats")]
 fn f64_cmp() {
     run("core/f64_cmp");
 }
@@ -351,6 +357,7 @@ fn endianness() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "soft-float NaN issues")]
 fn float_exprs() {
     run("core/float_exprs");
 }
