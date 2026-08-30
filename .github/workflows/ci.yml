@@ -234,18 +234,28 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+        with:
+          targets: riscv32imc-unknown-none-elf,riscv64gc-unknown-none-elf,thumbv7m-none-eabi,thumbv7em-none-eabihf
 
-      - name: Install WABT (WebAssembly Binary Toolkit)
+      - name: Install QEMU
         run: |
-          set -euo pipefail
-          WABT_VERSION=1.0.41
-          WABT_PLATFORM="linux-x64"
-          WABT_SHA256=83f8122e924745fcd70636e3594bc01c4c47f2d4c8f3c63b5d70d3f83a482677
-          tarball="wabt-${WABT_VERSION}-${WABT_PLATFORM}.tar.gz"
-          wget -q "https://github.com/WebAssembly/wabt/releases/download/${WABT_VERSION}/${tarball}"
-          echo "${WABT_SHA256}  ${tarball}" | sha256sum -c -
-          tar -xzf "${tarball}"
-          sudo cp wabt-${WABT_VERSION}/bin/* /usr/local/bin/
+          sudo apt-get update
+          sudo apt-get install -y \
+            qemu-system-arm \
+            qemu-system-riscv64 \
+            qemu-system-riscv32 \
+            qemu-kvm \
+            qemu-utils
+
+      - name: Install Cargo binutils
+        run: |
+          cargo install cargo-binutils
+          rustup component add llvm-tools
+
+      - name: Install and Setup Python 3.13
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.13' 
 
       - name: Cache Rust dependencies
         # Pinned commit resolved from the annotated Swatinem/rust-cache@v2 tag.
@@ -254,24 +264,17 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-bin: false
 
-      - name: Run CoreMark benchmark
+      - name: Run Benchmark
         id: benchmark
         run: |
           # Build and run the benchmark from workspace root, capturing output
-          output=$(cargo bench -p spacewasm_std --bench coremark --no-fail-fast 2>&1)
+          output=$(python3 crates/spacewasm_bench/scripts/run_all.py 4)
           echo "$output"
+          echo "out<<EOF" >> $GITHUB_OUTPUT
+          echo "$output" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
 
-          # Extract the CoreMark score from the output
-          score=$(echo "$output" | grep "CoreMark Score:" | awk '{print $3}')
-          if [ -z "$score" ]; then
-            echo "Failed to extract CoreMark score"
-            exit 1
-          fi
-
-          echo "score=$score" >> $GITHUB_OUTPUT
-          echo "Benchmark score: $score"
-
-      - name: Download baseline benchmark
+      - name: Run Baseline Benchmark
         id: baseline
         continue-on-error: true
         run: |
@@ -279,28 +282,30 @@ jobs:
           if [ "${{ github.event_name }}" == "pull_request" ]; then
             git fetch origin main:main
             git checkout main
-            baseline_output=$(cargo bench -p spacewasm_std --bench coremark --no-fail-fast 2>&1) || true
-            baseline_score=$(echo "$baseline_output" | grep "CoreMark Score:" | awk '{print $3}')
+            output=$(python3 crates/spacewasm_bench/scripts/run_all.py 4) || true
             git checkout -
 
-            if [ -n "$baseline_score" ]; then
-              echo "baseline=$baseline_score" >> $GITHUB_OUTPUT
-              echo "Baseline score: $baseline_score"
+            if [ -n "$output" ]; then
+              echo "out<<EOF" >> $GITHUB_OUTPUT
+              echo "$output" >> $GITHUB_OUTPUT
+              echo "EOF" >> $GITHUB_OUTPUT
+              echo "$output"
             else
-              echo "baseline=" >> $GITHUB_OUTPUT
+              echo "out={}" >> $GITHUB_OUTPUT
             fi
           else
-            echo "baseline=" >> $GITHUB_OUTPUT
+            echo "out={}" >> $GITHUB_OUTPUT
           fi
 
       - name: Save benchmark results
         if: github.event_name == 'pull_request'
+        # quotes intentionally ommitted around current and baseline values
         run: |
           cat > benchmark-results.json <<EOF
           {
             "prNumber": "${{ github.event.pull_request.number }}",
-            "currentScore": "${{ steps.benchmark.outputs.score }}",
-            "baselineScore": "${{ steps.baseline.outputs.baseline }}"
+            "current": ${{ steps.benchmark.outputs.out }},
+            "baseline": ${{ steps.baseline.outputs.out }}
           }
           EOF
 
