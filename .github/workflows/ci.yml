@@ -268,7 +268,7 @@ jobs:
         id: benchmark
         run: |
           # Build and run the benchmark from workspace root, capturing output
-          output=$(python3 crates/spacewasm_bench/scripts/run_all.py)
+          output=$(python3 crates/spacewasm_bench/scripts/run_all.py 4)
           echo "$output"
           echo "out<<EOF" >> $GITHUB_OUTPUT
           echo "$output" >> $GITHUB_OUTPUT

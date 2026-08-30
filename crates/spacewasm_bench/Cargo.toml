@@ -8,7 +8,7 @@ edition.workspace = true
 [dependencies]
 spacewasm = { path = "../.." }
 
-[target.'cfg(any(target_arch = "aarch64", target_arch = "x86_64"))'.dependencies]
+[target.'cfg(target_os = "linux")'.dependencies]
 spacewasm_util = { path = "../spacewasm_util" }
 cputicks = "0.1.0"
 

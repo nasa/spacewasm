@@ -1,5 +1,5 @@
-#![cfg_attr(not(any(target_arch = "aarch64", target_arch = "x86_64")), no_main)]
-#![cfg_attr(not(any(target_arch = "aarch64", target_arch = "x86_64")), no_std)]
+#![cfg_attr(not(target_os = "linux"), no_main)]
+#![cfg_attr(not(target_os = "linux"), no_std)]
 
 /// An embedding of the coremark benchmark in SpaceWasm, for desktop and embedded
 /// environments (*nix x86_64/aarch64, and bare-metal arm/riscv32/riscv64)
@@ -23,18 +23,18 @@ use core::ops::ControlFlow;
     path = "riscv.rs"
 )]
 #[cfg_attr(
-    any(target_arch = "aarch64", target_arch = "x86_64"),
+    target_os = "linux",
     path = "linux.rs"
 )]
 mod bench;
 mod bytes;
 
-#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
+#[cfg(target_os = "linux")]
 use spacewasm_util::RustSystemAllocator as Allocator;
 
-#[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+#[cfg(not(target_os = "linux"))]
 mod alloc;
-#[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+#[cfg(not(target_os = "linux"))]
 use {alloc::BareMetalAllocator as Allocator, bench::entry, semihosting::print};
 
 use spacewasm::{
@@ -138,9 +138,9 @@ fn coremark() -> f32 {
     engine.result.unwrap_or(RawValue::from_32(0)).read_f32()
 }
 
-#[cfg_attr(not(any(target_arch = "aarch64", target_arch = "x86_64")), entry)]
+#[cfg_attr(not(target_os = "linux"), entry)]
 fn entrypoint() -> ! {
-    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+    #[cfg(not(target_os = "linux"))]
     alloc::init();
 
     bench::clock_setup();
@@ -151,7 +151,7 @@ fn entrypoint() -> ! {
     bench::exit(0);
 }
 
-#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
+#[cfg(target_os = "linux")]
 fn main() {
     entrypoint();
 }
