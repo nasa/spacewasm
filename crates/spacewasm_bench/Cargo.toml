@@ -8,7 +8,7 @@ edition.workspace = true
 [dependencies]
 spacewasm = { path = "../.." }
 
-[target.'cfg(target_os = "linux")'.dependencies]
+[target.'cfg(not(target_os = "none"))'.dependencies]
 spacewasm_util = { path = "../spacewasm_util" }
 cputicks = "0.1.0"
 
@@ -18,7 +18,7 @@ riscv-rt = "0.18.0"
 semihosting = { version = "0.1.25", features = ["stdio", "panic-handler"] }
 embedded-alloc = "0.7.0"
 
-[target.'cfg(target_arch = "arm")'.dependencies]
+[target.'cfg(all(target_arch = "arm", target_os = "none"))'.dependencies]
 cortex-m = { version = "0.7.6", features = ["critical-section-single-core"] }
 cortex-m-rt = "0.7"
 rtic-monotonics = { version = "2.2.1", features = ["cortex-m-systick"] }
