@@ -10,15 +10,18 @@
 //!
 //! ---
 
+use std::sync::LazyLock;
+
+use cputicks::Ticks;
+
+static TICK_START: LazyLock<Ticks> = LazyLock::new(Ticks::now);
+
 pub fn clock_setup() {
-    // nothing to do here
+    // set up in LazyLock initializer above
 }
 
 pub fn clock_get_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as i64
+    TICK_START.elapsed().as_duration().as_millis() as i64
 }
 
 pub fn exit(code: i32) -> ! {

@@ -412,6 +412,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "cputicks"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "89c61476b451ea063dcbd3ef74ca152e96a3d5a06c904c077f3e8010862add05"
+
+[[package]]
 name = "cranelift-bitset"
 version = "0.115.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1745,6 +1751,7 @@ version = "0.0.0"
 dependencies = [
  "cortex-m",
  "cortex-m-rt",
+ "cputicks",
  "embedded-alloc",
  "riscv",
  "riscv-rt",

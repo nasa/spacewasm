@@ -16,15 +16,15 @@
 //! and the semihosting crate developed by Taiki Endo
 pub use riscv_rt::entry;
 
-const CLOCK_HZ: u32 = 1_000_000_000; // 1 GHz
+const TIMER_HZ: u32 = 10_000_000; // QEMU riscv time register frequency
 
 pub fn clock_setup() {
     // nothing to do here
 }
 
 pub fn clock_get_ms() -> i64 {
-    let ticks = riscv::register::time::read() as f64;
-    (ticks / ((CLOCK_HZ / 1000) as f64)) as i64
+    let ticks = riscv::register::time::read64() as f64;
+    (ticks / ((TIMER_HZ / 1000) as f64)) as i64
 }
 
 pub fn exit(code: i32) -> ! {

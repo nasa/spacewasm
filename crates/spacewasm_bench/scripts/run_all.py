@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 # A script that reads ELF section sizes and runs the coremark benchmark and outputs JSON.
 # This script should be run from the workspace root.
 #
@@ -17,25 +19,30 @@ import os
 import time
 from threading import Thread
 
+qemu_flags = "-nographic -semihosting-config enable=on,target=native -kernel"
+
 qemu_commands = {
-    "riscv32i-unknown-none-elf": "qemu-system-riscv32 -icount shift=0 -bios none -cpu rv32 -machine virt -m 256M -nographic -semihosting-config enable=on,target=native -kernel",
-    "riscv64gc-unknown-none-elf": "qemu-system-riscv64 -icount shift=0 -bios none -cpu rv64 -machine virt -m 256M -nographic -semihosting-config enable=on,target=native -kernel",
-    "thumbv7m-none-eabi": "qemu-system-arm -icount shift=0 -cpu cortex-m4 -machine netduinoplus2 -nographic -semihosting-config enable=on,target=native -kernel",
-    "thumbv7em-none-eabihf": "qemu-system-arm -icount shift=0 -cpu cortex-m4 -machine netduinoplus2 -nographic -semihosting-config enable=on,target=native -kernel",
+    "riscv32imc-unknown-none-elf": "qemu-system-riscv32 -icount shift={shift} -bios none -cpu rv32 -machine virt -m 256M {flags}",
+    "riscv64gc-unknown-none-elf": "qemu-system-riscv64 -icount shift={shift} -bios none -cpu rv64 -machine virt -m 256M {flags}",
+    "thumbv7m-none-eabi": "qemu-system-arm -icount shift={shift} -cpu cortex-m4 -machine netduinoplus2 {flags}",
+    "thumbv7em-none-eabihf": "qemu-system-arm -icount shift={shift} -cpu cortex-m4 -machine netduinoplus2 {flags}",
 }
 qemu_info = {
-    "riscv32i-unknown-none-elf": "rv32 / virt @ 1GHz",
-    "riscv64gc-unknown-none-elf": "rv64 / virt @ 1GHz",
+    "riscv32imc-unknown-none-elf": "rv32 / virt",
+    "riscv64gc-unknown-none-elf": "rv64 / virt",
     "thumbv7m-none-eabi": "cortex-m4 / netduinoplus2 @ 1GHz",
     "thumbv7em-none-eabihf": "cortex-m4 / netduinoplus2 @ 1GHz",
 }
 triples = list(qemu_commands.keys())
 elf_sections = [".text", ".rodata", ".data", ".bss"]
 
-def get_coremark(triple, q):
+def get_coremark(triple, q, shift):
     """runs QEMU over target triple"""
 
-    command = [*qemu_commands[triple].split(" "), f"target/{triple}/release/spacewasm_bench"]
+    command = [
+        *qemu_commands[triple].format(shift=shift, flags=qemu_flags).split(" "),
+        f"target/{triple}/release/spacewasm_bench"
+    ]
 
     sys.stderr.write(" ".join(command) + "\n")
     sys.stderr.flush()
@@ -48,7 +55,7 @@ def get_coremark(triple, q):
     sys.stderr.write(proc.stderr.decode())
     sys.stderr.flush()
 
-    output = float(proc.stdout.decode())
+    output = float(proc.stdout.decode()) * (2 ** shift)
 
     q.put((triple, output, full_time))
 
@@ -88,8 +95,20 @@ def get_sizes(triple):
     return out
 
 def main():
+    if len(sys.argv) != 2:
+        print(f"usage: {sys.argv[0]} <shift value>\n\n\t(note that  0 <= shift value <= 10)")
+        return 1
+
+    try:
+        shift = int(sys.argv[1])
+        if not 0 <= shift <= 10:
+            raise ValueError
+    except ValueError:
+        print(f"shift value of {sys.argv[1]} is invalid")
+        return 1
+
     q = queue.Queue()
-    threads = [Thread(target=get_coremark, args=(i, q)) for i in triples]
+    threads = [Thread(target=get_coremark, args=(i, q, shift)) for i in triples]
 
     data = {}
 
