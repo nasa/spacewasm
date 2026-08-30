@@ -10,7 +10,6 @@ spacewasm = { path = "../.." }
 
 [target.'cfg(not(target_os = "none"))'.dependencies]
 spacewasm_util = { path = "../spacewasm_util" }
-cputicks = "0.1.0"
 
 [target.'cfg(any(target_arch = "riscv64", target_arch = "riscv32"))'.dependencies]
 riscv = { version = "0.16.1", features = ["critical-section-single-hart"] }

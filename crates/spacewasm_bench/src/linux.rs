@@ -11,17 +11,16 @@
 //! ---
 
 use std::sync::LazyLock;
+use std::time::Instant;
 
-use cputicks::Ticks;
-
-static TICK_START: LazyLock<Ticks> = LazyLock::new(Ticks::now);
+static START_TIME: LazyLock<Instant> = LazyLock::new(Instant::now);
 
 pub fn clock_setup() {
     // set up in LazyLock initializer above
 }
 
 pub fn clock_get_ms() -> i64 {
-    TICK_START.elapsed().as_duration().as_millis() as i64
+    START_TIME.elapsed().as_millis() as i64
 }
 
 pub fn exit(code: i32) -> ! {
