@@ -28,13 +28,16 @@ use std::ops::ControlFlow;
 use std::panic::catch_unwind;
 use std::path::Path;
 use std::path::PathBuf;
-use std::process::Command as ProcessCommand;
 use std::ptr::NonNull;
 use std::rc::Rc;
+use std::sync::{Arc, Mutex};
+
+#[cfg(not(miri))]
+use std::process::Command as ProcessCommand;
+#[cfg(not(miri))]
+use std::sync::atomic::{AtomicU64, Ordering};
 
 type SubtestLogType = Arc<Mutex<Option<Rc<RefCell<LimitedVec<String>>>>>>;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Deserialize, Serialize)]
 struct TestFile {
@@ -1091,11 +1094,67 @@ fn check_initialization_error(result: InterpreterResult, text: &str) {
     }
 }
 
-// Simple temp directory that cleans up on drop
+/// Wrapper for `wast2json`
+#[cfg(not(miri))]
+fn wast2json(source_wast_path: &Path, out_dir: &Path, test_filename: &str) {
+    let output = ProcessCommand::new("wast2json")
+        .arg(source_wast_path)
+        .arg("--enable-custom-page-sizes")
+        .arg("-o")
+        .arg(out_dir.join(format!("{}.json", test_filename)))
+        .current_dir(out_dir)
+        .output()
+        .unwrap_or_else(|e| panic!("Failed to run wast2json: {e}"));
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        panic!("wast2json failed: {}", stderr);
+    }
+}
+
+#[cfg(not(miri))]
+pub fn convert_wast_for_miri() {
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let tests_dir = PathBuf::from(manifest_dir).join("tests");
+    let converted_root = PathBuf::from(manifest_dir).join("target").join("miri-wast");
+
+    let _ = std::fs::remove_dir_all(&converted_root);
+
+    // The `tests/` subdirectories containing `.wast` files. Hard-coded
+    // rather than walked, since it's a fixed, small set; add to this list
+    // if a new `.wast` suite subdirectory is introduced.
+    let wast_dirs: &[&str] = &["core", "regression", "custom-page-sizes"];
+
+    for subdir in wast_dirs {
+        let dir = tests_dir.join(subdir);
+        for entry in
+            std::fs::read_dir(&dir).unwrap_or_else(|e| panic!("Failed to read {dir:?}: {e}"))
+        {
+            let wast_path = entry.unwrap().path();
+            if wast_path.extension().is_none_or(|ext| ext != "wast") {
+                continue;
+            }
+
+            let rel = wast_path
+                .strip_prefix(&tests_dir)
+                .unwrap()
+                .with_extension("");
+            let test_filename = rel.file_stem().unwrap().to_string_lossy().to_string();
+
+            let out_dir = converted_root.join(&rel);
+            std::fs::create_dir_all(&out_dir).unwrap();
+
+            wast2json(&wast_path, &out_dir, &test_filename);
+        }
+    }
+}
+
+#[cfg(not(miri))]
 struct TempDir {
     path: PathBuf,
 }
 
+#[cfg(not(miri))]
 impl TempDir {
     fn new() -> std::io::Result<Self> {
         static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -1112,6 +1171,7 @@ impl TempDir {
     }
 }
 
+#[cfg(not(miri))]
 impl Drop for TempDir {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.path);
@@ -1475,9 +1535,11 @@ pub fn run_wast_test_file(test_name: &str, host_modules: HostModuleFactory) {
         .join(format!("{}.wast", test_name));
 
     // Create a temporary directory for generated files
+    #[cfg(not(miri))]
     let temp_dir =
         TempDir::new().unwrap_or_else(|e| panic!("Failed to create temp directory: {e}"));
-    let temp_path = temp_dir.path();
+    #[cfg(not(miri))]
+    let temp_path = temp_dir.path().to_path_buf();
 
     // Extract just the filename (without directory path) for the JSON output
     let test_filename = PathBuf::from(test_name)
@@ -1486,20 +1548,29 @@ pub fn run_wast_test_file(test_name: &str, host_modules: HostModuleFactory) {
         .to_string_lossy()
         .to_string();
 
-    // Run wast2json to generate Wasm modules and JSON descriptor
-    let output = ProcessCommand::new("wast2json")
-        .arg(&source_wast_path)
-        .arg("--enable-custom-page-sizes")
-        .arg("-o")
-        .arg(temp_path.join(format!("{}.json", test_filename)))
-        .current_dir(temp_path)
-        .output()
-        .unwrap_or_else(|e| panic!("Failed to run wast2json: {e}"));
+    // Pre-convert tests for Miri to run
+    #[cfg(not(miri))]
+    wast2json(&source_wast_path, &temp_path, &test_filename);
+    #[cfg(not(miri))]
+    let test_dir = temp_path;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        panic!("wast2json failed: {}", stderr);
-    }
+    #[cfg(miri)]
+    let test_dir = {
+        let dir = PathBuf::from(manifest_dir)
+            .join("target")
+            .join("miri-wast")
+            .join(test_name);
+
+        if !dir.join(format!("{}.json", test_filename)).exists() {
+            panic!(
+                "Converted wast files missing at {}. Run `cargo test --test miri_wast_convert \
+                 -- --ignored` (with `wast2json` on PATH) before `cargo miri test`.",
+                dir.display()
+            );
+        }
+
+        dir
+    };
 
     let wast_line = Arc::new(Mutex::new(None));
     #[allow(clippy::arc_with_non_send_sync)]
@@ -1507,7 +1578,7 @@ pub fn run_wast_test_file(test_name: &str, host_modules: HostModuleFactory) {
 
     match catch_unwind(|| {
         run_wast_test_file_inner(
-            temp_path.to_path_buf(),
+            test_dir,
             &test_filename,
             host_modules,
             wast_line.clone(),

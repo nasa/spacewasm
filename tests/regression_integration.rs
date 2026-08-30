@@ -1,5 +1,3 @@
-#![cfg(not(miri))]
-
 mod util;
 use std::{ops::ControlFlow, sync::Mutex};
 
