@@ -282,7 +282,7 @@ jobs:
           if [ "${{ github.event_name }}" == "pull_request" ]; then
             git fetch origin main:main
             git checkout main
-            output=$(python3 crates/spacewasm_bench/scripts/run_all.py) || true
+            output=$(python3 crates/spacewasm_bench/scripts/run_all.py 4) || true
             git checkout -
 
             if [ -n "$output" ]; then
