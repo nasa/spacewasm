@@ -1,0 +1,51 @@
+name: Daily CI Jobs
+
+on:
+  schedule:
+    - cron: "0 0 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  RUST_BACKTRACE: 1
+  CARGO_TERM_COLOR: always
+
+jobs:
+  miri-integration:
+    name: Miri Integration Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: nightly
+          override: true
+          components: miri
+
+      - name: Install WABT (WebAssembly Binary Toolkit)
+        run: |
+          WABT_VERSION=1.0.41
+          WABT_PLATFORM="linux-x64"
+          wget https://github.com/WebAssembly/wabt/releases/download/${WABT_VERSION}/wabt-${WABT_VERSION}-${WABT_PLATFORM}.tar.gz
+          tar -xzf wabt-${WABT_VERSION}-${WABT_PLATFORM}.tar.gz
+          sudo cp wabt-${WABT_VERSION}/bin/* /usr/local/bin/
+        shell: bash
+
+      - name: Convert wast files for Miri
+        run: cargo test --test miri_wast_convert -- --ignored
+
+      - name: Run Miri
+        env:
+          MIRIFLAGS: -Zmiri-disable-isolation
+          MIRI_TEST_TIMEOUT_SECS: 1500
+          MIRI_TEST_JOBS: 4
+          MIRI_TEST_TARGETS: core_integration regression_integration custom_page_sizes_integration statistics_integration
+        run: ./.github/scripts/run-tests-with-miri.sh

@@ -482,3 +482,242 @@ impl<'wasm> Drop for Reader<'wasm> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::InnerVec;
+
+    extern crate std;
+    use std::vec::Vec as StdVec;
+
+    /// A [`WasmStream`] that hands out its backing bytes in fixed-size chunks,
+    /// pointing each [`InnerVec`] directly into the borrowed slice (mirroring
+    /// the C API `Cursor` streaming test). A `chunk_size` of 1 forces a stream
+    /// round-trip for essentially every byte, and any size smaller than a
+    /// multi-byte value makes that value straddle a chunk boundary — exactly
+    /// the cross-chunk decode path that [`Reader::fill_buffer`] must handle.
+    struct ChunkStream<'a> {
+        data: &'a [u8],
+        pos: usize,
+        chunk_size: usize,
+    }
+
+    impl<'a> ChunkStream<'a> {
+        fn new(data: &'a [u8], chunk_size: usize) -> Self {
+            assert!(chunk_size > 0);
+            Self {
+                data,
+                pos: 0,
+                chunk_size,
+            }
+        }
+    }
+
+    impl WasmStream for ChunkStream<'_> {
+        fn read(&mut self) -> Result<Option<InnerVec<u8>>, u8> {
+            let remaining = self.data.len() - self.pos;
+            if remaining == 0 {
+                // No more chunks: signals EOF to the reader.
+                return Ok(None);
+            }
+            let n = remaining.min(self.chunk_size);
+            // SAFETY: `data` outlives every chunk we hand out; the reader only
+            // reads the bytes (never writes through the pointer) and copies
+            // them into its own buffer before requesting the next chunk.
+            let ptr = unsafe { self.data.as_ptr().add(self.pos) as *mut u8 };
+            self.pos += n;
+            Ok(Some(InnerVec {
+                ptr,
+                capacity: n as u32,
+                len: n as u32,
+            }))
+        }
+
+        // The backing slice is owned by the caller and stays alive for the
+        // whole test, so there is nothing to reclaim.
+        fn return_(&mut self, _chunk: InnerVec<u8>) {}
+    }
+
+    /// Decode a single value from `data` under several chunk sizes (1, 7, and
+    /// a single whole-buffer chunk) and assert it always equals `expected`,
+    /// with the reader landing exactly at end-of-input.
+    fn for_chunks<T: PartialEq + core::fmt::Debug>(
+        data: &[u8],
+        expected: T,
+        mut f: impl FnMut(&mut Reader) -> Result<T, ValidationError>,
+    ) {
+        for &sz in &[1usize, 7, data.len().max(1)] {
+            let mut stream = ChunkStream::new(data, sz);
+            let mut reader = Reader::new(&mut stream);
+            assert_eq!(f(&mut reader).unwrap(), expected, "value (chunk_size={sz})");
+            assert_eq!(reader.offset(), data.len(), "offset (chunk_size={sz})");
+        }
+    }
+
+    #[test]
+    fn read_u8_across_chunks() {
+        for_chunks(&[0xAB], 0xABu8, |r| r.read_u8());
+    }
+
+    #[test]
+    fn read_u32_leb128_multibyte() {
+        // 624485 == [0xE5, 0x8E, 0x26] (3-byte unsigned LEB128).
+        for_chunks(&[0xE5, 0x8E, 0x26], 624485u32, |r| r.read_u32());
+        // Single-byte and boundary values.
+        for_chunks(&[0x00], 0u32, |r| r.read_u32());
+        for_chunks(&[0x7F], 127u32, |r| r.read_u32());
+        // Full 5-byte encoding of u32::MAX.
+        for_chunks(&[0xFF, 0xFF, 0xFF, 0xFF, 0x0F], u32::MAX, |r| r.read_u32());
+    }
+
+    #[test]
+    fn read_i32_leb128_negative() {
+        for_chunks(&[0x80, 0x7F], -128i32, |r| r.read_i32()); // 2-byte
+        for_chunks(&[0xC0, 0xBB, 0x78], -123456i32, |r| r.read_i32()); // 3-byte
+        for_chunks(&[0x7F], -1i32, |r| r.read_i32()); // 1-byte sign-extended
+    }
+
+    #[test]
+    fn read_i64_leb128_full_width() {
+        for_chunks(&[0xD2, 0x09], 1234i64, |r| r.read_i64());
+        for_chunks(&[0xAE, 0x76], -1234i64, |r| r.read_i64());
+        // i64::MIN uses the full 10-byte continuation path.
+        let min = [0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x7F];
+        for_chunks(&min, i64::MIN, |r| r.read_i64());
+    }
+
+    #[test]
+    fn read_floats_little_endian() {
+        for_chunks(&3.5f32.to_le_bytes(), 3.5f32.to_bits(), |r| {
+            r.read_f32_bits()
+        });
+        for_chunks(&(-2.25f64).to_le_bytes(), (-2.25f64).to_bits(), |r| {
+            r.read_f64_bits()
+        });
+    }
+
+    #[test]
+    fn strip_bytes_skip_and_expect_across_chunks() {
+        let data = [1u8, 2, 3, 4, 5, 6];
+        // Feed one byte at a time so each read crosses a chunk boundary.
+        let mut stream = ChunkStream::new(&data, 1);
+        let mut reader = Reader::new(&mut stream);
+        assert_eq!(reader.strip_bytes::<3>().unwrap(), [1, 2, 3]);
+        reader.skip(1).unwrap(); // skips the 4
+        assert_eq!(reader.read_u8().unwrap(), 5);
+        reader.expect_u8(6).unwrap();
+        assert_eq!(reader.offset(), data.len());
+    }
+
+    #[test]
+    fn expect_u8_mismatch_errors_without_consuming() {
+        let data = [0x09u8];
+        let mut stream = ChunkStream::new(&data, 1);
+        let mut reader = Reader::new(&mut stream);
+        assert_eq!(
+            reader.expect_u8(0x00),
+            Err(ValidationError::ExpectedTerminal(0x00))
+        );
+        // The mismatched byte is not consumed and can still be read.
+        assert_eq!(reader.read_u8().unwrap(), 0x09);
+    }
+
+    #[test]
+    fn eof_is_reported_on_empty_and_exhausted_stream() {
+        // Empty stream.
+        let mut stream = ChunkStream::new(&[], 1);
+        let mut reader = Reader::new(&mut stream);
+        assert_eq!(reader.read_u8(), Err(ValidationError::Eof));
+        drop(reader);
+
+        // Exhausted after reading the only byte.
+        let data = [0x42u8];
+        let mut stream = ChunkStream::new(&data, 1);
+        let mut reader = Reader::new(&mut stream);
+        assert_eq!(reader.read_u8().unwrap(), 0x42);
+        assert_eq!(reader.read_u8(), Err(ValidationError::Eof));
+    }
+
+    #[test]
+    fn read_vec_across_chunks() {
+        // A LEB128 length (3) followed by three u8 elements, one byte per chunk.
+        let data = [0x03u8, 0x0A, 0x0B, 0x0C];
+        let mut stream = ChunkStream::new(&data, 1);
+        let mut reader = Reader::new(&mut stream);
+        // `read_vec` allocates through the `GlobalAllocator`, which the crate
+        // test binary backs via the `__spacewasm_alloc` shim in `lib.rs`.
+        let v = reader.read_vec(|r| r.read_u8()).unwrap();
+        assert_eq!(&*v, &[0x0A, 0x0B, 0x0C]);
+        assert_eq!(reader.offset(), data.len());
+    }
+
+    #[test]
+    fn single_large_chunk_refills_circular_buffer_repeatedly() {
+        // A payload larger than the 64-byte circular buffer, delivered as a
+        // SINGLE chunk, forces `fill_buffer` to re-enter its "copy more from
+        // the still-held chunk" branch each time the buffer drains (three times
+        // for 200 bytes). Reading every byte back byte-exact across those
+        // refills proves that path independently of `mixed_sequence_*`.
+        let mut data = StdVec::new();
+        for i in 0..200u32 {
+            data.push((i.wrapping_mul(7).wrapping_add(3)) as u8);
+        }
+        let mut stream = ChunkStream::new(&data, data.len()); // one chunk
+        let mut reader = Reader::new(&mut stream);
+        for (i, &expected) in data.iter().enumerate() {
+            assert_eq!(reader.read_u8().unwrap(), expected, "byte {i}");
+        }
+        assert_eq!(reader.offset(), data.len());
+        assert_eq!(reader.read_u8(), Err(ValidationError::Eof));
+    }
+
+    #[test]
+    fn mixed_sequence_across_chunks() {
+        // A heterogeneous value stream decoded back under several chunk sizes.
+        // chunk_size 1 forces a stream round-trip per byte; 3 and 7 make the
+        // multi-byte values straddle boundaries at varying offsets; and the
+        // whole-buffer case (> 64 bytes) exercises refilling the 64-byte
+        // circular buffer repeatedly from a single large chunk.
+        let mut data = StdVec::new();
+        data.push(0x2Au8); // u8 = 42
+        data.extend_from_slice(&[0xE5, 0x8E, 0x26]); // u32 LEB = 624485
+        data.extend_from_slice(&[0xC0, 0xBB, 0x78]); // i32 LEB = -123456
+        data.extend_from_slice(&[0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x7F]); // i64 = i64::MIN
+        data.extend_from_slice(&3.5f32.to_le_bytes()); // f32 bits
+        data.extend_from_slice(&(-2.25f64).to_le_bytes()); // f64 bits
+        data.extend_from_slice(&[0x11, 0x22, 0x33, 0x44]); // strip_bytes::<4>
+        data.extend_from_slice(&[0x55; 40]); // skip(40) of filler
+        data.push(0x77); // final u8
+        let total = data.len();
+        assert!(total > 64, "buffer must exceed the 64-byte circular buffer");
+
+        for &sz in &[1usize, 3, 7, total] {
+            let mut stream = ChunkStream::new(&data, sz);
+            let mut reader = Reader::new(&mut stream);
+            assert_eq!(reader.read_u8().unwrap(), 0x2A, "u8 (sz={sz})");
+            assert_eq!(reader.read_u32().unwrap(), 624485, "u32 (sz={sz})");
+            assert_eq!(reader.read_i32().unwrap(), -123456, "i32 (sz={sz})");
+            assert_eq!(reader.read_i64().unwrap(), i64::MIN, "i64 (sz={sz})");
+            assert_eq!(
+                reader.read_f32_bits().unwrap(),
+                3.5f32.to_bits(),
+                "f32 (sz={sz})"
+            );
+            assert_eq!(
+                reader.read_f64_bits().unwrap(),
+                (-2.25f64).to_bits(),
+                "f64 (sz={sz})"
+            );
+            assert_eq!(
+                reader.strip_bytes::<4>().unwrap(),
+                [0x11, 0x22, 0x33, 0x44],
+                "strip (sz={sz})"
+            );
+            reader.skip(40).unwrap();
+            assert_eq!(reader.read_u8().unwrap(), 0x77, "final (sz={sz})");
+            assert_eq!(reader.offset(), total, "offset (sz={sz})");
+            assert_eq!(reader.read_u8(), Err(ValidationError::Eof), "eof (sz={sz})");
+        }
+    }
+}
