@@ -13,9 +13,6 @@
 /*
  Operation status returned by most `spacewasm_*` functions.
  [`spacewasm_status_t::SPACEWASM_OK`] (0) means success.
-
- Variants are glob-re-exported below so they can be named unqualified within
- this crate (e.g. `status::SPACEWASM_OK`).
  */
 enum spacewasm_status_t
 #if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
@@ -341,6 +338,12 @@ typedef struct spacewasm_t spacewasm_t;
 typedef struct spacewasm_host_module_t spacewasm_host_module_t;
 
 /*
+ Opaque handle passed to C host callbacks, wrapping a borrowed core
+ [`Engine`]. Valid only for the duration of the call.
+ */
+typedef struct spacewasm_caller_t spacewasm_caller_t;
+
+/*
  Allocate `size` bytes aligned to `align`. Return NULL on failure.
  */
 typedef uint8_t *(*spacewasm_alloc_fn_t)(void *userdata, size_t size, size_t align);
@@ -365,14 +368,6 @@ typedef struct spacewasm_host_t {
     uint32_t capacity;
     uint32_t len;
 } spacewasm_host_t;
-
-/*
- Opaque handle passed to C host callbacks, wrapping a borrowed core
- [`Engine`]. Valid only for the duration of the call.
- */
-typedef struct spacewasm_caller_t {
-
-} spacewasm_caller_t;
 
 /*
  FFI-safe union of the four WebAssembly 1.0 value payloads.
@@ -488,10 +483,10 @@ struct spacewasm_allocator_t *spacewasm_allocator_new(spacewasm_alloc_fn_t alloc
 void spacewasm_allocator_destroy(struct spacewasm_allocator_t *allocator);
 
 /*
- Create a new host module vector of max_host_module size
+ Create a new host module vector of `len` size
 
  # Safety
- `host` must be live
+ `dest` must be null or a valid, live pointer to write the new host vector into.
  */
 spacewasm_status_t spacewasm_host_new(uint32_t len, struct spacewasm_host_t *dest);
 
@@ -635,9 +630,11 @@ spacewasm_status_t spacewasm_module_start(struct spacewasm_t *engine,
  parameter or return count differs, and
  [`spacewasm_status_t::SPACEWASM_ERR_PARAM_TYPE_MISMATCH`] when a type at some
  position differs. Returns [`spacewasm_status_t::SPACEWASM_ERR_NOT_FOUND`]
- when `module_idx` or `func_index` is out of range, and
- [`spacewasm_status_t::SPACEWASM_ERR_BAD_SIGNATURE`] when a signature string
- contains a character other than `iIfd` or is too long.
+ when `module_idx` or `func_index` is out of range. When a signature string
+ contains a character other than `iIfd` it returns
+ [`spacewasm_status_t::SPACEWASM_ERR_BAD_ARG`], and when it declares more than
+ `MAX_HOST_FUNCTION_PARAMS` entries it returns
+ [`spacewasm_status_t::SPACEWASM_ERR_FUNCTION_PARAMETERS_TOO_LARGE`].
 
  # Safety
  `engine` must be live; all C strings valid and NUL-terminated.

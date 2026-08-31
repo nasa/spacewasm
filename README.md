@@ -1,4 +1,4 @@
-<h1 align="center">SpaceWasm</h2>
+<h1 align="center">SpaceWasm</h1>
 
 <p align="center">
 <img src="docs/logo.svg" width="150" height="150">

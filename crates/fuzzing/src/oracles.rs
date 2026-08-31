@@ -116,7 +116,11 @@ unsafe impl Allocator for SystemAllocator {
         if layout.size() > MAX_ALLOCATION_BYTES {
             return Err(AllocError::OutOfMemory);
         }
-        unsafe { Ok(std::alloc::alloc(layout)) }
+        let ptr = unsafe { std::alloc::alloc(layout) };
+        if ptr.is_null() {
+            return Err(AllocError::AllocationFailed);
+        }
+        Ok(ptr)
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
@@ -503,7 +507,16 @@ pub fn no_traps(wasm: &[u8]) {
     // These should never trap since the module was generated with disallow_traps
     for (wasm_ref, params) in exported_funcs {
         state.reset();
-        state.invoke(wasm_ref, &params).unwrap();
+        match state.invoke(wasm_ref, &params) {
+            Ok(()) => {}
+            // Wasm Smith cannot avoid deeply-recursive exports; a stack overflow
+            // here is not a bug, so skip this export.
+            Err(InvokeError::StackOverflow) => {
+                log::debug!("export hit a stack overflow during invocation");
+                continue;
+            }
+            Err(e) => panic!("unexpected invoke error in no_traps module: {e:?}"),
+        }
 
         // Run the interpreter with limited instructions
         let interpreter = Interpreter;

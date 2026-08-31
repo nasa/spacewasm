@@ -560,10 +560,10 @@ fn check_func_signature() {
             "wrong return type"
         );
 
-        // Malformed signature string.
+        // Malformed signature string: an invalid value-list character.
         assert_eq!(
             spacewasm_check_func_signature(store, idx, func, c"ix".as_ptr(), c"i".as_ptr()),
-            status::SPACEWASM_ERR_BAD_SIGNATURE,
+            status::SPACEWASM_ERR_BAD_ARG,
             "bad signature char"
         );
 
@@ -1362,7 +1362,7 @@ fn error_paths() {
         "oversized max_modules"
     );
 
-    // Bad signature char -> ERR_BAD_SIGNATURE, no panic.
+    // Bad signature char -> ERR_BAD_ARG, no panic.
     assert_eq!(
         unsafe { spacewasm_host_new(1, host.as_mut_ptr()) },
         status::SPACEWASM_OK
@@ -1383,7 +1383,7 @@ fn error_paths() {
                 Some(add_one),
                 core::ptr::null_mut(),
             ),
-            status::SPACEWASM_ERR_BAD_SIGNATURE,
+            status::SPACEWASM_ERR_BAD_ARG,
             "bad signature"
         );
         spacewasm_host_destroy(host.as_mut_ptr());
@@ -1882,7 +1882,7 @@ fn invoke_status_maps() {
 
 #[test]
 fn simple_error_mappers() {
-    use spacewasm::{HostNameError, HostValListError, SectionDecodeError, ValidationError};
+    use spacewasm::{HostNameError, HostFunctionError, SectionDecodeError, ValidationError};
 
     let pe = spacewasm::ParseError::new(0, SectionDecodeError::new(ValidationError::Eof));
     assert_eq!(status::parse_status(&pe), status::SPACEWASM_ERR_EOF);
@@ -1891,10 +1891,35 @@ fn simple_error_mappers() {
         status::host_name_status(HostNameError),
         status::SPACEWASM_ERR_NAME_TOO_LONG
     );
+
+    // Every HostFunctionError variant maps to a distinct, stable status code.
     assert_eq!(
-        status::host_val_list_status(HostValListError),
-        status::SPACEWASM_ERR_BAD_SIGNATURE
+        status::host_val_list_status(HostFunctionError::ValListInvalidItem),
+        status::SPACEWASM_ERR_BAD_ARG,
+        "invalid value-list character"
     );
+    assert_eq!(
+        status::host_val_list_status(HostFunctionError::ParameterListTooLong),
+        status::SPACEWASM_ERR_FUNCTION_PARAMETERS_TOO_LARGE,
+        "too many parameters"
+    );
+    assert_eq!(
+        status::host_val_list_status(HostFunctionError::MultiReturnNotAllowed),
+        status::SPACEWASM_ERR_FUNCTION_RETURNS_TOO_LARGE,
+        "multiple return values"
+    );
+    // The AllocError variant forwards to the shared allocator mapping.
+    for ae in [
+        spacewasm::AllocError::AllocationFailed,
+        spacewasm::AllocError::OutOfMemory,
+        spacewasm::AllocError::PageTooSmall,
+    ] {
+        assert_eq!(
+            status::host_val_list_status(HostFunctionError::AllocError(ae.clone())),
+            status::alloc_status(ae),
+            "alloc error forwards to alloc_status"
+        );
+    }
 }
 
 #[test]
@@ -2067,7 +2092,7 @@ fn module_with_start_runs() {
         status::SPACEWASM_OK
     );
 
-    // Drive the start function in small fuel slices to also exercise the
+    // Drive the start function to completion.
     let mut trap = spacewasm_trap_t::SPACEWASM_TRAP_NONE;
     let start_status = run_to_completion(store, &mut trap);
     assert_eq!(
@@ -2097,7 +2122,6 @@ fn module_with_start_runs() {
     );
     assert_eq!(unsafe { out.u.i32_ }, 42, "start wrote 42");
 
-    // A second module with no start reports `needs_start == false`.
     unsafe {
         spacewasm_destroy(store);
         spacewasm_allocator_destroy(alloc);
@@ -2573,6 +2597,76 @@ fn add_host_function_not_found_module() {
             status::SPACEWASM_ERR_NOT_FOUND,
             "bad module index"
         );
+        spacewasm_host_destroy(host.as_mut_ptr());
+    }
+}
+
+#[test]
+fn add_host_function_signature_errors() {
+    let _guard = ALLOC_LOCK.lock().unwrap();
+    ensure_global_allocator();
+
+    let mut host = core::mem::MaybeUninit::<spacewasm_host_t>::uninit();
+    assert_eq!(
+        unsafe { spacewasm_host_new(1, host.as_mut_ptr()) },
+        status::SPACEWASM_OK
+    );
+    let mut hmod = 0u32;
+    unsafe {
+        assert_eq!(
+            spacewasm_add_host_module(host.as_mut_ptr(), c"env".as_ptr(), 4, 0, &mut hmod),
+            status::SPACEWASM_OK
+        );
+
+        // Helper to register a function with the given signatures, mapping each
+        // distinct HostFunctionError variant to its FFI status code.
+        let mut add = |name: &core::ffi::CStr, params: &core::ffi::CStr, returns: &core::ffi::CStr| {
+            spacewasm_add_host_function(
+                host.as_mut_ptr(),
+                hmod,
+                name.as_ptr(),
+                params.as_ptr(),
+                returns.as_ptr(),
+                Some(add_one),
+                core::ptr::null_mut(),
+            )
+        };
+
+        // Invalid value-list character in the parameter signature.
+        assert_eq!(
+            add(c"bad_param", c"x", c""),
+            status::SPACEWASM_ERR_BAD_ARG,
+            "invalid param char -> ValListInvalidItem"
+        );
+
+        // Invalid value-list character in the return signature.
+        assert_eq!(
+            add(c"bad_ret", c"i", c"z"),
+            status::SPACEWASM_ERR_BAD_ARG,
+            "invalid return char -> ValListInvalidItem"
+        );
+
+        // More than MAX_HOST_FUNCTION_PARAMS (9) parameters.
+        assert_eq!(
+            add(c"too_many", c"iiiiiiiiii", c""),
+            status::SPACEWASM_ERR_FUNCTION_PARAMETERS_TOO_LARGE,
+            "10 params -> ParameterListTooLong"
+        );
+
+        // More than one return value is not supported.
+        assert_eq!(
+            add(c"multi_ret", c"i", c"ii"),
+            status::SPACEWASM_ERR_FUNCTION_RETURNS_TOO_LARGE,
+            "two returns -> MultiReturnNotAllowed"
+        );
+
+        // A valid signature still succeeds after the rejected attempts.
+        assert_eq!(
+            add(c"ok", c"i", c"i"),
+            status::SPACEWASM_OK,
+            "valid signature registers"
+        );
+
         spacewasm_host_destroy(host.as_mut_ptr());
     }
 }

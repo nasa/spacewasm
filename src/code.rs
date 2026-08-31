@@ -108,11 +108,14 @@ impl Module {
         })?;
 
         // Compute the local size in words
-        let size_in_words = f
-            .locals
-            .iter()
-            .fold(0, |sum, (n, ty)| sum + (*n as usize) * ty.size())
-            / 4;
+        let mut total_size: usize = 0;
+        for (n, ty) in f.locals.iter() {
+            total_size = (*n as usize)
+                .checked_mul(ty.size())
+                .and_then(|v| total_size.checked_add(v))
+                .ok_or(ValidationError::TooManyLocals)?;
+        }
+        let size_in_words = total_size / 4;
 
         if size_in_words > 0xFFFF {
             return Err(ValidationError::TooManyLocals);

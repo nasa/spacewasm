@@ -204,7 +204,7 @@ int main(void) {
     spacewasm_trap_t trap = SPACEWASM_TRAP_NONE;
     spacewasm_run_status_t rs = SPACEWASM_RUN_OUT_OF_FUEL;
     while (rs == SPACEWASM_RUN_OUT_OF_FUEL) {
-        rs = spacewasm_run(store, 1000, &start_trap);
+        rs = spacewasm_run(store, 1000, &trap);
     }
 
     if (rs != SPACEWASM_RUN_FINISHED) {

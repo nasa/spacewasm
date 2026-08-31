@@ -47,7 +47,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
@@ -127,7 +127,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install 32-bit system libraries
         run: |
@@ -168,7 +168,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install Rust toolchain
         # Pinned to the commit the `stable` branch resolved to (its action.yml
@@ -210,7 +210,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
@@ -228,7 +228,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
 
@@ -262,7 +262,7 @@ jobs:
           echo "$output"
 
           # Extract the CoreMark score from the output
-          score=$(echo "$output" | grep "CoreMark Score:" | awk '{print $3}')
+          score=$(echo "$output" | grep -m1 "CoreMark Score:" | awk '{print $3}')
           if [ -z "$score" ]; then
             echo "Failed to extract CoreMark score"
             exit 1
@@ -280,7 +280,7 @@ jobs:
             git fetch origin main:main
             git checkout main
             baseline_output=$(cargo bench -p spacewasm_std --bench coremark --no-fail-fast 2>&1) || true
-            baseline_score=$(echo "$baseline_output" | grep "CoreMark Score:" | awk '{print $3}')
+            baseline_score=$(echo "$baseline_output" | grep -m1 "CoreMark Score:" | awk '{print $3}')
             git checkout -
 
             if [ -n "$baseline_score" ]; then
@@ -306,7 +306,7 @@ jobs:
 
       - name: Upload benchmark results
         if: github.event_name == 'pull_request'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: benchmark-results
           path: benchmark-results.json
@@ -318,12 +318,12 @@ jobs:
       fail-fast: false
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
 
       - name: Run Kani on repo
-        uses: model-checking/kani-github-action@v1.1
+        uses: model-checking/kani-github-action@f838096619a707b0f6b2118cf435eaccfa33e51f # v1.1
         with:
           args: "-j --output-format=terse"
 
@@ -332,16 +332,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
 
       - name: Install Rust toolchain
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
         with:
-          profile: minimal
           toolchain: nightly
-          override: true
           components: miri
 
       - name: Run Miri
@@ -354,7 +352,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
 
@@ -376,7 +374,9 @@ jobs:
           sudo cp wabt-${WABT_VERSION}/bin/* /usr/local/bin/
 
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@cargo-llvm-cov
+        uses: taiki-e/install-action@37f7c5781271959fb65b6b35224e28652ff2b63d # v2.87.0
+        with:
+          tool: cargo-llvm-cov
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
@@ -444,14 +444,14 @@ jobs:
 
       - name: Upload coverage results
         if: github.event_name == 'pull_request'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: coverage-results
           path: coverage-results.json
 
       - name: Upload coverage to Codecov
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: codecov/codecov-action@v7
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7
         with:
           files: lcov.info
           token: ${{ secrets.CODECOV_TOKEN }}

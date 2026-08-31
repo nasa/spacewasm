@@ -35,6 +35,7 @@ fn main() {
             "".into(),
             "I".into(),
             |_, _| {
+                CLOCK_CALL_COUNT.fetch_add(1, Ordering::Relaxed);
                 let ms = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()

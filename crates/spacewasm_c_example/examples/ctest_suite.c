@@ -673,13 +673,29 @@ static int test_error_paths(void) {
     CHECK(spacewasm_new(&host, 1024, 257, opts(256), &store) == SPACEWASM_ERR_BAD_ARG,
           "oversized max_modules");
 
-    /* Bad signature char -> ERR_BAD_SIGNATURE, no panic. */
+    /* Host function signature errors each map to a distinct status, no panic. */
     CHECK(spacewasm_host_new(1, &host) == SPACEWASM_OK, "host_new");
     uint32_t hmod = 0;
-    CHECK(spacewasm_add_host_module(&host, "env", 1, 0, &hmod) == SPACEWASM_OK, "add_host_module");
-    CHECK(spacewasm_add_host_function(&host, hmod, "bad", "x", "", add_one, NULL) ==
-              SPACEWASM_ERR_BAD_SIGNATURE,
-          "bad signature");
+    CHECK(spacewasm_add_host_module(&host, "env", 4, 0, &hmod) == SPACEWASM_OK, "add_host_module");
+    /* Invalid value-list character in the parameter signature. */
+    CHECK(spacewasm_add_host_function(&host, hmod, "bad_param", "x", "", add_one, NULL) ==
+              SPACEWASM_ERR_BAD_ARG,
+          "invalid param char");
+    /* Invalid value-list character in the return signature. */
+    CHECK(spacewasm_add_host_function(&host, hmod, "bad_ret", "i", "z", add_one, NULL) ==
+              SPACEWASM_ERR_BAD_ARG,
+          "invalid return char");
+    /* More than MAX_HOST_FUNCTION_PARAMS (9) parameters. */
+    CHECK(spacewasm_add_host_function(&host, hmod, "too_many", "iiiiiiiiii", "", add_one, NULL) ==
+              SPACEWASM_ERR_FUNCTION_PARAMETERS_TOO_LARGE,
+          "too many params");
+    /* More than one return value is not supported. */
+    CHECK(spacewasm_add_host_function(&host, hmod, "multi_ret", "i", "ii", add_one, NULL) ==
+              SPACEWASM_ERR_FUNCTION_RETURNS_TOO_LARGE,
+          "multiple returns");
+    /* A valid signature still succeeds after the rejected attempts. */
+    CHECK(spacewasm_add_host_function(&host, hmod, "ok", "i", "i", add_one, NULL) == SPACEWASM_OK,
+          "valid signature");
     spacewasm_host_destroy(&host);
 
     /* Malformed wasm -> parse error; the store is still created fine. */

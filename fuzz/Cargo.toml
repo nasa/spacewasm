@@ -42,6 +42,3 @@ bench = false
 
 [profile.release]
 debug = 1
-
-# Optional: Add this section if you want to disable sanitizers for specific targets
-# This requires setting up custom build profiles

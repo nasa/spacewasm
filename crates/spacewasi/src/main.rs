@@ -18,7 +18,7 @@
 /// Portions of this file are derived from <https://github.com/crossterm-rs/crossterm>
 use spacewasm::{
     CodeBuilder, CompilerOptions, Engine, ExportDesc, Interpreter, InterpreterResult,
-    InterpreterRunner, InvokeError, ModuleRef, PageAllocator, Ref, TrapReason, WasmRef,
+    InterpreterRunner, InvokeError, PageAllocator, Ref, TrapReason, WasmRef,
 };
 mod wasi_preview1;
 use crate::wasi_preview1::make_wasi_preview1_module;
@@ -178,7 +178,7 @@ fn main() {
     };
     let mut file_stream = FileStream::new(file);
 
-    let Ok(module) = spacewasm::Module::new::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
+    let module = match spacewasm::Module::new::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
         "main",
         &mut file_stream,
         &mut engine.store,
@@ -186,9 +186,12 @@ fn main() {
         spacewasm::Rc::new(RustSystemAllocator)
             .unwrap()
             .into_wasm_memory_allocator(),
-    ) else {
-        eprintln!("failed to parse WASM module");
-        std::process::exit(1);
+    ) {
+        Ok(module) => module,
+        Err(error) => {
+            eprintln!("failed to parse WASM module: {error:?}");
+            std::process::exit(1);
+        }
     };
 
     // Append the module and run its start function (if any). The interpreter
@@ -221,7 +224,12 @@ fn main() {
     let module: &spacewasm::Module = engine.store.modules().last().unwrap();
 
     let fi = {
-        let f = module.exports.iter().find(|f| &f.name == "_start").unwrap();
+        let Some(f) = module.exports.iter().find(|f| &f.name == "_start") else {
+            eprintln!(
+                "error: the provided wasm module does not correctly export a _start function"
+            );
+            std::process::exit(1);
+        };
         let ExportDesc::Func(fi) = f.desc else {
             eprintln!(
                 "error: the provided wasm module does not correctly export a _start function"
@@ -236,17 +244,17 @@ fn main() {
         std::process::exit(1);
     };
 
-    engine
-        .invoke(
-            WasmRef {
-                module: ModuleRef(0),
-                index: fi,
-            },
-            &[],
-        )
-        .unwrap();
-
-    let mut result = InterpreterResult::OutOfFuel;
+    let mut result = match engine.invoke(
+        WasmRef {
+            module: module_ref,
+            index: fi,
+        },
+        &[],
+    ) {
+        Ok(()) => InterpreterResult::OutOfFuel,
+        Err(InvokeError::StackOverflow) => InterpreterResult::Trap(TrapReason::StackOverflow),
+        Err(_) => unreachable!(),
+    };
     while result == InterpreterResult::OutOfFuel {
         result = Interpreter.run(code_builder.pages(), &mut engine, usize::MAX)
     }

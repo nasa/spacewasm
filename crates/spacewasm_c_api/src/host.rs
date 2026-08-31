@@ -13,7 +13,6 @@ const MAX_HOST_PARAMS: usize = 32;
 
 /// Opaque handle passed to C host callbacks, wrapping a borrowed core
 /// [`Engine`]. Valid only for the duration of the call.
-#[repr(C)]
 pub struct SpacewasmCaller;
 
 impl SpacewasmCaller {

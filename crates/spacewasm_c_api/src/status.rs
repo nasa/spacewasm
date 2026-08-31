@@ -2,15 +2,12 @@
 //! stable integer ABI is owned by the FFI layer, not the core crate.
 
 use spacewasm::{
-    AllocError, ConstantExprError, HostNameError, HostValListError, InterpreterResult, InvokeError,
-    MemoryError, ParseError, TrapReason, ValidationError,
+    AllocError, ConstantExprError, HostFunctionError, HostNameError, InterpreterResult,
+    InvokeError, MemoryError, ParseError, TrapReason, ValidationError,
 };
 
 /// Operation status returned by most `spacewasm_*` functions.
 /// [`spacewasm_status_t::SPACEWASM_OK`] (0) means success.
-///
-/// Variants are glob-re-exported below so they can be named unqualified within
-/// this crate (e.g. `status::SPACEWASM_OK`).
 #[repr(i32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum spacewasm_status_t {
@@ -362,8 +359,13 @@ pub fn host_name_status(_e: HostNameError) -> spacewasm_status_t {
     SPACEWASM_ERR_NAME_TOO_LONG
 }
 
-pub fn host_val_list_status(_e: HostValListError) -> spacewasm_status_t {
-    SPACEWASM_ERR_BAD_SIGNATURE
+pub fn host_val_list_status(e: HostFunctionError) -> spacewasm_status_t {
+    match e {
+        HostFunctionError::ValListInvalidItem => SPACEWASM_ERR_BAD_ARG,
+        HostFunctionError::ParameterListTooLong => SPACEWASM_ERR_FUNCTION_PARAMETERS_TOO_LARGE,
+        HostFunctionError::MultiReturnNotAllowed => SPACEWASM_ERR_FUNCTION_RETURNS_TOO_LARGE,
+        HostFunctionError::AllocError(ae) => alloc_status(ae),
+    }
 }
 
 /// Translate an [`InterpreterResult`] into a run status + trap code.

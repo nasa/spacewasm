@@ -32,18 +32,7 @@ macro_rules! vec {
     () => (
         $crate::Vec::zero()
     );
-    ($elem:expr; $n:expr) => (
-        $crate::Vec::from_elem($elem, $n)
-    );
     ($($x:expr),+ $(,)?) => (
-        // Using `write_box_via_move` produces a dramatic improvement in stack usage for unoptimized
-        // programs using this code path to construct large Vecs. We can't use `write_via_move`
-        // because this entire invocation has to remain a call chain without `let` bindings, or else
-        // inference and temporary lifetimes change and things break (see `vec-macro-rvalue-scope`,
-        // `vec-macro-coercions`, and `autoderef-vec-box-fn-36786` tests).
-        //
-        // `box_assume_init_into_vec_unsafe` isn't actually safe but the way we use it here is. We
-        // can't use an unsafe block as that would also wrap `$x`.
         $crate::Vec::from_array([$($x),+]).unwrap()
     );
 }
@@ -206,9 +195,6 @@ impl<T: Sized, A: Allocator> Vec<T, A> {
     /// Removes the last element from a vector and returns it, or [`None`] if it
     /// is empty.
     ///
-    /// If you'd like to pop the first element, consider using
-    /// `VecDeque::pop_front` instead.
-    ///
     /// # Examples
     ///
     /// ```
@@ -239,6 +225,11 @@ impl<T: Sized, A: Allocator> Vec<T, A> {
         self
     }
 
+    /// Converts the vector into a boxed slice.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the vector's length does not equal its capacity.
     pub fn into_boxed_slice(self) -> Box<[T], A> {
         assert_eq!(self.capacity(), self.len());
 

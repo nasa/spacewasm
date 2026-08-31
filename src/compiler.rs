@@ -359,6 +359,9 @@ impl<'a, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize> WasmVisi
         }
     }
 
+    // The four `*_reinterpret_*` handlers intentionally emit no IR instruction:
+    // a reinterpret is a bit-level no-op on the raw operand stack, so only the
+    // stack types need validating. The absence of an emitted opcode is deliberate.
     fn i32_reinterpret_f32(&self, state: &mut Self::State) -> Result<(), Self::Error> {
         validate!(state, (F32) -> (I32));
         Ok(())

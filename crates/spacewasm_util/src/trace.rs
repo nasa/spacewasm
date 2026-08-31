@@ -23,6 +23,8 @@ pub struct StateHistory {
 
 impl StateHistory {
     pub fn new(capacity: usize) -> Self {
+        // Capacity must be at least 1
+        let capacity = capacity.max(1);
         Self {
             snapshots: std::vec::Vec::with_capacity(capacity),
             capacity,

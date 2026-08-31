@@ -167,10 +167,27 @@ pub type HostFunctionResult = ControlFlow<HostFunctionBreak, Option<Value>>;
 /// Maximum number of parameters a host function may declare.
 pub const MAX_HOST_FUNCTION_PARAMS: usize = 9;
 
-/// Error returned when a host value signature contains an invalid character or
-/// exceeds [`HOST_SIGNATURE_CAP`] entries.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct HostValListError;
+/// Error returned when processing a host function item
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HostFunctionError {
+    /// Each HostValList item must be i, I, f, or d
+    ValListInvalidItem,
+
+    /// Host function signature is longer than MAX_HOST_FUNCTION_PARAMS
+    ParameterListTooLong,
+
+    /// Multiple return values are not supported
+    MultiReturnNotAllowed,
+
+    /// Could not box host function closure
+    AllocError(AllocError),
+}
+
+impl From<AllocError> for HostFunctionError {
+    fn from(value: AllocError) -> Self {
+        HostFunctionError::AllocError(value)
+    }
+}
 
 /// An owned, bounded list of [`ValType`] describing a host function's
 /// parameters or results. Parsed from a signature string of the characters
@@ -194,13 +211,13 @@ impl From<HostValList> for ResultType {
 }
 
 impl HostValList {
-    fn map_char(c: char) -> Result<ValType, HostValListError> {
+    fn map_char(c: char) -> Result<ValType, HostFunctionError> {
         match c {
             'i' => Ok(ValType::I32),
             'I' => Ok(ValType::I64),
             'f' => Ok(ValType::F32),
             'd' => Ok(ValType::F64),
-            _ => Err(HostValListError),
+            _ => Err(HostFunctionError::ValListInvalidItem),
         }
     }
 
@@ -214,13 +231,13 @@ impl HostValList {
     /// Fallibly construct a signature list. Returns an error if any character
     /// is not one of `iIfd` or the signature exceeds [`MAX_HOST_FUNCTION_PARAMS`] entries.
     /// This is the FFI-safe constructor.
-    pub fn try_new(s: &str) -> Result<Self, HostValListError> {
+    pub fn try_new(s: &str) -> Result<Self, HostFunctionError> {
         let mut data = [ValType::I32; MAX_HOST_FUNCTION_PARAMS];
         let mut len = 0usize;
 
         for c in s.chars() {
             if len >= MAX_HOST_FUNCTION_PARAMS {
-                return Err(HostValListError);
+                return Err(HostFunctionError::ParameterListTooLong);
             }
             data[len] = HostValList::map_char(c)?;
             len += 1;
@@ -370,20 +387,27 @@ impl HostFunction {
         params: HostValList,
         returns: HostValList,
         f: impl Fn(&mut Engine, &[Value]) -> HostFunctionResult + 'static,
-    ) -> Result<Self, HostValListError> {
-        let ps = params.iter().fold(0, |n, i| n + i.size()) / 4;
-        if ps > 0xFFFF {
-            return Err(HostValListError);
+    ) -> Result<Self, HostFunctionError> {
+        if params.len() > MAX_HOST_FUNCTION_PARAMS {
+            return Err(HostFunctionError::ParameterListTooLong);
         }
 
-        if params.len() > MAX_HOST_FUNCTION_PARAMS {
-            return Err(HostValListError);
+        // A sanity check to make sure that the parameters fit within the IR supported
+        // frame size. This check is unwrapped because the `MAX_HOST_FUNCTION_PARAMS` should
+        // already guard against this check (i.e. the parameter length also bounds the param size).
+        let ps = params
+            .iter()
+            .fold(0, |n: usize, i| n.checked_add(i.size()).unwrap())
+            / 4;
+
+        if ps > 0xFFFF {
+            unreachable!()
         }
 
         let mut rs: Option<ValType> = None;
         for r in returns.iter() {
             if rs.is_some() {
-                return Err(HostValListError);
+                return Err(HostFunctionError::MultiReturnNotAllowed);
             }
 
             rs = Some(r);
@@ -393,7 +417,7 @@ impl HostFunction {
             name,
             params,
             returns: ResultType(rs),
-            f: Box::new(f).unwrap().into_host_function_dyn(),
+            f: Box::new(f)?.into_host_function_dyn(),
         })
     }
 

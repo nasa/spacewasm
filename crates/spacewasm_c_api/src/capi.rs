@@ -128,10 +128,10 @@ impl From<&mut spacewasm_host_t> for &mut Vec<HostModule> {
     }
 }
 
-/// Create a new host module vector of max_host_module size
+/// Create a new host module vector of `len` size
 ///
 /// # Safety
-/// `host` must be live
+/// `dest` must be null or a valid, live pointer to write the new host vector into.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn spacewasm_host_new(
     len: u32,
@@ -509,9 +509,11 @@ pub unsafe extern "C" fn spacewasm_module_start(
 /// parameter or return count differs, and
 /// [`spacewasm_status_t::SPACEWASM_ERR_PARAM_TYPE_MISMATCH`] when a type at some
 /// position differs. Returns [`spacewasm_status_t::SPACEWASM_ERR_NOT_FOUND`]
-/// when `module_idx` or `func_index` is out of range, and
-/// [`spacewasm_status_t::SPACEWASM_ERR_BAD_SIGNATURE`] when a signature string
-/// contains a character other than `iIfd` or is too long.
+/// when `module_idx` or `func_index` is out of range. When a signature string
+/// contains a character other than `iIfd` it returns
+/// [`spacewasm_status_t::SPACEWASM_ERR_BAD_ARG`], and when it declares more than
+/// `MAX_HOST_FUNCTION_PARAMS` entries it returns
+/// [`spacewasm_status_t::SPACEWASM_ERR_FUNCTION_PARAMETERS_TOO_LARGE`].
 ///
 /// # Safety
 /// `engine` must be live; all C strings valid and NUL-terminated.
@@ -782,6 +784,11 @@ pub unsafe extern "C" fn spacewasm_run(
     fuel: usize,
     out_trap: *mut spacewasm_trap_t,
 ) -> spacewasm_run_status_t {
+    // Clear out the destination before we do any early returns
+    if !out_trap.is_null() {
+        unsafe { *out_trap = spacewasm_trap_t::SPACEWASM_TRAP_NONE };
+    }
+
     let Some(cengine) = (unsafe { engine.as_mut() }) else {
         return spacewasm_run_status_t::SPACEWASM_RUN_TRAP;
     };

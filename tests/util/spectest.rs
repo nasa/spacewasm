@@ -321,6 +321,8 @@ impl WasmStream for ByteStream {
 const MAX_CODE_PAGES: u32 = 256;
 const MAX_CONTROL_FRAMES: usize = 128;
 const MAX_STACK_DEPTH: usize = 256;
+/// Instruction budget for a single invoke/resume, used to catch infinite loops.
+const MAX_INVOKE_FUEL: usize = 10_000_000;
 
 /// Builds the set of host modules an engine is instantiated with. A factory
 /// (rather than a `Vec`) is required because the engine is rebuilt on every
@@ -644,9 +646,6 @@ fn clone_module(module: &Module) -> Module {
     }
 }
 
-// We need to add a method to Store to support pushing modules
-// For now, TestContext will manage store cloning by saving/restoring the entire Store
-
 fn load_module(
     ctx: &mut TestContext,
     module_name: Option<String>,
@@ -751,7 +750,7 @@ fn invoke_function_resume(
     let result = {
         let _locked = enter_locked();
         ctx.engine.resume(resume_value);
-        test_runner.run(ctx.code_builder.pages(), &mut ctx.engine, 10000000)
+        test_runner.run(ctx.code_builder.pages(), &mut ctx.engine, MAX_INVOKE_FUEL)
     };
 
     // Get the return types we saved when the function paused
@@ -854,7 +853,7 @@ fn invoke_function_normal(
     let result = {
         let _locked = enter_locked();
         ctx.engine.invoke(f_ref, &params).unwrap();
-        test_runner.run(ctx.code_builder.pages(), &mut ctx.engine, 10000000)
+        test_runner.run(ctx.code_builder.pages(), &mut ctx.engine, MAX_INVOKE_FUEL)
     };
 
     // Check the result
@@ -926,29 +925,6 @@ fn get_global(ctx: &TestContext, module_name: &Option<String>, field: &str) -> V
 }
 
 fn check_trap_reason(reason: TrapReason, text: &str) {
-    /*
-    RuntimeError::Trap(TrapError::DivideBy0) => Ok("integer divide by zero"),
-        RuntimeError::Trap(TrapError::UnrepresentableResult) => Ok("integer overflow"),
-        RuntimeError::Trap(TrapError::BadConversionToInteger) => {
-            Ok("invalid conversion to integer")
-        }
-        RuntimeError::Trap(TrapError::ReachedUnreachable) => Ok("unreachable"),
-        RuntimeError::Trap(TrapError::MemoryOrDataAccessOutOfBounds) => {
-            Ok("out of bounds memory access")
-        }
-        RuntimeError::Trap(TrapError::TableOrElementAccessOutOfBounds) => {
-            Ok("out of bounds table access")
-        }
-        RuntimeError::Trap(TrapError::UninitializedElement) => Ok("uninitialized element"),
-        RuntimeError::Trap(TrapError::SignatureMismatch) => Ok("indirect call type mismatch"),
-        RuntimeError::Trap(TrapError::TableAccessOutOfBounds) => Ok("undefined element"),
-
-        RuntimeError::StackExhaustion => Ok("call stack exhausted"),
-        RuntimeError::ModuleNotFound => Ok("module not found"),
-        RuntimeError::FunctionNotFound => Err(WastError::UnrepresentedRuntimeError),
-        RuntimeError::HostFunctionSignatureMismatch => Ok("host function signature mismatch"),
-
-     */
     match (reason, text) {
         (TrapReason::Unreachable, "unreachable") => {}
         (TrapReason::DivideByZero, "integer divide by zero") => {}

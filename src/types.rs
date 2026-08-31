@@ -226,7 +226,7 @@ impl Limit {
             0x01 => {
                 let min = wasm.read_u32()?;
 
-                // Note: We are disabling `max` memory size since we don't support memory.grow
+                // A maximum is present: read it and ensure it is not smaller than the minimum.
                 let max = wasm.read_u32()?;
                 if max < min {
                     return Err(ValidationError::InvalidMaxLimit);

@@ -237,11 +237,6 @@ fn main() {
         )
         .unwrap();
 
-    // let dbg = Inspector {
-    //     v: &interpreter,
-    //     out: *out,
-    // };
-
     let mut result = InterpreterResult::OutOfFuel;
     while result == InterpreterResult::OutOfFuel {
         result = spacewasm::Interpreter.run(text, &mut state, usize::MAX)
