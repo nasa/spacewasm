@@ -32,6 +32,10 @@ impl StateHistory {
     }
 
     pub fn record(&mut self, snapshot: StateSnapshot) {
+        // Nothing to hold, and the branch below would index an empty Vec.
+        if self.capacity == 0 {
+            return;
+        }
         if self.snapshots.len() < self.capacity {
             self.snapshots.push(snapshot);
         } else {
