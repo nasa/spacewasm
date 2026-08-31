@@ -1,5 +1,3 @@
-#![cfg(not(miri))]
-
 mod util;
 use spacewasm::vec;
 use util::{run_wast_test_file, spectest_host_module};
@@ -14,6 +12,7 @@ fn address() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "stack recursion")]
 fn call() {
     run("core/call");
 }
@@ -59,11 +58,13 @@ fn align() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "expensive recursion")]
 fn call_indirect() {
     run("core/call_indirect");
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "soft-float NaN issues")]
 fn f32() {
     run("core/f32");
 }
@@ -149,6 +150,7 @@ fn const_() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "slow with soft-floats")]
 fn f32_cmp() {
     run("core/f32_cmp");
 }
@@ -184,11 +186,13 @@ fn block() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "soft-float NaN issues")]
 fn conversions() {
     run("core/conversions");
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "soft-float NaN issues")]
 fn f64() {
     run("core/f64");
 }
@@ -209,6 +213,7 @@ fn memory() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "stack recursion")]
 fn skip_stack_guard_page() {
     run("core/skip-stack-guard-page");
 }
@@ -244,6 +249,7 @@ fn labels() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "malloc too slow")]
 fn memory_grow() {
     run("core/memory_grow");
 }
@@ -269,6 +275,7 @@ fn data() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "slow with soft-floats")]
 fn f64_cmp() {
     run("core/f64_cmp");
 }
@@ -309,6 +316,7 @@ fn elem() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "stack recursion")]
 fn fac() {
     run("core/fac");
 }
@@ -349,6 +357,7 @@ fn endianness() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "soft-float NaN issues")]
 fn float_exprs() {
     run("core/float_exprs");
 }
