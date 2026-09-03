@@ -82,6 +82,15 @@ pub struct Func {
     pub expr: Expr,
 }
 
+impl Func {
+    /// Stack words a call to this function needs above the caller's stack
+    /// pointer: the two-word call frame, the locals, and the peak operand usage.
+    #[inline]
+    pub fn required_stack_words(&self) -> usize {
+        self.stack_usage as usize + 2 + self.local_size as usize
+    }
+}
+
 impl Module {
     pub fn read_function_code<const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize>(
         &mut self,

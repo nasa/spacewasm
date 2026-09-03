@@ -32,6 +32,11 @@ pub trait BaseVisitor {
     visit_fn!(unreachable);
     visit_fn!(nop);
 
+    /// The decoder reached an opcode or immediate it cannot interpret.
+    fn malformed_ir(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        self.unreachable(state)
+    }
+
     // Control flow & parametric instructions are not handled by the base visitor
 
     // Memory instructions - loads

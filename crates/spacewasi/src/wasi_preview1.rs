@@ -61,10 +61,18 @@ fn next_i64(it: &mut std::slice::Iter<'_, Value>) -> i64 {
 /// trap into a panic that unwound through the entire host process. `proc_exit`
 /// is the one binding that does not route through here; it interprets its
 /// `I32Exit` "error" specially (see [`proc_exit_binding`]).
-fn finish(result: wiggle::anyhow::Result<i32>) -> HostFunctionResult {
+///
+/// `HostFunctionBreak::Trap` carries no payload, so the trap's cause is reported
+/// on stderr before it is discarded — otherwise every one of the ~44 bindings
+/// collapses into an indistinguishable `Trap(Host)` and the embedder cannot tell
+/// which WASI call failed or why. `name` identifies the binding.
+fn finish(name: &str, result: wiggle::anyhow::Result<i32>) -> HostFunctionResult {
     match result {
         Ok(code) => ControlFlow::Continue(Some(Value::I32(code))),
-        Err(_trap) => ControlFlow::Break(HostFunctionBreak::Trap),
+        Err(trap) => {
+            eprintln!("wasi_snapshot_preview1::{name} trapped: {trap:?}");
+            ControlFlow::Break(HostFunctionBreak::Trap)
+        }
     }
 }
 
@@ -107,11 +115,14 @@ macro_rules! wasi_binding {
             move |state, args| {
                 #[allow(unused_mut, unused_variables)]
                 let mut it = args.iter();
-                finish(block_on(wasi_snapshot_preview1::$name(
-                    &mut *ctx.borrow_mut(),
-                    &mut GuestMemory::Shared(state.memory.as_shared_cells()),
-                    $( next_arg!($ty, &mut it) ),*
-                )))
+                finish(
+                    stringify!($name),
+                    block_on(wasi_snapshot_preview1::$name(
+                        &mut *ctx.borrow_mut(),
+                        &mut GuestMemory::Shared(state.memory.as_shared_cells()),
+                        $( next_arg!($ty, &mut it) ),*
+                    )),
+                )
             },
         )
     }};
@@ -141,9 +152,11 @@ fn proc_exit_binding(
             &mut *ctx.borrow_mut(),
             &mut GuestMemory::Shared(state.memory.as_shared_cells()),
             status,
-        )) && let Some(exit) = e.downcast_ref::<I32Exit>()
-        {
-            exit_code.set(Some(exit.0));
+        )) {
+            match e.downcast_ref::<I32Exit>() {
+                Some(exit) => exit_code.set(Some(exit.0)),
+                None => eprintln!("wasi_snapshot_preview1::proc_exit trapped: {e:?}"),
+            }
         }
         ControlFlow::Break(HostFunctionBreak::Trap)
     })

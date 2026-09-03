@@ -322,9 +322,20 @@ pub unsafe extern "C" fn spacewasm_load_module(
 /// backpatch bound). No guest module is loaded yet; use
 /// [`spacewasm_load_module`] to load one or more.
 ///
-/// `host` may be null to create an engine with no host modules. The host vector
-/// is always consumed (its handle must not be used or destroyed afterward),
-/// whether the engine is created successfully.
+/// `host` may be null to create an engine with no host modules.
+///
+/// # Ownership of `host`
+///
+/// The host vector is consumed on every path *except* the two argument-validation
+/// failures that are rejected before `host` is read:
+///
+/// * [`spacewasm_status_t::SPACEWASM_ERR_NULL_ARG`] — `out_engine` is null.
+/// * [`spacewasm_status_t::SPACEWASM_ERR_VEC_TOO_LONG`] — `max_modules` exceeds 256.
+///
+/// On those two the caller still owns `host` and must
+/// [`spacewasm_host_destroy`] it. Every other outcome, success or failure,
+/// consumes it. Concretely: check for these two codes before deciding whether to
+/// destroy the vector.
 ///
 /// # Safety
 /// `host` must be null or a live handle from [`spacewasm_host_new`], not already
@@ -342,7 +353,7 @@ pub unsafe extern "C" fn spacewasm_new(
     }
 
     if max_modules > 256 {
-        return status::SPACEWASM_ERR_BAD_ARG;
+        return status::SPACEWASM_ERR_VEC_TOO_LONG;
     }
 
     // Take ownership of the host modules (consuming the handle), or start from
@@ -826,7 +837,12 @@ pub unsafe extern "C" fn spacewasm_run(
     rs
 }
 
-/// Resume the interpreter from a paused state.
+/// Resume the interpreter from a paused state (no return value).
+///
+/// Returns [`spacewasm_status_t::SPACEWASM_ERR_WRONG_STATE`] if the engine is not
+/// paused, and [`spacewasm_status_t::SPACEWASM_ERR_PARAM_TYPE_MISMATCH`] if the
+/// paused host function declared a result — use [`spacewasm_resume_value`]
+/// instead. On the latter the pause is preserved, so the call can be retried.
 ///
 /// # Safety
 /// `engine` must be live.
@@ -838,13 +854,21 @@ pub unsafe extern "C" fn spacewasm_resume(engine: *mut CEngine) -> spacewasm_sta
 
     match cengine.engine.resume(None) {
         Ok(()) => status::SPACEWASM_OK,
-        Err(_) => status::SPACEWASM_ERR_WRONG_STATE,
+        Err(e) => status::resume_status(e),
     }
 }
 
 /// Resume the interpreter from a paused state.
 /// This function will also push a value to the interpreter stack
 /// as the return value of the host function that requested a pause.
+///
+/// Returns [`spacewasm_status_t::SPACEWASM_ERR_BAD_ARG`] if `resume_value.tag` is
+/// not a valid [`spacewasm_valtype_t`],
+/// [`spacewasm_status_t::SPACEWASM_ERR_WRONG_STATE`] if the engine is not paused,
+/// and [`spacewasm_status_t::SPACEWASM_ERR_PARAM_TYPE_MISMATCH`] if the value's
+/// type does not match the paused host function's declared result. In the
+/// mismatch case the pause is preserved and no stack state changes, so the call
+/// can be retried with a correctly typed value.
 ///
 /// # Safety
 /// `engine` must be live.
@@ -863,7 +887,7 @@ pub unsafe extern "C" fn spacewasm_resume_value(
 
     match cengine.engine.resume(Some(value)) {
         Ok(()) => status::SPACEWASM_OK,
-        Err(_) => status::SPACEWASM_ERR_WRONG_STATE,
+        Err(e) => status::resume_status(e),
     }
 }
 

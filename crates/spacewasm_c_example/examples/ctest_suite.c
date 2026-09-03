@@ -675,11 +675,11 @@ static int test_error_paths(void) {
     CHECK(spacewasm_add_host_module(&host, "env", 4, 0, &hmod) == SPACEWASM_OK, "add_host_module");
     /* Invalid value-list character in the parameter signature. */
     CHECK(spacewasm_add_host_function(&host, hmod, "bad_param", "x", "", add_one, NULL) ==
-              SPACEWASM_ERR_BAD_ARG,
+              SPACEWASM_ERR_BAD_SIGNATURE,
           "invalid param char");
     /* Invalid value-list character in the return signature. */
     CHECK(spacewasm_add_host_function(&host, hmod, "bad_ret", "i", "z", add_one, NULL) ==
-              SPACEWASM_ERR_BAD_ARG,
+              SPACEWASM_ERR_BAD_SIGNATURE,
           "invalid return char");
     /* More than MAX_HOST_FUNCTION_PARAMS (9) parameters. */
     CHECK(spacewasm_add_host_function(&host, hmod, "too_many", "iiiiiiiiii", "", add_one, NULL) ==
