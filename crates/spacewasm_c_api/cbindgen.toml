@@ -32,14 +32,12 @@ after_includes = """
 #endif"""
 
 [export]
-include = ["MemoryStatistics"]
 # `__spacewasm_*` are the heap-allocator symbols the core crate imports; they are
 # provided internally, not part of the public C surface, so keep them out of the header.
 exclude = [
     "JumpTarget",
     "__spacewasm_alloc",
     "__spacewasm_dealloc",
-    "__spacewasm_memory_statistics",
     "rust_eh_personality",
 ]
 
@@ -48,9 +46,7 @@ exclude = [
 "SpacewasmCaller" = "spacewasm_caller_t"
 "CEngine" = "spacewasm_t"
 "HostModule" = "spacewasm_host_module_t"
-"MemoryStatistics" = "spacewasm_memory_statistics_t"
 
 [parse]
-# Follow the re-export of `MemoryStatistics` into the core crate.
 parse_deps = true
 include = ["spacewasm"]

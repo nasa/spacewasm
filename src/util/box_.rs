@@ -391,10 +391,6 @@ mod kani_proofs {
 
                 unsafe { self.inner.dealloc(ptr, layout) }
             }
-
-            fn memory_statistics(&self) -> crate::MemoryStatistics {
-                self.inner.memory_statistics()
-            }
         }
 
         let backing = RustSystemAllocator;

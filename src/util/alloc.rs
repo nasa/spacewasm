@@ -42,8 +42,8 @@ unsafe extern "C" {
     fn __spacewasm_dealloc(ptr: *mut u8, size: usize, align: usize);
 }
 
-/// Installs the process-global allocator that backs the `__spacewasm_alloc` /
-/// `__spacewasm_dealloc` / `__spacewasm_memory_statistics` FFI symbols.
+/// Installs the process-global allocator that backs the `__spacewasm_alloc` and
+/// `__spacewasm_dealloc` FFI symbols.
 ///
 /// # Single-threaded requirement (UB otherwise)
 ///

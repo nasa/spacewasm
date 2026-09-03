@@ -221,7 +221,6 @@ impl<T: Sized, A: Allocator> Vec<T, A> {
     /// #         Ok(unsafe { std::alloc::alloc(l) })
     /// #     }
     /// #     unsafe fn dealloc(&self, p: *mut u8, l: core::alloc::Layout) { unsafe { std::alloc::dealloc(p, l) } }
-    /// #     fn memory_statistics(&self) -> spacewasm::MemoryStatistics { spacewasm::MemoryStatistics { total_bytes: 0, pad_bytes: 0 } }
     /// # }
     /// # spacewasm::global_allocator!(DocAlloc, DocAlloc);
     /// use spacewasm::Vec;
@@ -259,7 +258,6 @@ impl<T: Sized, A: Allocator> Vec<T, A> {
     /// #         Ok(unsafe { std::alloc::alloc(l) })
     /// #     }
     /// #     unsafe fn dealloc(&self, p: *mut u8, l: core::alloc::Layout) { unsafe { std::alloc::dealloc(p, l) } }
-    /// #     fn memory_statistics(&self) -> spacewasm::MemoryStatistics { spacewasm::MemoryStatistics { total_bytes: 0, pad_bytes: 0 } }
     /// # }
     /// # spacewasm::global_allocator!(DocAlloc, DocAlloc);
     /// use spacewasm::Vec;
