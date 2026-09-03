@@ -200,28 +200,8 @@ impl<T: ?Sized, A: Allocator> Rc<T, A> {
             fat: core::mem::ManuallyDrop<FatPtr>,
         }
 
-        // SOUNDNESS / ABI ASSUMPTIONS
-        //
-        // The union below reinterprets the *representation* of a raw pointer.
-        // Rust does not give a *stable* guarantee for pointer layout, but every
-        // current Rust target follows the de-facto ABI relied on here:
-        //
-        //   1. A pointer to an unsized type (`*const U` where `U` is a trait
-        //      object or slice) is a two-word "fat" pointer laid out as
-        //      `(data_address, metadata)` -- exactly `FatPtr`.
-        //   2. For a struct `RcInner<U>` whose trailing field is the unsized
-        //      `U`, the pointer metadata of `*const RcInner<U>` is identical to
-        //      the metadata of `*const U` (same vtable / slice length). Building
-        //      a fat pointer from the `RcInner` base address plus `U`'s metadata
-        //      therefore yields a valid `*mut RcInner<U>` for the same
-        //      allocation, which is what this function does.
-        //
-        // The `const` block makes assumption (1) a per-instantiation
-        // compile-time check: if `into_dyn` is ever instantiated with a `U`
-        // that is not a two-word fat-pointer type (e.g. a `Sized` `U`, whose
-        // pointer is thin), the reinterpretation would be wrong and compilation
-        // fails here instead of miscompiling silently. `RcInner<U>` is checked
-        // as well to pin assumption (2)'s width.
+        // The `const` block validates memory layout assumptions made across the
+        // fat pointer conversion boundary
         const {
             let word = core::mem::size_of::<*const ()>();
             assert!(
