@@ -663,11 +663,13 @@ static int test_error_paths(void) {
     spacewasm_host_t host;
     CHECK(spacewasm_host_new(0, &host) == SPACEWASM_OK, "host_new");
     spacewasm_t* store = NULL;
-    spacewasm_status_t bad_arg_st = spacewasm_new(&host, 1024, 257, opts(256), &store);
-    if (bad_arg_st == SPACEWASM_ERR_BAD_ARG) {
+    /* This check runs before the host vector is read, so we still own it and
+       must destroy it before reusing `host` below. */
+    spacewasm_status_t oversized_st = spacewasm_new(&host, 1024, 257, opts(256), &store);
+    if (oversized_st != SPACEWASM_OK) {
         spacewasm_host_destroy(&host);
     }
-    CHECK(bad_arg_st == SPACEWASM_ERR_BAD_ARG, "oversized max_modules");
+    CHECK(oversized_st == SPACEWASM_ERR_VEC_TOO_LONG, "oversized max_modules");
 
     /* Host function signature errors each map to a distinct status, no panic. */
     CHECK(spacewasm_host_new(1, &host) == SPACEWASM_OK, "host_new");

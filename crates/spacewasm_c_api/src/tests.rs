@@ -1337,16 +1337,24 @@ fn error_paths() {
     let _guard = ALLOC_LOCK.lock().unwrap();
     ensure_global_allocator();
 
-    // max_modules > 256 -> store_new returns ERR_BAD_ARG (consumes the host).
+    // max_modules > 256 -> ERR_VEC_TOO_LONG. This check runs *before* the host
+    // vector is read, so the caller still owns it and must destroy it — see the
+    // "Ownership of `host`" section on `spacewasm_new`. Capture the status first
+    // so the vector is released before `host` is reused below.
     let mut host = core::mem::MaybeUninit::<spacewasm_host_t>::uninit();
     assert_eq!(
         unsafe { spacewasm_host_new(0, host.as_mut_ptr()) },
         status::SPACEWASM_OK
     );
     let mut store: *mut CEngine = core::ptr::null_mut();
+    let oversized_st =
+        unsafe { spacewasm_new(host.as_mut_ptr(), 1024, 257, opts(256), &mut store) };
+    if oversized_st != status::SPACEWASM_OK {
+        unsafe { spacewasm_host_destroy(host.as_mut_ptr()) };
+    }
     assert_eq!(
-        unsafe { spacewasm_new(host.as_mut_ptr(), 1024, 257, opts(256), &mut store) },
-        status::SPACEWASM_ERR_BAD_ARG,
+        oversized_st,
+        status::SPACEWASM_ERR_VEC_TOO_LONG,
         "oversized max_modules"
     );
 
