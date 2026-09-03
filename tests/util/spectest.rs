@@ -1138,7 +1138,7 @@ fn wast2json(source_wast_path: &Path, out_dir: &Path, test_filename: &str) {
 
     // Run wast2json to generate Wasm modules and JSON descriptor
     let output = ProcessCommand::new(&wast2json_bin)
-        .arg(&source_wast_path)
+        .arg(source_wast_path)
         .arg("--enable-custom-page-sizes")
         .arg("-o")
         .arg(out_dir.join(format!("{}.json", test_filename)))
