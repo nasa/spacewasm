@@ -1136,6 +1136,37 @@ impl BaseVisitor for Interpreter {
         Ok(())
     }
 
+    fn i32_extend8_s(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        let i = state.stack.read_u32(state.sp - 1) as i8 as i32 as u32;
+        state.stack.write_u32(state.sp - 1, i);
+        Ok(())
+    }
+
+    fn i32_extend16_s(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        let i = state.stack.read_u32(state.sp - 1) as i16 as i32 as u32;
+        state.stack.write_u32(state.sp - 1, i);
+        Ok(())
+    }
+
+    fn i64_extend8_s(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        let i = state.stack.read_u64(state.sp - 2) as i8 as i64 as u64;
+        state.stack.write_u64(state.sp - 2, i);
+        Ok(())
+    }
+
+    fn i64_extend16_s(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        let i = state.stack.read_u64(state.sp - 2) as i16 as i64 as u64;
+        state.stack.write_u64(state.sp - 2, i);
+        Ok(())
+    }
+
+    fn i64_extend32_s(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        let i = state.stack.read_u64(state.sp - 2) as i32 as i64 as u64;
+        state.stack.write_u64(state.sp - 2, i);
+        Ok(())
+    }
+
+
     fn i64_extend_i32_u(&self, state: &mut Self::State) -> Result<(), Self::Error> {
         // Zero-extend the i32 to an i64 and write it back to the stack
         let i = state.stack.read_u32(state.sp - 1) as u64;
