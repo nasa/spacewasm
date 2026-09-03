@@ -1,7 +1,7 @@
 use spacewasm::{
     CodeBuilder, CompilerOptions, ExportDesc, HostFunction, HostFunctionBreak, HostModule,
-    InterpreterResult, InterpreterRunner, ModuleRef, PageAllocator, Ref, SectionKind, ValType,
-    Value, WasmRef, vec,
+    InterpreterResult, InterpreterRunner, ModuleRef, PageAllocator, Ref, ValType, Value, WasmRef,
+    vec,
 };
 use spacewasm_util::{FileStream, RustSystemAllocator};
 use std::ops::ControlFlow;
@@ -148,19 +148,18 @@ fn main() {
 
     let file = std::fs::File::open(path).expect("failed to open file");
     let mut file_stream = FileStream::new(file);
-    let (module, stats) =
-        match spacewasm::Module::new_with_statistics::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
-            "main",
-            &mut file_stream,
-            &mut state.store,
-            &mut code_builder,
-            spacewasm::Rc::new(RustSystemAllocator)
-                .unwrap()
-                .into_wasm_memory_allocator(),
-        ) {
-            Ok(parsed) => parsed,
-            Err(e) => guest_error(format!("failed to decode/validate wasm module: {e:?}")),
-        };
+    let module = match spacewasm::Module::new::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
+        "main",
+        &mut file_stream,
+        &mut state.store,
+        &mut code_builder,
+        spacewasm::Rc::new(RustSystemAllocator)
+            .unwrap()
+            .into_wasm_memory_allocator(),
+    ) {
+        Ok(parsed) => parsed,
+        Err(e) => guest_error(format!("failed to decode/validate wasm module: {e:?}")),
+    };
 
     let text = code_builder.pages();
     let final_page_offset = code_builder.offset();
@@ -183,19 +182,15 @@ fn main() {
 
     let module = state.store.modules().last().unwrap();
 
-    let mut total: usize = 0;
-    for (i, section) in stats.iter().enumerate() {
-        let section_kind = SectionKind::convert(i as u8).unwrap();
-        eprintln!("{:?}: {} bytes", section_kind, section.total_bytes);
-        total += section.total_bytes as usize;
-    }
-
+    let stats = unsafe { GLOBAL_ALLOCATOR.read() }.stats();
     let wasm_size = file_stream.len();
 
-    eprintln!("Total: {}", total);
+    eprintln!("Total: {}", stats.total_bytes);
+    eprintln!("Pad bytes: {}", stats.pad_bytes);
+    eprintln!("Pages: {}", stats.pages);
     eprintln!(
         "Compilation Ratio: {:.2}x",
-        (total as f64) / (wasm_size as f64)
+        (stats.total_bytes as f64) / (wasm_size as f64)
     );
 
     let full_page_usage = if text.len() > 1 {
