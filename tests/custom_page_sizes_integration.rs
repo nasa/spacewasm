@@ -1,5 +1,3 @@
-#![cfg(not(miri))]
-
 mod util;
 use spacewasm::vec;
 use util::{run_wast_test_file, spectest_host_module};
