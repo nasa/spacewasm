@@ -2,6 +2,7 @@ use core::ops::Deref;
 
 use crate::util::InnerVec;
 
+/// A borrowed view over a buffer owned by a [`WasmStream`].
 pub struct Chunk(InnerVec<u8>);
 
 impl From<InnerVec<u8>> for Chunk {
@@ -19,7 +20,10 @@ impl Chunk {
 
 impl Drop for Chunk {
     fn drop(&mut self) {
-        assert_eq!(self.0.capacity, 0);
+        debug_assert_eq!(
+            self.0.capacity, 0,
+            "Chunk dropped without returning its buffer to the stream"
+        );
     }
 }
 

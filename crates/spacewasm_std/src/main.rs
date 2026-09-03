@@ -1,7 +1,7 @@
 use spacewasm::{
     CodeBuilder, CompilerOptions, ExportDesc, HostFunction, HostFunctionBreak, HostModule,
-    InterpreterResult, InterpreterRunner, ModuleRef, PageAllocator, Ref, SectionKind, ValType,
-    Value, WasmRef, vec,
+    InterpreterResult, InterpreterRunner, ModuleRef, PageAllocator, Ref, ValType, Value, WasmRef,
+    vec,
 };
 use spacewasm_util::{FileStream, RustSystemAllocator};
 use std::ops::ControlFlow;
@@ -16,13 +16,18 @@ const MAX_CODE_PAGES: u32 = 256;
 const MAX_CONTROL_FRAMES: usize = 64;
 const MAX_STACK_DEPTH: usize = 256;
 
+fn guest_error(msg: impl core::fmt::Display) -> ! {
+    eprintln!("error: {msg}");
+    std::process::exit(1);
+}
+
 fn main() {
     let path = std::env::args().nth(1).unwrap();
 
     let start = Instant::now();
     let mut code_builder = CodeBuilder::new(CompilerOptions {
         allow_memory_grow: false,
-        max_backpatch_iterations: 0,
+        max_backpatch_iterations: None,
         max_code_pages: MAX_CODE_PAGES,
     })
     .expect("failed to allocate code builder");
@@ -42,8 +47,14 @@ fn main() {
                     panic!("expected i32");
                 };
 
-                let f = state.memory.load(*addr as usize, *len as usize).unwrap();
-                let s: &str = core::str::from_utf8(f).unwrap();
+                // `addr`/`len` are guest-supplied: an out-of-bounds or
+                // non-UTF-8 pointer must trap the guest, not panic the host CLI.
+                let Ok(f) = state.memory.load(*addr as usize, *len as usize) else {
+                    return ControlFlow::Break(HostFunctionBreak::Trap);
+                };
+                let Ok(s) = core::str::from_utf8(f) else {
+                    return ControlFlow::Break(HostFunctionBreak::Trap);
+                };
 
                 eprintln!("PANIC {}:{}", s, line_no);
                 ControlFlow::Break(HostFunctionBreak::Trap)
@@ -64,12 +75,12 @@ fn main() {
                     panic!("expected i32");
                 };
 
-                let msg_r = state
-                    .memory
-                    .load(*msg_ptr as usize, *msg_len as usize)
-                    .unwrap();
-
-                let msg: &str = core::str::from_utf8(msg_r).unwrap();
+                let Ok(msg_r) = state.memory.load(*msg_ptr as usize, *msg_len as usize) else {
+                    return ControlFlow::Break(HostFunctionBreak::Trap);
+                };
+                let Ok(msg) = core::str::from_utf8(msg_r) else {
+                    return ControlFlow::Break(HostFunctionBreak::Trap);
+                };
 
                 eprintln!("MESSAGE {msg}");
                 ControlFlow::Continue(None)
@@ -91,17 +102,17 @@ fn main() {
                     panic!("expected i32");
                 };
 
-                // Time base
-                state.memory.store_u16(*time_ptr as usize, 0).unwrap();
-
-                // Time context
-                state.memory.store_u8((*time_ptr as usize) + 2, 0).unwrap();
-
-                // Seconds
-                state.memory.store_u32((*time_ptr as usize) + 3, 0).unwrap();
-
-                // Useconds
-                state.memory.store_u32((*time_ptr as usize) + 7, 0).unwrap();
+                // `time_ptr` is guest-supplied: trap on any out-of-bounds store
+                // rather than panicking the host CLI.
+                let wrote = state
+                    .memory
+                    .store_u16(*time_ptr as usize, 0) // Time base
+                    .and(state.memory.store_u8((*time_ptr as usize) + 2, 0)) // Time context
+                    .and(state.memory.store_u32((*time_ptr as usize) + 3, 0)) // Seconds
+                    .and(state.memory.store_u32((*time_ptr as usize) + 7, 0)); // Useconds
+                if wrote.is_err() {
+                    return ControlFlow::Break(HostFunctionBreak::Trap);
+                }
 
                 eprintln!("TELEMETRY {id}");
                 ControlFlow::Continue(Some(Value::I32(0)))
@@ -137,47 +148,49 @@ fn main() {
 
     let file = std::fs::File::open(path).expect("failed to open file");
     let mut file_stream = FileStream::new(file);
-    let (module, stats) =
-        spacewasm::Module::new_with_statistics::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
-            "main",
-            &mut file_stream,
-            &mut state.store,
-            &mut code_builder,
-            spacewasm::Rc::new(RustSystemAllocator)
-                .unwrap()
-                .into_wasm_memory_allocator(),
-        )
-        .expect("failed to parse wasm module");
+    let module = match spacewasm::Module::new::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
+        "main",
+        &mut file_stream,
+        &mut state.store,
+        &mut code_builder,
+        spacewasm::Rc::new(RustSystemAllocator)
+            .unwrap()
+            .into_wasm_memory_allocator(),
+    ) {
+        Ok(parsed) => parsed,
+        Err(e) => guest_error(format!("failed to decode/validate wasm module: {e:?}")),
+    };
 
     let text = code_builder.pages();
     let final_page_offset = code_builder.offset();
 
-    let module_ref = state.push_module(module).unwrap();
+    let module_ref = match state.push_module(module) {
+        Ok(module_ref) => module_ref,
+        Err(e) => guest_error(format!("failed to instantiate wasm module: {e:?}")),
+    };
     if let Some(start) = state.module_start(module_ref) {
-        state.invoke(start, &[]).unwrap();
+        if let Err(e) = state.invoke(start, &[]) {
+            guest_error(format!("failed to invoke start function: {e:?}"));
+        }
         match spacewasm::Interpreter.run(text, &mut state, usize::MAX) {
             InterpreterResult::Finished => {}
-            InterpreterResult::OutOfFuel => panic!("insufficient fuel for initialization"),
-            InterpreterResult::Trap(t) => panic!("trap during initialization {t:?}"),
-            InterpreterResult::Pause => panic!("pause during init"),
+            InterpreterResult::OutOfFuel => guest_error("insufficient fuel for initialization"),
+            InterpreterResult::Trap(t) => guest_error(format!("trap during initialization: {t:?}")),
+            InterpreterResult::Pause => guest_error("unexpected pause during initialization"),
         }
     }
 
     let module = state.store.modules().last().unwrap();
 
-    let mut total: usize = 0;
-    for (i, section) in stats.iter().enumerate() {
-        let section_kind = SectionKind::convert(i as u8).unwrap();
-        eprintln!("{:?}: {} bytes", section_kind, section.total_bytes);
-        total += section.total_bytes as usize;
-    }
-
+    let stats = unsafe { GLOBAL_ALLOCATOR.read() }.stats();
     let wasm_size = file_stream.len();
 
-    eprintln!("Total: {}", total);
+    eprintln!("Total: {}", stats.total_bytes);
+    eprintln!("Pad bytes: {}", stats.pad_bytes);
+    eprintln!("Pages: {}", stats.pages);
     eprintln!(
         "Compilation Ratio: {:.2}x",
-        (total as f64) / (wasm_size as f64)
+        (stats.total_bytes as f64) / (wasm_size as f64)
     );
 
     let full_page_usage = if text.len() > 1 {
@@ -215,32 +228,29 @@ fn main() {
     let module = state.store.modules().last().unwrap();
 
     let fi = {
-        let f = module.exports.iter().find(|f| &f.name == "run").unwrap();
+        let Some(f) = module.exports.iter().find(|f| &f.name == "run") else {
+            guest_error("wasm module does not export a `run` function");
+        };
         let ExportDesc::Func(fi) = f.desc else {
-            panic!()
+            guest_error("exported `run` is not a function");
         };
         fi
     };
 
     let module = state.store.modules().last().unwrap();
-    let Ref::Module(fi) = module.get_func_ref(fi).unwrap() else {
-        panic!()
+    let Some(Ref::Module(fi)) = module.get_func_ref(fi) else {
+        guest_error("exported `run` function reference is invalid");
     };
 
-    state
-        .invoke(
-            WasmRef {
-                module: ModuleRef(0),
-                index: fi,
-            },
-            &[],
-        )
-        .unwrap();
-
-    // let dbg = Inspector {
-    //     v: &interpreter,
-    //     out: *out,
-    // };
+    if let Err(e) = state.invoke(
+        WasmRef {
+            module: ModuleRef(0),
+            index: fi,
+        },
+        &[],
+    ) {
+        guest_error(format!("failed to invoke `run` function: {e:?}"));
+    }
 
     let mut result = InterpreterResult::OutOfFuel;
     while result == InterpreterResult::OutOfFuel {
@@ -248,7 +258,7 @@ fn main() {
     }
 
     let InterpreterResult::Finished = result else {
-        panic!("interpreter failed: {:?}", result)
+        guest_error(format!("interpreter failed: {result:?}"));
     };
 
     eprintln!(

@@ -10,12 +10,29 @@
 #include <stdint.h>
 #include <stddef.h>
 
+#if defined(__has_c_attribute)
+#  if __has_c_attribute(noreturn)
+#    define SPACEWASM_NORETURN [[noreturn]] /* Standard C23 attribute */
+#  endif
+#endif
+
+#if !defined(SPACEWASM_NORETURN)
+#  if defined(__STDC_VERSION__) && (__STDC_VERSION__ >= 201112L)
+#    define SPACEWASM_NORETURN _Noreturn /* Standard C11 keyword */
+#  elif defined(__GNUC__) || defined(__clang__)
+#    define SPACEWASM_NORETURN __attribute__((noreturn)) /* GCC / Clang extension */
+#  elif defined(_MSC_VER)
+#    define SPACEWASM_NORETURN __declspec(noreturn) /* MSVC extension */
+#  else
+#    define SPACEWASM_NORETURN /* Fallback: do nothing on unsupported compilers */
+#  endif
+#endif
+
+#define CustomSection_MAX_NAME_LENGTH 32
+
 /*
  Operation status returned by most `spacewasm_*` functions.
  [`spacewasm_status_t::SPACEWASM_OK`] (0) means success.
-
- Variants are glob-re-exported below so they can be named unqualified within
- this crate (e.g. `status::SPACEWASM_OK`).
  */
 enum spacewasm_status_t
 #if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
@@ -79,6 +96,7 @@ enum spacewasm_status_t
     SPACEWASM_ERR_TYPE_MISMATCH = 101,
     SPACEWASM_ERR_BLOCK_RESULT_TYPE_MISMATCH = 102,
     SPACEWASM_ERR_FUNCTION_RESULT_TYPE_MISMATCH = 103,
+    SPACEWASM_ERR_BR_TABLE_RESULT_TYPE_MISMATCH = 104,
     SPACEWASM_ERR_ILLEGAL_MEMORY_GROW = 112,
     SPACEWASM_ERR_INVALID_ELEMENT_OFFSET = 113,
     SPACEWASM_ERR_INVALID_ELEMENT_OUT_OF_BOUNDS = 114,
@@ -107,7 +125,7 @@ enum spacewasm_status_t
     SPACEWASM_ERR_TABLE_IMPORT_NOT_FOUND = 147,
     SPACEWASM_ERR_FUNCTION_IMPORT_OUT_OF_RANGE = 148,
     SPACEWASM_ERR_FUNCTION_IMPORT_TYPE_MISMATCH = 149,
-    SPACEWASM_ERR_GLOBAL_IS_NOT_MUTABLE = 150,
+    SPACEWASM_ERR_GLOBAL_NOT_MUTABLE = 150,
     SPACEWASM_ERR_GLOBAL_IMPORT_TYPE_MISMATCH = 151,
     SPACEWASM_ERR_MEMORY_IMPORT_TYPE_MISMATCH = 152,
     SPACEWASM_ERR_TABLE_IMPORT_TYPE_MISMATCH = 153,
@@ -341,6 +359,12 @@ typedef struct spacewasm_t spacewasm_t;
 typedef struct spacewasm_host_module_t spacewasm_host_module_t;
 
 /*
+ Opaque handle passed to C host callbacks, wrapping a borrowed core
+ [`Engine`]. Valid only for the duration of the call.
+ */
+typedef struct spacewasm_caller_t spacewasm_caller_t;
+
+/*
  Allocate `size` bytes aligned to `align`. Return NULL on failure.
  */
 typedef uint8_t *(*spacewasm_alloc_fn_t)(void *userdata, size_t size, size_t align);
@@ -365,14 +389,6 @@ typedef struct spacewasm_host_t {
     uint32_t capacity;
     uint32_t len;
 } spacewasm_host_t;
-
-/*
- Opaque handle passed to C host callbacks, wrapping a borrowed core
- [`Engine`]. Valid only for the duration of the call.
- */
-typedef struct spacewasm_caller_t {
-
-} spacewasm_caller_t;
 
 /*
  FFI-safe union of the four WebAssembly 1.0 value payloads.
@@ -448,22 +464,11 @@ typedef void (*spacewasm_global_dealloc_fn_t)(void *userdata,
                                               size_t size,
                                               size_t align);
 
-typedef struct spacewasm_memory_statistics_t {
-    int32_t total_bytes;
-    int32_t pad_bytes;
-} spacewasm_memory_statistics_t;
-
 
 
 #ifdef __cplusplus
 extern "C" {
 #endif // __cplusplus
-
-/*
- Global allocator statistics. Independent of the interpreter configuration,
- so it takes no const-generic parameters.
- */
-spacewasm_memory_statistics_t spacewasm_memory_statistics(void);
 
 /*
  Create a guest linear-memory allocator from three C callbacks, returning an
@@ -488,10 +493,10 @@ struct spacewasm_allocator_t *spacewasm_allocator_new(spacewasm_alloc_fn_t alloc
 void spacewasm_allocator_destroy(struct spacewasm_allocator_t *allocator);
 
 /*
- Create a new host module vector of max_host_module size
+ Create a new host module vector of `len` size
 
  # Safety
- `host` must be live
+ `dest` must be null or a valid, live pointer to write the new host vector into.
  */
 spacewasm_status_t spacewasm_host_new(uint32_t len, struct spacewasm_host_t *dest);
 
@@ -635,9 +640,11 @@ spacewasm_status_t spacewasm_module_start(struct spacewasm_t *engine,
  parameter or return count differs, and
  [`spacewasm_status_t::SPACEWASM_ERR_PARAM_TYPE_MISMATCH`] when a type at some
  position differs. Returns [`spacewasm_status_t::SPACEWASM_ERR_NOT_FOUND`]
- when `module_idx` or `func_index` is out of range, and
- [`spacewasm_status_t::SPACEWASM_ERR_BAD_SIGNATURE`] when a signature string
- contains a character other than `iIfd` or is too long.
+ when `module_idx` or `func_index` is out of range. When a signature string
+ contains a character other than `iIfd` it returns
+ [`spacewasm_status_t::SPACEWASM_ERR_BAD_ARG`], and when it declares more than
+ `MAX_HOST_FUNCTION_PARAMS` entries it returns
+ [`spacewasm_status_t::SPACEWASM_ERR_FUNCTION_PARAMETERS_TOO_LARGE`].
 
  # Safety
  `engine` must be live; all C strings valid and NUL-terminated.
@@ -699,7 +706,7 @@ spacewasm_status_t spacewasm_get_global(struct spacewasm_t *engine,
  `global_index` is out of range,
  [`spacewasm_status_t::SPACEWASM_ERR_GLOBAL_TYPE_MISMATCH`] when the value type
  does not match the global, and
- [`spacewasm_status_t::SPACEWASM_ERR_GLOBAL_IS_NOT_MUTABLE`] when the global is
+ [`spacewasm_status_t::SPACEWASM_ERR_GLOBAL_NOT_MUTABLE`] when the global is
  declared `const`.
 
  # Safety
@@ -770,6 +777,12 @@ spacewasm_status_t spacewasm_reset(struct spacewasm_t *engine);
  Fetch the result of the last completed call, coerced to `expected`, into
  `out`.
 
+ # Silent type coercion
+
+ The core engine stores a completed call's result as an untagged
+ [`RawValue`]. The function signature must be checked before invoking and the return
+ value must be extracted (in this function) using the proper `expected` type.
+
  # Safety
  `engine` must be live; `out` valid.
  */
@@ -831,7 +844,7 @@ spacewasm_status_t spacewasm_mem_size(struct spacewasm_caller_t *caller, uint32_
 
  returns: !
  */
-extern void spacewasm_panic(const uint8_t *filename,
+SPACEWASM_NORETURN extern void spacewasm_panic(const uint8_t *filename,
                             size_t filename_len,
                             uint32_t line,
                             const uint8_t *msg,
@@ -845,9 +858,9 @@ extern void spacewasm_panic(const uint8_t *filename,
  `alloc`/`dealloc` must remain valid for the lifetime of the process and
  honor the requested size/alignment. `userdata` must outlive all allocations.
  */
-int32_t spacewasm_set_global_allocator(spacewasm_global_alloc_fn_t alloc,
-                                       spacewasm_global_dealloc_fn_t dealloc,
-                                       void *userdata);
+spacewasm_status_t spacewasm_set_global_allocator(spacewasm_global_alloc_fn_t alloc,
+                                                  spacewasm_global_dealloc_fn_t dealloc,
+                                                  void *userdata);
 
 #ifdef __cplusplus
 }  // extern "C"

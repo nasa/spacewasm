@@ -13,7 +13,6 @@ const MAX_HOST_PARAMS: usize = 32;
 
 /// Opaque handle passed to C host callbacks, wrapping a borrowed core
 /// [`Engine`]. Valid only for the duration of the call.
-#[repr(C)]
 pub struct SpacewasmCaller;
 
 impl SpacewasmCaller {
@@ -86,7 +85,7 @@ impl CHostFunction {
     /// Invoke the C callback for a guest→host call: marshal the arguments,
     /// expose the state as an opaque caller handle, and translate the result
     /// back into spacewasm's `ControlFlow` outcome.
-    pub(crate) fn call(&self, state: &Engine, args: &[Value]) -> HostFunctionResult {
+    pub(crate) fn call(&self, state: &mut Engine, args: &[Value]) -> HostFunctionResult {
         if args.len() > MAX_HOST_PARAMS {
             return ControlFlow::Break(HostFunctionBreak::Trap);
         }
@@ -107,7 +106,7 @@ impl CHostFunction {
 
         // Expose the borrowed state as an opaque caller pointer. The callback
         // may only use it for the duration of this call.
-        let caller = state as *const Engine as *mut SpacewasmCaller;
+        let caller = state as *mut Engine as *mut SpacewasmCaller;
 
         // SAFETY: `f` is a valid C function pointer supplied at registration.
         let outcome = unsafe {
@@ -123,7 +122,10 @@ impl CHostFunction {
         match outcome {
             spacewasm_hostcall_result_t::SPACEWASM_CONTINUE_NONE => ControlFlow::Continue(None),
             spacewasm_hostcall_result_t::SPACEWASM_CONTINUE_SOME => {
-                ControlFlow::Continue(Some(out_result.to_value()))
+                match out_result.try_to_value() {
+                    Some(v) => ControlFlow::Continue(Some(v)),
+                    None => panic!("invalid out_result type"),
+                }
             }
             spacewasm_hostcall_result_t::SPACEWASM_TRAP => {
                 ControlFlow::Break(HostFunctionBreak::Trap)

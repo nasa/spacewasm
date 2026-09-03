@@ -2,15 +2,12 @@
 //! stable integer ABI is owned by the FFI layer, not the core crate.
 
 use spacewasm::{
-    AllocError, ConstantExprError, HostNameError, HostValListError, InterpreterResult, InvokeError,
-    MemoryError, ParseError, TrapReason, ValidationError,
+    AllocError, ConstantExprError, HostFunctionError, HostNameError, InterpreterResult,
+    InvokeError, MemoryError, ParseError, TrapReason, ValidationError,
 };
 
 /// Operation status returned by most `spacewasm_*` functions.
 /// [`spacewasm_status_t::SPACEWASM_OK`] (0) means success.
-///
-/// Variants are glob-re-exported below so they can be named unqualified within
-/// this crate (e.g. `status::SPACEWASM_OK`).
 #[repr(i32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum spacewasm_status_t {
@@ -83,6 +80,7 @@ pub enum spacewasm_status_t {
     SPACEWASM_ERR_TYPE_MISMATCH = 101,
     SPACEWASM_ERR_BLOCK_RESULT_TYPE_MISMATCH = 102,
     SPACEWASM_ERR_FUNCTION_RESULT_TYPE_MISMATCH = 103,
+    SPACEWASM_ERR_BR_TABLE_RESULT_TYPE_MISMATCH = 104,
 
     // Parse / validation errors - Memory and table validation
     SPACEWASM_ERR_ILLEGAL_MEMORY_GROW = 112,
@@ -117,7 +115,7 @@ pub enum spacewasm_status_t {
     SPACEWASM_ERR_TABLE_IMPORT_NOT_FOUND = 147,
     SPACEWASM_ERR_FUNCTION_IMPORT_OUT_OF_RANGE = 148,
     SPACEWASM_ERR_FUNCTION_IMPORT_TYPE_MISMATCH = 149,
-    SPACEWASM_ERR_GLOBAL_IS_NOT_MUTABLE = 150,
+    SPACEWASM_ERR_GLOBAL_NOT_MUTABLE = 150,
     SPACEWASM_ERR_GLOBAL_IMPORT_TYPE_MISMATCH = 151,
     SPACEWASM_ERR_MEMORY_IMPORT_TYPE_MISMATCH = 152,
     SPACEWASM_ERR_TABLE_IMPORT_TYPE_MISMATCH = 153,
@@ -240,6 +238,7 @@ pub fn invoke_status(e: InvokeError) -> spacewasm_status_t {
         InvokeError::ParamLenMismatch => SPACEWASM_ERR_PARAM_LEN_MISMATCH,
         InvokeError::ParamTypeMismatch => SPACEWASM_ERR_PARAM_TYPE_MISMATCH,
         InvokeError::StackOverflow => SPACEWASM_ERR_STACK_OVERFLOW,
+        InvokeError::Busy => SPACEWASM_ERR_WRONG_STATE,
     }
 }
 
@@ -286,6 +285,7 @@ pub fn validation_status(e: &ValidationError) -> spacewasm_status_t {
         ValidationError::LabelJumpTooLarge => SPACEWASM_ERR_LABEL_JUMP_TOO_LARGE,
         ValidationError::TypeMismatch => SPACEWASM_ERR_TYPE_MISMATCH,
         ValidationError::BlockResultTypeMismatch => SPACEWASM_ERR_BLOCK_RESULT_TYPE_MISMATCH,
+        ValidationError::BrTableResultTypeMismatch => SPACEWASM_ERR_BR_TABLE_RESULT_TYPE_MISMATCH,
         ValidationError::FunctionResultTypeMismatch => SPACEWASM_ERR_FUNCTION_RESULT_TYPE_MISMATCH,
         ValidationError::IllegalMemoryGrow => SPACEWASM_ERR_ILLEGAL_MEMORY_GROW,
         ValidationError::InvalidElementOffset => SPACEWASM_ERR_INVALID_ELEMENT_OFFSET,
@@ -319,7 +319,7 @@ pub fn validation_status(e: &ValidationError) -> spacewasm_status_t {
         ValidationError::TableImportNotFound => SPACEWASM_ERR_TABLE_IMPORT_NOT_FOUND,
         ValidationError::FunctionImportOutOfRange => SPACEWASM_ERR_FUNCTION_IMPORT_OUT_OF_RANGE,
         ValidationError::FunctionImportTypeMismatch => SPACEWASM_ERR_FUNCTION_IMPORT_TYPE_MISMATCH,
-        ValidationError::GlobalIsNotMutable => SPACEWASM_ERR_GLOBAL_IS_NOT_MUTABLE,
+        ValidationError::GlobalNotMutable => SPACEWASM_ERR_GLOBAL_NOT_MUTABLE,
         ValidationError::GlobalImportTypeMismatch => SPACEWASM_ERR_GLOBAL_IMPORT_TYPE_MISMATCH,
         ValidationError::MemoryImportTypeMismatch => SPACEWASM_ERR_MEMORY_IMPORT_TYPE_MISMATCH,
         ValidationError::TableImportTypeMismatch => SPACEWASM_ERR_TABLE_IMPORT_TYPE_MISMATCH,
@@ -362,8 +362,13 @@ pub fn host_name_status(_e: HostNameError) -> spacewasm_status_t {
     SPACEWASM_ERR_NAME_TOO_LONG
 }
 
-pub fn host_val_list_status(_e: HostValListError) -> spacewasm_status_t {
-    SPACEWASM_ERR_BAD_SIGNATURE
+pub fn host_val_list_status(e: HostFunctionError) -> spacewasm_status_t {
+    match e {
+        HostFunctionError::ValListInvalidItem => SPACEWASM_ERR_BAD_ARG,
+        HostFunctionError::ParameterListTooLong => SPACEWASM_ERR_FUNCTION_PARAMETERS_TOO_LARGE,
+        HostFunctionError::MultiReturnNotAllowed => SPACEWASM_ERR_FUNCTION_RETURNS_TOO_LARGE,
+        HostFunctionError::AllocError(ae) => alloc_status(ae),
+    }
 }
 
 /// Translate an [`InterpreterResult`] into a run status + trap code.

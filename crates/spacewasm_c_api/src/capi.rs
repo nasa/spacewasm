@@ -51,7 +51,8 @@ impl From<spacewasm_compiler_options_t> for CompilerOptions {
     fn from(o: spacewasm_compiler_options_t) -> Self {
         CompilerOptions {
             allow_memory_grow: o.allow_memory_grow,
-            max_backpatch_iterations: o.max_backpatch_iterations,
+            max_backpatch_iterations: (o.max_backpatch_iterations != 0)
+                .then_some(o.max_backpatch_iterations),
             max_code_pages: o.max_code_pages,
         }
     }
@@ -128,10 +129,21 @@ impl From<&mut spacewasm_host_t> for &mut Vec<HostModule> {
     }
 }
 
-/// Create a new host module vector of max_host_module size
+const _: () = {
+    assert!(
+        core::mem::size_of::<spacewasm_host_t>() == core::mem::size_of::<Vec<HostModule>>(),
+        "spacewasm_host_t must match Vec<HostModule> layout (size)"
+    );
+    assert!(
+        core::mem::align_of::<spacewasm_host_t>() == core::mem::align_of::<Vec<HostModule>>(),
+        "spacewasm_host_t must match Vec<HostModule> layout (align)"
+    );
+};
+
+/// Create a new host module vector of `len` size
 ///
 /// # Safety
-/// `host` must be live
+/// `dest` must be null or a valid, live pointer to write the new host vector into.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn spacewasm_host_new(
     len: u32,
@@ -509,9 +521,11 @@ pub unsafe extern "C" fn spacewasm_module_start(
 /// parameter or return count differs, and
 /// [`spacewasm_status_t::SPACEWASM_ERR_PARAM_TYPE_MISMATCH`] when a type at some
 /// position differs. Returns [`spacewasm_status_t::SPACEWASM_ERR_NOT_FOUND`]
-/// when `module_idx` or `func_index` is out of range, and
-/// [`spacewasm_status_t::SPACEWASM_ERR_BAD_SIGNATURE`] when a signature string
-/// contains a character other than `iIfd` or is too long.
+/// when `module_idx` or `func_index` is out of range. When a signature string
+/// contains a character other than `iIfd` it returns
+/// [`spacewasm_status_t::SPACEWASM_ERR_BAD_ARG`], and when it declares more than
+/// `MAX_HOST_FUNCTION_PARAMS` entries it returns
+/// [`spacewasm_status_t::SPACEWASM_ERR_FUNCTION_PARAMETERS_TOO_LARGE`].
 ///
 /// # Safety
 /// `engine` must be live; all C strings valid and NUL-terminated.
@@ -661,7 +675,7 @@ pub unsafe extern "C" fn spacewasm_get_global(
 /// `global_index` is out of range,
 /// [`spacewasm_status_t::SPACEWASM_ERR_GLOBAL_TYPE_MISMATCH`] when the value type
 /// does not match the global, and
-/// [`spacewasm_status_t::SPACEWASM_ERR_GLOBAL_IS_NOT_MUTABLE`] when the global is
+/// [`spacewasm_status_t::SPACEWASM_ERR_GLOBAL_NOT_MUTABLE`] when the global is
 /// declared `const`.
 ///
 /// # Safety
@@ -692,20 +706,26 @@ pub unsafe extern "C" fn spacewasm_set_global(
         None => return status::SPACEWASM_ERR_NOT_FOUND,
     };
 
-    if ValType::from(value.tag) != global.type_.ty {
+    let Some(value_val) = value.try_to_value() else {
+        return status::SPACEWASM_ERR_BAD_ARG;
+    };
+
+    let (ty, raw) = match value_val {
+        Value::I32(i) => (ValType::I32, RawValue::from_i32(i)),
+        Value::I64(i) => (ValType::I64, RawValue::from_i64(i)),
+        Value::F32(f) => (ValType::F32, RawValue::from_f32(f)),
+        Value::F64(f) => (ValType::F64, RawValue::from_f64(f)),
+    };
+
+    if ty != global.type_.ty {
         return status::SPACEWASM_ERR_GLOBAL_TYPE_MISMATCH;
     }
 
     if !global.type_.mutable {
-        return status::SPACEWASM_ERR_GLOBAL_IS_NOT_MUTABLE;
+        return status::SPACEWASM_ERR_GLOBAL_NOT_MUTABLE;
     }
 
-    global.value = match value.to_value() {
-        Value::I32(i) => RawValue::from_i32(i),
-        Value::I64(i) => RawValue::from_i64(i),
-        Value::F32(f) => RawValue::from_f32(f),
-        Value::F64(f) => RawValue::from_f64(f),
-    };
+    global.value = raw;
     status::SPACEWASM_OK
 }
 
@@ -750,13 +770,13 @@ pub unsafe extern "C" fn spacewasm_invoke(
         return status::SPACEWASM_ERR_CAPACITY;
     }
 
-    // Marshal parameters. `from_raw_parts` requires a non-null pointer even for
-    // a zero-length slice, so only build the slice when there are entries (the
-    // contract permits a null `params` when `n == 0`).
     if n != 0 {
         let slice = unsafe { core::slice::from_raw_parts(params, n) };
         for (i, v) in slice.iter().enumerate() {
-            buf[i] = v.to_value();
+            let Some(val) = v.try_to_value() else {
+                return status::SPACEWASM_ERR_BAD_ARG;
+            };
+            buf[i] = val;
         }
     }
 
@@ -782,6 +802,11 @@ pub unsafe extern "C" fn spacewasm_run(
     fuel: usize,
     out_trap: *mut spacewasm_trap_t,
 ) -> spacewasm_run_status_t {
+    // Clear out the destination before we do any early returns
+    if !out_trap.is_null() {
+        unsafe { *out_trap = spacewasm_trap_t::SPACEWASM_TRAP_NONE };
+    }
+
     let Some(cengine) = (unsafe { engine.as_mut() }) else {
         return spacewasm_run_status_t::SPACEWASM_RUN_TRAP;
     };
@@ -811,8 +836,10 @@ pub unsafe extern "C" fn spacewasm_resume(engine: *mut CEngine) -> spacewasm_sta
         return status::SPACEWASM_ERR_NULL_ARG;
     };
 
-    cengine.engine.resume(None);
-    status::SPACEWASM_OK
+    match cengine.engine.resume(None) {
+        Ok(()) => status::SPACEWASM_OK,
+        Err(_) => status::SPACEWASM_ERR_WRONG_STATE,
+    }
 }
 
 /// Resume the interpreter from a paused state.
@@ -830,8 +857,14 @@ pub unsafe extern "C" fn spacewasm_resume_value(
         return status::SPACEWASM_ERR_NULL_ARG;
     };
 
-    cengine.engine.resume(Some(resume_value.into()));
-    status::SPACEWASM_OK
+    let Some(value) = resume_value.try_to_value() else {
+        return status::SPACEWASM_ERR_BAD_ARG;
+    };
+
+    match cengine.engine.resume(Some(value)) {
+        Ok(()) => status::SPACEWASM_OK,
+        Err(_) => status::SPACEWASM_ERR_WRONG_STATE,
+    }
 }
 
 /// Reset the engine back to an idle state, discarding any in-progress or
@@ -855,6 +888,12 @@ pub unsafe extern "C" fn spacewasm_reset(engine: *mut CEngine) -> spacewasm_stat
 /// Fetch the result of the last completed call, coerced to `expected`, into
 /// `out`.
 ///
+/// # Silent type coercion
+///
+/// The core engine stores a completed call's result as an untagged
+/// [`RawValue`]. The function signature must be checked before invoking and the return
+/// value must be extracted (in this function) using the proper `expected` type.
+///
 /// # Safety
 /// `engine` must be live; `out` valid.
 #[unsafe(no_mangle)]
@@ -869,10 +908,13 @@ pub unsafe extern "C" fn spacewasm_get_result(
     if out.is_null() {
         return status::SPACEWASM_ERR_NULL_ARG;
     }
+    let Ok(expected_ty) = ValType::try_from(&expected) else {
+        return status::SPACEWASM_ERR_BAD_ARG;
+    };
     match cengine
         .engine
         .result
-        .map(|raw| spacewasm_value_t::from_raw(raw, ValType::from(expected)))
+        .map(|raw| spacewasm_value_t::from_raw(raw, expected_ty))
     {
         Some(v) => {
             unsafe { *out = v };

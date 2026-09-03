@@ -26,7 +26,7 @@ target_flag() {
 export -f target_flag
 
 # shellcheck disable=SC2206
-targets=(${MIRI_TEST_TARGETS:-lib core_integration regression_integration custom_page_sizes_integration statistics_integration})
+targets=(${MIRI_TEST_TARGETS:-lib core_integration regression_integration custom_page_sizes_integration})
 
 pairs_file="$(mktemp)"
 results_file="$(mktemp)"
@@ -34,10 +34,21 @@ trap 'rm -f "$pairs_file" "$results_file"' EXIT
 
 for label in "${targets[@]}"; do
   target="$(target_flag "$label")"
-  RUSTFLAGS="--cfg miri" cargo test --quiet $target -- --list 2>/dev/null |
-    grep ': test$' | sed 's/: test$//' |
-    sed "s/^/${label}\t/" \
-      >>"$pairs_file"
+
+  if ! listing="$(RUSTFLAGS="--cfg miri" cargo test --quiet $target -- --list 2>&1)"; then
+    echo "!!! could not enumerate tests for target '${label}'" >&2
+    echo "$listing" >&2
+    exit 1
+  fi
+
+  names="$(printf '%s\n' "$listing" | grep ': test$' | sed 's/: test$//' || true)"
+  if [ -z "$names" ]; then
+    echo "!!! target '${label}' enumerated zero tests" >&2
+    echo "    (stale MIRI_TEST_TARGETS entry, or every test is #[ignore]d?)" >&2
+    exit 1
+  fi
+
+  printf '%s\n' "$names" | sed "s/^/${label}\t/" >>"$pairs_file"
 done
 
 total=$(wc -l <"$pairs_file")

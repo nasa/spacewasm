@@ -230,6 +230,10 @@ pub struct GlobalVariable {
     pub mutable: bool,
 }
 
+/// The IR encodes code addresses as 24-bit page indices (see [`JumpTarget`]),
+/// so no more than `2^24` code pages can ever be addressed.
+const MAX_ADDRESSABLE_CODE_PAGES: u32 = 1 << 24;
+
 #[derive(Debug, Copy, Clone)]
 pub struct CompilerOptions {
     /// Allow compiling memory.grow instructions into IR
@@ -238,10 +242,24 @@ pub struct CompilerOptions {
     /// Maximum number of iterations to resolve during a control flow backpatch.
     /// This effectively limits a potentially long loop though can reject valid programs.
     ///
-    /// Set this to 0 for unlimited iterations
-    pub max_backpatch_iterations: u32,
+    /// `None` means unlimited iterations; `Some(n)` rejects a backpatch chain
+    /// longer than `n` with [`ValidationError::PossibleBackpatchCycle`]. This is
+    /// an explicit opt-out rather than a magic sentinel value.
+    pub max_backpatch_iterations: Option<u32>,
 
-    /// The maximum number of code pages allowed across all modules
+    /// The maximum number of code pages allowed across all modules.
+    ///
+    /// # Sizing
+    /// Each page is a [`TextPage`] of 256 16-bit words (512 bytes). At
+    /// construction ([`CodeBuilder::new`]) this set the *page table* capacity:
+    /// a `Vec` of `max_code_pages` `Box<TextPage>` pointers.
+    ///
+    /// The 512-byte page bodies themselves are allocated lazily as the module is loaded.
+    ///
+    /// Choose `max_code_pages` to cover the largest total IR (across all modules
+    /// loaded onto the store). Oversizing it costs only the pointer table, not the page bodies.
+    /// It must be strictly less than `MAX_ADDRESSABLE_CODE_PAGES` (`2^24`) and must be sized to
+    /// fit inside a single heap memory page.
     pub max_code_pages: u32,
 }
 
@@ -256,7 +274,7 @@ pub struct CodeBuilder {
 
 impl CodeBuilder {
     pub fn new(options: CompilerOptions) -> Result<CodeBuilder, AllocError> {
-        if options.max_code_pages >= (1 << 24) {
+        if options.max_code_pages >= MAX_ADDRESSABLE_CODE_PAGES {
             return Err(AllocError::AllocationFailed);
         }
 
@@ -298,10 +316,10 @@ impl CodeBuilder {
             next = address + lt.jump();
 
             n += 1;
-            if self.options().max_backpatch_iterations != 0
-                && n > self.options().max_backpatch_iterations
-            {
-                return Err(ValidationError::PossibleBackpatchCycle);
+            if let Some(max) = self.options().max_backpatch_iterations {
+                if n > max {
+                    return Err(ValidationError::PossibleBackpatchCycle);
+                }
             }
         }
 
@@ -338,7 +356,7 @@ impl CodeBuilder {
         };
 
         // We support up to 24-bit page addresses
-        assert!(page_index < (1 << 24));
+        assert!(page_index < MAX_ADDRESSABLE_CODE_PAGES as usize);
         assert!(offset < 256);
 
         JumpTarget(((page_index as u32) << 8) | (offset as u32))
@@ -515,7 +533,7 @@ impl<'a, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize>
     pub fn check_br_table_result(&mut self, r: ResultType) -> Result<(), ValidationError> {
         if let Some(other) = self.br_table_result {
             if other != r {
-                Err(ValidationError::BlockResultTypeMismatch)
+                Err(ValidationError::BrTableResultTypeMismatch)
             } else {
                 Ok(())
             }
@@ -531,7 +549,7 @@ impl<'a, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize>
     ) -> Result<(), ValidationError> {
         if let Some(other) = self.br_table_result {
             if other != def_result {
-                Err(ValidationError::BlockResultTypeMismatch)
+                Err(ValidationError::BrTableResultTypeMismatch)
             } else {
                 self.br_table_result = None;
                 Ok(())

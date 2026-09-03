@@ -1,0 +1,49 @@
+name: Install WABT
+description: >
+  Download and install the WebAssembly Binary Toolkit (WABT)
+
+runs:
+  using: composite
+  steps:
+    - name: Install WABT (WebAssembly Binary Toolkit)
+      shell: bash
+      run: |
+        set -euo pipefail
+        # WABT release to install. The SHA-256 pins below are specific to this
+        # version -- bump both together (checksums come from the upstream
+        # release page) or verification will (correctly) fail.
+        WABT_VERSION=1.0.41
+        # Select the upstream release asset for this runner. macOS x64 is handled
+        # defensively but intentionally has no pinned checksum: no Intel-mac
+        # runner is in the matrix, so add its checksum before scheduling one.
+        if [ "$RUNNER_OS" == "macOS" ]; then
+          if [ "$RUNNER_ARCH" == "ARM64" ]; then
+            WABT_PLATFORM="macos-arm64"
+          else
+            WABT_PLATFORM="macos-x64"
+          fi
+        else
+          # Linux
+          if [ "$RUNNER_ARCH" == "ARM64" ]; then
+            WABT_PLATFORM="linux-arm64"
+          else
+            WABT_PLATFORM="linux-x64"
+          fi
+        fi
+        case "$WABT_PLATFORM" in
+          linux-x64)   WABT_SHA256=83f8122e924745fcd70636e3594bc01c4c47f2d4c8f3c63b5d70d3f83a482677 ;;
+          linux-arm64) WABT_SHA256=5e35416ee8725dc7cc0572e4392a8117cbf008b0e34c0db65c75506b0299cdbf ;;
+          macos-arm64) WABT_SHA256=e5269d6bbe05dfeb179e4f21111b3a641d6ccaa38b0b21d472ae5c65f8c4ff5d ;;
+          *) echo "::error::No pinned WABT checksum for platform $WABT_PLATFORM"; exit 1 ;;
+        esac
+        tarball="wabt-${WABT_VERSION}-${WABT_PLATFORM}.tar.gz"
+        wget -q "https://github.com/WebAssembly/wabt/releases/download/${WABT_VERSION}/${tarball}"
+        # macOS runners ship `shasum` (Perl) rather than GNU coreutils'
+        # `sha256sum`; both accept the same "<hash>  <file>" verify format.
+        if command -v sha256sum >/dev/null 2>&1; then
+          echo "${WABT_SHA256}  ${tarball}" | sha256sum -c -
+        else
+          echo "${WABT_SHA256}  ${tarball}" | shasum -a 256 -c -
+        fi
+        tar -xzf "${tarball}"
+        sudo cp "wabt-${WABT_VERSION}/bin/"* /usr/local/bin/

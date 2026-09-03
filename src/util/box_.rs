@@ -21,9 +21,26 @@ impl<A: Allocator, T: core::fmt::Debug> core::fmt::Debug for Box<T, A> {
     }
 }
 
+impl<T: Clone, A: Allocator + Clone> Box<T, A> {
+    /// Attempt to clone the box, returning [`AllocError`] if allocating the new
+    /// backing storage fails.
+    ///
+    /// The inner value is cloned before the new allocation is populated, so a
+    /// panic in `T::clone` (or an allocation failure) leaks nothing.
+    pub fn try_clone(&self) -> Result<Self, AllocError> {
+        Box::new_in(self.alloc.clone(), (**self).clone())
+    }
+}
+
 impl<T: Clone, A: Allocator + Clone> Clone for Box<T, A> {
+    /// # Panics
+    /// Panics if allocating the new backing storage fails. Use
+    /// [`Box::try_clone`] to handle allocation failure without panicking.
+    ///
+    /// (Mirrors the fallible-allocation decision documented on
+    /// [`crate::Vec::clone`].)
     fn clone(&self) -> Self {
-        Box::new_in(self.alloc.clone(), (**self).clone()).unwrap()
+        self.try_clone().expect("Box::clone: allocation failed")
     }
 }
 
@@ -373,10 +390,6 @@ mod kani_proofs {
                 );
 
                 unsafe { self.inner.dealloc(ptr, layout) }
-            }
-
-            fn memory_statistics(&self) -> crate::MemoryStatistics {
-                self.inner.memory_statistics()
             }
         }
 

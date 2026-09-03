@@ -5,9 +5,15 @@ include(ExternalProject)
 set(SPACEWASM_TARGET "" CACHE STRING "Target triple for Rust compiler")
 
 if(SPACEWASM_TARGET STREQUAL "")
-  execute_process(COMMAND rustc -vV OUTPUT_VARIABLE RUSTC_VERSION)
-  string(REGEX MATCH "host: ([^ \n]*)" RUSTC_HOST ${RUSTC_VERSION})
-  string(STRIP ${CMAKE_MATCH_1} RUSTC_HOST_TARGET)
+  execute_process(
+    COMMAND rustc -vV
+    OUTPUT_VARIABLE RUSTC_VERSION
+    RESULT_VARIABLE RUSTC_RESULT)
+  if(NOT RUSTC_RESULT EQUAL 0)
+    message(FATAL_ERROR "rustc not found or failed to run; set SPACEWASM_TARGET to the desired target triple")
+  endif()
+  string(REGEX MATCH "host: ([^ \n]*)" RUSTC_HOST "${RUSTC_VERSION}")
+  string(STRIP "${CMAKE_MATCH_1}" RUSTC_HOST_TARGET)
   set(SPACEWASM_TARGET ${RUSTC_HOST_TARGET})
 endif()
 
@@ -40,6 +46,7 @@ ExternalProject_Add(
     BUILD_COMMAND
         ${CMAKE_COMMAND} -E env CARGO_TARGET_DIR=${CARGO_TARGET_DIR}
         ${SPACEWASM_CARGO_BINARY} build
+          --locked
           --target ${SPACEWASM_TARGET}
           --package spacewasm_c_api
           ${SPACEWASM_BUILD_TYPE_FLAG}

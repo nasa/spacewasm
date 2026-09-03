@@ -146,7 +146,7 @@ impl Store {
                         return if g.value.ty() != expected_ty.ty {
                             Err(ValidationError::GlobalImportTypeMismatch)
                         } else if g.value.mutable() != expected_ty.mutable {
-                            Err(ValidationError::GlobalIsNotMutable)
+                            Err(ValidationError::GlobalNotMutable)
                         } else {
                             Ok(Import::HostGlobal {
                                 module: HostModuleRef::new(mi),
@@ -176,7 +176,7 @@ impl Store {
                                     if g.type_.ty != expected_ty.ty {
                                         Err(ValidationError::GlobalImportTypeMismatch)
                                     } else if expected_ty.mutable != g.type_.mutable {
-                                        Err(ValidationError::GlobalIsNotMutable)
+                                        Err(ValidationError::GlobalNotMutable)
                                     } else {
                                         Ok(Import::Global {
                                             module: ModuleRef(mi as u8),
@@ -190,7 +190,7 @@ impl Store {
                                     if g.type_.ty != expected_ty.ty {
                                         Err(ValidationError::GlobalImportTypeMismatch)
                                     } else if expected_ty.mutable != g.type_.mutable {
-                                        Err(ValidationError::GlobalIsNotMutable)
+                                        Err(ValidationError::GlobalNotMutable)
                                     } else {
                                         Ok(Import::Global { module, index })
                                     }
@@ -201,7 +201,7 @@ impl Store {
                                     if g.value.ty() != expected_ty.ty {
                                         Err(ValidationError::GlobalImportTypeMismatch)
                                     } else if expected_ty.mutable != g.value.mutable() {
-                                        Err(ValidationError::GlobalIsNotMutable)
+                                        Err(ValidationError::GlobalNotMutable)
                                     } else {
                                         Ok(Import::HostGlobal { module, index })
                                     }
@@ -238,8 +238,6 @@ impl Store {
                         });
                     }
                 }
-
-                return Err(ValidationError::TableImportNotFound);
             }
         }
 

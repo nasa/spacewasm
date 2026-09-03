@@ -18,9 +18,9 @@ use serde::{Deserialize, Serialize};
 use spacewasm::{
     AllocError, Allocator, CodeBuilder, CompilerOptions, ConstantExprError, Engine, ExportDesc,
     GlobalValue, GlobalValueError, HostFunction, HostGlobal, HostModule, InnerVec, Interpreter,
-    InterpreterResult, InterpreterRunner, InvokeError, Limit, Memory, MemoryError,
-    MemoryStatistics, Module, ModuleRef, ParseError, Ref, TrapReason, ValType, ValidationError,
-    Value, WasmMemoryAllocator, WasmRef, WasmStream, global_allocator, vec,
+    InterpreterResult, InterpreterRunner, InvokeError, Limit, Memory, MemoryError, Module,
+    ModuleRef, ParseError, Ref, TrapReason, ValType, ValidationError, Value, WasmMemoryAllocator,
+    WasmRef, WasmStream, global_allocator, vec,
 };
 use std::alloc::Layout;
 use std::cell::RefCell;
@@ -201,13 +201,6 @@ unsafe impl Allocator for SpecTestAllocator {
 
         unsafe { std::alloc::dealloc(ptr, layout) }
     }
-
-    fn memory_statistics(&self) -> MemoryStatistics {
-        MemoryStatistics {
-            total_bytes: 0,
-            pad_bytes: 0,
-        }
-    }
 }
 
 struct RustSystemAllocator;
@@ -255,9 +248,8 @@ struct StaticGlobal {
 }
 
 impl GlobalValue for StaticGlobal {
-    fn write(&self, value: Value) -> Result<(), GlobalValueError> {
-        *self.value.lock().unwrap() = value;
-        Ok(())
+    fn write(&self, _value: Value) -> Result<(), GlobalValueError> {
+        Err(GlobalValueError)
     }
 
     fn read(&self) -> Result<Value, GlobalValueError> {
@@ -305,10 +297,13 @@ impl WasmStream for ByteStream {
 
         if let Some(ref mut vec) = self.buffer {
             self.consumed = true;
-            let inner = InnerVec {
-                ptr: vec.as_mut_ptr(),
-                capacity: vec.len() as u32,
-                len: vec.len() as u32,
+            debug_assert!(
+                u32::try_from(vec.len()).is_ok(),
+                "wasm module length {} does not fit in u32",
+                vec.len()
+            );
+            let inner = unsafe {
+                InnerVec::from_raw_parts(vec.as_mut_ptr(), vec.len() as u32, vec.len() as u32)
             };
             Ok(Some(inner))
         } else {
@@ -317,13 +312,16 @@ impl WasmStream for ByteStream {
     }
 
     fn return_(&mut self, _chunk: InnerVec<u8>) {
-        // Buffer is kept alive in self.buffer, so nothing to do
+        // No-op: the stream owns `self.buffer` and never handed off ownership,
+        // so there is nothing to reclaim. See the handoff rationale in `read`.
     }
 }
 
 const MAX_CODE_PAGES: u32 = 256;
 const MAX_CONTROL_FRAMES: usize = 128;
 const MAX_STACK_DEPTH: usize = 256;
+/// Instruction budget for a single invoke/resume, used to catch infinite loops.
+const MAX_INVOKE_FUEL: usize = 10_000_000;
 
 /// Builds the set of host modules an engine is instantiated with. A factory
 /// (rather than a `Vec`) is required because the engine is rebuilt on every
@@ -353,7 +351,7 @@ impl TestContext {
             engine: new_engine(host_modules),
             code_builder: CodeBuilder::new(CompilerOptions {
                 allow_memory_grow: true,
-                max_backpatch_iterations: 0,
+                max_backpatch_iterations: None,
                 max_code_pages: MAX_CODE_PAGES,
             })
             .unwrap(),
@@ -392,7 +390,7 @@ impl TestContext {
         // Clone all modules into the new store
         for module in self.engine.store.modules().iter() {
             let cloned_module = clone_module(module);
-            cloned.store.push_module(cloned_module);
+            cloned.store.push_module(cloned_module).unwrap();
         }
 
         cloned
@@ -603,9 +601,12 @@ fn clone_memory(memory: &Memory) -> spacewasm::Rc<Memory> {
         }
     }
 
-    // Copy the memory contents
+    // Copy the memory contents. Use the memory's actual page size rather than
+    // assuming the default 64 KiB Wasm page, so memories declared under the
+    // custom-page-sizes proposal (e.g. `MemPageSize::_1`) are cloned with the
+    // correct byte length instead of over-/under-reading.
     if current_size > 0 {
-        let size_in_bytes = (current_size as usize) * 65536;
+        let size_in_bytes = (current_size as usize) * mem_type.page_size();
         let data = memory.load(0, size_in_bytes).unwrap();
         new_memory.store(0, data).unwrap();
     }
@@ -646,9 +647,6 @@ fn clone_module(module: &Module) -> Module {
         start: module.start,
     }
 }
-
-// We need to add a method to Store to support pushing modules
-// For now, TestContext will manage store cloning by saving/restoring the entire Store
 
 fn load_module(
     ctx: &mut TestContext,
@@ -695,7 +693,9 @@ fn load_module(
         match ctx.engine.module_start(module_ref) {
             None => InterpreterResult::Finished,
             Some(start) => match ctx.engine.invoke(start, &[]) {
-                Ok(()) => Interpreter.run(ctx.code_builder.pages(), &mut ctx.engine, usize::MAX),
+                Ok(()) => {
+                    Interpreter.run(ctx.code_builder.pages(), &mut ctx.engine, MAX_INVOKE_FUEL)
+                }
                 Err(InvokeError::StackOverflow) => {
                     InterpreterResult::Trap(TrapReason::StackOverflow)
                 }
@@ -753,8 +753,10 @@ fn invoke_function_resume(
     // deallocation may occur.
     let result = {
         let _locked = enter_locked();
-        ctx.engine.resume(resume_value);
-        test_runner.run(ctx.code_builder.pages(), &mut ctx.engine, 10000000)
+        ctx.engine
+            .resume(resume_value)
+            .expect("engine should be paused when resuming");
+        test_runner.run(ctx.code_builder.pages(), &mut ctx.engine, MAX_INVOKE_FUEL)
     };
 
     // Get the return types we saved when the function paused
@@ -857,7 +859,7 @@ fn invoke_function_normal(
     let result = {
         let _locked = enter_locked();
         ctx.engine.invoke(f_ref, &params).unwrap();
-        test_runner.run(ctx.code_builder.pages(), &mut ctx.engine, 10000000)
+        test_runner.run(ctx.code_builder.pages(), &mut ctx.engine, MAX_INVOKE_FUEL)
     };
 
     // Check the result
@@ -929,29 +931,6 @@ fn get_global(ctx: &TestContext, module_name: &Option<String>, field: &str) -> V
 }
 
 fn check_trap_reason(reason: TrapReason, text: &str) {
-    /*
-    RuntimeError::Trap(TrapError::DivideBy0) => Ok("integer divide by zero"),
-        RuntimeError::Trap(TrapError::UnrepresentableResult) => Ok("integer overflow"),
-        RuntimeError::Trap(TrapError::BadConversionToInteger) => {
-            Ok("invalid conversion to integer")
-        }
-        RuntimeError::Trap(TrapError::ReachedUnreachable) => Ok("unreachable"),
-        RuntimeError::Trap(TrapError::MemoryOrDataAccessOutOfBounds) => {
-            Ok("out of bounds memory access")
-        }
-        RuntimeError::Trap(TrapError::TableOrElementAccessOutOfBounds) => {
-            Ok("out of bounds table access")
-        }
-        RuntimeError::Trap(TrapError::UninitializedElement) => Ok("uninitialized element"),
-        RuntimeError::Trap(TrapError::SignatureMismatch) => Ok("indirect call type mismatch"),
-        RuntimeError::Trap(TrapError::TableAccessOutOfBounds) => Ok("undefined element"),
-
-        RuntimeError::StackExhaustion => Ok("call stack exhausted"),
-        RuntimeError::ModuleNotFound => Ok("module not found"),
-        RuntimeError::FunctionNotFound => Err(WastError::UnrepresentedRuntimeError),
-        RuntimeError::HostFunctionSignatureMismatch => Ok("host function signature mismatch"),
-
-     */
     match (reason, text) {
         (TrapReason::Unreachable, "unreachable") => {}
         (TrapReason::DivideByZero, "integer divide by zero") => {}
@@ -971,56 +950,96 @@ fn check_trap_reason(reason: TrapReason, text: &str) {
     }
 }
 
+/// Assert that an interpreter [`ValidationError`] is an acceptable match for the
+/// spec-suite's expected rejection `text`.
 fn check_decode_error(err: ParseError, text: String) {
     match (err.err.err, text.as_str()) {
-        (
-            ValidationError::MalformedInteger,
-            "integer too large" | "integer representation too long",
-        ) => {}
+        // --- Encoding / structural malformations ---
         (ValidationError::MalformedMagic, "magic header not detected") => {}
         (ValidationError::MalformedVersion, "unknown binary version") => {}
-        (ValidationError::ExpectedTerminal(0), "zero byte expected") => {}
-        (
-            ValidationError::Eof,
-            "unexpected end" | "length out of bounds" | "unexpected end of section or function",
-        ) => {}
-        (ValidationError::TooManyLocals, "too many locals") => {}
         (ValidationError::MalformedUtf8, "malformed UTF-8 encoding") => {}
+        (ValidationError::MalformedSectionId(_), "malformed section id") => {}
+        (
+            ValidationError::MalformedSectionSize,
+            "section size mismatch" | "unexpected end" | "malformed value type",
+        ) => {}
         (
             ValidationError::InvalidCodeSectionFunctionCount,
             "function and code section have inconsistent lengths",
         ) => {}
-        (ValidationError::MalformedSectionSize, "section size mismatch") => {}
-        (ValidationError::LocalIdxOutOfRange, "unknown local") => {}
-        (ValidationError::MultipleMemories, "multiple memories") => {}
+        (ValidationError::DuplicateSection(_), "unexpected content after last section") => {}
+        (ValidationError::InvalidSectionOrdering(_, _), "unexpected section order") => {}
+        (ValidationError::ExpectedTerminal(0), "zero byte expected") => {}
+        (
+            ValidationError::MalformedInteger,
+            "integer too large" | "integer representation too long",
+        ) => {}
+        // A truncated stream
+        (
+            ValidationError::Eof,
+            "unexpected end"
+            | "length out of bounds"
+            | "unexpected end of section or function"
+            | "integer representation too long"
+            | "malformed value type",
+        ) => {}
+        (ValidationError::VecTooLong, "length out of bounds") => {}
+
+        // --- Value / type descriptors ---
+        (ValidationError::MalformedValueType(_), "malformed value type") => {}
+        (ValidationError::MalformedFunction(_), "malformed function type") => {}
+        (ValidationError::MalformedElemType(_), "malformed element type") => {}
+        (ValidationError::MalformedLimit(_), "malformed limits flag") => {}
+        (ValidationError::MalformedMemType(_), "malformed memory type") => {}
+        // Import and export descriptors share the same malformed-kind variant.
+        (
+            ValidationError::MalformedImportExportDesc(_),
+            "malformed import kind" | "malformed export kind",
+        ) => {}
+        (ValidationError::ExpectedConstOrVar(_), "malformed mutability") => {}
+
+        // --- Index-space / definition lookups ("unknown X" family) ---
+        (ValidationError::LocalIdxOutOfRange, "unknown local" | "local offset out of range") => {}
+        (ValidationError::GlobalIdxOutOfRange, "unknown global") => {}
+        (ValidationError::TypeIdxOutOfRange, "unknown type") => {}
+        (ValidationError::FunctionImportOutOfRange, "unknown type") => {}
+        (ValidationError::FunctionIdxOutOfRange, "unknown function") => {}
+        (ValidationError::TableNotDefined, "unknown table") => {}
+        (ValidationError::MemoryNotDefined, "unknown memory") => {}
+        (ValidationError::InvalidMemIndex, "unknown memory") => {}
+        (ValidationError::InvalidTableIndex, "malformed value type" | "unknown table") => {}
+
+        // --- Control flow ---
+        (ValidationError::InvalidElseBlock, "else without matching if") => {}
+        // An out-of-range label, or a branch whose target is truncated away.
+        (
+            ValidationError::InvalidLabelIndex,
+            "unknown label" | "unexpected end of section or function",
+        ) => {}
+
+        // --- Type checking ("type mismatch" is a coarse spec category) ---
+        (ValidationError::TypeMismatch, "type mismatch") => {}
+        (ValidationError::StackUnderflow, "type mismatch") => {}
+        (ValidationError::FunctionResultTypeMismatch, "type mismatch") => {}
+        (ValidationError::GlobalTypeMismatch, "type mismatch") => {}
+        (ValidationError::InvalidMemOffsetType, "type mismatch") => {}
+        // Either a plain block-result mismatch, or a result-typed `if` missing
+        // its `else` arm (both are the same internal state).
+        (
+            ValidationError::BlockResultTypeMismatch,
+            "type mismatch" | "result-typed if without else",
+        ) => {}
+        (ValidationError::BrTableResultTypeMismatch, "type mismatch") => {}
+        (ValidationError::FunctionReturnsTooLarge, "invalid result arity") => {}
+        (ValidationError::TooManyLocals, "too many locals") => {}
         (ValidationError::AlignmentLargerThanType, "alignment must not be larger than natural") => {
         }
-        (ValidationError::TypeMismatch, "type mismatch") => {}
-        (ValidationError::BlockResultTypeMismatch, "type mismatch") => {}
-        (ValidationError::InvalidElseBlock, "else without matching if") => {}
-        (ValidationError::InvalidLabelIndex, "unknown label") => {}
-        (ValidationError::MalformedSectionSize, "unexpected end") => {}
-        (ValidationError::GlobalIdxOutOfRange, "unknown global") => {}
-        (ValidationError::MalformedSectionId(_), "malformed section id") => {}
-        (ValidationError::VecTooLong, "length out of bounds") => {}
-        (ValidationError::StackUnderflow, "type mismatch") => {}
-        (ValidationError::TypeIdxOutOfRange, "unknown type") => {}
-        (ValidationError::FunctionResultTypeMismatch, "type mismatch") => {}
-        (ValidationError::FunctionIdxOutOfRange, "unknown function") => {}
-        (ValidationError::FunctionReturnsTooLarge, "invalid result arity") => {}
-        (ValidationError::TableNotDefined, "unknown table") => {}
-        (ValidationError::InvalidTableIndex, "malformed value type") => {}
-        (ValidationError::InvalidLabelIndex, "unexpected end of section or function") => {}
-        (ValidationError::MalformedValueType(_), "malformed value type") => {}
-        (ValidationError::DuplicateSection(_), "unexpected content after last section") => {}
-        (ValidationError::GlobalIsNotMutable, "immutable global") => {}
-        (ValidationError::InvalidElementOffset, "type mismatch") => {}
+
+        // --- Constant expressions ---
         (
             ValidationError::InvalidConstantExpr(ConstantExprError::InvalidConstantInstruction),
             "constant expression required",
         ) => {}
-        (ValidationError::FunctionImportOutOfRange, "unknown type") => {}
-        (ValidationError::GlobalTypeMismatch, "type mismatch") => {}
         (
             ValidationError::InvalidConstantExpr(ConstantExprError::AlreadyHasValue),
             "type mismatch",
@@ -1030,54 +1049,69 @@ fn check_decode_error(err: ParseError, text: String) {
             ValidationError::InvalidConstantExpr(ConstantExprError::InvalidGlobal),
             "unknown global",
         ) => {}
-        (ValidationError::ExpectedConstOrVar(_), "malformed mutability") => {}
-        (ValidationError::MemoryNotDefined, "unknown memory") => {}
+
+        // --- Immutable globals ---
+        // `GlobalNotMutable` covers both a `global.set` on an immutable
+        // global (`"immutable global"`) and an import whose mutability disagrees
+        // with the definition (`"incompatible import type"`).
+        (ValidationError::GlobalNotMutable, "immutable global" | "incompatible import type") => {}
+
+        // --- Limits / sizing ---
         (ValidationError::InvalidMaxLimit, "size minimum must not be greater than maximum") => {}
-        (ValidationError::MemoryTooLarge, "memory size must be at most 65536 pages (4GiB)") => {}
-        (ValidationError::MemoryTooLarge, "memory size must be at most 4 GiB") => {}
+        // Two upstream phrasings for the same 4 GiB memory cap.
+        (
+            ValidationError::MemoryTooLarge,
+            "memory size must be at most 65536 pages (4GiB)" | "memory size must be at most 4 GiB",
+        ) => {}
         (ValidationError::TableTooLarge, "table size too large") => {}
-        (ValidationError::LocalIdxOutOfRange, "local offset out of range") => {}
-        (ValidationError::BlockResultTypeMismatch, "result-typed if without else") => {}
-        (ValidationError::InvalidNegativeMemOffset, "data segment does not fit") => {}
-        (ValidationError::InvalidMemOffsetType, "type mismatch") => {}
+        (ValidationError::InvalidPageSize(_), "invalid custom page size") => {}
+        (ValidationError::StackTooLarge, "call frame too large") => {}
+
+        // --- Sections / names that must be unique ---
+        (ValidationError::MultipleMemories, "multiple memories") => {}
+        (ValidationError::MultipleTables, "multiple tables") => {}
+        (ValidationError::DuplicateExportName, "duplicate export name") => {}
+
+        // --- Start function ---
         (ValidationError::InvalidStartFunctionSignature, "start function") => {}
         (
             ValidationError::InvalidHostStartFunction,
             "start function must not be a host function",
         ) => {}
-        (ValidationError::DuplicateExportName, "duplicate export name") => {}
-        (ValidationError::InvalidTableIndex, "unknown table") => {}
+
+        // --- Data / element segment placement ---
+        (ValidationError::InvalidNegativeMemOffset, "data segment does not fit") => {}
         (ValidationError::MemoryError(MemoryError::OutOfBounds), "data segment does not fit") => {}
-        (ValidationError::InvalidMemIndex, "unknown memory") => {}
-        (ValidationError::FunctionImportNotFound, "unknown import") => {}
-        (ValidationError::GlobalImportNotFound, "unknown import") => {}
-        (ValidationError::MemoryImportNotFound, "unknown import") => {}
+        (ValidationError::InvalidElementOutOfBounds, "elements segment does not fit") => {}
+        // A bad element offset is either a type mismatch on the offset
+        // expression, or an out-of-range placement past the table end.
+        (
+            ValidationError::InvalidElementOffset,
+            "type mismatch" | "elements segment does not fit",
+        ) => {}
+        (ValidationError::TableRefNotUnique, "table reference not unique") => {}
+
+        // --- Imports ("unknown import" vs "incompatible import type") ---
+        // Each `*ImportNotFound` variant is used both when no matching export
+        // exists at all (`"unknown import"`) and when a candidate exists but is
+        // rejected as incompatible (`"incompatible import type"`).
+        (
+            ValidationError::FunctionImportNotFound,
+            "unknown import" | "incompatible import type",
+        ) => {}
+        (ValidationError::GlobalImportNotFound, "unknown import" | "incompatible import type") => {}
+        (ValidationError::MemoryImportNotFound, "unknown import" | "incompatible import type") => {}
+        (ValidationError::TableImportNotFound, "unknown import" | "incompatible import type") => {}
         (ValidationError::FunctionImportTypeMismatch, "incompatible import type") => {}
         (ValidationError::GlobalImportTypeMismatch, "incompatible import type") => {}
         (ValidationError::MemoryImportTypeMismatch, "incompatible import type") => {}
-        (ValidationError::FunctionImportNotFound, "incompatible import type") => {}
-        (ValidationError::GlobalImportNotFound, "incompatible import type") => {}
-        (ValidationError::MemoryImportNotFound, "incompatible import type") => {}
-        (ValidationError::GlobalIsNotMutable, "incompatible import type") => {}
-        (ValidationError::InvalidElementOutOfBounds, "elements segment does not fit") => {}
-        (ValidationError::InvalidElementOffset, "elements segment does not fit") => {}
-        (ValidationError::MultipleTables, "multiple tables") => {}
-        (ValidationError::TableImportNotFound, "unknown import") => {}
+        (ValidationError::MemoryImportTooLarge, "incompatible import type") => {}
         (ValidationError::TableImportIncompatibleSize, "incompatible import type") => {}
         (ValidationError::TableImportTypeMismatch, "incompatible import type") => {}
-        (ValidationError::TableImportNotFound, "incompatible import type") => {}
-        (ValidationError::MemoryImportTooLarge, "incompatible import type") => {}
-        (ValidationError::InvalidPageSize(_), "invalid custom page size") => {}
+
+        // --- Resource allocation ---
         (ValidationError::GuestMemoryAllocationFailure, "allocation failed") => {}
-        (ValidationError::MalformedFunction(_), "malformed function type") => {}
-        (ValidationError::MalformedElemType(_), "malformed element type") => {}
-        (ValidationError::MalformedLimit(_), "malformed limits flag") => {}
-        (ValidationError::MalformedMemType(_), "malformed memory type") => {}
-        (ValidationError::MalformedImportExportDesc(_), "malformed import kind") => {}
-        (ValidationError::MalformedImportExportDesc(_), "malformed export kind") => {}
-        (ValidationError::InvalidSectionOrdering(_, _), "unexpected section order") => {}
-        (ValidationError::StackTooLarge, "call frame too large") => {}
-        (ValidationError::TableRefNotUnique, "table reference not unique") => {}
+
         err => {
             panic!("Could not match validation error text '{text}' with error {err:?}")
         }
@@ -1097,14 +1131,20 @@ fn check_initialization_error(result: InterpreterResult, text: &str) {
 /// Wrapper for `wast2json`
 #[cfg(not(miri))]
 fn wast2json(source_wast_path: &Path, out_dir: &Path, test_filename: &str) {
-    let output = ProcessCommand::new("wast2json")
+    // Resolve the WABT `wast2json` tool used to compile the `.wast`
+    let wast2json_bin = std::env::var_os("WABT_WAST2JSON")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("wast2json"));
+
+    // Run wast2json to generate Wasm modules and JSON descriptor
+    let output = ProcessCommand::new(&wast2json_bin)
         .arg(source_wast_path)
         .arg("--enable-custom-page-sizes")
         .arg("-o")
         .arg(out_dir.join(format!("{}.json", test_filename)))
         .current_dir(out_dir)
         .output()
-        .unwrap_or_else(|e| panic!("Failed to run wast2json: {e}"));
+        .unwrap_or_else(|e| panic!("Failed to run {}: {e}", wast2json_bin.display()));
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);

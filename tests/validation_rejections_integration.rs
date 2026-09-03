@@ -6,8 +6,8 @@ use core::alloc::Layout;
 use core::ptr::NonNull;
 
 use spacewasm::{
-    AllocError, Allocator, CodeBuilder, CompilerOptions, Engine, InnerVec, MemoryStatistics,
-    Module, ValidationError, WasmMemoryAllocator, WasmStream, global_allocator,
+    AllocError, Allocator, CodeBuilder, CompilerOptions, Engine, InnerVec, Module, ValidationError,
+    WasmMemoryAllocator, WasmStream, global_allocator,
 };
 
 extern crate std;
@@ -30,13 +30,6 @@ unsafe impl Allocator for SystemAllocator {
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         unsafe { std::alloc::dealloc(ptr, layout) }
     }
-
-    fn memory_statistics(&self) -> MemoryStatistics {
-        MemoryStatistics {
-            total_bytes: 0,
-            pad_bytes: 0,
-        }
-    }
 }
 
 global_allocator!(SystemAllocator, SystemAllocator);
@@ -47,7 +40,7 @@ fn code_builder_rejects_oversized_max_code_pages() {
     // `CodeBuilder::new` must return an allocation error rather than panic.
     let opts = CompilerOptions {
         allow_memory_grow: false,
-        max_backpatch_iterations: 0,
+        max_backpatch_iterations: None,
         max_code_pages: 1 << 24,
     };
     assert!(matches!(
@@ -58,7 +51,7 @@ fn code_builder_rejects_oversized_max_code_pages() {
     // One below the limit still builds successfully, pinning the boundary.
     let opts_ok = CompilerOptions {
         allow_memory_grow: false,
-        max_backpatch_iterations: 0,
+        max_backpatch_iterations: None,
         max_code_pages: (1 << 24) - 1,
     };
     assert!(CodeBuilder::new(opts_ok).is_ok());
@@ -67,34 +60,34 @@ fn code_builder_rejects_oversized_max_code_pages() {
 const MAX_CONTROL_FRAMES: usize = 128;
 const MAX_STACK_DEPTH: usize = 256;
 
-/// Single-shot [`WasmStream`] that hands the whole borrowed buffer over once,
-/// then reports EOF. Mirrors `tests/util/spectest.rs::ByteStream` but borrows
-/// its bytes (the backing array is a local in each test and outlives the read).
-struct ByteStream<'a> {
-    data: &'a [u8],
+/// Single-shot [`WasmStream`] that hands its whole buffer over once, then
+/// reports EOF.
+struct ByteStream {
+    buffer: Vec<u8>,
     consumed: bool,
 }
 
-impl<'a> ByteStream<'a> {
-    fn new(data: &'a [u8]) -> Self {
+impl ByteStream {
+    fn new(data: &[u8]) -> Self {
         Self {
-            data,
+            buffer: data.to_vec(),
             consumed: false,
         }
     }
 }
 
-impl WasmStream for ByteStream<'_> {
+impl WasmStream for ByteStream {
     fn read(&mut self) -> Result<Option<InnerVec<u8>>, u8> {
         if self.consumed {
             return Ok(None);
         }
         self.consumed = true;
-        // SAFETY: `data` outlives this stream; the reader only reads the bytes.
-        Ok(Some(InnerVec {
-            ptr: self.data.as_ptr() as *mut u8,
-            capacity: self.data.len() as u32,
-            len: self.data.len() as u32,
+        Ok(Some(unsafe {
+            InnerVec::from_raw_parts(
+                self.buffer.as_mut_ptr(),
+                self.buffer.len() as u32,
+                self.buffer.len() as u32,
+            )
         }))
     }
 
@@ -152,7 +145,7 @@ fn compile(wasm: &[u8], options: CompilerOptions) -> Result<(), ValidationError>
     .map_err(|e| e.err.err)
 }
 
-/// MF-21: with `allow_memory_grow = false`, a module containing `memory.grow`
+/// With `allow_memory_grow = false`, a module containing `memory.grow`
 /// must be rejected with `IllegalMemoryGrow`; with the flag enabled the same
 /// bytes compile. The harness (`.wast`) fixes the flag to `true`, so this is
 /// the only place the rejection can be exercised.
@@ -174,7 +167,7 @@ fn memory_grow_rejected_when_option_disabled() {
 
     let disabled = CompilerOptions {
         allow_memory_grow: false,
-        max_backpatch_iterations: 0,
+        max_backpatch_iterations: None,
         max_code_pages: 256,
     };
     assert_eq!(
@@ -191,10 +184,9 @@ fn memory_grow_rejected_when_option_disabled() {
     assert!(compile(WASM, enabled).is_ok());
 }
 
-/// MF-22: a non-zero `max_backpatch_iterations` must reject a module whose
-/// forward-branch backpatch chain is longer than the limit, with
+/// Must reject a module whose forward-branch backpatch chain is longer than the limit, with
 /// `PossibleBackpatchCycle` — even though the module contains no real cycle.
-/// With `max_backpatch_iterations = 0` (unlimited, the harness default) the
+/// With `max_backpatch_iterations = None` (unlimited, the harness default) the
 /// same module compiles.
 #[test]
 fn backpatch_chain_exceeding_limit_is_rejected() {
@@ -219,7 +211,7 @@ fn backpatch_chain_exceeding_limit_is_rejected() {
     // A chain of 4 comfortably exceeds a limit of 1.
     let limited = CompilerOptions {
         allow_memory_grow: false,
-        max_backpatch_iterations: 1,
+        max_backpatch_iterations: Some(1),
         max_code_pages: 256,
     };
     assert_eq!(
@@ -227,10 +219,10 @@ fn backpatch_chain_exceeding_limit_is_rejected() {
         Err(ValidationError::PossibleBackpatchCycle),
     );
 
-    // Boundary: `0` disables the limit, so the identical (cycle-free) module
+    // Boundary: `None` disables the limit, so the identical (cycle-free) module
     // compiles — proving the rejection comes from the limit, not the bytes.
     let unlimited = CompilerOptions {
-        max_backpatch_iterations: 0,
+        max_backpatch_iterations: None,
         ..limited
     };
     assert!(compile(WASM, unlimited).is_ok());

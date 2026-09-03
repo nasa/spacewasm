@@ -4,7 +4,8 @@
 mod tests {
     use crate::{
         AllocError, BaseVisitor, Engine, Interpreter, InterpreterResult, InterpreterRunner,
-        IrVisitor, MemArg, MemType, Memory, MemoryKind, Module, ModuleRef, ValType,
+        InvokeError, IrVisitor, MemArg, MemType, Memory, MemoryKind, Module, ModuleRef, ResultType,
+        ResumeError, ValType, Value, WasmRef,
     };
 
     extern crate std;
@@ -680,6 +681,15 @@ mod tests {
     test_op!(test_i32_gt_s_true, i32_gt_s, i32, i32: 5, (-5i32) as u32 => 1);
     test_op!(test_i32_le_s_true, i32_le_s, i32, i32: 5, 5 => 1);
     test_op!(test_i32_ge_s_true, i32_ge_s, i32, i32: 5, 5 => 1);
+    test_op!(test_i32_gt_s_false, i32_gt_s, i32, i32: (-5i32) as u32, 5 => 0);
+    test_op!(test_i32_gt_u_true, i32_gt_u, i32, i32: (-1i32) as u32, 1 => 1);
+    test_op!(test_i32_gt_u_false, i32_gt_u, i32, i32: 1, (-1i32) as u32 => 0);
+    test_op!(test_i32_le_s_false, i32_le_s, i32, i32: 6, 5 => 0);
+    test_op!(test_i32_le_u_true, i32_le_u, i32, i32: 1, (-1i32) as u32 => 1);
+    test_op!(test_i32_le_u_false, i32_le_u, i32, i32: (-1i32) as u32, 1 => 0);
+    test_op!(test_i32_ge_s_false, i32_ge_s, i32, i32: (-1i32) as u32, 1 => 0);
+    test_op!(test_i32_ge_u_true, i32_ge_u, i32, i32: (-1i32) as u32, 1 => 1);
+    test_op!(test_i32_ge_u_false, i32_ge_u, i32, i32: 1, (-1i32) as u32 => 0);
 
     // ===== i32 Arithmetic Operations =====
     test_op!(test_i32_clz, i32_clz, i32: 0x00F00000 => 8);
@@ -1152,6 +1162,64 @@ mod tests {
 
             assert_eq!(state.sp, 2);
             assert_eq!(state.stack.read_u64(0), 1); // Wraps around
+        });
+    }
+
+    // ===== Engine invoke/resume failure paths =====
+
+    /// `invoke` on a non-idle engine must report `Busy` instead of panicking.
+    #[test]
+    fn test_invoke_busy_when_not_idle() {
+        with_test_context(|state| {
+            // Force a non-idle stack pointer to simulate a mid-execution engine.
+            // The busy guard runs before any module/function lookup, so the
+            // (empty) test module's function table is never touched.
+            state.sp = 1;
+
+            let err = state.invoke(
+                WasmRef {
+                    module: ModuleRef(0),
+                    index: 0,
+                },
+                &[],
+            );
+            assert_eq!(err, Err(InvokeError::Busy));
+        });
+    }
+
+    /// `resume` on an engine that is not paused must report `NotPaused`.
+    #[test]
+    fn test_resume_when_not_paused() {
+        with_test_context(|state| {
+            assert!(state.host_pause_result.is_none());
+            assert_eq!(state.resume(None), Err(ResumeError::NotPaused));
+        });
+    }
+
+    /// `resume` with a value that does not match the paused host function's
+    /// declared result type must report `ResultTypeMismatch` and preserve the
+    /// pending pause so the caller can retry.
+    #[test]
+    fn test_resume_result_type_mismatch_preserves_pause() {
+        with_test_context(|state| {
+            // Simulate a host function that paused while expecting an i32 result.
+            state.host_pause_result = Some(ResultType(Some(ValType::I32)));
+
+            // Supplying no value (or a wrong-typed value) is a mismatch.
+            assert_eq!(state.resume(None), Err(ResumeError::ResultTypeMismatch));
+            // The pending pause is left intact for a retry.
+            assert_eq!(
+                state.host_pause_result,
+                Some(ResultType(Some(ValType::I32)))
+            );
+
+            // Retrying with the correctly-typed value succeeds and consumes the
+            // pause, pushing the value onto the operand stack.
+            let sp_before = state.sp;
+            assert_eq!(state.resume(Some(Value::I32(7))), Ok(()));
+            assert!(state.host_pause_result.is_none());
+            assert_eq!(state.sp, sp_before + 1);
+            assert_eq!(state.stack.read_u32(sp_before), 7);
         });
     }
 }

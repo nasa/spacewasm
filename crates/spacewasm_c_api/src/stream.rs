@@ -85,10 +85,8 @@ impl WasmStream for CallbackStream {
                 // Hand the interpreter a borrowed view of the callback's buffer.
                 // `capacity: 0` ensures the `Chunk` drop assertion holds and no
                 // deallocation of borrowed memory is attempted.
-                Ok(Some(InnerVec {
-                    ptr: out_buf as *mut u8,
-                    capacity: 0,
-                    len: out_len as u32,
+                Ok(Some(unsafe {
+                    InnerVec::from_raw_parts(out_buf as *mut u8, 0, out_len as u32)
                 }))
             }
         }

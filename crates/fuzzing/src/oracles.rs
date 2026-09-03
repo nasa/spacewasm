@@ -70,10 +70,8 @@ impl WasmStream for ByteStream {
 
         if let Some(ref mut vec) = self.buffer {
             self.consumed = true;
-            let inner = InnerVec {
-                ptr: vec.as_mut_ptr(),
-                capacity: vec.len() as u32,
-                len: vec.len() as u32,
+            let inner = unsafe {
+                InnerVec::from_raw_parts(vec.as_mut_ptr(), vec.len() as u32, vec.len() as u32)
             };
             Ok(Some(inner))
         } else {
@@ -116,18 +114,15 @@ unsafe impl Allocator for SystemAllocator {
         if layout.size() > MAX_ALLOCATION_BYTES {
             return Err(AllocError::OutOfMemory);
         }
-        unsafe { Ok(std::alloc::alloc(layout)) }
+        let ptr = unsafe { std::alloc::alloc(layout) };
+        if ptr.is_null() {
+            return Err(AllocError::AllocationFailed);
+        }
+        Ok(ptr)
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         unsafe { std::alloc::dealloc(ptr, layout) }
-    }
-
-    fn memory_statistics(&self) -> MemoryStatistics {
-        MemoryStatistics {
-            total_bytes: 0,
-            pad_bytes: 0,
-        }
     }
 }
 
@@ -197,7 +192,7 @@ fn validate_module(wasm: &[u8]) -> Result<(), ValidationError> {
 
     let mut code_builder = CodeBuilder::new(CompilerOptions {
         allow_memory_grow: true,
-        max_backpatch_iterations: 0,
+        max_backpatch_iterations: None,
         max_code_pages: MAX_CODE_PAGES,
     })
     .unwrap();
@@ -266,25 +261,8 @@ fn load_module(wasm: &[u8]) -> bool {
 /// differ (each need only match its label under subtyping). A `br_table` in
 /// unreachable code whose targets share arity but differ in type is therefore
 /// valid under 2.0 (wasmi accepts) and invalid under 1.0 (SpaceWasm rejects with
-/// `BlockResultTypeMismatch`).
+/// `BrTableResultTypeMismatch`).
 /// See <https://github.com/nasa/spacewasm/issues/171#issuecomment-5333770458>.
-///
-/// Variant granularity is sound for the first three groups because this classifier
-/// is only consulted when wasmi *accepted* the module: the validation-error
-/// subcases that share those variants (e.g. a non-`i32` element/data offset
-/// expression, an unknown section id other than 12, or an export of a nonexistent
-/// memory index) make wasmi reject too, so they never reach this check.
-///
-/// `BlockResultTypeMismatch` is coarser. SpaceWasm also emits it for block-end
-/// stack-height mismatches and a result-typed `if` without an `else` -- errors
-/// invalid under *both* spec versions, so wasmi rejects them too and they do not
-/// reach this check today. But that safety rests on SpaceWasm and wasmi agreeing,
-/// not on a spec relaxation, so allow-listing the whole variant gives up the
-/// fuzzer's ability to flag a *hypothetical* SpaceWasm over-strictness bug that
-/// rejected an otherwise-1.0-valid module with this same variant (e.g. a dead-code
-/// stack-height check). Narrowing it to only the `br_table` subcase would require
-/// a dedicated error variant in the production validator; this classifier can only
-/// discriminate on the variant it is handed.
 #[cfg(feature = "differential")]
 fn is_benign_rejection(err: &ValidationError) -> bool {
     matches!(
@@ -308,9 +286,8 @@ fn is_benign_rejection(err: &ValidationError) -> bool {
             | ValidationError::InvalidMemIndex
             // Spec-version difference: a `br_table` whose targets share arity but
             // differ in type is valid under wasm 2.0 (wasmi) and invalid under wasm
-            // 1.0 (SpaceWasm). Coarse -- this variant also covers block-end checks
-            // invalid under both versions; see the doc comment above.
-            | ValidationError::BlockResultTypeMismatch
+            // 1.0 (SpaceWasm).
+            | ValidationError::BrTableResultTypeMismatch
     )
 }
 
@@ -373,7 +350,7 @@ pub fn no_traps(wasm: &[u8]) {
     // Compile module with reduced code pages
     let mut code_builder = CodeBuilder::new(CompilerOptions {
         allow_memory_grow: true,
-        max_backpatch_iterations: 0,
+        max_backpatch_iterations: None,
         max_code_pages: MAX_CODE_PAGES,
     })
     .unwrap();
@@ -503,7 +480,16 @@ pub fn no_traps(wasm: &[u8]) {
     // These should never trap since the module was generated with disallow_traps
     for (wasm_ref, params) in exported_funcs {
         state.reset();
-        state.invoke(wasm_ref, &params).unwrap();
+        match state.invoke(wasm_ref, &params) {
+            Ok(()) => {}
+            // Wasm Smith cannot avoid deeply-recursive exports; a stack overflow
+            // here is not a bug, so skip this export.
+            Err(InvokeError::StackOverflow) => {
+                log::debug!("export hit a stack overflow during invocation");
+                continue;
+            }
+            Err(e) => panic!("unexpected invoke error in no_traps module: {e:?}"),
+        }
 
         // Run the interpreter with limited instructions
         let interpreter = Interpreter;

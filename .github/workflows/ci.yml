@@ -47,7 +47,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
@@ -55,41 +55,7 @@ jobs:
           components: rustfmt, clippy
 
       - name: Install WABT (WebAssembly Binary Toolkit)
-        run: |
-          set -euo pipefail
-          WABT_VERSION=1.0.41
-          if [ "$RUNNER_OS" == "macOS" ]; then
-            if [ "$RUNNER_ARCH" == "ARM64" ]; then
-              WABT_PLATFORM="macos-arm64"
-            else
-              WABT_PLATFORM="macos-x64"
-            fi
-          else
-            # Linux
-            if [ "$RUNNER_ARCH" == "ARM64" ]; then
-              WABT_PLATFORM="linux-arm64"
-            else
-              WABT_PLATFORM="linux-x64"
-            fi
-          fi
-          case "$WABT_PLATFORM" in
-            linux-x64)   WABT_SHA256=83f8122e924745fcd70636e3594bc01c4c47f2d4c8f3c63b5d70d3f83a482677 ;;
-            linux-arm64) WABT_SHA256=5e35416ee8725dc7cc0572e4392a8117cbf008b0e34c0db65c75506b0299cdbf ;;
-            macos-arm64) WABT_SHA256=e5269d6bbe05dfeb179e4f21111b3a641d6ccaa38b0b21d472ae5c65f8c4ff5d ;;
-            *) echo "::error::No pinned WABT checksum for platform $WABT_PLATFORM"; exit 1 ;;
-          esac
-          tarball="wabt-${WABT_VERSION}-${WABT_PLATFORM}.tar.gz"
-          wget -q "https://github.com/WebAssembly/wabt/releases/download/${WABT_VERSION}/${tarball}"
-          # macOS runners ship `shasum` (Perl) rather than GNU coreutils'
-          # `sha256sum`; both accept the same "<hash>  <file>" verify format.
-          if command -v sha256sum >/dev/null 2>&1; then
-            echo "${WABT_SHA256}  ${tarball}" | sha256sum -c -
-          else
-            echo "${WABT_SHA256}  ${tarball}" | shasum -a 256 -c -
-          fi
-          tar -xzf "${tarball}"
-          sudo cp wabt-${WABT_VERSION}/bin/* /usr/local/bin/
-        shell: bash
+        uses: ./.github/actions/install-wabt
 
       - name: Cache Rust dependencies
         # Pinned commit resolved from the annotated Swatinem/rust-cache@v2 tag.
@@ -127,7 +93,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install 32-bit system libraries
         run: |
@@ -140,16 +106,7 @@ jobs:
           targets: i686-unknown-linux-gnu
 
       - name: Install WABT (WebAssembly Binary Toolkit)
-        run: |
-          set -euo pipefail
-          WABT_VERSION=1.0.41
-          WABT_SHA256=83f8122e924745fcd70636e3594bc01c4c47f2d4c8f3c63b5d70d3f83a482677
-          tarball="wabt-${WABT_VERSION}-linux-x64.tar.gz"
-          wget -q "https://github.com/WebAssembly/wabt/releases/download/${WABT_VERSION}/${tarball}"
-          echo "${WABT_SHA256}  ${tarball}" | sha256sum -c -
-          tar -xzf "${tarball}"
-          sudo cp wabt-${WABT_VERSION}/bin/* /usr/local/bin/
-        shell: bash
+        uses: ./.github/actions/install-wabt
 
       # Only the interpreter library is deployed to the 32-bit target, so the
       # host-only workspace tooling is not built here. Running the suite on a
@@ -168,7 +125,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install Rust toolchain
         # Pinned to the commit the `stable` branch resolved to (its action.yml
@@ -210,7 +167,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
@@ -228,7 +185,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
 
@@ -236,16 +193,7 @@ jobs:
         uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
 
       - name: Install WABT (WebAssembly Binary Toolkit)
-        run: |
-          set -euo pipefail
-          WABT_VERSION=1.0.41
-          WABT_PLATFORM="linux-x64"
-          WABT_SHA256=83f8122e924745fcd70636e3594bc01c4c47f2d4c8f3c63b5d70d3f83a482677
-          tarball="wabt-${WABT_VERSION}-${WABT_PLATFORM}.tar.gz"
-          wget -q "https://github.com/WebAssembly/wabt/releases/download/${WABT_VERSION}/${tarball}"
-          echo "${WABT_SHA256}  ${tarball}" | sha256sum -c -
-          tar -xzf "${tarball}"
-          sudo cp wabt-${WABT_VERSION}/bin/* /usr/local/bin/
+        uses: ./.github/actions/install-wabt
 
       - name: Cache Rust dependencies
         # Pinned commit resolved from the annotated Swatinem/rust-cache@v2 tag.
@@ -262,7 +210,7 @@ jobs:
           echo "$output"
 
           # Extract the CoreMark score from the output
-          score=$(echo "$output" | grep "CoreMark Score:" | awk '{print $3}')
+          score=$(echo "$output" | grep -m1 "CoreMark Score:" | awk '{print $3}')
           if [ -z "$score" ]; then
             echo "Failed to extract CoreMark score"
             exit 1
@@ -280,7 +228,7 @@ jobs:
             git fetch origin main:main
             git checkout main
             baseline_output=$(cargo bench -p spacewasm_std --bench coremark --no-fail-fast 2>&1) || true
-            baseline_score=$(echo "$baseline_output" | grep "CoreMark Score:" | awk '{print $3}')
+            baseline_score=$(echo "$baseline_output" | grep -m1 "CoreMark Score:" | awk '{print $3}')
             git checkout -
 
             if [ -n "$baseline_score" ]; then
@@ -306,7 +254,7 @@ jobs:
 
       - name: Upload benchmark results
         if: github.event_name == 'pull_request'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: benchmark-results
           path: benchmark-results.json
@@ -318,12 +266,12 @@ jobs:
       fail-fast: false
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
 
       - name: Run Kani on repo
-        uses: model-checking/kani-github-action@v1.1
+        uses: model-checking/kani-github-action@f838096619a707b0f6b2118cf435eaccfa33e51f # v1.1
         with:
           args: "-j --output-format=terse"
 
@@ -332,16 +280,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
 
       - name: Install Rust toolchain
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
         with:
-          profile: minimal
-          toolchain: nightly
-          override: true
+          toolchain: nightly-2026-08-30
           components: miri
 
       - name: Run Miri
@@ -356,7 +302,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
 
@@ -366,19 +312,12 @@ jobs:
           components: llvm-tools-preview
 
       - name: Install WABT (WebAssembly Binary Toolkit)
-        run: |
-          set -euo pipefail
-          WABT_VERSION=1.0.41
-          WABT_PLATFORM="linux-x64"
-          WABT_SHA256=83f8122e924745fcd70636e3594bc01c4c47f2d4c8f3c63b5d70d3f83a482677
-          tarball="wabt-${WABT_VERSION}-${WABT_PLATFORM}.tar.gz"
-          wget -q "https://github.com/WebAssembly/wabt/releases/download/${WABT_VERSION}/${tarball}"
-          echo "${WABT_SHA256}  ${tarball}" | sha256sum -c -
-          tar -xzf "${tarball}"
-          sudo cp wabt-${WABT_VERSION}/bin/* /usr/local/bin/
+        uses: ./.github/actions/install-wabt
 
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@cargo-llvm-cov
+        uses: taiki-e/install-action@37f7c5781271959fb65b6b35224e28652ff2b63d # v2.87.0
+        with:
+          tool: cargo-llvm-cov
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
@@ -446,14 +385,14 @@ jobs:
 
       - name: Upload coverage results
         if: github.event_name == 'pull_request'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: coverage-results
           path: coverage-results.json
 
       - name: Upload coverage to Codecov
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: codecov/codecov-action@v7
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7
         with:
           files: lcov.info
           token: ${{ secrets.CODECOV_TOKEN }}

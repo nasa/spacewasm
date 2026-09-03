@@ -27,7 +27,11 @@ fn ensure_global_allocator() {
         Some(global_dealloc),
         core::ptr::null_mut(),
     );
-    assert_eq!(rc, 0, "set_global_allocator failed");
+    assert_eq!(
+        rc,
+        crate::spacewasm_status_t::SPACEWASM_OK,
+        "set_global_allocator failed"
+    );
 }
 
 /// A minimum alignment matching what the C suite uses (`sizeof(void*)`).
@@ -453,22 +457,6 @@ fn invoke_add(
     Ok(unsafe { out.u.i32_ })
 }
 
-/// Load `ADD_WASM`, invoke `add(1, 2)`, and tear everything down. Used by the
-/// no-leak lifecycle test.
-fn run_add_once() {
-    let store = new_store(1024, 1, 256);
-    let alloc = new_guest_allocator();
-    let idx = load_module_onto(alloc, store, c"main", ADD_WASM, 0).expect("load");
-    let mut func = 0u32;
-    let st = unsafe { spacewasm_find_export_func(store, idx, c"add".as_ptr(), &mut func) };
-    assert_eq!(st, status::SPACEWASM_OK, "find");
-    assert_eq!(invoke_add(store, idx, func, 1, 2).expect("invoke"), 3);
-    unsafe {
-        spacewasm_destroy(store);
-        spacewasm_allocator_destroy(alloc);
-    }
-}
-
 // ---- host callback ----------------------------------------------------------
 
 /// Host implementation of `env.add_one`: returns `param + 1`.
@@ -560,10 +548,10 @@ fn check_func_signature() {
             "wrong return type"
         );
 
-        // Malformed signature string.
+        // Malformed signature string: an invalid value-list character.
         assert_eq!(
             spacewasm_check_func_signature(store, idx, func, c"ix".as_ptr(), c"i".as_ptr()),
-            status::SPACEWASM_ERR_BAD_SIGNATURE,
+            status::SPACEWASM_ERR_BAD_ARG,
             "bad signature char"
         );
 
@@ -741,7 +729,7 @@ fn global_get_set() {
         // Writing a const global is rejected.
         assert_eq!(
             spacewasm_set_global(store, idx, c, i32_val(1)),
-            status::SPACEWASM_ERR_GLOBAL_IS_NOT_MUTABLE,
+            status::SPACEWASM_ERR_GLOBAL_NOT_MUTABLE,
             "set const global"
         );
         // The const global keeps its value.
@@ -1362,7 +1350,7 @@ fn error_paths() {
         "oversized max_modules"
     );
 
-    // Bad signature char -> ERR_BAD_SIGNATURE, no panic.
+    // Bad signature char -> ERR_BAD_ARG, no panic.
     assert_eq!(
         unsafe { spacewasm_host_new(1, host.as_mut_ptr()) },
         status::SPACEWASM_OK
@@ -1383,7 +1371,7 @@ fn error_paths() {
                 Some(add_one),
                 core::ptr::null_mut(),
             ),
-            status::SPACEWASM_ERR_BAD_SIGNATURE,
+            status::SPACEWASM_ERR_BAD_ARG,
             "bad signature"
         );
         spacewasm_host_destroy(host.as_mut_ptr());
@@ -1449,16 +1437,6 @@ fn null_arg_handling() {
     assert_eq!(st, status::SPACEWASM_ERR_NULL_ARG, "null store");
 
     unsafe { spacewasm_destroy(store) };
-}
-
-#[test]
-fn statistics_available() {
-    let _guard = ALLOC_LOCK.lock().unwrap();
-    ensure_global_allocator();
-
-    // Just confirm the statistics entry point is wired and returns.
-    let stats = crate::spacewasm_memory_statistics();
-    let _ = (stats.total_bytes, stats.pad_bytes);
 }
 
 // ---- pure status-mapping tests ----------------------------------------------
@@ -1627,6 +1605,10 @@ fn validation_error_codes_map() {
             status::SPACEWASM_ERR_BLOCK_RESULT_TYPE_MISMATCH,
         ),
         (
+            BrTableResultTypeMismatch,
+            status::SPACEWASM_ERR_BR_TABLE_RESULT_TYPE_MISMATCH,
+        ),
+        (
             FunctionResultTypeMismatch,
             status::SPACEWASM_ERR_FUNCTION_RESULT_TYPE_MISMATCH,
         ),
@@ -1712,10 +1694,7 @@ fn validation_error_codes_map() {
             FunctionImportTypeMismatch,
             status::SPACEWASM_ERR_FUNCTION_IMPORT_TYPE_MISMATCH,
         ),
-        (
-            GlobalIsNotMutable,
-            status::SPACEWASM_ERR_GLOBAL_IS_NOT_MUTABLE,
-        ),
+        (GlobalNotMutable, status::SPACEWASM_ERR_GLOBAL_NOT_MUTABLE),
         (
             GlobalImportTypeMismatch,
             status::SPACEWASM_ERR_GLOBAL_IMPORT_TYPE_MISMATCH,
@@ -1882,7 +1861,7 @@ fn invoke_status_maps() {
 
 #[test]
 fn simple_error_mappers() {
-    use spacewasm::{HostNameError, HostValListError, SectionDecodeError, ValidationError};
+    use spacewasm::{HostFunctionError, HostNameError, SectionDecodeError, ValidationError};
 
     let pe = spacewasm::ParseError::new(0, SectionDecodeError::new(ValidationError::Eof));
     assert_eq!(status::parse_status(&pe), status::SPACEWASM_ERR_EOF);
@@ -1891,10 +1870,35 @@ fn simple_error_mappers() {
         status::host_name_status(HostNameError),
         status::SPACEWASM_ERR_NAME_TOO_LONG
     );
+
+    // Every HostFunctionError variant maps to a distinct, stable status code.
     assert_eq!(
-        status::host_val_list_status(HostValListError),
-        status::SPACEWASM_ERR_BAD_SIGNATURE
+        status::host_val_list_status(HostFunctionError::ValListInvalidItem),
+        status::SPACEWASM_ERR_BAD_ARG,
+        "invalid value-list character"
     );
+    assert_eq!(
+        status::host_val_list_status(HostFunctionError::ParameterListTooLong),
+        status::SPACEWASM_ERR_FUNCTION_PARAMETERS_TOO_LARGE,
+        "too many parameters"
+    );
+    assert_eq!(
+        status::host_val_list_status(HostFunctionError::MultiReturnNotAllowed),
+        status::SPACEWASM_ERR_FUNCTION_RETURNS_TOO_LARGE,
+        "multiple return values"
+    );
+    // The AllocError variant forwards to the shared allocator mapping.
+    for ae in [
+        spacewasm::AllocError::AllocationFailed,
+        spacewasm::AllocError::OutOfMemory,
+        spacewasm::AllocError::PageTooSmall,
+    ] {
+        assert_eq!(
+            status::host_val_list_status(HostFunctionError::AllocError(ae.clone())),
+            status::alloc_status(ae),
+            "alloc error forwards to alloc_status"
+        );
+    }
 }
 
 #[test]
@@ -1947,7 +1951,7 @@ fn value_round_trips_all_types() {
     ];
     for v in values {
         let c = spacewasm_value_t::from_value(v);
-        assert_eq!(c.to_value(), v, "round trip {v:?}");
+        assert_eq!(c.try_to_value().unwrap(), v, "round trip {v:?}");
     }
 }
 
@@ -1956,19 +1960,27 @@ fn value_from_raw_reinterprets_by_type() {
     use spacewasm::{RawValue, ValType, Value};
 
     assert_eq!(
-        spacewasm_value_t::from_raw(RawValue::from_i32(-1), ValType::I32).to_value(),
+        spacewasm_value_t::from_raw(RawValue::from_i32(-1), ValType::I32)
+            .try_to_value()
+            .unwrap(),
         Value::I32(-1)
     );
     assert_eq!(
-        spacewasm_value_t::from_raw(RawValue::from_i64(9), ValType::I64).to_value(),
+        spacewasm_value_t::from_raw(RawValue::from_i64(9), ValType::I64)
+            .try_to_value()
+            .unwrap(),
         Value::I64(9)
     );
     assert_eq!(
-        spacewasm_value_t::from_raw(RawValue::from_f32(1.5), ValType::F32).to_value(),
+        spacewasm_value_t::from_raw(RawValue::from_f32(1.5), ValType::F32)
+            .try_to_value()
+            .unwrap(),
         Value::F32(1.5)
     );
     assert_eq!(
-        spacewasm_value_t::from_raw(RawValue::from_f64(6.5), ValType::F64).to_value(),
+        spacewasm_value_t::from_raw(RawValue::from_f64(6.5), ValType::F64)
+            .try_to_value()
+            .unwrap(),
         Value::F64(6.5)
     );
 }
@@ -1985,7 +1997,7 @@ fn valtype_conversions_both_directions() {
     ];
     for (vt, c) in pairs {
         assert_eq!(spacewasm_valtype_t::from(vt), c);
-        assert_eq!(ValType::from(c), vt);
+        assert_eq!(ValType::try_from(&c).unwrap(), vt);
     }
 }
 
@@ -2067,7 +2079,7 @@ fn module_with_start_runs() {
         status::SPACEWASM_OK
     );
 
-    // Drive the start function in small fuel slices to also exercise the
+    // Drive the start function to completion.
     let mut trap = spacewasm_trap_t::SPACEWASM_TRAP_NONE;
     let start_status = run_to_completion(store, &mut trap);
     assert_eq!(
@@ -2097,7 +2109,6 @@ fn module_with_start_runs() {
     );
     assert_eq!(unsafe { out.u.i32_ }, 42, "start wrote 42");
 
-    // A second module with no start reports `needs_start == false`.
     unsafe {
         spacewasm_destroy(store);
         spacewasm_allocator_destroy(alloc);
@@ -2237,6 +2248,127 @@ fn reset_abandons_in_progress_call() {
         unsafe { spacewasm_reset(core::ptr::null_mut()) },
         status::SPACEWASM_ERR_NULL_ARG,
         "null engine"
+    );
+
+    unsafe {
+        spacewasm_destroy(store);
+        spacewasm_allocator_destroy(alloc);
+    }
+}
+
+/// Resuming an engine that is not paused (nothing is awaiting a host result) is
+/// a state error, and a null engine is rejected up front, for both resume
+/// entry points.
+#[test]
+fn resume_without_pause_is_wrong_state() {
+    let _guard = ALLOC_LOCK.lock().unwrap();
+    ensure_global_allocator();
+
+    let store = new_store(1024, 1, 256);
+    let alloc = new_guest_allocator();
+    let _idx = load_module_onto(alloc, store, c"main", ADD_WASM, 0).expect("load");
+
+    // The engine is idle (nothing paused), so both resume paths reject with
+    // WRONG_STATE rather than corrupting the operand stack.
+    assert_eq!(
+        unsafe { spacewasm_resume(store) },
+        status::SPACEWASM_ERR_WRONG_STATE,
+        "resume while not paused"
+    );
+    assert_eq!(
+        unsafe { spacewasm_resume_value(store, i32_val(0)) },
+        status::SPACEWASM_ERR_WRONG_STATE,
+        "resume_value while not paused"
+    );
+
+    // A null engine is rejected before any state inspection.
+    assert_eq!(
+        unsafe { spacewasm_resume(core::ptr::null_mut()) },
+        status::SPACEWASM_ERR_NULL_ARG,
+        "resume null engine"
+    );
+    assert_eq!(
+        unsafe { spacewasm_resume_value(core::ptr::null_mut(), i32_val(0)) },
+        status::SPACEWASM_ERR_NULL_ARG,
+        "resume_value null engine"
+    );
+
+    unsafe {
+        spacewasm_destroy(store);
+        spacewasm_allocator_destroy(alloc);
+    }
+}
+
+/// Exercise the `out_trap` output path of `spacewasm_run`: it is cleared up
+/// front even on an early return, overwritten with the real trap reason on a
+/// trap, and a null `out_trap` is accepted.
+#[test]
+fn run_out_trap_output_path() {
+    let _guard = ALLOC_LOCK.lock().unwrap();
+    ensure_global_allocator();
+
+    let store = new_store(1024, 1, 256);
+    let alloc = new_guest_allocator();
+    let idx = load_module_onto(alloc, store, c"main", TRAP_WASM, 0).expect("load");
+    let mut func = 0u32;
+    assert_eq!(
+        unsafe { spacewasm_find_export_func(store, idx, c"boom".as_ptr(), &mut func) },
+        status::SPACEWASM_OK,
+        "find boom"
+    );
+
+    // `run` clears `out_trap` before doing anything, even on the early return
+    // taken when idle: a stale seed must be reset to NONE.
+    let mut trap = spacewasm_trap_t::SPACEWASM_TRAP_UNREACHABLE; // stale seed
+    assert_eq!(
+        unsafe { spacewasm_run(store, 0, &mut trap) },
+        spacewasm_run_status_t::SPACEWASM_RUN_TRAP,
+        "run while idle traps"
+    );
+    assert_eq!(
+        trap,
+        spacewasm_trap_t::SPACEWASM_TRAP_NONE,
+        "idle run clears out_trap to NONE"
+    );
+
+    // A real trap overwrites the seeded value with the actual trap reason.
+    assert_eq!(
+        unsafe { spacewasm_invoke(store, idx, func, core::ptr::null(), 0) },
+        status::SPACEWASM_OK,
+        "invoke boom"
+    );
+    trap = spacewasm_trap_t::SPACEWASM_TRAP_HOST; // stale seed
+    assert_eq!(
+        run_to_completion(store, &mut trap),
+        spacewasm_run_status_t::SPACEWASM_RUN_TRAP,
+        "boom traps"
+    );
+    assert_eq!(
+        trap,
+        spacewasm_trap_t::SPACEWASM_TRAP_UNREACHABLE,
+        "out_trap carries the real trap reason"
+    );
+
+    // A null `out_trap` is accepted: after a reset the same call traps again
+    // with nowhere to report the reason, and must not crash.
+    assert_eq!(
+        unsafe { spacewasm_reset(store) },
+        status::SPACEWASM_OK,
+        "reset"
+    );
+    assert_eq!(
+        unsafe { spacewasm_invoke(store, idx, func, core::ptr::null(), 0) },
+        status::SPACEWASM_OK,
+        "re-invoke boom"
+    );
+    let mut rs = spacewasm_run_status_t::SPACEWASM_RUN_OUT_OF_FUEL;
+    while rs == spacewasm_run_status_t::SPACEWASM_RUN_OUT_OF_FUEL {
+        rs = unsafe { spacewasm_run(store, 10000, core::ptr::null_mut()) };
+    }
+    assert_eq!(
+        rs,
+        spacewasm_run_status_t::SPACEWASM_RUN_TRAP,
+        "null out_trap still reports TRAP"
     );
 
     unsafe {
@@ -2578,6 +2710,77 @@ fn add_host_function_not_found_module() {
 }
 
 #[test]
+fn add_host_function_signature_errors() {
+    let _guard = ALLOC_LOCK.lock().unwrap();
+    ensure_global_allocator();
+
+    let mut host = core::mem::MaybeUninit::<spacewasm_host_t>::uninit();
+    assert_eq!(
+        unsafe { spacewasm_host_new(1, host.as_mut_ptr()) },
+        status::SPACEWASM_OK
+    );
+    let mut hmod = 0u32;
+    unsafe {
+        assert_eq!(
+            spacewasm_add_host_module(host.as_mut_ptr(), c"env".as_ptr(), 4, 0, &mut hmod),
+            status::SPACEWASM_OK
+        );
+
+        // Helper to register a function with the given signatures, mapping each
+        // distinct HostFunctionError variant to its FFI status code.
+        let mut add =
+            |name: &core::ffi::CStr, params: &core::ffi::CStr, returns: &core::ffi::CStr| {
+                spacewasm_add_host_function(
+                    host.as_mut_ptr(),
+                    hmod,
+                    name.as_ptr(),
+                    params.as_ptr(),
+                    returns.as_ptr(),
+                    Some(add_one),
+                    core::ptr::null_mut(),
+                )
+            };
+
+        // Invalid value-list character in the parameter signature.
+        assert_eq!(
+            add(c"bad_param", c"x", c""),
+            status::SPACEWASM_ERR_BAD_ARG,
+            "invalid param char -> ValListInvalidItem"
+        );
+
+        // Invalid value-list character in the return signature.
+        assert_eq!(
+            add(c"bad_ret", c"i", c"z"),
+            status::SPACEWASM_ERR_BAD_ARG,
+            "invalid return char -> ValListInvalidItem"
+        );
+
+        // More than MAX_HOST_FUNCTION_PARAMS (9) parameters.
+        assert_eq!(
+            add(c"too_many", c"iiiiiiiiii", c""),
+            status::SPACEWASM_ERR_FUNCTION_PARAMETERS_TOO_LARGE,
+            "10 params -> ParameterListTooLong"
+        );
+
+        // More than one return value is not supported.
+        assert_eq!(
+            add(c"multi_ret", c"i", c"ii"),
+            status::SPACEWASM_ERR_FUNCTION_RETURNS_TOO_LARGE,
+            "two returns -> MultiReturnNotAllowed"
+        );
+
+        // A valid signature still succeeds after the rejected attempts.
+        assert_eq!(
+            add(c"ok", c"i", c"i"),
+            status::SPACEWASM_OK,
+            "valid signature registers"
+        );
+
+        spacewasm_host_destroy(host.as_mut_ptr());
+    }
+}
+
+#[test]
 fn allocator_new_rejects_null_callbacks() {
     // Any null callback yields a null handle (no allocation performed).
     assert!(
@@ -2615,15 +2818,15 @@ fn allocator_new_rejects_null_callbacks() {
 #[test]
 fn set_global_allocator_rejects_null() {
     let _guard = ALLOC_LOCK.lock().unwrap();
-    // A null callback is rejected with a non-zero code, leaving any previously
-    // installed allocator in place.
+    // A null callback is rejected with the "null callback" code, leaving any
+    // previously installed allocator in place.
     assert_eq!(
         crate::spacewasm_set_global_allocator(None, Some(global_dealloc), core::ptr::null_mut()),
-        1
+        crate::spacewasm_status_t::SPACEWASM_ERR_BAD_ARG
     );
     assert_eq!(
         crate::spacewasm_set_global_allocator(Some(global_alloc), None, core::ptr::null_mut()),
-        1
+        crate::spacewasm_status_t::SPACEWASM_ERR_BAD_ARG
     );
     // Re-establish the valid allocator for any subsequent tests.
     ensure_global_allocator();
@@ -2716,25 +2919,6 @@ fn engine_rejects_out_of_range_module() {
         spacewasm_destroy(store);
         spacewasm_allocator_destroy(alloc);
     }
-}
-
-/// Create and destroy many stores; the tracked live-byte total must return to
-/// its baseline, validating drop order and that names/closures are freed.
-#[test]
-fn no_leak_across_lifecycle() {
-    let _guard = ALLOC_LOCK.lock().unwrap();
-    ensure_global_allocator();
-
-    run_add_once(); // absorb one-time allocations
-    let baseline = crate::spacewasm_memory_statistics().total_bytes;
-    for _ in 0..50 {
-        run_add_once();
-    }
-    let after = crate::spacewasm_memory_statistics().total_bytes;
-    assert_eq!(
-        after, baseline,
-        "memory drifted: baseline={baseline} after={after}"
-    );
 }
 
 /// `(module (import "env" "pause") (func (export "test_pause") (result i32)

@@ -2,10 +2,20 @@ use core::ops::{Deref, DerefMut};
 
 use crate::AllocError;
 
+/// The raw backing store shared by [`crate::Vec`] and the streaming API.
+///
+/// # Invariants
+/// - `len <= capacity`.
+/// - If `capacity == 0`, `ptr` may be null; otherwise `ptr` points to a single
+///   allocation valid for `capacity` values of `T`, and the first `len`
+///   elements are initialized.
+/// - `InnerVec` does **not** own its allocation: it never frees the buffer and
+///   never drops its elements. The owner (typically [`crate::Vec`]) is
+///   responsible for both.
 pub struct InnerVec<T: Sized> {
-    pub ptr: *mut T,
-    pub capacity: u32,
-    pub len: u32,
+    pub(crate) ptr: *mut T,
+    pub(crate) capacity: u32,
+    pub(crate) len: u32,
 }
 
 impl<T: core::fmt::Debug> core::fmt::Debug for InnerVec<T> {
@@ -15,12 +25,37 @@ impl<T: core::fmt::Debug> core::fmt::Debug for InnerVec<T> {
 }
 
 impl<T: Sized> InnerVec<T> {
+    /// Create an empty `InnerVec` with no backing allocation.
+    ///
+    /// This is the only *safe* constructor: it upholds every invariant
+    /// trivially with `len == capacity == 0` and a null `ptr`. Populated
+    /// instances must be built with [`InnerVec::from_raw_parts`].
     pub fn zero() -> InnerVec<T> {
         InnerVec {
             ptr: core::ptr::null_mut(),
             capacity: 0,
             len: 0,
         }
+    }
+
+    /// Build an `InnerVec` directly from its raw parts.
+    ///
+    /// # Safety
+    /// The caller must uphold all of the [`InnerVec`] invariants:
+    /// - `len <= capacity`.
+    /// - If `capacity == 0`, `ptr` may be null; otherwise `ptr` must point to a
+    ///   single allocation valid for `capacity` values of `T` (correctly sized
+    ///   and aligned), with the first `len` elements initialized.
+    /// - `InnerVec` neither frees the allocation nor drops its elements, so the
+    ///   caller (typically [`crate::Vec`]) retains ownership and must keep the
+    ///   allocation valid for as long as the returned value is used.
+    pub unsafe fn from_raw_parts(ptr: *mut T, capacity: u32, len: u32) -> InnerVec<T> {
+        InnerVec { ptr, capacity, len }
+    }
+
+    /// Raw pointer to the backing allocation (null when `capacity == 0`).
+    pub fn ptr(&self) -> *mut T {
+        self.ptr
     }
 
     pub fn len(&self) -> usize {
@@ -133,11 +168,9 @@ mod kani_proofs {
         let layout = Layout::array::<T>(capacity as usize).unwrap();
         let ptr = unsafe { alloc.alloc(layout).unwrap() as *mut T };
 
-        InnerVec {
-            ptr,
-            capacity,
-            len: 0,
-        }
+        // SAFETY: `ptr` is a fresh allocation valid for `capacity` elements and
+        // `len == 0`, so no element is claimed to be initialized.
+        unsafe { InnerVec::from_raw_parts(ptr, capacity, 0) }
     }
 
     // Helper to deallocate an InnerVec
@@ -340,8 +373,17 @@ mod kani_proofs {
         }
     }
 
-    /// Each value dropped exactly once, iterator properly invalidates vec
-    /// drop_count ≤ (original_len - current_len)
+    /// Drop semantics of `InnerVec`:
+    /// - Elements held in the vec are NOT dropped by `iter()` (it yields `&T`).
+    /// - `pop()` moves an element out; dropping that returned value runs its
+    ///   destructor exactly once.
+    /// - `InnerVec` has no `Drop` of its own, so freeing the (emptied) buffer
+    ///   runs no destructors.
+    ///
+    /// This asserts the drop *count* against a live counter, rather than the
+    /// previous version whose bound was vacuously true (iterating by reference
+    /// never changes `len`, so `drop_count <= original_len - current_len`
+    /// reduced to `0 <= 0`).
     #[kani::proof]
     fn verify_drop_semantics() {
         unsafe {
@@ -360,42 +402,42 @@ mod kani_proofs {
                 drop_counter: &mut drop_count as *mut u32,
             });
 
-            let original_len = vec.len;
-            assert_eq!(original_len, 2, "Should have 2 elements");
+            assert_eq!(vec.len, 2, "Should have 2 elements");
 
-            // First iteration should consume values and drop them
-            {
-                for _val in vec.iter() {
-                    // Values are consumed and dropped
-                }
-            }
-
-            let current_len = vec.len;
-            let drops_after_first = drop_count;
-
-            //  drop_count ≤ (original_len - current_len)
-            // With correct ownership tracking, drops should equal removed elements
-            assert!(
-                drop_count <= (original_len - current_len),
-                "Drops must not exceed removed elements"
-            );
-
-            // Second iteration over same data
-            {
-                for _val in vec.iter() {
-                    // Values already consumed - iterator should not read them again
-                }
-            }
-
-            let drops_after_second = drop_count;
-
-            //  Each value dropped exactly once (no double-drop)
+            // Iterating by reference must NOT drop any element.
+            for _val in vec.iter() {}
             assert_eq!(
-                drops_after_second, drops_after_first,
-                "No additional drops should occur on second iteration"
+                drop_count, 0,
+                "iter() yields references and must not drop elements"
             );
 
+            // Popping moves the value out; dropping it here runs one destructor.
+            {
+                let popped = vec.pop();
+                assert!(popped.is_some(), "pop on a non-empty vec returns Some");
+            }
+            assert_eq!(
+                drop_count, 1,
+                "dropping one popped value runs exactly one destructor"
+            );
+            assert_eq!(vec.len, 1, "pop decrements len");
+
+            // Pop and drop the second value.
+            {
+                let _popped = vec.pop();
+            }
+            assert_eq!(
+                drop_count, 2,
+                "dropping the second popped value runs exactly one more destructor"
+            );
+            assert_eq!(vec.len, 0, "vec is now empty");
+
+            // `InnerVec` owns no `Drop`, so freeing the empty buffer drops nothing.
             dealloc_inner_vec(vec, &alloc);
+            assert_eq!(
+                drop_count, 2,
+                "freeing the (empty) buffer runs no further destructors"
+            );
         }
     }
 }

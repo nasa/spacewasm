@@ -18,14 +18,24 @@
 /// Portions of this file are derived from <https://github.com/crossterm-rs/crossterm>
 use spacewasm::{
     CodeBuilder, CompilerOptions, Engine, ExportDesc, Interpreter, InterpreterResult,
-    InterpreterRunner, InvokeError, ModuleRef, PageAllocator, Ref, TrapReason, WasmRef,
+    InterpreterRunner, InvokeError, PageAllocator, Ref, TrapReason, WasmRef,
 };
 mod wasi_preview1;
 use crate::wasi_preview1::make_wasi_preview1_module;
 use clap::error::ErrorKind;
 use clap::{CommandFactory, Parser};
 use spacewasm_util::{FileStream, RustSystemAllocator};
+use std::process::ExitCode;
 use wasi_common::sync::{Dir, WasiCtxBuilder, ambient_authority};
+
+/// Restores the terminal from raw mode when dropped.
+struct RawTtyGuard;
+
+impl Drop for RawTtyGuard {
+    fn drop(&mut self) {
+        let _ = crossterm::terminal::disable_raw_mode();
+    }
+}
 
 spacewasm::global_allocator!(
     PageAllocator<RustSystemAllocator, 0x200>,
@@ -73,7 +83,7 @@ struct Args {
     args: Vec<String>,
 }
 
-fn main() {
+fn main() -> ExitCode {
     let args = Args::parse();
     let mut cmd = Args::command();
 
@@ -112,13 +122,6 @@ fn main() {
                 std::process::exit(1);
             };
         }
-    }
-
-    if args.raw_tty.unwrap_or(false) {
-        let Ok(_) = crossterm::terminal::enable_raw_mode() else {
-            eprintln!("error enabling raw terminal mode");
-            std::process::exit(1);
-        };
     }
 
     wasi_ctx_builder.inherit_stdio();
@@ -162,11 +165,11 @@ fn main() {
         }
     }
 
-    let preview1_module = make_wasi_preview1_module(wasi_ctx_builder.build());
+    let (preview1_module, exit_code) = make_wasi_preview1_module(wasi_ctx_builder.build());
 
     let mut code_builder = CodeBuilder::new(CompilerOptions {
         allow_memory_grow: true,
-        max_backpatch_iterations: 0,
+        max_backpatch_iterations: None,
         max_code_pages: MAX_PAGES as u32,
     })
     .unwrap();
@@ -178,7 +181,7 @@ fn main() {
     };
     let mut file_stream = FileStream::new(file);
 
-    let Ok(module) = spacewasm::Module::new::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
+    let module = match spacewasm::Module::new::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
         "main",
         &mut file_stream,
         &mut engine.store,
@@ -186,14 +189,29 @@ fn main() {
         spacewasm::Rc::new(RustSystemAllocator)
             .unwrap()
             .into_wasm_memory_allocator(),
-    ) else {
-        eprintln!("failed to parse WASM module");
-        std::process::exit(1);
+    ) {
+        Ok(module) => module,
+        Err(error) => {
+            eprintln!("failed to parse WASM module: {error:?}");
+            std::process::exit(1);
+        }
+    };
+
+    let module_ref = engine.push_module(module).unwrap();
+
+    // Enable raw terminal mode (if requested)
+    let _tty_guard = if args.raw_tty.unwrap_or(false) {
+        if crossterm::terminal::enable_raw_mode().is_err() {
+            eprintln!("error enabling raw terminal mode");
+            return ExitCode::from(1);
+        }
+        Some(RawTtyGuard)
+    } else {
+        None
     };
 
     // Append the module and run its start function (if any). The interpreter
     // reads code directly from the builder's pages.
-    let module_ref = engine.push_module(module).unwrap();
     let init_result = match engine.module_start(module_ref) {
         None => InterpreterResult::Finished,
         Some(start) => match engine.invoke(start, &[]) {
@@ -202,64 +220,75 @@ fn main() {
             Err(_) => unreachable!(),
         },
     };
+    // A guest may call `proc_exit` from its start function; honor the recorded
+    // code before treating the resulting host trap as a failure.
+    if let Some(code) = exit_code.get() {
+        return ExitCode::from(code as u8);
+    }
     match init_result {
         InterpreterResult::Finished => {}
         InterpreterResult::OutOfFuel => {
             eprintln!("insufficient fuel for initialization");
-            std::process::exit(1);
+            return ExitCode::from(1);
         }
         InterpreterResult::Trap(t) => {
             eprintln!("trap during initialization {t:?}");
-            std::process::exit(1);
+            return ExitCode::from(1);
         }
         InterpreterResult::Pause => {
             eprintln!("pause during init");
-            std::process::exit(1);
+            return ExitCode::from(1);
         }
     }
 
     let module: &spacewasm::Module = engine.store.modules().last().unwrap();
 
     let fi = {
-        let f = module.exports.iter().find(|f| &f.name == "_start").unwrap();
+        let Some(f) = module.exports.iter().find(|f| &f.name == "_start") else {
+            eprintln!(
+                "error: the provided wasm module does not correctly export a _start function"
+            );
+            return ExitCode::from(1);
+        };
         let ExportDesc::Func(fi) = f.desc else {
             eprintln!(
                 "error: the provided wasm module does not correctly export a _start function"
             );
-            std::process::exit(1);
+            return ExitCode::from(1);
         };
         fi
     };
 
     let Ref::Module(fi) = module.get_func_ref(fi).unwrap() else {
         eprintln!("error: the provided wasm module does not correctly export a _start function");
-        std::process::exit(1);
+        return ExitCode::from(1);
     };
 
-    engine
-        .invoke(
-            WasmRef {
-                module: ModuleRef(0),
-                index: fi,
-            },
-            &[],
-        )
-        .unwrap();
-
-    let mut result = InterpreterResult::OutOfFuel;
+    let mut result = match engine.invoke(
+        WasmRef {
+            module: module_ref,
+            index: fi,
+        },
+        &[],
+    ) {
+        Ok(()) => InterpreterResult::OutOfFuel,
+        Err(InvokeError::StackOverflow) => InterpreterResult::Trap(TrapReason::StackOverflow),
+        Err(_) => unreachable!(),
+    };
     while result == InterpreterResult::OutOfFuel {
         result = Interpreter.run(code_builder.pages(), &mut engine, usize::MAX)
     }
 
-    if args.raw_tty.unwrap_or(false) {
-        let Ok(_) = crossterm::terminal::disable_raw_mode() else {
-            eprintln!("error disabling raw terminal mode");
-            std::process::exit(1);
-        };
+    // If the guest called `proc_exit`, exit with the status it requested.
+    if let Some(code) = exit_code.get() {
+        return ExitCode::from(code as u8);
     }
 
-    let InterpreterResult::Finished = result else {
-        eprintln!("interpreter failed: {:?}", result);
-        std::process::exit(1);
-    };
+    match result {
+        InterpreterResult::Finished => ExitCode::SUCCESS,
+        other => {
+            eprintln!("interpreter failed: {other:?}");
+            ExitCode::from(1)
+        }
+    }
 }

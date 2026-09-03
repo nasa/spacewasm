@@ -98,22 +98,19 @@ static const uint8_t HOST_WASM[] = {
 /* (module (import "env" "pause") (func (export "test_pause") (result i32)
  *   (call 0) (i32.const 42))) */
 static const uint8_t PAUSE_WASM[] = {
-    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x60,
-    0x00, 0x00, 0x60, 0x00, 0x01, 0x7f, 0x02, 0x0d, 0x01, 0x03, 0x65, 0x6e,
-    0x76, 0x05, 0x70, 0x61, 0x75, 0x73, 0x65, 0x00, 0x00, 0x03, 0x02, 0x01,
-    0x01, 0x07, 0x0e, 0x01, 0x0a, 0x74, 0x65, 0x73, 0x74, 0x5f, 0x70, 0x61,
-    0x75, 0x73, 0x65, 0x00, 0x01, 0x0a, 0x08, 0x01, 0x06, 0x00, 0x10, 0x00,
-    0x41, 0x2a, 0x0b};
+    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x60, 0x00, 0x00, 0x60, 0x00,
+    0x01, 0x7f, 0x02, 0x0d, 0x01, 0x03, 0x65, 0x6e, 0x76, 0x05, 0x70, 0x61, 0x75, 0x73, 0x65, 0x00,
+    0x00, 0x03, 0x02, 0x01, 0x01, 0x07, 0x0e, 0x01, 0x0a, 0x74, 0x65, 0x73, 0x74, 0x5f, 0x70, 0x61,
+    0x75, 0x73, 0x65, 0x00, 0x01, 0x0a, 0x08, 0x01, 0x06, 0x00, 0x10, 0x00, 0x41, 0x2a, 0x0b};
 
 /* (module (import "env" "pause_i32") (func (export "test_pause_i32") (result i32)
  *   (call 0))) */
 static const uint8_t PAUSE_I32_WASM[] = {
-    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x05, 0x01, 0x60,
-    0x00, 0x01, 0x7f, 0x02, 0x11, 0x01, 0x03, 0x65, 0x6e, 0x76, 0x09, 0x70,
-    0x61, 0x75, 0x73, 0x65, 0x5f, 0x69, 0x33, 0x32, 0x00, 0x00, 0x03, 0x02,
-    0x01, 0x00, 0x07, 0x12, 0x01, 0x0e, 0x74, 0x65, 0x73, 0x74, 0x5f, 0x70,
-    0x61, 0x75, 0x73, 0x65, 0x5f, 0x69, 0x33, 0x32, 0x00, 0x01, 0x0a, 0x06,
-    0x01, 0x04, 0x00, 0x10, 0x00, 0x0b};
+    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x05, 0x01, 0x60, 0x00, 0x01,
+    0x7f, 0x02, 0x11, 0x01, 0x03, 0x65, 0x6e, 0x76, 0x09, 0x70, 0x61, 0x75, 0x73, 0x65,
+    0x5f, 0x69, 0x33, 0x32, 0x00, 0x00, 0x03, 0x02, 0x01, 0x00, 0x07, 0x12, 0x01, 0x0e,
+    0x74, 0x65, 0x73, 0x74, 0x5f, 0x70, 0x61, 0x75, 0x73, 0x65, 0x5f, 0x69, 0x33, 0x32,
+    0x00, 0x01, 0x0a, 0x06, 0x01, 0x04, 0x00, 0x10, 0x00, 0x0b};
 
 /* (module
  *   (global $g (export "g") (mut i32) (i32.const 7))
@@ -121,13 +118,11 @@ static const uint8_t PAUSE_I32_WASM[] = {
  *   (func (export "get_g") (result i32) global.get $g)
  *   (func (export "set_g") (param i32) local.get 0 global.set $g)) */
 static const uint8_t GLOBALS_WASM[] = {
-    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x09, 0x02, 0x60,
-    0x00, 0x01, 0x7f, 0x60, 0x01, 0x7f, 0x00, 0x03, 0x03, 0x02, 0x00, 0x01,
-    0x06, 0x0b, 0x02, 0x7f, 0x01, 0x41, 0x07, 0x0b, 0x7f, 0x00, 0x41, 0x2a,
-    0x0b, 0x07, 0x19, 0x04, 0x01, 0x67, 0x03, 0x00, 0x01, 0x63, 0x03, 0x01,
-    0x05, 0x67, 0x65, 0x74, 0x5f, 0x67, 0x00, 0x00, 0x05, 0x73, 0x65, 0x74,
-    0x5f, 0x67, 0x00, 0x01, 0x0a, 0x0d, 0x02, 0x04, 0x00, 0x23, 0x00, 0x0b,
-    0x06, 0x00, 0x20, 0x00, 0x24, 0x00, 0x0b};
+    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x09, 0x02, 0x60, 0x00, 0x01, 0x7f, 0x60,
+    0x01, 0x7f, 0x00, 0x03, 0x03, 0x02, 0x00, 0x01, 0x06, 0x0b, 0x02, 0x7f, 0x01, 0x41, 0x07, 0x0b,
+    0x7f, 0x00, 0x41, 0x2a, 0x0b, 0x07, 0x19, 0x04, 0x01, 0x67, 0x03, 0x00, 0x01, 0x63, 0x03, 0x01,
+    0x05, 0x67, 0x65, 0x74, 0x5f, 0x67, 0x00, 0x00, 0x05, 0x73, 0x65, 0x74, 0x5f, 0x67, 0x00, 0x01,
+    0x0a, 0x0d, 0x02, 0x04, 0x00, 0x23, 0x00, 0x0b, 0x06, 0x00, 0x20, 0x00, 0x24, 0x00, 0x0b};
 
 /* (module
  *   (global $gi (export "gi") (mut i32) (i32.const 10))
@@ -136,20 +131,18 @@ static const uint8_t GLOBALS_WASM[] = {
  *   (global $gd (export "gd") (mut f64) (f64.const 2.5))
  *   (func (export "get_gI") (result i64) global.get $gI)) */
 static const uint8_t GLOBALS_MULTI_WASM[] = {
-    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x05, 0x01, 0x60,
-    0x00, 0x01, 0x7e, 0x03, 0x02, 0x01, 0x00, 0x06, 0x1f, 0x04, 0x7f, 0x01,
-    0x41, 0x0a, 0x0b, 0x7e, 0x01, 0x42, 0x14, 0x0b, 0x7d, 0x01, 0x43, 0x00,
-    0x00, 0xc0, 0x3f, 0x0b, 0x7c, 0x01, 0x44, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x04, 0x40, 0x0b, 0x07, 0x1e, 0x05, 0x02, 0x67, 0x69, 0x03, 0x00,
-    0x02, 0x67, 0x49, 0x03, 0x01, 0x02, 0x67, 0x66, 0x03, 0x02, 0x02, 0x67,
-    0x64, 0x03, 0x03, 0x06, 0x67, 0x65, 0x74, 0x5f, 0x67, 0x49, 0x00, 0x00,
-    0x0a, 0x06, 0x01, 0x04, 0x00, 0x23, 0x01, 0x0b};
+    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x05, 0x01, 0x60, 0x00, 0x01, 0x7e, 0x03,
+    0x02, 0x01, 0x00, 0x06, 0x1f, 0x04, 0x7f, 0x01, 0x41, 0x0a, 0x0b, 0x7e, 0x01, 0x42, 0x14, 0x0b,
+    0x7d, 0x01, 0x43, 0x00, 0x00, 0xc0, 0x3f, 0x0b, 0x7c, 0x01, 0x44, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x04, 0x40, 0x0b, 0x07, 0x1e, 0x05, 0x02, 0x67, 0x69, 0x03, 0x00, 0x02, 0x67, 0x49, 0x03,
+    0x01, 0x02, 0x67, 0x66, 0x03, 0x02, 0x02, 0x67, 0x64, 0x03, 0x03, 0x06, 0x67, 0x65, 0x74, 0x5f,
+    0x67, 0x49, 0x00, 0x00, 0x0a, 0x06, 0x01, 0x04, 0x00, 0x23, 0x01, 0x0b};
 
 /* Exporter half of the imported-global pair, module "b":
  * (module (global (export "bg") (mut i32) (i32.const 55))) */
-static const uint8_t GLOBAL_EXPORTER_WASM[] = {
-    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x06, 0x06, 0x01, 0x7f,
-    0x01, 0x41, 0x37, 0x0b, 0x07, 0x06, 0x01, 0x02, 0x62, 0x67, 0x03, 0x00};
+static const uint8_t GLOBAL_EXPORTER_WASM[] = {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+                                               0x06, 0x06, 0x01, 0x7f, 0x01, 0x41, 0x37, 0x0b,
+                                               0x07, 0x06, 0x01, 0x02, 0x62, 0x67, 0x03, 0x00};
 
 /* Importer half, module "a": imports b.bg (index-space global 0), then defines
  * and exports its own mutable i32 `ag` (module-local global 0, index-space 1),
@@ -160,10 +153,9 @@ static const uint8_t GLOBAL_EXPORTER_WASM[] = {
  *   (global $ag (export "ag") (mut i32) (i32.const 11))
  *   (export "reexport" (global $ig))) */
 static const uint8_t GLOBAL_IMPORTER_WASM[] = {
-    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x02, 0x09, 0x01, 0x01,
-    0x62, 0x02, 0x62, 0x67, 0x03, 0x7f, 0x01, 0x06, 0x06, 0x01, 0x7f, 0x01,
-    0x41, 0x0b, 0x0b, 0x07, 0x11, 0x02, 0x02, 0x61, 0x67, 0x03, 0x01, 0x08,
-    0x72, 0x65, 0x65, 0x78, 0x70, 0x6f, 0x72, 0x74, 0x03, 0x00};
+    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x02, 0x09, 0x01, 0x01, 0x62, 0x02, 0x62, 0x67,
+    0x03, 0x7f, 0x01, 0x06, 0x06, 0x01, 0x7f, 0x01, 0x41, 0x0b, 0x0b, 0x07, 0x11, 0x02, 0x02, 0x61,
+    0x67, 0x03, 0x01, 0x08, 0x72, 0x65, 0x65, 0x78, 0x70, 0x6f, 0x72, 0x74, 0x03, 0x00};
 
 /* ---- helpers ------------------------------------------------------------- */
 
@@ -263,8 +255,7 @@ static spacewasm_status_t load_module_onto(spacewasm_allocator_t* alloc, spacewa
     return rs == SPACEWASM_RUN_FINISHED ? SPACEWASM_OK : SPACEWASM_ERR_WRONG_STATE;
 }
 
-static spacewasm_run_status_t run_to_completion(spacewasm_t* store,
-                                                spacewasm_trap_t* out_trap) {
+static spacewasm_run_status_t run_to_completion(spacewasm_t* store, spacewasm_trap_t* out_trap) {
     spacewasm_run_status_t rs = SPACEWASM_RUN_OUT_OF_FUEL;
     while (rs == SPACEWASM_RUN_OUT_OF_FUEL) {
         rs = spacewasm_run(store, 1000, out_trap);
@@ -488,7 +479,8 @@ static int test_globals(void) {
     CHECK(out.u.i32_ == 100, "g after set = %d", out.u.i32_);
 
     uint32_t get_g = 0;
-    CHECK(spacewasm_find_export_func(store, mod_idx, "get_g", &get_g) == SPACEWASM_OK, "find get_g");
+    CHECK(spacewasm_find_export_func(store, mod_idx, "get_g", &get_g) == SPACEWASM_OK,
+          "find get_g");
     CHECK(spacewasm_invoke(store, mod_idx, get_g, NULL, 0) == SPACEWASM_OK, "invoke get_g");
     spacewasm_trap_t trap = SPACEWASM_TRAP_NONE;
     CHECK(run_to_completion(store, &trap) == SPACEWASM_RUN_FINISHED, "run get_g");
@@ -497,7 +489,8 @@ static int test_globals(void) {
 
     /* Conversely, `set_g` from Wasm is observable through get_global. */
     uint32_t set_g = 0;
-    CHECK(spacewasm_find_export_func(store, mod_idx, "set_g", &set_g) == SPACEWASM_OK, "find set_g");
+    CHECK(spacewasm_find_export_func(store, mod_idx, "set_g", &set_g) == SPACEWASM_OK,
+          "find set_g");
     spacewasm_value_t arg = i32_val(5);
     CHECK(spacewasm_invoke(store, mod_idx, set_g, &arg, 1) == SPACEWASM_OK, "invoke set_g");
     CHECK(run_to_completion(store, &trap) == SPACEWASM_RUN_FINISHED, "run set_g");
@@ -505,7 +498,7 @@ static int test_globals(void) {
     CHECK(out.u.i32_ == 5, "get_global observes set_g = %d", out.u.i32_);
 
     /* Writing a const global is rejected and leaves it unchanged. */
-    CHECK(spacewasm_set_global(store, mod_idx, c, i32_val(1)) == SPACEWASM_ERR_GLOBAL_IS_NOT_MUTABLE,
+    CHECK(spacewasm_set_global(store, mod_idx, c, i32_val(1)) == SPACEWASM_ERR_GLOBAL_NOT_MUTABLE,
           "set const");
     CHECK(spacewasm_get_global(store, mod_idx, c, &out) == SPACEWASM_OK, "get c after reject");
     CHECK(out.u.i32_ == 42, "c unchanged = %d", out.u.i32_);
@@ -666,20 +659,39 @@ static int test_globals_imported(void) {
 }
 
 static int test_error_paths(void) {
-    /* max_modules > 256 -> store_new returns ERR_BAD_ARG (consumes the host). */
+    /* max_modules > 256 */
     spacewasm_host_t host;
     CHECK(spacewasm_host_new(0, &host) == SPACEWASM_OK, "host_new");
     spacewasm_t* store = NULL;
-    CHECK(spacewasm_new(&host, 1024, 257, opts(256), &store) == SPACEWASM_ERR_BAD_ARG,
-          "oversized max_modules");
+    spacewasm_status_t bad_arg_st = spacewasm_new(&host, 1024, 257, opts(256), &store);
+    if (bad_arg_st == SPACEWASM_ERR_BAD_ARG) {
+        spacewasm_host_destroy(&host);
+    }
+    CHECK(bad_arg_st == SPACEWASM_ERR_BAD_ARG, "oversized max_modules");
 
-    /* Bad signature char -> ERR_BAD_SIGNATURE, no panic. */
+    /* Host function signature errors each map to a distinct status, no panic. */
     CHECK(spacewasm_host_new(1, &host) == SPACEWASM_OK, "host_new");
     uint32_t hmod = 0;
-    CHECK(spacewasm_add_host_module(&host, "env", 1, 0, &hmod) == SPACEWASM_OK, "add_host_module");
-    CHECK(spacewasm_add_host_function(&host, hmod, "bad", "x", "", add_one, NULL) ==
-              SPACEWASM_ERR_BAD_SIGNATURE,
-          "bad signature");
+    CHECK(spacewasm_add_host_module(&host, "env", 4, 0, &hmod) == SPACEWASM_OK, "add_host_module");
+    /* Invalid value-list character in the parameter signature. */
+    CHECK(spacewasm_add_host_function(&host, hmod, "bad_param", "x", "", add_one, NULL) ==
+              SPACEWASM_ERR_BAD_ARG,
+          "invalid param char");
+    /* Invalid value-list character in the return signature. */
+    CHECK(spacewasm_add_host_function(&host, hmod, "bad_ret", "i", "z", add_one, NULL) ==
+              SPACEWASM_ERR_BAD_ARG,
+          "invalid return char");
+    /* More than MAX_HOST_FUNCTION_PARAMS (9) parameters. */
+    CHECK(spacewasm_add_host_function(&host, hmod, "too_many", "iiiiiiiiii", "", add_one, NULL) ==
+              SPACEWASM_ERR_FUNCTION_PARAMETERS_TOO_LARGE,
+          "too many params");
+    /* More than one return value is not supported. */
+    CHECK(spacewasm_add_host_function(&host, hmod, "multi_ret", "i", "ii", add_one, NULL) ==
+              SPACEWASM_ERR_FUNCTION_RETURNS_TOO_LARGE,
+          "multiple returns");
+    /* A valid signature still succeeds after the rejected attempts. */
+    CHECK(spacewasm_add_host_function(&host, hmod, "ok", "i", "i", add_one, NULL) == SPACEWASM_OK,
+          "valid signature");
     spacewasm_host_destroy(&host);
 
     /* Malformed wasm -> parse error; the store is still created fine. */
@@ -717,19 +729,9 @@ static int test_null_arg_handling(void) {
 
     /* NULL store to find_export_func. */
     uint32_t idx = 0;
-    CHECK(spacewasm_find_export_func(NULL, 0, "add", &idx) == SPACEWASM_ERR_NULL_ARG,
-          "null store");
+    CHECK(spacewasm_find_export_func(NULL, 0, "add", &idx) == SPACEWASM_ERR_NULL_ARG, "null store");
 
     spacewasm_destroy(store);
-    return 0;
-}
-
-static int test_statistics_available(void) {
-    spacewasm_memory_statistics_t stats = spacewasm_memory_statistics();
-    /* Reported by the page allocator's local tracking; just confirm it's wired.
-     */
-    (void)stats.total_bytes;
-    (void)stats.pad_bytes;
     return 0;
 }
 
@@ -760,19 +762,6 @@ static int run_add_once(void) {
     spacewasm_destroy(store);
     spacewasm_allocator_destroy(alloc);
     return rc;
-}
-
-/* Create and destroy many stores; the tracked live-byte total must return to
- * its baseline, validating drop order and that names/closures are freed. */
-static int test_no_leak_across_lifecycle(void) {
-    CHECK(run_add_once() == 0, "warmup"); /* absorb one-time allocations */
-    int32_t baseline = spacewasm_memory_statistics().total_bytes;
-    for (int i = 0; i < 50; i++) {
-        CHECK(run_add_once() == 0, "iter %d", i);
-    }
-    int32_t after = spacewasm_memory_statistics().total_bytes;
-    CHECK(after == baseline, "memory drifted: baseline=%d after=%d", baseline, after);
-    return 0;
 }
 
 /* ---- pause/resume host callbacks ----------------------------------------- */
@@ -806,8 +795,7 @@ static int test_pause_and_resume_no_value(void) {
     CHECK(spacewasm_host_new(1, &host) == SPACEWASM_OK, "host_new");
 
     uint32_t hmod;
-    CHECK(spacewasm_add_host_module(&host, "env", 1, 0, &hmod) == SPACEWASM_OK,
-          "add_host_module");
+    CHECK(spacewasm_add_host_module(&host, "env", 1, 0, &hmod) == SPACEWASM_OK, "add_host_module");
     CHECK(spacewasm_add_host_function(&host, hmod, "pause", "", "", pause_host, NULL) ==
               SPACEWASM_OK,
           "add_host_function");
@@ -817,11 +805,11 @@ static int test_pause_and_resume_no_value(void) {
     CHECK(spacewasm_new(&host, 1024, 1, opts, &store) == SPACEWASM_OK, "store_new");
 
     cursor_t cursor = {PAUSE_WASM, sizeof(PAUSE_WASM), 0, 0};
-    spacewasm_allocator_t* alloc = spacewasm_allocator_new(mem_alloc, mem_realloc, mem_dealloc, NULL);
+    spacewasm_allocator_t* alloc =
+        spacewasm_allocator_new(mem_alloc, mem_realloc, mem_dealloc, NULL);
     CHECK(alloc != NULL, "allocator_new");
     uint32_t idx;
-    CHECK(spacewasm_load_module(store, "main", cursor_read, &cursor, alloc, &idx) ==
-              SPACEWASM_OK,
+    CHECK(spacewasm_load_module(store, "main", cursor_read, &cursor, alloc, &idx) == SPACEWASM_OK,
           "load_module");
 
     /* No start function */
@@ -842,9 +830,10 @@ static int test_pause_and_resume_no_value(void) {
     /* Resume without value */
     CHECK(spacewasm_resume(store) == SPACEWASM_OK, "resume");
 
-    /* Continue running to completion */
-    while (spacewasm_run(store, 10000, &trap) == SPACEWASM_RUN_OUT_OF_FUEL)
-        ;
+    /* Continue running to completion, capturing the terminal status. */
+    spacewasm_run_status_t final_status = run_to_completion(store, &trap);
+    CHECK(final_status == SPACEWASM_RUN_FINISHED, "run finished (status=%d, trap=%d)",
+          (int)final_status, (int)trap);
     CHECK(trap == SPACEWASM_TRAP_NONE, "no trap");
 
     /* Check result */
@@ -862,8 +851,7 @@ static int test_pause_and_resume_with_value(void) {
     CHECK(spacewasm_host_new(1, &host) == SPACEWASM_OK, "host_new");
 
     uint32_t hmod;
-    CHECK(spacewasm_add_host_module(&host, "env", 1, 0, &hmod) == SPACEWASM_OK,
-          "add_host_module");
+    CHECK(spacewasm_add_host_module(&host, "env", 1, 0, &hmod) == SPACEWASM_OK, "add_host_module");
     CHECK(spacewasm_add_host_function(&host, hmod, "pause_i32", "", "i", pause_i32_host, NULL) ==
               SPACEWASM_OK,
           "add_host_function");
@@ -873,11 +861,11 @@ static int test_pause_and_resume_with_value(void) {
     CHECK(spacewasm_new(&host, 1024, 1, opts, &store) == SPACEWASM_OK, "store_new");
 
     cursor_t cursor = {PAUSE_I32_WASM, sizeof(PAUSE_I32_WASM), 0, 0};
-    spacewasm_allocator_t* alloc = spacewasm_allocator_new(mem_alloc, mem_realloc, mem_dealloc, NULL);
+    spacewasm_allocator_t* alloc =
+        spacewasm_allocator_new(mem_alloc, mem_realloc, mem_dealloc, NULL);
     CHECK(alloc != NULL, "allocator_new");
     uint32_t idx;
-    CHECK(spacewasm_load_module(store, "main", cursor_read, &cursor, alloc, &idx) ==
-              SPACEWASM_OK,
+    CHECK(spacewasm_load_module(store, "main", cursor_read, &cursor, alloc, &idx) == SPACEWASM_OK,
           "load_module");
 
     /* No start function */
@@ -899,9 +887,10 @@ static int test_pause_and_resume_with_value(void) {
     spacewasm_value_t resume_val = {SPACEWASM_I32, {.i32_ = 99}};
     CHECK(spacewasm_resume_value(store, resume_val) == SPACEWASM_OK, "resume_value");
 
-    /* Continue running to completion */
-    while (spacewasm_run(store, 10000, &trap) == SPACEWASM_RUN_OUT_OF_FUEL)
-        ;
+    /* Continue running to completion, capturing the terminal status. */
+    spacewasm_run_status_t final_status = run_to_completion(store, &trap);
+    CHECK(final_status == SPACEWASM_RUN_FINISHED, "run finished (status=%d, trap=%d)",
+          (int)final_status, (int)trap);
     CHECK(trap == SPACEWASM_TRAP_NONE, "no trap");
 
     /* Check result - should be the resumed value (99) */
@@ -917,7 +906,7 @@ static int test_pause_and_resume_with_value(void) {
 /* ---- runner -------------------------------------------------------------- */
 
 int main(void) {
-    if (spacewasm_set_global_allocator(heap_alloc, heap_dealloc, NULL) != 0) {
+    if (spacewasm_set_global_allocator(heap_alloc, heap_dealloc, NULL) != SPACEWASM_OK) {
         fprintf(stderr, "set_global_allocator failed\n");
         return 1;
     }
@@ -936,10 +925,8 @@ int main(void) {
         {"globals_imported", test_globals_imported},
         {"error_paths", test_error_paths},
         {"null_arg_handling", test_null_arg_handling},
-        {"statistics_available", test_statistics_available},
         {"pause_and_resume_no_value", test_pause_and_resume_no_value},
         {"pause_and_resume_with_value", test_pause_and_resume_with_value},
-        {"no_leak_across_lifecycle", test_no_leak_across_lifecycle},
     };
 
     int failures = 0;
