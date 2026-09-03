@@ -152,6 +152,8 @@ Here are a couple of limitations that may be relevant to developers of Wasm modu
 | IR Code             | 8 GiB               | Compiled IR, not raw bytecode. This limit is across all modules in the store. The IR / Bytecode ratio is printed in `spacewasm_std` as the "compilation ratio". It is difficult to estimate this upfront because it varies on the types of instructions used. |
 | Function parameters | 255 32-bit words    | Per function.                                                                                                                                                                                                                                                 |
 | Local variables     | 65,535 32-bit words | Per function.                                                                                                                                                                                                                                                 |
+| Import name length  | 32 bytes            | Applies to each import's module name and field name; a longer name is rejected at decode time.                                                                                                                                                                |
+| Custom section name | 32 bytes            | The name of each custom section (e.g. the `name` section); a longer name is rejected at decode time.                                                                                                                                                          |
 
 ## Benchmarking
 

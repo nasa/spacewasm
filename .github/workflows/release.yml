@@ -44,16 +44,7 @@ jobs:
           fi
 
       - name: Install WABT (WebAssembly Binary Toolkit)
-        run: |
-          set -euo pipefail
-          WABT_VERSION=1.0.41
-          WABT_PLATFORM="linux-x64"
-          WABT_SHA256=83f8122e924745fcd70636e3594bc01c4c47f2d4c8f3c63b5d70d3f83a482677
-          tarball="wabt-${WABT_VERSION}-${WABT_PLATFORM}.tar.gz"
-          wget -q "https://github.com/WebAssembly/wabt/releases/download/${WABT_VERSION}/${tarball}"
-          echo "${WABT_SHA256}  ${tarball}" | sha256sum -c -
-          tar -xzf "${tarball}"
-          sudo cp wabt-${WABT_VERSION}/bin/* /usr/local/bin/
+        uses: ./.github/actions/install-wabt
 
       - name: Run tests
         run: cargo test --workspace --verbose
@@ -64,11 +55,18 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
+      - name: Verify spacewasm_c_api packaging
+        run: |
+          cargo build -p spacewasm_c_api --release --verbose
+          cargo package -p spacewasm_c_api --allow-dirty --no-verify
+
       - name: Publish spacewasm_c_api to crates.io
         # Published after spacewasm since it depends on the exact matching
         # release. cargo waits for the dependency to be available in the index.
         # --allow-dirty: the injected version is an uncommitted working-tree change.
-        # --no-verify: Work around 'unwinding panics are not supported without std'
+        # --no-verify: skips cargo's verify build, which fails with "unwinding
+        # panics are not supported without std" for this no_std `panic = "abort"`
+        # staticlib/cdylib.
         run: cargo publish -p spacewasm_c_api --allow-dirty --no-verify
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}

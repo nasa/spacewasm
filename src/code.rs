@@ -96,34 +96,38 @@ impl Module {
         let empty_f = self.functions[i].clone();
         let mut f = core::mem::replace(&mut self.functions[i], empty_f);
 
-        f.locals = wasm.read_vec(|w| {
-            let n = w.read_u32()?;
-            let t = ValType::read(w)?;
+        wasm.with_limit(size as usize, |wasm| {
+            f.locals = wasm.read_vec(|w| {
+                let n = w.read_u32()?;
+                let t = ValType::read(w)?;
 
-            if n > 0xFFFF {
+                if n > 0xFFFF {
+                    return Err(ValidationError::TooManyLocals);
+                }
+
+                Ok((n as u16, t))
+            })?;
+
+            // Compute the local size in words
+            let mut total_size: usize = 0;
+            for (n, ty) in f.locals.iter() {
+                total_size = (*n as usize)
+                    .checked_mul(ty.size())
+                    .and_then(|v| total_size.checked_add(v))
+                    .ok_or(ValidationError::TooManyLocals)?;
+            }
+            let size_in_words = total_size / 4;
+
+            if size_in_words > 0xFFFF {
                 return Err(ValidationError::TooManyLocals);
             }
 
-            Ok((n as u16, t))
+            f.local_size = size_in_words as u16;
+            (f.expr, f.stack_usage) =
+                Expr::read::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(wasm, builder, store, self, &f)?;
+
+            Ok(())
         })?;
-
-        // Compute the local size in words
-        let mut total_size: usize = 0;
-        for (n, ty) in f.locals.iter() {
-            total_size = (*n as usize)
-                .checked_mul(ty.size())
-                .and_then(|v| total_size.checked_add(v))
-                .ok_or(ValidationError::TooManyLocals)?;
-        }
-        let size_in_words = total_size / 4;
-
-        if size_in_words > 0xFFFF {
-            return Err(ValidationError::TooManyLocals);
-        }
-
-        f.local_size = size_in_words as u16;
-        (f.expr, f.stack_usage) =
-            Expr::read::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(wasm, builder, store, self, &f)?;
 
         // Bound the worst-case call frame this function can produce. When a
         // function performs a call, the frame it leaves behind is

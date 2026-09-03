@@ -51,6 +51,10 @@ pub struct Reader<'wasm> {
     /// A counter keeping track of the total number of bytes we've processed in the Wasm binary
     /// This is useful for generating error messages with an absolute location in the binary.
     full_offset: usize,
+
+    /// Offset ahead of full_offset tracking the read limits of this section.
+    /// Set by `with_limit` and restored to usize::MAX (or previous limit) after completion.
+    limit: usize,
 }
 
 impl<'wasm> Reader<'wasm> {
@@ -61,11 +65,36 @@ impl<'wasm> Reader<'wasm> {
             next: None,
             buffer: CircularBuffer::new(),
             full_offset: 0,
+            limit: usize::MAX,
         }
     }
 
     pub fn offset(&self) -> usize {
         self.full_offset
+    }
+
+    /// Run `f` with reads bounded to `len` bytes.
+    pub fn with_limit<T, E, F>(&mut self, len: usize, f: F) -> Result<T, E>
+    where
+        E: From<ValidationError>,
+        F: FnOnce(&mut Self) -> Result<T, E>,
+    {
+        let new_limit = self
+            .full_offset
+            .checked_add(len)
+            .filter(|&nl| nl <= self.limit)
+            .ok_or(ValidationError::MalformedSectionSize)?;
+        let prev = core::mem::replace(&mut self.limit, new_limit);
+        let result = f(self);
+        self.limit = prev;
+        result
+    }
+
+    /// Bytes that may still be read before reaching the configured
+    /// section/function limit (see [`with_limit`](Self::with_limit)). Returns
+    /// `usize::MAX` when no limit is in effect.
+    fn bytes_remaining(&self) -> usize {
+        self.limit.saturating_sub(self.full_offset)
     }
 
     /// Fills the circular buffer from the stream chunks.
@@ -143,6 +172,10 @@ impl<'wasm> Reader<'wasm> {
 
     /// Tries to read one byte and fails if the end of file is reached.
     pub fn read_u8(&mut self) -> Result<u8, ValidationError> {
+        if self.full_offset >= self.limit {
+            return Err(ValidationError::Eof);
+        }
+
         let byte = self.peek_u8()?;
         self.buffer.pop_front();
         self.full_offset += 1;
@@ -442,7 +475,7 @@ impl<'wasm> Reader<'wasm> {
         T: 'wasm,
     {
         let len = self.read_u32()?;
-        if len as usize > SIZE {
+        if len as usize > SIZE || len as usize > self.bytes_remaining() {
             return Err(ValidationError::VecTooLong);
         }
 
@@ -465,6 +498,10 @@ impl<'wasm> Reader<'wasm> {
         VA: Allocator,
     {
         let len = self.read_u32()?;
+        if len as usize > self.bytes_remaining() {
+            return Err(ValidationError::VecTooLong);
+        }
+
         let mut out = Vec::new_in(alloc, len)?;
         for _ in 0..len {
             out.push(read_element(self)?);
@@ -650,6 +687,156 @@ mod tests {
         let v = reader.read_vec(|r| r.read_u8()).unwrap();
         assert_eq!(&*v, &[0x0A, 0x0B, 0x0C]);
         assert_eq!(reader.offset(), data.len());
+    }
+
+    #[test]
+    fn read_vec_rejects_length_exceeding_limit() {
+        // A LEB128 length of 100 followed by only two bytes. With a section
+        // limit covering just the three available bytes, the declared length
+        // cannot fit (each element needs >=1 byte), so the reader rejects it
+        // with `VecTooLong` before attempting any allocation.
+        let data = [0x64u8, 0x00, 0x00]; // len = 100, then two payload bytes
+        let mut stream = ChunkStream::new(&data, data.len());
+        let mut reader = Reader::new(&mut stream);
+        assert_eq!(
+            reader.with_limit(data.len(), |r| r.read_vec(|r| r.read_u8())),
+            Err(ValidationError::VecTooLong)
+        );
+    }
+
+    #[test]
+    fn read_vec_allows_length_within_limit() {
+        // The same length check passes when the limit accommodates the
+        // elements, and decoding proceeds normally.
+        let data = [0x03u8, 0x0A, 0x0B, 0x0C];
+        let mut stream = ChunkStream::new(&data, data.len());
+        let mut reader = Reader::new(&mut stream);
+        let v = reader
+            .with_limit(data.len(), |r| r.read_vec(|r| r.read_u8()))
+            .unwrap();
+        assert_eq!(&*v, &[0x0A, 0x0B, 0x0C]);
+        assert_eq!(reader.offset(), data.len());
+    }
+
+    #[test]
+    fn read_vec_unbounded_without_limit() {
+        // Without `with_limit`, `bytes_remaining()` is `usize::MAX`, so the
+        // bound is inert and behaviour matches the pre-existing reader.
+        let data = [0x03u8, 0x0A, 0x0B, 0x0C];
+        let mut stream = ChunkStream::new(&data, data.len());
+        let mut reader = Reader::new(&mut stream);
+        let v = reader.read_vec(|r| r.read_u8()).unwrap();
+        assert_eq!(&*v, &[0x0A, 0x0B, 0x0C]);
+    }
+
+    /// Assert that reading a value needing `need` bytes succeeds under a
+    /// `with_limit(need, …)` region that ends exactly at the value's last byte,
+    /// and is rejected with `Eof` under a `with_limit(need - 1, …)` region that
+    /// is one byte too small (the read crosses the boundary). Bytes are fed one
+    /// per chunk so the boundary can fall inside a multi-byte decode.
+    fn bounded_read<T: core::fmt::Debug + PartialEq>(
+        data: &[u8],
+        need: usize,
+        mut f: impl FnMut(&mut Reader) -> Result<T, ValidationError>,
+    ) {
+        // Exact fit: the region ends exactly at the value's final byte.
+        let mut stream = ChunkStream::new(data, 1);
+        let mut reader = Reader::new(&mut stream);
+        reader
+            .with_limit(need, |r| f(r))
+            .expect("exact-fit read should succeed");
+        assert_eq!(reader.offset(), need, "offset after exact-fit read");
+        drop(reader);
+
+        // One byte short: the read crosses the boundary and is rejected as Eof.
+        let mut stream = ChunkStream::new(data, 1);
+        let mut reader = Reader::new(&mut stream);
+        assert_eq!(
+            reader.with_limit(need - 1, |r| f(r)),
+            Err(ValidationError::Eof),
+            "read crossing the boundary should be Eof",
+        );
+    }
+
+    #[test]
+    fn with_limit_bounds_every_primitive_read() {
+        bounded_read(&[0xAA, 0xBB], 1, |r| r.read_u8());
+        // 3-byte unsigned LEB128 (624485).
+        bounded_read(&[0xE5, 0x8E, 0x26], 3, |r| r.read_u32());
+        // 10-byte signed LEB128 (i64::MIN), the longest continuation path.
+        let min = [0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x7F];
+        bounded_read(&min, 10, |r| r.read_i64());
+        bounded_read(&3.5f32.to_le_bytes(), 4, |r| r.read_f32_bits());
+        bounded_read(&[0x11, 0x22, 0x33, 0x44], 4, |r| r.strip_bytes::<4>());
+        bounded_read(&[0x01, 0x02, 0x03, 0x04], 4, |r| r.skip(4));
+        // `expect_u8` peeks (unbounded) then consumes via `read_u8`; a matching
+        // byte at a zero-remaining boundary is still rejected on the consume.
+        bounded_read(&[0x07], 1, |r| r.expect_u8(0x07));
+    }
+
+    #[test]
+    fn with_limit_nests_and_rejects_oversized_subregion() {
+        let data = [0x01u8, 0x02, 0x03, 0x04, 0x05, 0x06];
+
+        // An inner region is bounded within the outer region, and the bytes the
+        // inner region does not consume remain readable in the outer region.
+        let mut stream = ChunkStream::new(&data, 1);
+        let mut reader = Reader::new(&mut stream);
+        let r: Result<(), ValidationError> = reader.with_limit(4, |r| {
+            r.with_limit(2, |r| {
+                assert_eq!(r.read_u8()?, 0x01);
+                assert_eq!(r.read_u8()?, 0x02);
+                // A third read crosses the inner 2-byte boundary.
+                assert_eq!(r.read_u8(), Err(ValidationError::Eof));
+                Ok::<(), ValidationError>(())
+            })?;
+            // Still within the outer 4-byte budget: the next byte reads fine.
+            assert_eq!(r.read_u8()?, 0x03);
+            Ok(())
+        });
+        assert_eq!(r, Ok(()));
+        drop(reader);
+
+        // An inner region claiming more bytes than the enclosing budget is
+        // rejected before any read.
+        let mut stream = ChunkStream::new(&data, 1);
+        let mut reader = Reader::new(&mut stream);
+        let r = reader.with_limit(3, |r| r.with_limit(4, |r| r.read_u8()));
+        assert_eq!(r, Err(ValidationError::MalformedSectionSize));
+    }
+
+    #[test]
+    fn with_limit_restores_outer_bound_after_ok_and_err() {
+        let data = [0x0Au8, 0x0B, 0x0C, 0x0D];
+
+        // After a bounded region completes with Ok, the limit is restored: a
+        // subsequent framing read proceeds past the just-closed boundary.
+        let mut stream = ChunkStream::new(&data, 1);
+        let mut reader = Reader::new(&mut stream);
+        reader
+            .with_limit(2, |r| {
+                assert_eq!(r.read_u8()?, 0x0A);
+                assert_eq!(r.read_u8()?, 0x0B);
+                Ok::<(), ValidationError>(())
+            })
+            .unwrap();
+        assert_eq!(reader.read_u8().unwrap(), 0x0C);
+        assert_eq!(reader.read_u8().unwrap(), 0x0D);
+        assert_eq!(reader.offset(), data.len());
+        drop(reader);
+
+        // The limit is also restored when the region returns Err: the byte that
+        // was blocked at the boundary is readable once the region unwinds.
+        let mut stream = ChunkStream::new(&data, 1);
+        let mut reader = Reader::new(&mut stream);
+        let r: Result<(), ValidationError> = reader.with_limit(1, |r| {
+            assert_eq!(r.read_u8()?, 0x0A);
+            r.read_u8()?; // crosses the 1-byte boundary -> Eof
+            Ok(())
+        });
+        assert_eq!(r, Err(ValidationError::Eof));
+        assert_eq!(reader.read_u8().unwrap(), 0x0B);
+        assert_eq!(reader.offset(), 2);
     }
 
     #[test]

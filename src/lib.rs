@@ -60,36 +60,10 @@ pub(crate) use ir_reader::*;
 mod engine;
 pub use engine::*;
 
-#[derive(Debug, Default, Clone)]
-#[repr(C)]
-pub struct MemoryStatistics {
-    pub total_bytes: i32,
-    pub pad_bytes: i32,
-}
-
-/// Computes the delta between two different statistic samples
-impl core::ops::Sub for MemoryStatistics {
-    type Output = MemoryStatistics;
-
-    fn sub(self, rhs: Self) -> Self::Output {
-        MemoryStatistics {
-            total_bytes: self.total_bytes - rhs.total_bytes,
-            pad_bytes: self.pad_bytes - rhs.pad_bytes,
-        }
-    }
-}
-
-impl core::ops::AddAssign for MemoryStatistics {
-    fn add_assign(&mut self, rhs: Self) {
-        self.total_bytes += rhs.total_bytes;
-        self.pad_bytes += rhs.pad_bytes;
-    }
-}
-
 #[cfg(any(test, kani))]
 pub mod test_support {
-    use crate::MemoryStatistics;
     use crate::alloc::{AllocError, Allocator};
+    use core::sync::atomic::{AtomicI32, Ordering};
     extern crate std;
     use std::alloc::Layout;
 
@@ -99,7 +73,7 @@ pub mod test_support {
     pub struct RustSystemAllocator;
 
     // Track allocation statistics
-    static mut TOTAL_ALLOCATED: i32 = 0;
+    static TOTAL_ALLOCATED: AtomicI32 = AtomicI32::new(0);
 
     unsafe impl Allocator for RustSystemAllocator {
         unsafe fn alloc(&self, layout: Layout) -> Result<*mut u8, AllocError> {
@@ -108,9 +82,7 @@ pub mod test_support {
             } else {
                 let ptr = unsafe { std::alloc::alloc(layout) };
                 if !ptr.is_null() {
-                    unsafe {
-                        TOTAL_ALLOCATED += layout.size() as i32;
-                    }
+                    TOTAL_ALLOCATED.fetch_add(layout.size() as i32, Ordering::Relaxed);
                 }
                 Ok(ptr)
             }
@@ -123,22 +95,14 @@ pub mod test_support {
 
             unsafe {
                 std::alloc::dealloc(ptr, layout);
-                TOTAL_ALLOCATED -= layout.size() as i32;
             }
-        }
-
-        fn memory_statistics(&self) -> MemoryStatistics {
-            MemoryStatistics {
-                total_bytes: unsafe { TOTAL_ALLOCATED },
-                pad_bytes: 0,
-            }
+            TOTAL_ALLOCATED.fetch_sub(layout.size() as i32, Ordering::Relaxed);
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::MemoryStatistics;
     use crate::alloc::Allocator;
     use crate::test_support::RustSystemAllocator;
     use core::alloc::Layout;
@@ -168,9 +132,5 @@ mod tests {
     pub unsafe extern "C" fn __spacewasm_dealloc(ptr: *mut u8, size: usize, align: usize) {
         let layout = Layout::from_size_align(size, align).unwrap();
         unsafe { (*GLOBAL_ALLOCATOR).dealloc(ptr, layout) }
-    }
-    #[unsafe(no_mangle)]
-    pub unsafe extern "C" fn __spacewasm_memory_statistics() -> MemoryStatistics {
-        unsafe { (*GLOBAL_ALLOCATOR).memory_statistics() }
     }
 }

@@ -88,6 +88,8 @@ datastructures within the implementation.
 - **Host modules**: Maximum 256 host modules
 - **Function parameters**: Maximum 255 32-bit words
 - **Local variables**: Maximum 65,535 32-bit words total per function
+- **Import names**: Each import's module name and field name are limited to 32 bytes; a longer name is rejected at decode time
+- **Custom-section names**: Limited to 32 bytes; a longer name is rejected at decode time
 
 ### Linear Memory
 

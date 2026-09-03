@@ -505,7 +505,7 @@ static int test_globals(void) {
     CHECK(out.u.i32_ == 5, "get_global observes set_g = %d", out.u.i32_);
 
     /* Writing a const global is rejected and leaves it unchanged. */
-    CHECK(spacewasm_set_global(store, mod_idx, c, i32_val(1)) == SPACEWASM_ERR_GLOBAL_IS_NOT_MUTABLE,
+    CHECK(spacewasm_set_global(store, mod_idx, c, i32_val(1)) == SPACEWASM_ERR_GLOBAL_NOT_MUTABLE,
           "set const");
     CHECK(spacewasm_get_global(store, mod_idx, c, &out) == SPACEWASM_OK, "get c after reject");
     CHECK(out.u.i32_ == 42, "c unchanged = %d", out.u.i32_);
@@ -666,12 +666,15 @@ static int test_globals_imported(void) {
 }
 
 static int test_error_paths(void) {
-    /* max_modules > 256 -> store_new returns ERR_BAD_ARG (consumes the host). */
+    /* max_modules > 256 */
     spacewasm_host_t host;
     CHECK(spacewasm_host_new(0, &host) == SPACEWASM_OK, "host_new");
     spacewasm_t* store = NULL;
-    CHECK(spacewasm_new(&host, 1024, 257, opts(256), &store) == SPACEWASM_ERR_BAD_ARG,
-          "oversized max_modules");
+    spacewasm_status_t bad_arg_st = spacewasm_new(&host, 1024, 257, opts(256), &store);
+    if (bad_arg_st == SPACEWASM_ERR_BAD_ARG) {
+        spacewasm_host_destroy(&host);
+    }
+    CHECK(bad_arg_st == SPACEWASM_ERR_BAD_ARG, "oversized max_modules");
 
     /* Host function signature errors each map to a distinct status, no panic. */
     CHECK(spacewasm_host_new(1, &host) == SPACEWASM_OK, "host_new");
@@ -858,9 +861,10 @@ static int test_pause_and_resume_no_value(void) {
     /* Resume without value */
     CHECK(spacewasm_resume(store) == SPACEWASM_OK, "resume");
 
-    /* Continue running to completion */
-    while (spacewasm_run(store, 10000, &trap) == SPACEWASM_RUN_OUT_OF_FUEL)
-        ;
+    /* Continue running to completion, capturing the terminal status. */
+    spacewasm_run_status_t final_status = run_to_completion(store, &trap);
+    CHECK(final_status == SPACEWASM_RUN_FINISHED, "run finished (status=%d, trap=%d)",
+          (int)final_status, (int)trap);
     CHECK(trap == SPACEWASM_TRAP_NONE, "no trap");
 
     /* Check result */
@@ -915,9 +919,10 @@ static int test_pause_and_resume_with_value(void) {
     spacewasm_value_t resume_val = {SPACEWASM_I32, {.i32_ = 99}};
     CHECK(spacewasm_resume_value(store, resume_val) == SPACEWASM_OK, "resume_value");
 
-    /* Continue running to completion */
-    while (spacewasm_run(store, 10000, &trap) == SPACEWASM_RUN_OUT_OF_FUEL)
-        ;
+    /* Continue running to completion, capturing the terminal status. */
+    spacewasm_run_status_t final_status = run_to_completion(store, &trap);
+    CHECK(final_status == SPACEWASM_RUN_FINISHED, "run finished (status=%d, trap=%d)",
+          (int)final_status, (int)trap);
     CHECK(trap == SPACEWASM_TRAP_NONE, "no trap");
 
     /* Check result - should be the resumed value (99) */
@@ -933,7 +938,7 @@ static int test_pause_and_resume_with_value(void) {
 /* ---- runner -------------------------------------------------------------- */
 
 int main(void) {
-    if (spacewasm_set_global_allocator(heap_alloc, heap_dealloc, NULL) != 0) {
+    if (spacewasm_set_global_allocator(heap_alloc, heap_dealloc, NULL) != SPACEWASM_OK) {
         fprintf(stderr, "set_global_allocator failed\n");
         return 1;
     }

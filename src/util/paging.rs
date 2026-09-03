@@ -1,9 +1,10 @@
-use crate::MemoryStatistics;
 use crate::alloc::{AllocError, Allocator};
 use core::alloc::Layout;
 use core::cell::UnsafeCell;
 
-// TODO(tumbar) Do we need to expose this or is it constant across all of SpaceWasm?
+/// Alignment requested when pulling a whole page from the backing allocator.
+/// 8 is usually the largest Rust will request (for the types we are using) so this
+/// default page alignment should incur minimal (probably none) initial padding.
 const ALIGNMENT: usize = 8;
 
 #[derive(Debug, Default, Clone)]
@@ -11,15 +12,6 @@ pub struct PageAllocatorStatistics {
     pub total_bytes: u32,
     pub pad_bytes: u32,
     pub pages: u32,
-}
-
-impl From<PageAllocatorStatistics> for MemoryStatistics {
-    fn from(stats: PageAllocatorStatistics) -> MemoryStatistics {
-        MemoryStatistics {
-            total_bytes: stats.total_bytes as i32,
-            pad_bytes: stats.pad_bytes as i32,
-        }
-    }
 }
 
 /// A page is an allocator that utilizes a large contiguous blocks of memory
@@ -91,10 +83,6 @@ unsafe impl<A: Allocator, const MAX_PAGES: usize> Allocator for PageAllocator<A,
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         unsafe { (&mut *self.inner.get()).dealloc(ptr, layout) }
     }
-
-    fn memory_statistics(&self) -> MemoryStatistics {
-        self.stats().into()
-    }
 }
 
 impl<A: Allocator, const MAX_PAGES: usize> PageAllocatorInner<A, MAX_PAGES> {
@@ -129,8 +117,8 @@ impl<A: Allocator, const MAX_PAGES: usize> PageAllocatorInner<A, MAX_PAGES> {
                     let ptr = match page.alloc(layout) {
                         None => {
                             // Allocation failed on a new page
-                            // Drop the page and error
-                            // FIXME(tumbar) This means that the page size is too small! What do we do?
+                            // All pages are the same size so this will never work.
+                            // Drop the page and error.
                             unsafe { self.page_allocator.dealloc(addr, page_layout) }
                             return Err(AllocError::PageTooSmall);
                         }
@@ -173,6 +161,14 @@ impl<A: Allocator, const MAX_PAGES: usize> PageAllocatorInner<A, MAX_PAGES> {
                 }
             }
         }
+
+        // This pointer is not owned by us!
+        // Potentially a double free or invalid pointer
+        debug_assert!(
+            false,
+            "PageAllocator::dealloc called with a pointer not owned by any live page \
+             (foreign pointer or double free)"
+        );
     }
 }
 
@@ -348,6 +344,51 @@ mod tests {
                 assert_eq!(stats.pages, 0, "page must be reclaimed when empty");
                 assert_eq!(stats.total_bytes, 0, "no bytes should remain live");
             }
+        }
+    }
+
+    #[test]
+    fn test_partial_deallocation_keeps_page_until_last_free() {
+        // A 128-byte page holds exactly two 64-byte allocations, so this
+        // exercises partial deallocation of a page across a multi-page live
+        // set: freeing one allocation from a page while its sibling is still
+        // live (`Page::dealloc` returning `Some(false)`) must NOT reclaim the
+        // page, whereas freeing the last live allocation (`Some(true)`) must.
+        let page_alloc = PageAllocator::<RustSystemAllocator, 4>::new(RustSystemAllocator, 128);
+
+        unsafe {
+            let layout = Layout::from_size_align(64, 8).unwrap();
+
+            let a = page_alloc.alloc(layout).unwrap(); // page 0, slot 0
+            let b = page_alloc.alloc(layout).unwrap(); // page 0, slot 1 (page 0 full)
+            let c = page_alloc.alloc(layout).unwrap(); // page 1, slot 0
+
+            assert_eq!(page_alloc.stats().pages, 2, "two pages must be live");
+
+            // Partial free: releasing one of page 0's two allocations must not
+            // reclaim the page while its sibling remains live.
+            page_alloc.dealloc(b, layout);
+            assert_eq!(
+                page_alloc.stats().pages,
+                2,
+                "page 0 must stay live while one of its allocations remains"
+            );
+
+            // Freeing the final live allocation in page 0 reclaims it.
+            page_alloc.dealloc(a, layout);
+            assert_eq!(
+                page_alloc.stats().pages,
+                1,
+                "page 0 must be reclaimed once all of its allocations are freed"
+            );
+
+            // Page 1 is still live via `c`; freeing it reclaims the last page.
+            page_alloc.dealloc(c, layout);
+            assert_eq!(
+                page_alloc.stats().pages,
+                0,
+                "all pages reclaimed after every allocation is freed"
+            );
         }
     }
 

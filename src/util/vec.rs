@@ -18,12 +18,18 @@ pub struct Vec<T: Sized, A: Allocator = GlobalAllocator> {
 }
 
 impl<T> Vec<T, GlobalAllocator> {
-    pub fn from_exact_iter(iter: impl ExactSizeIterator<Item = T>) -> Self {
-        let mut o = Self::new(iter.len() as u32).unwrap();
+    /// Build a `Vec` from an exact-size iterator.
+    ///
+    /// The capacity is taken from `iter.len()`. Returns [`AllocError`] if that
+    /// length does not fit in a `u32` (instead of silently truncating the cast)
+    /// or if allocating the backing buffer fails.
+    pub fn from_exact_iter(iter: impl ExactSizeIterator<Item = T>) -> Result<Self, AllocError> {
+        let capacity = u32::try_from(iter.len()).map_err(|_| AllocError::AllocationFailed)?;
+        let mut o = Self::new(capacity)?;
         for i in iter {
             o.push(i);
         }
-        o
+        Ok(o)
     }
 }
 
@@ -49,24 +55,35 @@ impl<A: Allocator, T: core::fmt::Debug> core::fmt::Debug for Vec<T, A> {
     }
 }
 
-impl<T: Clone, A: Allocator + Clone> Clone for Vec<T, A> {
-    fn clone(&self) -> Self {
-        let mut n: Vec<T, A> = Vec::new_in(self.alloc.clone(), self.inner.capacity).unwrap();
+impl<T: Clone, A: Allocator + Clone> Vec<T, A> {
+    /// Attempt to clone the vector, returning [`AllocError`] if allocating the
+    /// new backing buffer fails. The clone preserves both length and capacity.
+    ///
+    /// This is panic-safe: if an element's [`Clone`] implementation panics
+    /// part-way through, every element cloned so far is dropped before the
+    /// panic propagates, so nothing is leaked. The guard is the new `Vec`'s own
+    /// [`Drop`] — [`Vec::push`] advances its `len` only *after* each element is
+    /// written, and on unwind `Drop` reclaims exactly that initialized prefix.
+    pub fn try_clone(&self) -> Result<Self, AllocError> {
+        let mut n: Vec<T, A> = Vec::new_in(self.alloc.clone(), self.inner.capacity)?;
 
-        if !self.is_empty() {
-            // SAFETY: We need to write to uninitialized memory without creating a reference to it.
-            // Use ptr::write to initialize each element.
-            unsafe {
-                for i in 0..self.len() {
-                    core::ptr::write(n.inner.ptr.add(i), self[i].clone());
-                }
-            }
+        for i in 0..self.len() {
+            // `self.len() <= capacity == n.capacity`, so `push` never overflows.
+            // `self[i].clone()` is evaluated before `push` takes ownership, so a
+            // panic there leaves `n` holding only the already-cloned prefix.
+            n.push(self[i].clone());
         }
 
-        // Only set len after initializing the memory
-        n.inner.len = self.inner.len;
+        Ok(n)
+    }
+}
 
-        n
+impl<T: Clone, A: Allocator + Clone> Clone for Vec<T, A> {
+    /// # Panics
+    /// Panics if allocating the new backing buffer fails. Use
+    /// [`Vec::try_clone`] to handle allocation failure without panicking.
+    fn clone(&self) -> Self {
+        self.try_clone().expect("Vec::clone: allocation failed")
     }
 }
 
@@ -92,26 +109,46 @@ impl<T: Sized> Vec<T, GlobalAllocator> {
         Vec::new_in(GlobalAllocator, capacity)
     }
 
-    pub fn new_from(ptr: *mut T, capacity: u32) -> Vec<T> {
+    /// Build a `Vec` that adopts a raw allocation, using [`GlobalAllocator`].
+    ///
+    /// The returned `Vec` starts empty (`len == 0`) and treats all `capacity`
+    /// slots as uninitialized. Its [`Drop`] frees `ptr` with [`GlobalAllocator`].
+    ///
+    /// # Safety
+    /// - `ptr` must point to a single allocation of at least `capacity` values
+    ///   of `T`, produced by [`GlobalAllocator`] with the layout
+    ///   `Layout::array::<T>(capacity)` (correctly sized and aligned).
+    /// - Ownership of that allocation is transferred to the returned `Vec`: it
+    ///   must not be freed, aliased, or otherwise used elsewhere, since the
+    ///   `Vec`'s `Drop` will free it with the same allocator and layout.
+    pub unsafe fn new_from(ptr: *mut T, capacity: u32) -> Vec<T> {
         Vec {
-            inner: InnerVec {
-                ptr,
-                capacity,
-                len: 0,
-            },
+            // SAFETY: guaranteed by this function's contract; `len == 0` so no
+            // element is claimed initialized.
+            inner: unsafe { InnerVec::from_raw_parts(ptr, capacity, 0) },
             alloc: GlobalAllocator,
         }
     }
 }
 
 impl<T: Sized, A: Allocator> Vec<T, A> {
-    pub fn new_from_with_alloc(ptr: *mut T, capacity: u32, alloc: A) -> Vec<T, A> {
+    /// Build a `Vec` that adopts a raw allocation, using a custom allocator.
+    ///
+    /// The returned `Vec` starts empty (`len == 0`) and treats all `capacity`
+    /// slots as uninitialized. Its [`Drop`] frees `ptr` with `alloc`.
+    ///
+    /// # Safety
+    /// - `ptr` must point to a single allocation of at least `capacity` values
+    ///   of `T`, produced by `alloc` with the layout
+    ///   `Layout::array::<T>(capacity)` (correctly sized and aligned).
+    /// - Ownership of that allocation is transferred to the returned `Vec`: it
+    ///   must not be freed, aliased, or otherwise used elsewhere, since the
+    ///   `Vec`'s `Drop` will free it with `alloc` and the same layout.
+    pub unsafe fn new_from_with_alloc(ptr: *mut T, capacity: u32, alloc: A) -> Vec<T, A> {
         Vec {
-            inner: InnerVec {
-                ptr,
-                capacity,
-                len: 0,
-            },
+            // SAFETY: guaranteed by this function's contract; `len == 0` so no
+            // element is claimed initialized.
+            inner: unsafe { InnerVec::from_raw_parts(ptr, capacity, 0) },
             alloc,
         }
     }
@@ -131,11 +168,10 @@ impl<T: Sized, A: Allocator> Vec<T, A> {
         };
 
         Ok(Vec {
-            inner: InnerVec {
-                ptr: ptr as *mut T,
-                capacity,
-                len: 0,
-            },
+            // SAFETY: `ptr` is either null (capacity 0) or a fresh allocation of
+            // `capacity` elements from `alloc`, and `len == 0` so no element is
+            // claimed initialized.
+            inner: unsafe { InnerVec::from_raw_parts(ptr as *mut T, capacity, 0) },
             alloc,
         })
     }
@@ -144,11 +180,7 @@ impl<T: Sized, A: Allocator> Vec<T, A> {
 impl<T: Sized> Vec<T, GlobalAllocator> {
     pub fn zero() -> Vec<T> {
         Vec {
-            inner: InnerVec {
-                ptr: core::ptr::null_mut(),
-                capacity: 0,
-                len: 0,
-            },
+            inner: InnerVec::zero(),
             alloc: GlobalAllocator,
         }
     }
@@ -167,7 +199,11 @@ impl<T: Sized, A: Allocator> Vec<T, A> {
         self.inner.capacity()
     }
 
-    /// Appends an element to the back of a collection.
+    /// Appends an element to the back of the vector.
+    ///
+    /// Unlike `alloc::vec::Vec`, this vector has a fixed capacity fixed at
+    /// construction and never reallocates. Use [`Vec::try_push`] to handle a
+    /// full vector without panicking.
     ///
     /// # Panics
     ///
@@ -176,9 +212,25 @@ impl<T: Sized, A: Allocator> Vec<T, A> {
     /// # Examples
     ///
     /// ```
-    /// let mut vec = vec![1, 2];
+    /// # // `spacewasm` is `no_std`: its `GlobalAllocator` forwards to the
+    /// # // `__spacewasm_*` symbols an embedder installs via `global_allocator!`.
+    /// # // A doctest is its own binary, so provide a std-backed implementation.
+    /// # struct DocAlloc;
+    /// # unsafe impl spacewasm::Allocator for DocAlloc {
+    /// #     unsafe fn alloc(&self, l: core::alloc::Layout) -> Result<*mut u8, spacewasm::AllocError> {
+    /// #         Ok(unsafe { std::alloc::alloc(l) })
+    /// #     }
+    /// #     unsafe fn dealloc(&self, p: *mut u8, l: core::alloc::Layout) { unsafe { std::alloc::dealloc(p, l) } }
+    /// #     fn memory_statistics(&self) -> spacewasm::MemoryStatistics { spacewasm::MemoryStatistics { total_bytes: 0, pad_bytes: 0 } }
+    /// # }
+    /// # spacewasm::global_allocator!(DocAlloc, DocAlloc);
+    /// use spacewasm::Vec;
+    ///
+    /// let mut vec = Vec::new(3).unwrap();
+    /// vec.push(1);
+    /// vec.push(2);
     /// vec.push(3);
-    /// assert_eq!(vec, [1, 2, 3]);
+    /// assert_eq!(&vec[..], &[1, 2, 3]);
     /// ```
     ///
     /// # Time complexity
@@ -192,15 +244,29 @@ impl<T: Sized, A: Allocator> Vec<T, A> {
         self.inner.try_push(value)
     }
 
-    /// Removes the last element from a vector and returns it, or [`None`] if it
-    /// is empty.
+    /// Removes the last element from the vector and returns it, or [`None`] if
+    /// it is empty. The capacity is unchanged.
     ///
     /// # Examples
     ///
     /// ```
-    /// let mut vec = vec![1, 2, 3];
+    /// # // `spacewasm` is `no_std`: its `GlobalAllocator` forwards to the
+    /// # // `__spacewasm_*` symbols an embedder installs via `global_allocator!`.
+    /// # // A doctest is its own binary, so provide a std-backed implementation.
+    /// # struct DocAlloc;
+    /// # unsafe impl spacewasm::Allocator for DocAlloc {
+    /// #     unsafe fn alloc(&self, l: core::alloc::Layout) -> Result<*mut u8, spacewasm::AllocError> {
+    /// #         Ok(unsafe { std::alloc::alloc(l) })
+    /// #     }
+    /// #     unsafe fn dealloc(&self, p: *mut u8, l: core::alloc::Layout) { unsafe { std::alloc::dealloc(p, l) } }
+    /// #     fn memory_statistics(&self) -> spacewasm::MemoryStatistics { spacewasm::MemoryStatistics { total_bytes: 0, pad_bytes: 0 } }
+    /// # }
+    /// # spacewasm::global_allocator!(DocAlloc, DocAlloc);
+    /// use spacewasm::Vec;
+    ///
+    /// let mut vec = Vec::from_array([1, 2, 3]).unwrap();
     /// assert_eq!(vec.pop(), Some(3));
-    /// assert_eq!(vec, [1, 2]);
+    /// assert_eq!(&vec[..], &[1, 2]);
     /// ```
     ///
     /// # Time complexity
@@ -274,10 +340,10 @@ impl<T: Sized, A: Allocator> Drop for Vec<T, A> {
     }
 }
 
-impl<T> IntoIterator for Vec<T, GlobalAllocator> {
+impl<T, A: Allocator> IntoIterator for Vec<T, A> {
     type Item = T;
-    type IntoIter = IntoIter<T, GlobalAllocator>;
-    fn into_iter(self) -> IntoIter<T, GlobalAllocator> {
+    type IntoIter = IntoIter<T, A>;
+    fn into_iter(self) -> IntoIter<T, A> {
         // Make sure not to drop Vec since that would free the buffer
         let vec = core::mem::ManuallyDrop::new(self);
 
@@ -285,6 +351,9 @@ impl<T> IntoIterator for Vec<T, GlobalAllocator> {
         let ptr = vec.inner.ptr;
         let cap = vec.inner.capacity as usize;
         let len = vec.inner.len as usize;
+
+        // SAFETY: move the allocator out of the `ManuallyDrop` wrapper into the IntoIter
+        let alloc = unsafe { core::ptr::read(&vec.alloc) };
 
         IntoIter {
             buf: ptr,
@@ -296,7 +365,7 @@ impl<T> IntoIterator for Vec<T, GlobalAllocator> {
             } else {
                 unsafe { ptr.add(len) }
             },
-            alloc: GlobalAllocator,
+            alloc,
         }
     }
 }
@@ -410,7 +479,8 @@ mod kani_proofs {
     }
 
     /// Verify that Vec::clone creates an independent copy with equal contents.
-    /// Tests the unsafe ptr::write loop in Clone::clone (vec.rs:63-82).
+    /// Exercises the clone path (`Clone::clone` -> `try_clone`), which pushes
+    /// each cloned element into a freshly allocated buffer.
     #[kani::proof]
     #[kani::unwind(4)]
     fn proof_vec_clone_correctness() {
@@ -521,6 +591,42 @@ mod tests {
         vec.push(1);
         vec.push(2);
         vec.push(3);
+    }
+
+    #[test]
+    fn test_try_push() {
+        let mut vec = Vec::new(2).unwrap();
+
+        // Succeeds while there is spare capacity.
+        assert_eq!(vec.try_push(1), Ok(()));
+        assert_eq!(vec.try_push(2), Ok(()));
+        assert_eq!(vec.len(), 2);
+
+        // Once full, try_push reports the failure instead of panicking.
+        assert_eq!(vec.try_push(3), Err(AllocError::OutOfMemory));
+        assert_eq!(vec.len(), 2);
+        assert_eq!(&vec[..], &[1, 2]);
+    }
+
+    #[test]
+    fn test_into_boxed_slice() {
+        let mut vec = Vec::new(3).unwrap();
+        vec.push(10);
+        vec.push(20);
+        vec.push(30);
+
+        let boxed = vec.into_boxed_slice();
+        assert_eq!(boxed.len(), 3);
+        assert_eq!(&*boxed, &[10, 20, 30]);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_into_boxed_slice_not_full_panics() {
+        // into_boxed_slice requires len == capacity.
+        let mut vec = Vec::new(3).unwrap();
+        vec.push(1);
+        let _ = vec.into_boxed_slice();
     }
 
     #[test]
@@ -665,7 +771,7 @@ mod tests {
 
     #[test]
     fn test_from_exact_iter() {
-        let vec = Vec::from_exact_iter([10, 20, 30].into_iter());
+        let vec = Vec::from_exact_iter([10, 20, 30].into_iter()).unwrap();
         assert_eq!(vec.len(), 3);
         assert_eq!(vec.capacity(), 3);
         assert_eq!(&vec[..], &[10, 20, 30]);
@@ -698,7 +804,9 @@ mod tests {
         let layout = Layout::array::<i32>(capacity as usize).unwrap();
         let ptr = unsafe { GlobalAllocator.alloc(layout).unwrap() as *mut i32 };
 
-        let mut vec = Vec::new_from(ptr, capacity);
+        // SAFETY: `ptr` is a fresh GlobalAllocator allocation for `capacity`
+        // i32s and ownership is transferred to the returned Vec.
+        let mut vec = unsafe { Vec::new_from(ptr, capacity) };
         assert_eq!(vec.capacity(), 3);
         assert_eq!(vec.len(), 0);
 
@@ -716,7 +824,9 @@ mod tests {
         let layout = Layout::array::<i32>(capacity as usize).unwrap();
         let ptr = unsafe { RustSystemAllocator.alloc(layout).unwrap() as *mut i32 };
 
-        let mut vec = Vec::new_from_with_alloc(ptr, capacity, RustSystemAllocator);
+        // SAFETY: `ptr` is a fresh RustSystemAllocator allocation for `capacity`
+        // i32s and ownership is transferred to the returned Vec.
+        let mut vec = unsafe { Vec::new_from_with_alloc(ptr, capacity, RustSystemAllocator) };
         assert_eq!(vec.capacity(), 2);
         assert_eq!(vec.len(), 0);
 

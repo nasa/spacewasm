@@ -1,1396 +1,255 @@
-/// WASI bindings for spacewasi using the wasi-common interfaces
-///
-/// Copyright 2026 California Institute of Technology
-///
-/// Licensed under the Apache License, Version 2.0 (the "License");
-/// you may not use this file except in compliance with the License.
-/// You may obtain a copy of the License at
-///
-/// <http://www.apache.org/licenses/LICENSE-2.0>
-///
-/// ---
-/// Portions of this file are derived from <https://github.com/bytecodealliance/wasmtime>
-/// and the wasi-common crate developed by the wasmtime community.
+// WASI bindings for spacewasi using the wasi-common interfaces
+//
+// Copyright 2026 California Institute of Technology
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// <http://www.apache.org/licenses/LICENSE-2.0>
+//
+// ---
+// Portions of this file are derived from <https://github.com/bytecodealliance/wasmtime>
+// and the wasi-common crate developed by the wasmtime community.
 use futures::executor::block_on;
-use spacewasm::{HostFunction, HostModule, Value, vec};
-use std::cell::RefCell;
+use spacewasm::{HostFunction, HostFunctionBreak, HostFunctionResult, HostModule, Value, vec};
+use std::cell::{Cell, RefCell};
 use std::ops::ControlFlow;
 use std::rc::Rc;
+use wasi_common::I32Exit;
 use wasi_common::snapshots::preview_1::wasi_snapshot_preview1;
 use wiggle::GuestMemory;
 
-pub fn make_wasi_preview1_module(wasi_ctx: wasi_common::WasiCtx) -> HostModule {
-    let wasi_ctx_two = Rc::new(RefCell::new(wasi_ctx));
+/// Pop the next argument, asserting it is an `i32`.
+///
+/// The interpreter validates the guest's argument count and types against each
+/// binding's declared signature before the host closure runs, so a mismatch
+/// here is a host-side bug (a wrong signature string in a binding), not
+/// guest-reachable input; panicking is therefore appropriate.
+fn next_i32(it: &mut std::slice::Iter<'_, Value>) -> i32 {
+    match it.next() {
+        Some(Value::I32(v)) => *v,
+        other => panic!("host binding expected an i32 argument, got {other:?}"),
+    }
+}
 
-    HostModule {
+/// Pop the next argument, asserting it is an `i64`. See [`next_i32`].
+fn next_i64(it: &mut std::slice::Iter<'_, Value>) -> i64 {
+    match it.next() {
+        Some(Value::I64(v)) => *v,
+        other => panic!("host binding expected an i64 argument, got {other:?}"),
+    }
+}
+
+/// Centralized result-mapping policy shared by every WASI host binding.
+///
+/// The wiggle-generated wrappers return `Result<i32, wiggle::anyhow::Error>`:
+///
+/// * `Ok(errno)` — the syscall ran to completion. `errno` is the WASI status
+///   returned to the guest (`0` on success, or a `wasi_snapshot_preview1` errno
+///   such as `EBADF`/`EFAULT`). wiggle has *already* folded the recoverable
+///   guest-memory faults into an `Errno` at this point (e.g. a borrowed pointer
+///   becomes `Errno::Fault`, an invalid enum becomes `Errno::Inval`), so those
+///   are handed straight back to the guest as the `i32` result.
+/// * `Err(trap)` — an unrecoverable host trap that the guest cannot observe as
+///   an errno: an out-of-bounds or misaligned guest pointer (which the WASI
+///   spec mandates trap on), an unexpected OS-level error, etc. These abort the
+///   guest via [`HostFunctionBreak::Trap`] (surfacing to the embedder as
+///   `TrapReason::Host`).
+///
+/// This replaces the previous per-binding `.unwrap()`, which turned every host
+/// trap into a panic that unwound through the entire host process. `proc_exit`
+/// is the one binding that does not route through here; it interprets its
+/// `I32Exit` "error" specially (see [`proc_exit_binding`]).
+fn finish(result: wiggle::anyhow::Result<i32>) -> HostFunctionResult {
+    match result {
+        Ok(code) => ControlFlow::Continue(Some(Value::I32(code))),
+        Err(_trap) => ControlFlow::Break(HostFunctionBreak::Trap),
+    }
+}
+
+/// Select the argument accessor for a signature character
+/// (`i` = i32, `I` = i64), matching the interpreter's signature-string alphabet.
+macro_rules! next_arg {
+    (i, $it:expr) => {
+        next_i32($it)
+    };
+    (I, $it:expr) => {
+        next_i64($it)
+    };
+}
+
+/// Generate a `wasi_snapshot_preview1` [`HostFunction`] binding.
+///
+/// This folds together the three pieces that were previously copy-pasted across
+/// ~45 bindings: the sound `GuestMemory::Shared` view of linear memory
+/// ([`spacewasm::Memory::as_shared_cells`]), typed argument extraction, and the
+/// shared error mapping ([`finish`]).
+///
+/// * `$ctx`     — the shared `WasiCtx` handle to clone into the closure.
+/// * `$name`    — the wiggle function, also used verbatim as the exported name.
+/// * `$params`  — the interpreter parameter-signature string.
+/// * `$results` — the interpreter result-signature string.
+/// * `[ .. ]`   — the argument types in order (`i` = i32, `I` = i64).
+macro_rules! wasi_binding {
+    (
+        $ctx:ident,
+        $name:ident,
+        $params:literal,
+        $results:literal,
+        [ $( $ty:ident ),* $(,)? ]
+    ) => {{
+        let ctx = Rc::clone(&$ctx);
+        HostFunction::new(
+            stringify!($name),
+            $params.into(),
+            $results.into(),
+            move |state, args| {
+                #[allow(unused_mut, unused_variables)]
+                let mut it = args.iter();
+                finish(block_on(wasi_snapshot_preview1::$name(
+                    &mut *ctx.borrow_mut(),
+                    &mut GuestMemory::Shared(state.memory.as_shared_cells()),
+                    $( next_arg!($ty, &mut it) ),*
+                )))
+            },
+        )
+    }};
+}
+
+/// The `proc_exit` binding.
+///
+/// It cannot use [`wasi_binding!`]/[`finish`] because wasi-common models
+/// `proc_exit` as a diverging call: its wiggle wrapper always returns `Err` —
+/// an `I32Exit(code)` for a valid status, or a generic trap for an out-of-range
+/// one. Rather than calling `std::process::exit` (which would skip the caller's
+/// Drop-based cleanup, such as restoring the terminal from raw mode), it records
+/// the requested status in `exit_code` and traps out of the interpreter. `main`
+/// observes the recorded code after the run unwinds and exits with it, so all
+/// RAII guards get a chance to run. An out-of-range status carries no `I32Exit`,
+/// so nothing is recorded and `main` treats it as an ordinary host trap.
+fn proc_exit_binding(
+    wasi_ctx: &Rc<RefCell<wasi_common::WasiCtx>>,
+    exit_code: &Rc<Cell<Option<i32>>>,
+) -> HostFunction {
+    let ctx = Rc::clone(wasi_ctx);
+    let exit_code = Rc::clone(exit_code);
+    HostFunction::new("proc_exit", "i".into(), "".into(), move |state, args| {
+        let mut it = args.iter();
+        let status = next_i32(&mut it);
+        if let Err(e) = block_on(wasi_snapshot_preview1::proc_exit(
+            &mut *ctx.borrow_mut(),
+            &mut GuestMemory::Shared(state.memory.as_shared_cells()),
+            status,
+        )) && let Some(exit) = e.downcast_ref::<I32Exit>()
+        {
+            exit_code.set(Some(exit.0));
+        }
+        ControlFlow::Break(HostFunctionBreak::Trap)
+    })
+}
+
+/// Build the `wasi_snapshot_preview1` host module.
+///
+/// Returns the module together with a shared exit-code cell. When the guest
+/// calls `proc_exit`, the binding records the exit status in this cell and traps
+/// out of the interpreter (see [`proc_exit_binding`]); the caller (`main`)
+/// inspects the cell after the run finishes to decide the process exit code.
+pub fn make_wasi_preview1_module(
+    wasi_ctx: wasi_common::WasiCtx,
+) -> (HostModule, Rc<Cell<Option<i32>>>) {
+    let wasi_ctx_two = Rc::new(RefCell::new(wasi_ctx));
+    let exit_code: Rc<Cell<Option<i32>>> = Rc::new(Cell::new(None));
+
+    let module = HostModule {
         name: "wasi_snapshot_preview1".into(),
         globals: vec![],
         functions: vec![
-            HostFunction::new("args_get", "ii".into(), "i".into(), {
-                let wasi_ctx_args_get = Rc::clone(&wasi_ctx_two);
-                move |state, args| {
-                    let Some(Value::I32(a0)) = args.first() else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a1)) = args.get(1) else {
-                        panic!("expected i32");
-                    };
-
-                    let code = block_on(wasi_snapshot_preview1::args_get(
-                        &mut *wasi_ctx_args_get.borrow_mut(),
-                        &mut GuestMemory::Shared(unsafe {
-                            core::mem::transmute::<&[u8], &[std::cell::UnsafeCell<u8>]>(
-                                state.memory.get_slice(),
-                            )
-                        }),
-                        *a0,
-                        *a1,
-                    ))
-                    .unwrap();
-
-                    ControlFlow::Continue(Some(Value::I32(code as i32)))
-                }
-            }),
-            HostFunction::new("args_sizes_get", "ii".into(), "i".into(), {
-                let wasi_ctx_args_sizes_get = Rc::clone(&wasi_ctx_two);
-                move |state, args| {
-                    let Some(Value::I32(a0)) = args.first() else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a1)) = args.get(1) else {
-                        panic!("expected i32");
-                    };
-
-                    let code = block_on(wasi_snapshot_preview1::args_sizes_get(
-                        &mut *wasi_ctx_args_sizes_get.borrow_mut(),
-                        &mut GuestMemory::Shared(unsafe {
-                            core::mem::transmute::<&[u8], &[std::cell::UnsafeCell<u8>]>(
-                                state.memory.get_slice(),
-                            )
-                        }),
-                        *a0,
-                        *a1,
-                    ))
-                    .unwrap();
-
-                    ControlFlow::Continue(Some(Value::I32(code as i32)))
-                }
-            }),
-            HostFunction::new("environ_get", "ii".into(), "i".into(), {
-                let wasi_ctx_environ_get = Rc::clone(&wasi_ctx_two);
-                move |state, args| {
-                    let Some(Value::I32(a0)) = args.first() else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a1)) = args.get(1) else {
-                        panic!("expected i32");
-                    };
-
-                    let code = block_on(wasi_snapshot_preview1::environ_get(
-                        &mut *wasi_ctx_environ_get.borrow_mut(),
-                        &mut GuestMemory::Shared(unsafe {
-                            core::mem::transmute::<&[u8], &[std::cell::UnsafeCell<u8>]>(
-                                state.memory.get_slice(),
-                            )
-                        }),
-                        *a0,
-                        *a1,
-                    ))
-                    .unwrap();
-
-                    ControlFlow::Continue(Some(Value::I32(code as i32)))
-                }
-            }),
-            HostFunction::new("environ_sizes_get", "ii".into(), "i".into(), {
-                let wasi_ctx_environ_sizes_get = Rc::clone(&wasi_ctx_two);
-                move |state, args| {
-                    let Some(Value::I32(a0)) = args.first() else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a1)) = args.get(1) else {
-                        panic!("expected i32");
-                    };
-
-                    let code = block_on(wasi_snapshot_preview1::environ_sizes_get(
-                        &mut *wasi_ctx_environ_sizes_get.borrow_mut(),
-                        &mut GuestMemory::Shared(unsafe {
-                            core::mem::transmute::<&[u8], &[std::cell::UnsafeCell<u8>]>(
-                                state.memory.get_slice(),
-                            )
-                        }),
-                        *a0,
-                        *a1,
-                    ))
-                    .unwrap();
-
-                    ControlFlow::Continue(Some(Value::I32(code as i32)))
-                }
-            }),
-            HostFunction::new("clock_res_get", "ii".into(), "i".into(), {
-                let wasi_ctx_clock_res_get = Rc::clone(&wasi_ctx_two);
-                move |state, args| {
-                    let Some(Value::I32(a0)) = args.first() else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a1)) = args.get(1) else {
-                        panic!("expected i32");
-                    };
-
-                    let code = block_on(wasi_snapshot_preview1::clock_res_get(
-                        &mut *wasi_ctx_clock_res_get.borrow_mut(),
-                        &mut GuestMemory::Shared(unsafe {
-                            core::mem::transmute::<&[u8], &[std::cell::UnsafeCell<u8>]>(
-                                state.memory.get_slice(),
-                            )
-                        }),
-                        *a0,
-                        *a1,
-                    ))
-                    .unwrap();
-
-                    ControlFlow::Continue(Some(Value::I32(code as i32)))
-                }
-            }),
-            HostFunction::new("clock_time_get", "iIi".into(), "i".into(), {
-                let wasi_ctx_clock_time_get = Rc::clone(&wasi_ctx_two);
-                move |state, args| {
-                    let Some(Value::I32(a0)) = args.first() else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I64(a1)) = args.get(1) else {
-                        panic!("expected i64");
-                    };
-                    let Some(Value::I32(a2)) = args.get(2) else {
-                        panic!("expected i32");
-                    };
-
-                    let code = block_on(wasi_snapshot_preview1::clock_time_get(
-                        &mut *wasi_ctx_clock_time_get.borrow_mut(),
-                        &mut GuestMemory::Shared(unsafe {
-                            core::mem::transmute::<&[u8], &[std::cell::UnsafeCell<u8>]>(
-                                state.memory.get_slice(),
-                            )
-                        }),
-                        *a0,
-                        *a1,
-                        *a2,
-                    ))
-                    .unwrap();
-
-                    ControlFlow::Continue(Some(Value::I32(code as i32)))
-                }
-            }),
-            HostFunction::new("fd_advise", "iIIi".into(), "i".into(), {
-                let wasi_ctx_fd_advise = Rc::clone(&wasi_ctx_two);
-                move |state, args| {
-                    let Some(Value::I32(a0)) = args.first() else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I64(a1)) = args.get(1) else {
-                        panic!("expected i64");
-                    };
-                    let Some(Value::I64(a2)) = args.get(2) else {
-                        panic!("expected i64");
-                    };
-                    let Some(Value::I32(a3)) = args.get(3) else {
-                        panic!("expected i32");
-                    };
-
-                    let code = block_on(wasi_snapshot_preview1::fd_advise(
-                        &mut *wasi_ctx_fd_advise.borrow_mut(),
-                        &mut GuestMemory::Shared(unsafe {
-                            core::mem::transmute::<&[u8], &[std::cell::UnsafeCell<u8>]>(
-                                state.memory.get_slice(),
-                            )
-                        }),
-                        *a0,
-                        *a1,
-                        *a2,
-                        *a3,
-                    ))
-                    .unwrap();
-
-                    ControlFlow::Continue(Some(Value::I32(code as i32)))
-                }
-            }),
-            HostFunction::new("fd_allocate", "iII".into(), "i".into(), {
-                let wasi_ctx_fd_allocate = Rc::clone(&wasi_ctx_two);
-                move |state, args| {
-                    let Some(Value::I32(a0)) = args.first() else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I64(a1)) = args.get(1) else {
-                        panic!("expected i64");
-                    };
-                    let Some(Value::I64(a2)) = args.get(2) else {
-                        panic!("expected i64");
-                    };
-
-                    let code = block_on(wasi_snapshot_preview1::fd_allocate(
-                        &mut *wasi_ctx_fd_allocate.borrow_mut(),
-                        &mut GuestMemory::Shared(unsafe {
-                            core::mem::transmute::<&[u8], &[std::cell::UnsafeCell<u8>]>(
-                                state.memory.get_slice(),
-                            )
-                        }),
-                        *a0,
-                        *a1,
-                        *a2,
-                    ))
-                    .unwrap();
-
-                    ControlFlow::Continue(Some(Value::I32(code as i32)))
-                }
-            }),
-            HostFunction::new("fd_close", "i".into(), "i".into(), {
-                let wasi_ctx_fd_close = Rc::clone(&wasi_ctx_two);
-                move |state, args| {
-                    let Some(Value::I32(a0)) = args.first() else {
-                        panic!("expected i32");
-                    };
-
-                    let code = block_on(wasi_snapshot_preview1::fd_close(
-                        &mut *wasi_ctx_fd_close.borrow_mut(),
-                        &mut GuestMemory::Shared(unsafe {
-                            core::mem::transmute::<&[u8], &[std::cell::UnsafeCell<u8>]>(
-                                state.memory.get_slice(),
-                            )
-                        }),
-                        *a0,
-                    ))
-                    .unwrap();
-
-                    ControlFlow::Continue(Some(Value::I32(code as i32)))
-                }
-            }),
-            HostFunction::new("fd_datasync", "i".into(), "i".into(), {
-                let wasi_ctx_fd_datasync = Rc::clone(&wasi_ctx_two);
-                move |state, args| {
-                    let Some(Value::I32(a0)) = args.first() else {
-                        panic!("expected i32");
-                    };
-
-                    let code = block_on(wasi_snapshot_preview1::fd_datasync(
-                        &mut *wasi_ctx_fd_datasync.borrow_mut(),
-                        &mut GuestMemory::Shared(unsafe {
-                            core::mem::transmute::<&[u8], &[std::cell::UnsafeCell<u8>]>(
-                                state.memory.get_slice(),
-                            )
-                        }),
-                        *a0,
-                    ))
-                    .unwrap();
-
-                    ControlFlow::Continue(Some(Value::I32(code as i32)))
-                }
-            }),
-            HostFunction::new("fd_fdstat_get", "ii".into(), "i".into(), {
-                let wasi_ctx_fd_fdstat_get = Rc::clone(&wasi_ctx_two);
-                move |state, args| {
-                    let Some(Value::I32(a0)) = args.first() else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a1)) = args.get(1) else {
-                        panic!("expected i32");
-                    };
-
-                    let code = block_on(wasi_snapshot_preview1::fd_fdstat_get(
-                        &mut *wasi_ctx_fd_fdstat_get.borrow_mut(),
-                        &mut GuestMemory::Shared(unsafe {
-                            core::mem::transmute::<&[u8], &[std::cell::UnsafeCell<u8>]>(
-                                state.memory.get_slice(),
-                            )
-                        }),
-                        *a0,
-                        *a1,
-                    ))
-                    .unwrap();
-
-                    ControlFlow::Continue(Some(Value::I32(code as i32)))
-                }
-            }),
-            HostFunction::new("fd_fdstat_set_flags", "ii".into(), "i".into(), {
-                let wasi_ctx_fd_fdstat_set_flags = Rc::clone(&wasi_ctx_two);
-                move |state, args| {
-                    let Some(Value::I32(a0)) = args.first() else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a1)) = args.get(1) else {
-                        panic!("expected i32");
-                    };
-
-                    let code = block_on(wasi_snapshot_preview1::fd_fdstat_set_flags(
-                        &mut *wasi_ctx_fd_fdstat_set_flags.borrow_mut(),
-                        &mut GuestMemory::Shared(unsafe {
-                            core::mem::transmute::<&[u8], &[std::cell::UnsafeCell<u8>]>(
-                                state.memory.get_slice(),
-                            )
-                        }),
-                        *a0,
-                        *a1,
-                    ))
-                    .unwrap();
-
-                    ControlFlow::Continue(Some(Value::I32(code as i32)))
-                }
-            }),
-            HostFunction::new("fd_fdstat_set_rights", "iII".into(), "i".into(), {
-                let wasi_ctx_fd_fdstat_set_rights = Rc::clone(&wasi_ctx_two);
-                move |state, args| {
-                    let Some(Value::I32(a0)) = args.first() else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I64(a1)) = args.get(1) else {
-                        panic!("expected i64");
-                    };
-                    let Some(Value::I64(a2)) = args.get(2) else {
-                        panic!("expected i64");
-                    };
-
-                    let code = block_on(wasi_snapshot_preview1::fd_fdstat_set_rights(
-                        &mut *wasi_ctx_fd_fdstat_set_rights.borrow_mut(),
-                        &mut GuestMemory::Shared(unsafe {
-                            core::mem::transmute::<&[u8], &[std::cell::UnsafeCell<u8>]>(
-                                state.memory.get_slice(),
-                            )
-                        }),
-                        *a0,
-                        *a1,
-                        *a2,
-                    ))
-                    .unwrap();
-
-                    ControlFlow::Continue(Some(Value::I32(code as i32)))
-                }
-            }),
-            HostFunction::new("fd_filestat_get", "ii".into(), "i".into(), {
-                let wasi_ctx_fd_filestat_get = Rc::clone(&wasi_ctx_two);
-                move |state, args| {
-                    let Some(Value::I32(a0)) = args.first() else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a1)) = args.get(1) else {
-                        panic!("expected i32");
-                    };
-
-                    let code = block_on(wasi_snapshot_preview1::fd_filestat_get(
-                        &mut *wasi_ctx_fd_filestat_get.borrow_mut(),
-                        &mut GuestMemory::Shared(unsafe {
-                            core::mem::transmute::<&[u8], &[std::cell::UnsafeCell<u8>]>(
-                                state.memory.get_slice(),
-                            )
-                        }),
-                        *a0,
-                        *a1,
-                    ))
-                    .unwrap();
-
-                    ControlFlow::Continue(Some(Value::I32(code as i32)))
-                }
-            }),
-            HostFunction::new("fd_filestat_set_size", "iI".into(), "i".into(), {
-                let wasi_ctx_fd_filestat_set_size = Rc::clone(&wasi_ctx_two);
-                move |state, args| {
-                    let Some(Value::I32(a0)) = args.first() else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I64(a1)) = args.get(1) else {
-                        panic!("expected i64");
-                    };
-
-                    let code = block_on(wasi_snapshot_preview1::fd_filestat_set_size(
-                        &mut *wasi_ctx_fd_filestat_set_size.borrow_mut(),
-                        &mut GuestMemory::Shared(unsafe {
-                            core::mem::transmute::<&[u8], &[std::cell::UnsafeCell<u8>]>(
-                                state.memory.get_slice(),
-                            )
-                        }),
-                        *a0,
-                        *a1,
-                    ))
-                    .unwrap();
-
-                    ControlFlow::Continue(Some(Value::I32(code as i32)))
-                }
-            }),
-            HostFunction::new("fd_filestat_set_times", "iIIi".into(), "i".into(), {
-                let wasi_ctx_fd_filestat_set_times = Rc::clone(&wasi_ctx_two);
-                move |state, args| {
-                    let Some(Value::I32(a0)) = args.first() else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I64(a1)) = args.get(1) else {
-                        panic!("expected i64");
-                    };
-                    let Some(Value::I64(a2)) = args.get(2) else {
-                        panic!("expected i64");
-                    };
-                    let Some(Value::I32(a3)) = args.get(3) else {
-                        panic!("expected i32");
-                    };
-
-                    let code = block_on(wasi_snapshot_preview1::fd_filestat_set_times(
-                        &mut *wasi_ctx_fd_filestat_set_times.borrow_mut(),
-                        &mut GuestMemory::Shared(unsafe {
-                            core::mem::transmute::<&[u8], &[std::cell::UnsafeCell<u8>]>(
-                                state.memory.get_slice(),
-                            )
-                        }),
-                        *a0,
-                        *a1,
-                        *a2,
-                        *a3,
-                    ))
-                    .unwrap();
-
-                    ControlFlow::Continue(Some(Value::I32(code as i32)))
-                }
-            }),
-            HostFunction::new("fd_pread", "iiiIi".into(), "i".into(), {
-                let wasi_ctx_fd_pread = Rc::clone(&wasi_ctx_two);
-                move |state, args| {
-                    let Some(Value::I32(a0)) = args.first() else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a1)) = args.get(1) else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a2)) = args.get(2) else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I64(a3)) = args.get(3) else {
-                        panic!("expected i64");
-                    };
-                    let Some(Value::I32(a4)) = args.get(4) else {
-                        panic!("expected i32");
-                    };
-
-                    let code = block_on(wasi_snapshot_preview1::fd_pread(
-                        &mut *wasi_ctx_fd_pread.borrow_mut(),
-                        &mut GuestMemory::Shared(unsafe {
-                            core::mem::transmute::<&[u8], &[std::cell::UnsafeCell<u8>]>(
-                                state.memory.get_slice(),
-                            )
-                        }),
-                        *a0,
-                        *a1,
-                        *a2,
-                        *a3,
-                        *a4,
-                    ))
-                    .unwrap();
-
-                    ControlFlow::Continue(Some(Value::I32(code as i32)))
-                }
-            }),
-            HostFunction::new("fd_prestat_get", "ii".into(), "i".into(), {
-                let wasi_ctx_fd_prestat_get = Rc::clone(&wasi_ctx_two);
-                move |state, args| {
-                    let Some(Value::I32(a0)) = args.first() else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a1)) = args.get(1) else {
-                        panic!("expected i32");
-                    };
-
-                    let code = block_on(wasi_snapshot_preview1::fd_prestat_get(
-                        &mut *wasi_ctx_fd_prestat_get.borrow_mut(),
-                        &mut GuestMemory::Shared(unsafe {
-                            core::mem::transmute::<&[u8], &[std::cell::UnsafeCell<u8>]>(
-                                state.memory.get_slice(),
-                            )
-                        }),
-                        *a0,
-                        *a1,
-                    ))
-                    .unwrap();
-
-                    ControlFlow::Continue(Some(Value::I32(code as i32)))
-                }
-            }),
-            HostFunction::new("fd_prestat_dir_name", "iii".into(), "i".into(), {
-                let wasi_ctx_fd_prestat_dir_name = Rc::clone(&wasi_ctx_two);
-                move |state, args| {
-                    let Some(Value::I32(a0)) = args.first() else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a1)) = args.get(1) else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a2)) = args.get(2) else {
-                        panic!("expected i32");
-                    };
-
-                    let code = block_on(wasi_snapshot_preview1::fd_prestat_dir_name(
-                        &mut *wasi_ctx_fd_prestat_dir_name.borrow_mut(),
-                        &mut GuestMemory::Shared(unsafe {
-                            core::mem::transmute::<&[u8], &[std::cell::UnsafeCell<u8>]>(
-                                state.memory.get_slice(),
-                            )
-                        }),
-                        *a0,
-                        *a1,
-                        *a2,
-                    ))
-                    .unwrap();
-
-                    ControlFlow::Continue(Some(Value::I32(code as i32)))
-                }
-            }),
-            HostFunction::new("fd_pwrite", "iiiIi".into(), "i".into(), {
-                let wasi_ctx_fd_pwrite = Rc::clone(&wasi_ctx_two);
-                move |state, args| {
-                    let Some(Value::I32(a0)) = args.first() else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a1)) = args.get(1) else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a2)) = args.get(2) else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I64(a3)) = args.get(3) else {
-                        panic!("expected i64");
-                    };
-                    let Some(Value::I32(a4)) = args.get(4) else {
-                        panic!("expected i32");
-                    };
-
-                    let code = block_on(wasi_snapshot_preview1::fd_pwrite(
-                        &mut *wasi_ctx_fd_pwrite.borrow_mut(),
-                        &mut GuestMemory::Shared(unsafe {
-                            core::mem::transmute::<&[u8], &[std::cell::UnsafeCell<u8>]>(
-                                state.memory.get_slice(),
-                            )
-                        }),
-                        *a0,
-                        *a1,
-                        *a2,
-                        *a3,
-                        *a4,
-                    ))
-                    .unwrap();
-
-                    ControlFlow::Continue(Some(Value::I32(code as i32)))
-                }
-            }),
-            HostFunction::new("fd_read", "iiii".into(), "i".into(), {
-                let wasi_ctx_fd_read = Rc::clone(&wasi_ctx_two);
-                move |state, args| {
-                    let Some(Value::I32(a0)) = args.first() else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a1)) = args.get(1) else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a2)) = args.get(2) else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a3)) = args.get(3) else {
-                        panic!("expected i32");
-                    };
-
-                    let code = block_on(wasi_snapshot_preview1::fd_read(
-                        &mut *wasi_ctx_fd_read.borrow_mut(),
-                        &mut GuestMemory::Shared(unsafe {
-                            core::mem::transmute::<&[u8], &[std::cell::UnsafeCell<u8>]>(
-                                state.memory.get_slice(),
-                            )
-                        }),
-                        *a0,
-                        *a1,
-                        *a2,
-                        *a3,
-                    ))
-                    .unwrap();
-
-                    ControlFlow::Continue(Some(Value::I32(code as i32)))
-                }
-            }),
-            HostFunction::new("fd_readdir", "iiiIi".into(), "i".into(), {
-                let wasi_ctx_fd_readdir = Rc::clone(&wasi_ctx_two);
-                move |state, args| {
-                    let Some(Value::I32(a0)) = args.first() else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a1)) = args.get(1) else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a2)) = args.get(2) else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I64(a3)) = args.get(3) else {
-                        panic!("expected i64");
-                    };
-                    let Some(Value::I32(a4)) = args.get(4) else {
-                        panic!("expected i32");
-                    };
-
-                    let code = block_on(wasi_snapshot_preview1::fd_readdir(
-                        &mut *wasi_ctx_fd_readdir.borrow_mut(),
-                        &mut GuestMemory::Shared(unsafe {
-                            core::mem::transmute::<&[u8], &[std::cell::UnsafeCell<u8>]>(
-                                state.memory.get_slice(),
-                            )
-                        }),
-                        *a0,
-                        *a1,
-                        *a2,
-                        *a3,
-                        *a4,
-                    ))
-                    .unwrap();
-
-                    ControlFlow::Continue(Some(Value::I32(code as i32)))
-                }
-            }),
-            HostFunction::new("fd_seek", "iIii".into(), "i".into(), {
-                let wasi_ctx_fd_seek = Rc::clone(&wasi_ctx_two);
-                move |state, args| {
-                    let Some(Value::I32(a0)) = args.first() else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I64(a1)) = args.get(1) else {
-                        panic!("expected i64");
-                    };
-                    let Some(Value::I32(a2)) = args.get(2) else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a3)) = args.get(3) else {
-                        panic!("expected i32");
-                    };
-
-                    let code = block_on(wasi_snapshot_preview1::fd_seek(
-                        &mut *wasi_ctx_fd_seek.borrow_mut(),
-                        &mut GuestMemory::Shared(unsafe {
-                            core::mem::transmute::<&[u8], &[std::cell::UnsafeCell<u8>]>(
-                                state.memory.get_slice(),
-                            )
-                        }),
-                        *a0,
-                        *a1,
-                        *a2,
-                        *a3,
-                    ))
-                    .unwrap();
-
-                    ControlFlow::Continue(Some(Value::I32(code as i32)))
-                }
-            }),
-            HostFunction::new("fd_sync", "i".into(), "i".into(), {
-                let wasi_ctx_fd_sync = Rc::clone(&wasi_ctx_two);
-                move |state, args| {
-                    let Some(Value::I32(a0)) = args.first() else {
-                        panic!("expected i32");
-                    };
-
-                    let code = block_on(wasi_snapshot_preview1::fd_sync(
-                        &mut *wasi_ctx_fd_sync.borrow_mut(),
-                        &mut GuestMemory::Shared(unsafe {
-                            core::mem::transmute::<&[u8], &[std::cell::UnsafeCell<u8>]>(
-                                state.memory.get_slice(),
-                            )
-                        }),
-                        *a0,
-                    ))
-                    .unwrap();
-
-                    ControlFlow::Continue(Some(Value::I32(code as i32)))
-                }
-            }),
-            HostFunction::new("fd_tell", "ii".into(), "i".into(), {
-                let wasi_ctx_fd_tell = Rc::clone(&wasi_ctx_two);
-                move |state, args| {
-                    let Some(Value::I32(a0)) = args.first() else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a1)) = args.get(1) else {
-                        panic!("expected i32");
-                    };
-
-                    let code = block_on(wasi_snapshot_preview1::fd_tell(
-                        &mut *wasi_ctx_fd_tell.borrow_mut(),
-                        &mut GuestMemory::Shared(unsafe {
-                            core::mem::transmute::<&[u8], &[std::cell::UnsafeCell<u8>]>(
-                                state.memory.get_slice(),
-                            )
-                        }),
-                        *a0,
-                        *a1,
-                    ))
-                    .unwrap();
-
-                    ControlFlow::Continue(Some(Value::I32(code as i32)))
-                }
-            }),
-            HostFunction::new("fd_write", "iiii".into(), "i".into(), {
-                let wasi_ctx_fd_write = Rc::clone(&wasi_ctx_two);
-                move |state, args| {
-                    let Some(Value::I32(a0)) = args.first() else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a1)) = args.get(1) else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a2)) = args.get(2) else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a3)) = args.get(3) else {
-                        panic!("expected i32");
-                    };
-
-                    let code = block_on(wasi_snapshot_preview1::fd_write(
-                        &mut *wasi_ctx_fd_write.borrow_mut(),
-                        &mut GuestMemory::Shared(unsafe {
-                            core::mem::transmute::<&[u8], &[std::cell::UnsafeCell<u8>]>(
-                                state.memory.get_slice(),
-                            )
-                        }),
-                        *a0,
-                        *a1,
-                        *a2,
-                        *a3,
-                    ))
-                    .unwrap();
-
-                    ControlFlow::Continue(Some(Value::I32(code as i32)))
-                }
-            }),
-            HostFunction::new("path_create_directory", "iii".into(), "i".into(), {
-                let wasi_ctx_path_create_directory = Rc::clone(&wasi_ctx_two);
-                move |state, args| {
-                    let Some(Value::I32(a0)) = args.first() else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a1)) = args.get(1) else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a2)) = args.get(2) else {
-                        panic!("expected i32");
-                    };
-
-                    let code = block_on(wasi_snapshot_preview1::path_create_directory(
-                        &mut *wasi_ctx_path_create_directory.borrow_mut(),
-                        &mut GuestMemory::Shared(unsafe {
-                            core::mem::transmute::<&[u8], &[std::cell::UnsafeCell<u8>]>(
-                                state.memory.get_slice(),
-                            )
-                        }),
-                        *a0,
-                        *a1,
-                        *a2,
-                    ))
-                    .unwrap();
-
-                    ControlFlow::Continue(Some(Value::I32(code as i32)))
-                }
-            }),
-            HostFunction::new("path_filestat_get", "iiiii".into(), "i".into(), {
-                let wasi_ctx_path_filestat_get = Rc::clone(&wasi_ctx_two);
-                move |state, args| {
-                    let Some(Value::I32(a0)) = args.first() else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a1)) = args.get(1) else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a2)) = args.get(2) else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a3)) = args.get(3) else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a4)) = args.get(4) else {
-                        panic!("expected i32");
-                    };
-
-                    let code = block_on(wasi_snapshot_preview1::path_filestat_get(
-                        &mut *wasi_ctx_path_filestat_get.borrow_mut(),
-                        &mut GuestMemory::Shared(unsafe {
-                            core::mem::transmute::<&[u8], &[std::cell::UnsafeCell<u8>]>(
-                                state.memory.get_slice(),
-                            )
-                        }),
-                        *a0,
-                        *a1,
-                        *a2,
-                        *a3,
-                        *a4,
-                    ))
-                    .unwrap();
-
-                    ControlFlow::Continue(Some(Value::I32(code as i32)))
-                }
-            }),
-            HostFunction::new("path_filestat_set_times", "iiiiIIi".into(), "i".into(), {
-                let wasi_ctx_path_filestat_set_times = Rc::clone(&wasi_ctx_two);
-                move |state, args| {
-                    let Some(Value::I32(a0)) = args.first() else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a1)) = args.get(1) else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a2)) = args.get(2) else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a3)) = args.get(3) else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I64(a4)) = args.get(4) else {
-                        panic!("expected i64");
-                    };
-                    let Some(Value::I64(a5)) = args.get(5) else {
-                        panic!("expected i64");
-                    };
-                    let Some(Value::I32(a6)) = args.get(6) else {
-                        panic!("expected i32");
-                    };
-
-                    let code = block_on(wasi_snapshot_preview1::path_filestat_set_times(
-                        &mut *wasi_ctx_path_filestat_set_times.borrow_mut(),
-                        &mut GuestMemory::Shared(unsafe {
-                            core::mem::transmute::<&[u8], &[std::cell::UnsafeCell<u8>]>(
-                                state.memory.get_slice(),
-                            )
-                        }),
-                        *a0,
-                        *a1,
-                        *a2,
-                        *a3,
-                        *a4,
-                        *a5,
-                        *a6,
-                    ))
-                    .unwrap();
-
-                    ControlFlow::Continue(Some(Value::I32(code as i32)))
-                }
-            }),
-            HostFunction::new("path_link", "iiiiiii".into(), "i".into(), {
-                let wasi_ctx_path_link = Rc::clone(&wasi_ctx_two);
-                move |state, args| {
-                    let Some(Value::I32(a0)) = args.first() else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a1)) = args.get(1) else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a2)) = args.get(2) else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a3)) = args.get(3) else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a4)) = args.get(4) else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a5)) = args.get(5) else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a6)) = args.get(6) else {
-                        panic!("expected i32");
-                    };
-
-                    let code = block_on(wasi_snapshot_preview1::path_link(
-                        &mut *wasi_ctx_path_link.borrow_mut(),
-                        &mut GuestMemory::Shared(unsafe {
-                            core::mem::transmute::<&[u8], &[std::cell::UnsafeCell<u8>]>(
-                                state.memory.get_slice(),
-                            )
-                        }),
-                        *a0,
-                        *a1,
-                        *a2,
-                        *a3,
-                        *a4,
-                        *a5,
-                        *a6,
-                    ))
-                    .unwrap();
-
-                    ControlFlow::Continue(Some(Value::I32(code as i32)))
-                }
-            }),
-            HostFunction::new("path_open", "iiiiiIIii".into(), "i".into(), {
-                let wasi_ctx_path_open = Rc::clone(&wasi_ctx_two);
-                move |state, args| {
-                    let Some(Value::I32(a0)) = args.first() else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a1)) = args.get(1) else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a2)) = args.get(2) else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a3)) = args.get(3) else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a4)) = args.get(4) else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I64(a5)) = args.get(5) else {
-                        panic!("expected i64");
-                    };
-                    let Some(Value::I64(a6)) = args.get(6) else {
-                        panic!("expected i64");
-                    };
-                    let Some(Value::I32(a7)) = args.get(7) else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a8)) = args.get(8) else {
-                        panic!("expected i32");
-                    };
-
-                    let code = block_on(wasi_snapshot_preview1::path_open(
-                        &mut *wasi_ctx_path_open.borrow_mut(),
-                        &mut GuestMemory::Shared(unsafe {
-                            core::mem::transmute::<&[u8], &[std::cell::UnsafeCell<u8>]>(
-                                state.memory.get_slice(),
-                            )
-                        }),
-                        *a0,
-                        *a1,
-                        *a2,
-                        *a3,
-                        *a4,
-                        *a5,
-                        *a6,
-                        *a7,
-                        *a8,
-                    ))
-                    .unwrap();
-
-                    ControlFlow::Continue(Some(Value::I32(code as i32)))
-                }
-            }),
-            HostFunction::new("path_readlink", "iiiiii".into(), "i".into(), {
-                let wasi_ctx_path_readlink = Rc::clone(&wasi_ctx_two);
-                move |state, args| {
-                    let Some(Value::I32(a0)) = args.first() else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a1)) = args.get(1) else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a2)) = args.get(2) else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a3)) = args.get(3) else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a4)) = args.get(4) else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a5)) = args.get(5) else {
-                        panic!("expected i32");
-                    };
-
-                    let code = block_on(wasi_snapshot_preview1::path_readlink(
-                        &mut *wasi_ctx_path_readlink.borrow_mut(),
-                        &mut GuestMemory::Shared(unsafe {
-                            core::mem::transmute::<&[u8], &[std::cell::UnsafeCell<u8>]>(
-                                state.memory.get_slice(),
-                            )
-                        }),
-                        *a0,
-                        *a1,
-                        *a2,
-                        *a3,
-                        *a4,
-                        *a5,
-                    ))
-                    .unwrap();
-
-                    ControlFlow::Continue(Some(Value::I32(code as i32)))
-                }
-            }),
-            HostFunction::new("path_remove_directory", "iii".into(), "i".into(), {
-                let wasi_ctx_path_remove_directory = Rc::clone(&wasi_ctx_two);
-                move |state, args| {
-                    let Some(Value::I32(a0)) = args.first() else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a1)) = args.get(1) else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a2)) = args.get(2) else {
-                        panic!("expected i32");
-                    };
-
-                    let code = block_on(wasi_snapshot_preview1::path_remove_directory(
-                        &mut *wasi_ctx_path_remove_directory.borrow_mut(),
-                        &mut GuestMemory::Shared(unsafe {
-                            core::mem::transmute::<&[u8], &[std::cell::UnsafeCell<u8>]>(
-                                state.memory.get_slice(),
-                            )
-                        }),
-                        *a0,
-                        *a1,
-                        *a2,
-                    ))
-                    .unwrap();
-
-                    ControlFlow::Continue(Some(Value::I32(code as i32)))
-                }
-            }),
-            HostFunction::new("path_rename", "iiiiii".into(), "i".into(), {
-                let wasi_ctx_path_rename = Rc::clone(&wasi_ctx_two);
-                move |state, args| {
-                    let Some(Value::I32(a0)) = args.first() else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a1)) = args.get(1) else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a2)) = args.get(2) else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a3)) = args.get(3) else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a4)) = args.get(4) else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a5)) = args.get(5) else {
-                        panic!("expected i32");
-                    };
-
-                    let code = block_on(wasi_snapshot_preview1::path_rename(
-                        &mut *wasi_ctx_path_rename.borrow_mut(),
-                        &mut GuestMemory::Shared(unsafe {
-                            core::mem::transmute::<&[u8], &[std::cell::UnsafeCell<u8>]>(
-                                state.memory.get_slice(),
-                            )
-                        }),
-                        *a0,
-                        *a1,
-                        *a2,
-                        *a3,
-                        *a4,
-                        *a5,
-                    ))
-                    .unwrap();
-
-                    ControlFlow::Continue(Some(Value::I32(code as i32)))
-                }
-            }),
-            HostFunction::new("path_symlink", "iiiii".into(), "i".into(), {
-                let wasi_ctx_path_symlink = Rc::clone(&wasi_ctx_two);
-                move |state, args| {
-                    let Some(Value::I32(a0)) = args.first() else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a1)) = args.get(1) else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a2)) = args.get(2) else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a3)) = args.get(3) else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a4)) = args.get(4) else {
-                        panic!("expected i32");
-                    };
-
-                    let code = block_on(wasi_snapshot_preview1::path_symlink(
-                        &mut *wasi_ctx_path_symlink.borrow_mut(),
-                        &mut GuestMemory::Shared(unsafe {
-                            core::mem::transmute::<&[u8], &[std::cell::UnsafeCell<u8>]>(
-                                state.memory.get_slice(),
-                            )
-                        }),
-                        *a0,
-                        *a1,
-                        *a2,
-                        *a3,
-                        *a4,
-                    ))
-                    .unwrap();
-
-                    ControlFlow::Continue(Some(Value::I32(code as i32)))
-                }
-            }),
-            HostFunction::new("path_unlink_file", "iii".into(), "i".into(), {
-                let wasi_ctx_path_unlink_file = Rc::clone(&wasi_ctx_two);
-                move |state, args| {
-                    let Some(Value::I32(a0)) = args.first() else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a1)) = args.get(1) else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a2)) = args.get(2) else {
-                        panic!("expected i32");
-                    };
-
-                    let code = block_on(wasi_snapshot_preview1::path_unlink_file(
-                        &mut *wasi_ctx_path_unlink_file.borrow_mut(),
-                        &mut GuestMemory::Shared(unsafe {
-                            core::mem::transmute::<&[u8], &[std::cell::UnsafeCell<u8>]>(
-                                state.memory.get_slice(),
-                            )
-                        }),
-                        *a0,
-                        *a1,
-                        *a2,
-                    ))
-                    .unwrap();
-
-                    ControlFlow::Continue(Some(Value::I32(code as i32)))
-                }
-            }),
-            HostFunction::new("poll_oneoff", "iiii".into(), "i".into(), {
-                let wasi_ctx_poll_oneoff = Rc::clone(&wasi_ctx_two);
-                move |state, args| {
-                    let Some(Value::I32(a0)) = args.first() else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a1)) = args.get(1) else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a2)) = args.get(2) else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a3)) = args.get(3) else {
-                        panic!("expected i32");
-                    };
-
-                    let code = block_on(wasi_snapshot_preview1::poll_oneoff(
-                        &mut *wasi_ctx_poll_oneoff.borrow_mut(),
-                        &mut GuestMemory::Shared(unsafe {
-                            core::mem::transmute::<&[u8], &[std::cell::UnsafeCell<u8>]>(
-                                state.memory.get_slice(),
-                            )
-                        }),
-                        *a0,
-                        *a1,
-                        *a2,
-                        *a3,
-                    ))
-                    .unwrap();
-
-                    ControlFlow::Continue(Some(Value::I32(code as i32)))
-                }
-            }),
-            HostFunction::new("proc_exit", "i".into(), "".into(), {
-                let wasi_ctx_proc_exit = Rc::clone(&wasi_ctx_two);
-                move |state, args| {
-                    let Some(Value::I32(a0)) = args.first() else {
-                        panic!("expected i32");
-                    };
-
-                    let _ = block_on(wasi_snapshot_preview1::proc_exit(
-                        &mut *wasi_ctx_proc_exit.borrow_mut(),
-                        &mut GuestMemory::Shared(unsafe {
-                            core::mem::transmute::<&[u8], &[std::cell::UnsafeCell<u8>]>(
-                                state.memory.get_slice(),
-                            )
-                        }),
-                        *a0,
-                    ));
-
-                    std::process::exit(*a0);
-                }
-            }),
-            HostFunction::new("proc_raise", "i".into(), "i".into(), {
-                let wasi_ctx_proc_raise = Rc::clone(&wasi_ctx_two);
-                move |state, args| {
-                    let Some(Value::I32(a0)) = args.first() else {
-                        panic!("expected i32");
-                    };
-
-                    let code = block_on(wasi_snapshot_preview1::proc_raise(
-                        &mut *wasi_ctx_proc_raise.borrow_mut(),
-                        &mut GuestMemory::Shared(unsafe {
-                            core::mem::transmute::<&[u8], &[std::cell::UnsafeCell<u8>]>(
-                                state.memory.get_slice(),
-                            )
-                        }),
-                        *a0,
-                    ))
-                    .unwrap();
-
-                    ControlFlow::Continue(Some(Value::I32(code as i32)))
-                }
-            }),
-            HostFunction::new("random_get", "ii".into(), "i".into(), {
-                let wasi_ctx_random_get = Rc::clone(&wasi_ctx_two);
-                move |state, args| {
-                    let Some(Value::I32(a0)) = args.first() else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a1)) = args.get(1) else {
-                        panic!("expected i32");
-                    };
-
-                    let code = block_on(wasi_snapshot_preview1::random_get(
-                        &mut *wasi_ctx_random_get.borrow_mut(),
-                        &mut GuestMemory::Shared(unsafe {
-                            core::mem::transmute::<&[u8], &[std::cell::UnsafeCell<u8>]>(
-                                state.memory.get_slice(),
-                            )
-                        }),
-                        *a0,
-                        *a1,
-                    ))
-                    .unwrap();
-
-                    ControlFlow::Continue(Some(Value::I32(code as i32)))
-                }
-            }),
-            HostFunction::new("sched_yield", "".into(), "i".into(), {
-                let wasi_ctx_sched_yield = Rc::clone(&wasi_ctx_two);
-                move |state, _| {
-                    let code = block_on(wasi_snapshot_preview1::sched_yield(
-                        &mut *wasi_ctx_sched_yield.borrow_mut(),
-                        &mut GuestMemory::Shared(unsafe {
-                            core::mem::transmute::<&[u8], &[std::cell::UnsafeCell<u8>]>(
-                                state.memory.get_slice(),
-                            )
-                        }),
-                    ))
-                    .unwrap();
-
-                    ControlFlow::Continue(Some(Value::I32(code as i32)))
-                }
-            }),
-            HostFunction::new("sock_accept", "iii".into(), "i".into(), {
-                let wasi_ctx_sock_accept = Rc::clone(&wasi_ctx_two);
-                move |state, args| {
-                    let Some(Value::I32(a0)) = args.first() else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a1)) = args.get(1) else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a2)) = args.get(2) else {
-                        panic!("expected i32");
-                    };
-
-                    let code = block_on(wasi_snapshot_preview1::sock_accept(
-                        &mut *wasi_ctx_sock_accept.borrow_mut(),
-                        &mut GuestMemory::Shared(unsafe {
-                            core::mem::transmute::<&[u8], &[std::cell::UnsafeCell<u8>]>(
-                                state.memory.get_slice(),
-                            )
-                        }),
-                        *a0,
-                        *a1,
-                        *a2,
-                    ))
-                    .unwrap();
-
-                    ControlFlow::Continue(Some(Value::I32(code as i32)))
-                }
-            }),
-            HostFunction::new("sock_recv", "iiiiii".into(), "i".into(), {
-                let wasi_ctx_sock_recv = Rc::clone(&wasi_ctx_two);
-                move |state, args| {
-                    let Some(Value::I32(a0)) = args.first() else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a1)) = args.get(1) else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a2)) = args.get(2) else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a3)) = args.get(3) else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a4)) = args.get(4) else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a5)) = args.get(5) else {
-                        panic!("expected i32");
-                    };
-
-                    let code = block_on(wasi_snapshot_preview1::sock_recv(
-                        &mut *wasi_ctx_sock_recv.borrow_mut(),
-                        &mut GuestMemory::Shared(unsafe {
-                            core::mem::transmute::<&[u8], &[std::cell::UnsafeCell<u8>]>(
-                                state.memory.get_slice(),
-                            )
-                        }),
-                        *a0,
-                        *a1,
-                        *a2,
-                        *a3,
-                        *a4,
-                        *a5,
-                    ))
-                    .unwrap();
-
-                    ControlFlow::Continue(Some(Value::I32(code as i32)))
-                }
-            }),
-            HostFunction::new("sock_send", "iiiii".into(), "i".into(), {
-                let wasi_ctx_sock_send = Rc::clone(&wasi_ctx_two);
-                move |state, args| {
-                    let Some(Value::I32(a0)) = args.first() else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a1)) = args.get(1) else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a2)) = args.get(2) else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a3)) = args.get(3) else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a4)) = args.get(4) else {
-                        panic!("expected i32");
-                    };
-
-                    let code = block_on(wasi_snapshot_preview1::sock_send(
-                        &mut *wasi_ctx_sock_send.borrow_mut(),
-                        &mut GuestMemory::Shared(unsafe {
-                            core::mem::transmute::<&[u8], &[std::cell::UnsafeCell<u8>]>(
-                                state.memory.get_slice(),
-                            )
-                        }),
-                        *a0,
-                        *a1,
-                        *a2,
-                        *a3,
-                        *a4,
-                    ))
-                    .unwrap();
-
-                    ControlFlow::Continue(Some(Value::I32(code as i32)))
-                }
-            }),
-            HostFunction::new("sock_shutdown", "ii".into(), "i".into(), {
-                let wasi_ctx_sock_shutdown = Rc::clone(&wasi_ctx_two);
-                move |state, args| {
-                    let Some(Value::I32(a0)) = args.first() else {
-                        panic!("expected i32");
-                    };
-                    let Some(Value::I32(a1)) = args.get(1) else {
-                        panic!("expected i32");
-                    };
-
-                    let code = block_on(wasi_snapshot_preview1::sock_shutdown(
-                        &mut *wasi_ctx_sock_shutdown.borrow_mut(),
-                        &mut GuestMemory::Shared(unsafe {
-                            core::mem::transmute::<&[u8], &[std::cell::UnsafeCell<u8>]>(
-                                state.memory.get_slice(),
-                            )
-                        }),
-                        *a0,
-                        *a1,
-                    ))
-                    .unwrap();
-
-                    ControlFlow::Continue(Some(Value::I32(code as i32)))
-                }
-            }),
+            wasi_binding!(wasi_ctx_two, args_get, "ii", "i", [i, i]),
+            wasi_binding!(wasi_ctx_two, args_sizes_get, "ii", "i", [i, i]),
+            wasi_binding!(wasi_ctx_two, environ_get, "ii", "i", [i, i]),
+            wasi_binding!(wasi_ctx_two, environ_sizes_get, "ii", "i", [i, i]),
+            wasi_binding!(wasi_ctx_two, clock_res_get, "ii", "i", [i, i]),
+            wasi_binding!(wasi_ctx_two, clock_time_get, "iIi", "i", [i, I, i]),
+            wasi_binding!(wasi_ctx_two, fd_advise, "iIIi", "i", [i, I, I, i]),
+            wasi_binding!(wasi_ctx_two, fd_allocate, "iII", "i", [i, I, I]),
+            wasi_binding!(wasi_ctx_two, fd_close, "i", "i", [i]),
+            wasi_binding!(wasi_ctx_two, fd_datasync, "i", "i", [i]),
+            wasi_binding!(wasi_ctx_two, fd_fdstat_get, "ii", "i", [i, i]),
+            wasi_binding!(wasi_ctx_two, fd_fdstat_set_flags, "ii", "i", [i, i]),
+            wasi_binding!(wasi_ctx_two, fd_fdstat_set_rights, "iII", "i", [i, I, I]),
+            wasi_binding!(wasi_ctx_two, fd_filestat_get, "ii", "i", [i, i]),
+            wasi_binding!(wasi_ctx_two, fd_filestat_set_size, "iI", "i", [i, I]),
+            wasi_binding!(
+                wasi_ctx_two,
+                fd_filestat_set_times,
+                "iIIi",
+                "i",
+                [i, I, I, i]
+            ),
+            wasi_binding!(wasi_ctx_two, fd_pread, "iiiIi", "i", [i, i, i, I, i]),
+            wasi_binding!(wasi_ctx_two, fd_prestat_get, "ii", "i", [i, i]),
+            wasi_binding!(wasi_ctx_two, fd_prestat_dir_name, "iii", "i", [i, i, i]),
+            wasi_binding!(wasi_ctx_two, fd_pwrite, "iiiIi", "i", [i, i, i, I, i]),
+            wasi_binding!(wasi_ctx_two, fd_read, "iiii", "i", [i, i, i, i]),
+            wasi_binding!(wasi_ctx_two, fd_readdir, "iiiIi", "i", [i, i, i, I, i]),
+            wasi_binding!(wasi_ctx_two, fd_seek, "iIii", "i", [i, I, i, i]),
+            wasi_binding!(wasi_ctx_two, fd_sync, "i", "i", [i]),
+            wasi_binding!(wasi_ctx_two, fd_tell, "ii", "i", [i, i]),
+            wasi_binding!(wasi_ctx_two, fd_write, "iiii", "i", [i, i, i, i]),
+            wasi_binding!(wasi_ctx_two, path_create_directory, "iii", "i", [i, i, i]),
+            wasi_binding!(
+                wasi_ctx_two,
+                path_filestat_get,
+                "iiiii",
+                "i",
+                [i, i, i, i, i]
+            ),
+            wasi_binding!(
+                wasi_ctx_two,
+                path_filestat_set_times,
+                "iiiiIIi",
+                "i",
+                [i, i, i, i, I, I, i]
+            ),
+            wasi_binding!(
+                wasi_ctx_two,
+                path_link,
+                "iiiiiii",
+                "i",
+                [i, i, i, i, i, i, i]
+            ),
+            wasi_binding!(
+                wasi_ctx_two,
+                path_open,
+                "iiiiiIIii",
+                "i",
+                [i, i, i, i, i, I, I, i, i]
+            ),
+            wasi_binding!(
+                wasi_ctx_two,
+                path_readlink,
+                "iiiiii",
+                "i",
+                [i, i, i, i, i, i]
+            ),
+            wasi_binding!(wasi_ctx_two, path_remove_directory, "iii", "i", [i, i, i]),
+            wasi_binding!(wasi_ctx_two, path_rename, "iiiiii", "i", [i, i, i, i, i, i]),
+            wasi_binding!(wasi_ctx_two, path_symlink, "iiiii", "i", [i, i, i, i, i]),
+            wasi_binding!(wasi_ctx_two, path_unlink_file, "iii", "i", [i, i, i]),
+            wasi_binding!(wasi_ctx_two, poll_oneoff, "iiii", "i", [i, i, i, i]),
+            proc_exit_binding(&wasi_ctx_two, &exit_code),
+            wasi_binding!(wasi_ctx_two, proc_raise, "i", "i", [i]),
+            wasi_binding!(wasi_ctx_two, random_get, "ii", "i", [i, i]),
+            wasi_binding!(wasi_ctx_two, sched_yield, "", "i", []),
+            wasi_binding!(wasi_ctx_two, sock_accept, "iii", "i", [i, i, i]),
+            wasi_binding!(wasi_ctx_two, sock_recv, "iiiiii", "i", [i, i, i, i, i, i]),
+            wasi_binding!(wasi_ctx_two, sock_send, "iiiii", "i", [i, i, i, i, i]),
+            wasi_binding!(wasi_ctx_two, sock_shutdown, "ii", "i", [i, i]),
         ],
         memory: spacewasm::Vec::zero(),
         table: spacewasm::Vec::zero(),
-    }
+    };
+
+    (module, exit_code)
 }

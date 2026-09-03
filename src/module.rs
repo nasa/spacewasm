@@ -79,39 +79,11 @@ impl Module {
             code_builder,
             &mut DefaultCustomSectionHandler,
             allocator,
-            None,
         )
         .map_err(|err| ParseError {
             offset: wasm.offset() as u32,
             err,
         })
-    }
-
-    pub fn new_with_statistics<const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize>(
-        name: &str,
-        stream: &mut dyn WasmStream,
-        store: &mut Store,
-        code_builder: &mut CodeBuilder,
-        allocator: Rc<dyn WasmMemoryAllocator>,
-    ) -> Result<(Module, [MemoryStatistics; SectionKind::N as usize]), ParseError> {
-        let mut wasm = Reader::new(stream);
-        let mut stats: [MemoryStatistics; SectionKind::N as usize] = Default::default();
-
-        let m = Module::read::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
-            name,
-            &mut wasm,
-            store,
-            code_builder,
-            &mut DefaultCustomSectionHandler,
-            allocator,
-            Some(&mut stats),
-        )
-        .map_err(|err| ParseError {
-            offset: wasm.offset() as u32,
-            err,
-        })?;
-
-        Ok((m, stats))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -122,7 +94,6 @@ impl Module {
         code_builder: &mut CodeBuilder,
         custom_handler: &mut dyn CustomSectionHandler,
         allocator: Rc<dyn WasmMemoryAllocator>,
-        mut stats: Option<&mut [MemoryStatistics; SectionKind::N as usize]>,
     ) -> Result<Module, SectionDecodeError> {
         let magic = wasm.strip_bytes::<4>()?;
         if magic != [0x00, 0x61, 0x73, 0x6D] {
@@ -190,26 +161,19 @@ impl Module {
             let section_size = wasm.read_u32()? as usize;
             let section_start = wasm.offset();
 
-            let memory_before = GlobalAllocator.memory_statistics();
-
-            module
-                .read_section::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
-                    wasm,
-                    store,
-                    section_size,
-                    section_ty,
-                    custom_handler,
-                    code_builder,
-                    allocator.clone(),
-                )
-                .map_err(|e| e.with_section(section_ty))?;
-
-            let memory_after = GlobalAllocator.memory_statistics();
-
-            // Compute the memory usage delta to track per-section usage
-            if let Some(stats) = &mut stats {
-                stats[section_ty as usize] += memory_after - memory_before;
-            }
+            wasm.with_limit(section_size, |wasm| {
+                module
+                    .read_section::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
+                        wasm,
+                        store,
+                        section_size,
+                        section_ty,
+                        custom_handler,
+                        code_builder,
+                        allocator.clone(),
+                    )
+                    .map_err(|e| e.with_section(section_ty))
+            })?;
 
             // Validate we actually read the entire section
             let section_end = wasm.offset();
@@ -516,13 +480,18 @@ impl SectionKind {
 pub struct CustomSection;
 
 impl CustomSection {
+    pub const MAX_NAME_LENGTH: usize = 32;
+
     pub fn read(
         wasm: &mut Reader,
         size: usize,
         handler: &mut dyn CustomSectionHandler,
     ) -> Result<(), ValidationError> {
         let start = wasm.offset();
-        let name: StaticVec<u8, 32> = wasm.read_vec_stack(|w| w.read_u8())?;
+
+        // We only support up to MAX_NAME_LENGTH-byte names
+        let name: StaticVec<u8, { CustomSection::MAX_NAME_LENGTH }> =
+            wasm.read_vec_stack(|w| w.read_u8())?;
         let name_str = core::str::from_utf8(&name).map_err(|_| ValidationError::MalformedUtf8)?;
 
         let name_length = wasm.offset() - start;
@@ -530,7 +499,10 @@ impl CustomSection {
             return Err(ValidationError::MalformedSectionSize);
         }
 
-        handler.custom_section(name_str, size - name_length, wasm)
+        let payload_len = size - name_length;
+        wasm.with_limit(payload_len, |wasm| {
+            handler.custom_section(name_str, payload_len, wasm)
+        })
     }
 }
 

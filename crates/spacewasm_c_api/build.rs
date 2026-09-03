@@ -46,6 +46,30 @@ fn generate_header() {
         // its mtime unchanged) when the output is identical, so regenerating
         // does not trigger a rebuild loop.
         .write_to_file(&header);
+
+    // Attatch [noreturn] to spacewasm_panic
+    annotate_noreturn(&header);
+}
+
+/// Prefix the generated `spacewasm_panic` declaration with `SPACEWASM_NORETURN`.
+#[cfg(feature = "codegen")]
+fn annotate_noreturn(header: &Path) {
+    use std::fs;
+
+    const DECL: &str = "extern void spacewasm_panic(";
+    const ANNOTATED: &str = "SPACEWASM_NORETURN extern void spacewasm_panic(";
+
+    let contents = fs::read_to_string(header).expect("failed to read generated header");
+    // Idempotent: nothing to do if the annotation is already present.
+    if contents.contains(ANNOTATED) {
+        return;
+    }
+    let patched = contents.replacen(DECL, ANNOTATED, 1);
+    assert!(
+        patched != contents,
+        "expected `{DECL}` in the generated header to annotate with SPACEWASM_NORETURN"
+    );
+    fs::write(header, patched).expect("failed to write annotated header");
 }
 
 #[cfg(not(feature = "codegen"))]

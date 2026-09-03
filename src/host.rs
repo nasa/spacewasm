@@ -330,7 +330,7 @@ pub struct HostFunction {
     name: HostName<HOST_FUNCTION_NAME_CAP>,
     params: HostValList,
     returns: ResultType,
-    f: HostFunctionFn,
+    f: Option<HostFunctionFn>,
 }
 
 impl Debug for HostFunction {
@@ -369,6 +369,14 @@ impl HostFunction {
     /// via the panicking [`HostName::new`] / [`HostValList::new`] constructors,
     /// so this is only appropriate for compile-time-known values in Rust code.
     /// FFI callers should validate input and use [`HostFunction::try_new`].
+    ///
+    /// # Panics
+    ///
+    /// Panics if the parameter/result signature is too large or contains
+    /// multiple returns, or if the closure allocation fails
+    /// ([`HostFunctionError::AllocError`]). [`HostFunction::try_new`] routes all
+    /// of these through a `Result` instead of panicking; prefer it on
+    /// caller-supplied input.
     pub fn new(
         name: impl Into<HostName<HOST_FUNCTION_NAME_CAP>>,
         params: HostValList,
@@ -392,17 +400,8 @@ impl HostFunction {
             return Err(HostFunctionError::ParameterListTooLong);
         }
 
-        // A sanity check to make sure that the parameters fit within the IR supported
-        // frame size. This check is unwrapped because the `MAX_HOST_FUNCTION_PARAMS` should
-        // already guard against this check (i.e. the parameter length also bounds the param size).
-        let ps = params
-            .iter()
-            .fold(0, |n: usize, i| n.checked_add(i.size()).unwrap())
-            / 4;
-
-        if ps > 0xFFFF {
-            unreachable!()
-        }
+        // Make sure the max host functions (even if all i64) fit in the IR
+        const { assert!(MAX_HOST_FUNCTION_PARAMS.saturating_mul(2) <= 0xFFFF) };
 
         let mut rs: Option<ValType> = None;
         for r in returns.iter() {
@@ -417,7 +416,7 @@ impl HostFunction {
             name,
             params,
             returns: ResultType(rs),
-            f: Box::new(f)?.into_host_function_dyn(),
+            f: Some(Box::new(f)?.into_host_function_dyn()),
         })
     }
 
@@ -433,15 +432,29 @@ impl HostFunction {
         self.params.iter().fold(0, |n, i| n + i.size()) / 4
     }
 
-    pub fn get_call(&mut self) -> HostFunctionFn {
-        core::mem::replace(
-            &mut self.f,
-            Box::new(placeholder).unwrap().into_host_function_dyn(),
-        )
+    /// Move the host closure out for the duration of a single call.
+    ///
+    /// The closure must be taken out of `self` because invoking it requires a
+    /// `&mut Engine` that mutably borrows the store which owns this
+    /// `HostFunction`; leaving `None` behind avoids that borrow conflict without
+    /// allocating a placeholder. The caller MUST return the closure via
+    /// [`HostFunction::finish_call`] before this function can be reached again.
+    ///
+    /// # Reentrancy
+    ///
+    /// The engine is single-threaded and a host function is not permitted to
+    /// reenter itself (directly or transitively). If it does, the closure has
+    /// already been taken and this returns `None`.
+    pub fn get_call(&mut self) -> Option<HostFunctionFn> {
+        self.f.take()
     }
 
+    /// Restore the closure previously taken by [`HostFunction::get_call`] once
+    /// the call has returned. Must be paired with exactly one preceding
+    /// `get_call`; the closure returns to the always-`Some` steady state.
     pub fn finish_call(&mut self, f: HostFunctionFn) {
-        let _ = core::mem::replace(&mut self.f, f);
+        let other = self.f.replace(f);
+        debug_assert!(other.is_none());
     }
 
     pub fn name(&self) -> &str {
@@ -449,6 +462,36 @@ impl HostFunction {
     }
 }
 
-fn placeholder(_: &mut Engine, _: &[Value]) -> HostFunctionResult {
-    panic!("invoked invalid host module")
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dummy() -> HostFunction {
+        HostFunction::new(
+            "dummy",
+            HostValList::new("ii"),
+            HostValList::new(""),
+            |_, _| ControlFlow::Continue(None),
+        )
+    }
+
+    // `get_call` must move the closure out (no per-call allocation) and
+    // `finish_call` must restore it. A second `get_call` while the closure is
+    // out models a reentrant invocation and must observe `None` rather than
+    // panicking (findings: non-allocating get_call + reentrancy-as-trap).
+    #[test]
+    fn get_call_takes_and_finish_call_restores() {
+        let mut f = dummy();
+
+        // Steady state: the closure is present.
+        let taken = f.get_call();
+        assert!(taken.is_some());
+
+        // While the closure is out, a reentrant `get_call` observes `None`.
+        assert!(f.get_call().is_none());
+
+        // Restoring returns to the always-`Some` steady state.
+        f.finish_call(taken.unwrap());
+        assert!(f.get_call().is_some());
+    }
 }

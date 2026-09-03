@@ -1,4 +1,4 @@
-use spacewasm::{AllocError, Allocator, MemoryStatistics, WasmMemoryAllocator};
+use spacewasm::{AllocError, Allocator, WasmMemoryAllocator};
 use std::alloc::Layout;
 use std::ptr::NonNull;
 
@@ -22,10 +22,6 @@ unsafe impl Allocator for RustSystemAllocator {
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         unsafe { std::alloc::dealloc(ptr, layout) }
-    }
-
-    fn memory_statistics(&self) -> MemoryStatistics {
-        panic!("The page allocator should be tracking it's own memory statistics.")
     }
 }
 

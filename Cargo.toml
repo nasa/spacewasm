@@ -43,8 +43,8 @@ strict-assertions = []
 libm = "=0.2.16"
 
 [dev-dependencies]
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "=1.0.150"
 spacewasm = { path = ".", features = ["strict-assertions"] }
 
 # The C library is a `no_std` staticlib/cdylib and cannot unwind (no `std` in the

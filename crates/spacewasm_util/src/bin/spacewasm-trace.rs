@@ -9,8 +9,8 @@
 
 use spacewasm::{
     AllocError, Allocator, CodeBuilder, CompilerOptions, Engine, ExportDesc, InnerVec, Interpreter,
-    InterpreterResult, InterpreterRunner, InvokeError, MemoryStatistics, Module, ModuleRef, Ref,
-    TrapReason, Vec as WasmVec, WasmMemoryAllocator, WasmRef, WasmStream,
+    InterpreterResult, InterpreterRunner, InvokeError, Module, ModuleRef, Ref, TrapReason,
+    Vec as WasmVec, WasmMemoryAllocator, WasmRef, WasmStream,
 };
 use spacewasm::{ValType, Value};
 use spacewasm_util::StateTracer;
@@ -45,10 +45,12 @@ impl WasmStream for ByteStream {
         }
 
         self.consumed = true;
-        let inner = InnerVec {
-            ptr: self.buffer.as_mut_ptr(),
-            capacity: self.buffer.len() as u32,
-            len: self.buffer.len() as u32,
+        let inner = unsafe {
+            InnerVec::from_raw_parts(
+                self.buffer.as_mut_ptr(),
+                self.buffer.len() as u32,
+                self.buffer.len() as u32,
+            )
         };
         Ok(Some(inner))
     }
@@ -76,13 +78,6 @@ unsafe impl Allocator for SystemAllocator {
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: std::alloc::Layout) {
         unsafe { std::alloc::dealloc(ptr, layout) }
-    }
-
-    fn memory_statistics(&self) -> MemoryStatistics {
-        MemoryStatistics {
-            total_bytes: 0,
-            pad_bytes: 0,
-        }
     }
 }
 
@@ -197,7 +192,7 @@ fn main() {
     // Compile module
     let mut code_builder = CodeBuilder::new(CompilerOptions {
         allow_memory_grow: true,
-        max_backpatch_iterations: 0,
+        max_backpatch_iterations: None,
         max_code_pages: MAX_CODE_PAGES,
     })
     .unwrap();

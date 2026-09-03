@@ -1,3 +1,6 @@
+// Compile-time limits for the C API build (the default configuration).
+// To override this file set `SPACEWASM_CONFIG` in your `build.rs`.
+
 /// Maximum control frame depth per function.
 pub const MAX_CONTROL_FRAMES: usize = 64;
 

@@ -337,7 +337,7 @@ impl<'a, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize> WasmVisi
     fn global_set(&self, x: GlobalIdx, state: &mut Self::State) -> Result<(), Self::Error> {
         let g = state.get_global(x)?;
         if !g.mutable {
-            Err(ValidationError::GlobalIsNotMutable)
+            Err(ValidationError::GlobalNotMutable)
         } else {
             let _ = state.pop_stack(g.ty)?;
             match g.reference {

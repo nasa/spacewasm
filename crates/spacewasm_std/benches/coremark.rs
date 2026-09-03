@@ -51,7 +51,7 @@ fn main() {
     let mut state = Engine::new(1024, 2, WasmVec::from_array([env]).unwrap()).unwrap();
     let mut code_builder = CodeBuilder::new(CompilerOptions {
         allow_memory_grow: false,
-        max_backpatch_iterations: 0,
+        max_backpatch_iterations: None,
         max_code_pages: MAX_CODE_PAGES,
     })
     .unwrap();
@@ -146,7 +146,6 @@ fn main() {
             if coremark_score > 1.0 {
                 println!("=== CoreMark Results ===");
                 println!("CoreMark Score: {:.3}", coremark_score);
-                println!("CoreMark/MHz: {:.3}", coremark_score);
                 println!(
                     "Iterations/sec: {:.2}",
                     coremark_score as f64 / elapsed.as_secs_f64()

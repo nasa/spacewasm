@@ -7,20 +7,25 @@ impl LocalVariable {
     }
 }
 
+#[repr(C)]
 struct CallFrame {
     frame_length: u16,
-    module_delta: u8,
+    module_delta: i8,
     parameter_size: u8,
 }
 
 impl CallFrame {
     pub fn from_bits(bits: u32) -> CallFrame {
-        // SAFETY: We are converting from the serialized form. The sizes are checked at compile time.
+        // SAFETY: `CallFrame` and `u32` have identical size (asserted at compile
+        // time) and every 32-bit pattern is a valid `CallFrame`.
+        const { assert!(core::mem::size_of::<CallFrame>() == core::mem::size_of::<u32>()) };
         unsafe { core::mem::transmute(bits) }
     }
 
-    // SAFETY: We are converting to the serialized form. The sizes are checked at compile time.
     pub fn into_bits(self) -> u32 {
+        // SAFETY: see `from_bits`; the `#[repr(C)]` layout serializes directly
+        // to a `u32` and the size equality is asserted at compile time.
+        const { assert!(core::mem::size_of::<CallFrame>() == core::mem::size_of::<u32>()) };
         unsafe { core::mem::transmute(self) }
     }
 }
@@ -33,6 +38,21 @@ pub enum InvokeError {
     ParamTypeMismatch,
     /// The function requires more stack space than the interpreter has remaining
     StackOverflow,
+    /// The engine is not currently idle and therefore we cannot invoke
+    Busy,
+}
+
+/// Error returned by [`Engine::resume`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResumeError {
+    /// `resume` was called but the engine is not paused waiting for a host
+    /// function result.
+    NotPaused,
+    /// The supplied resume value's type does not match the result type declared
+    /// by the paused host function (this also covers a missing or unexpected
+    /// value). The pending pause is preserved so the caller may retry with a
+    /// correctly-typed value.
+    ResultTypeMismatch,
 }
 
 impl Engine {
@@ -42,7 +62,7 @@ impl Engine {
             0
         } else {
             // Swap to the extern module's context
-            let delta = f_ref.module.0.wrapping_sub(self.module.0);
+            let delta = f_ref.module.0.wrapping_sub(self.module.0) as i8;
             self.module = f_ref.module;
             self.memory = self.store.get_memory(self.module).clone();
             self.table = self.store.get_table(self.module).clone();
@@ -53,7 +73,7 @@ impl Engine {
     }
 
     /// Call a function within the _current_ module
-    fn call_impl(&mut self, module_delta: u8, index: u16) -> Result<(), InterpreterBreak> {
+    fn call_impl(&mut self, module_delta: i8, index: u16) -> Result<(), InterpreterBreak> {
         // Make sure we have enough stack space for the function call
         let m = &self.store.modules()[self.module.0 as usize];
         let f = &m.functions[index as usize];
@@ -99,11 +119,11 @@ impl Engine {
     /// This function can only be used to kick off the interpreter.
     /// It cannot be invoked once the interpreter has started.
     pub fn invoke(&mut self, f_ref: WasmRef, params: &[Value]) -> Result<(), InvokeError> {
-        // Make sure we are looking at the sentinel program counter
-        // This is only the case when nothing is running
-        assert_eq!(self.pc, JumpTarget::SENTINEL);
-        assert_eq!(self.sp, 0);
-        assert_eq!(self.fp, 0);
+        // `invoke` may only kick off execution from a fully idle engine
+        // We currently do not have a notion of an interrupt.
+        if self.pc != JumpTarget::SENTINEL || self.sp != 0 || self.fp != 0 {
+            return Err(InvokeError::Busy);
+        }
 
         let m = &self.store.modules()[f_ref.module.0 as usize];
         let f = &m.functions[f_ref.index as usize];
@@ -140,6 +160,7 @@ impl Engine {
                     self.sp += 2;
                 }
                 _ => {
+                    self.sp = 0;
                     return Err(InvokeError::ParamTypeMismatch);
                 }
             }
@@ -149,8 +170,9 @@ impl Engine {
         self.module = f_ref.module;
         self.memory = self.store.get_memory(self.module).clone();
         self.table = self.store.get_table(self.module).clone();
-        self.call_impl(0, f_ref.index)
-            .map_err(|_| InvokeError::StackOverflow)?;
+
+        // This unwrap should be safe because we checked for stack overflow up-front.
+        self.call_impl(0, f_ref.index).unwrap();
         self.jumped = false;
         self.result = None;
 
@@ -159,9 +181,21 @@ impl Engine {
 
     /// Resume the interpreter after a host pause.
     /// Optionally pushes a value to the operand stack as a host function return value.
-    pub fn resume(&mut self, resume_value: Option<Value>) {
-        // Unwrap is safe here because we should not call resume() unless the interpreter requested a pause
-        match (self.host_pause_result.take().unwrap(), resume_value) {
+    ///
+    /// Returns [`ResumeError::NotPaused`] if the engine is not currently paused
+    /// waiting for a host function result, and [`ResumeError::ResultTypeMismatch`]
+    /// if `resume_value` does not match the paused host function's declared
+    /// result type (in which case the pending pause is left intact so the caller
+    /// may retry).
+    pub fn resume(&mut self, resume_value: Option<Value>) -> Result<(), ResumeError> {
+        // `resume` is only valid when a host function has paused the engine and
+        // is awaiting a result. If nothing is pending, report it instead of
+        // panicking.
+        let Some(pause_result) = self.host_pause_result.take() else {
+            return Err(ResumeError::NotPaused);
+        };
+
+        match (pause_result, resume_value) {
             (ResultType(Some(ValType::F32)), Some(Value::F32(z))) => {
                 self.stack.write_f32(self.sp, z);
                 self.sp += 1;
@@ -179,8 +213,14 @@ impl Engine {
                 self.sp += 2;
             }
             (ResultType(None), None) => {}
-            _ => panic!("expected host function to return a value"),
+            _ => {
+                // Result the pause result ty
+                self.host_pause_result = Some(pause_result);
+                return Err(ResumeError::ResultTypeMismatch);
+            }
         }
+
+        Ok(())
     }
 }
 
@@ -1357,7 +1397,7 @@ impl IrVisitor for Interpreter {
         // Check if we are leaving the context of this module
         if call_frame.module_delta != 0 {
             // Restore the old module context outside this frame
-            let restore_module = state.module.0.wrapping_sub(call_frame.module_delta);
+            let restore_module = state.module.0.wrapping_sub(call_frame.module_delta as u8);
             state.module = ModuleRef(restore_module);
             state.memory = state.store.get_memory(state.module).clone();
             state.table = state.store.get_table(state.module).clone();
@@ -1734,7 +1774,7 @@ mod kani_proofs {
     #[kani::proof]
     fn proof_callframe_transmute_roundtrip() {
         let frame_length: u16 = kani::any();
-        let module_delta: u8 = kani::any();
+        let module_delta: i8 = kani::any();
         let parameter_size: u8 = kani::any();
 
         let frame = CallFrame {
@@ -1765,7 +1805,7 @@ mod kani_proofs {
     #[kani::proof]
     fn proof_callframe_deterministic() {
         let frame_length: u16 = kani::any();
-        let module_delta: u8 = kani::any();
+        let module_delta: i8 = kani::any();
         let parameter_size: u8 = kani::any();
 
         let frame1 = CallFrame {
@@ -1807,5 +1847,74 @@ mod kani_proofs {
         assert_eq!(decoded.frame_length, 0x1234);
         assert_eq!(decoded.module_delta, 0x56);
         assert_eq!(decoded.parameter_size, 0x78);
+    }
+
+    /// Model the stack-pointer arithmetic of a call-frame push (`call_impl`)
+    /// followed by the matching return unwind (`return_`), proving that the
+    /// frame pointer round-trips and that none of the offset computations
+    /// overflow or underflow under the invariants that hold at the call site.
+    #[kani::proof]
+    fn proof_call_return_sp_arithmetic() {
+        // Symbolic caller state at the call site. `prev_fp` is the caller's
+        // frame pointer; `sp0` is the stack pointer once the callee's arguments
+        // have been pushed — this value becomes the callee frame pointer.
+        let prev_fp: u32 = kani::any();
+        let sp0: u32 = kani::any();
+        // Word counts drawn from the callee definition.
+        let parameter_words: u8 = kani::any();
+        let local_size: u16 = kani::any();
+        let return_size: usize = kani::any();
+        // Entry/normal returns move at most a 64-bit (2-word) result.
+        kani::assume(return_size <= 2);
+
+        // Invariants established by construction and validation:
+        // - the new frame pointer never precedes the caller frame pointer,
+        // - the caller pushed `parameter_words` argument words below the fp,
+        // - the frame span fits the 16-bit `CallFrame::frame_length` field,
+        // - the stack pointer stays inside the addressable (u32) range so the
+        //   widening/narrowing conversions cannot mask overflow.
+        kani::assume(prev_fp <= sp0);
+        kani::assume(sp0 >= parameter_words as u32);
+        let frame_span = sp0 - prev_fp;
+        kani::assume(frame_span <= u16::MAX as u32);
+        kani::assume((sp0 as usize) + 2 + local_size as usize <= u32::MAX as usize);
+
+        // --- call_impl: push the frame and allocate locals ---
+        let frame = CallFrame {
+            frame_length: frame_span as u16,
+            module_delta: 0,
+            parameter_size: parameter_words,
+        };
+        // The interpreter sets `fp = sp` before allocating the frame + locals.
+        let fp = sp0;
+        let sp_after_push = sp0 as usize + 2 + local_size as usize;
+        assert!(
+            sp_after_push >= sp0 as usize + 2,
+            "allocating locals never shrinks the frame"
+        );
+
+        // --- return_: unwind the frame ---
+        let decoded = CallFrame::from_bits(frame.into_bits());
+        let return_fp = fp - decoded.frame_length as u32;
+        assert_eq!(
+            return_fp, prev_fp,
+            "return must restore the caller frame pointer"
+        );
+
+        // `parameter_start = fp - parameter_size` must not underflow.
+        let parameter_start = fp as usize - decoded.parameter_size as usize;
+        assert!(
+            parameter_start <= fp as usize,
+            "parameter_start must not underflow past the frame pointer"
+        );
+
+        // A non-entry return writes results into
+        // `[parameter_start, parameter_start + return_size)` and leaves `sp`
+        // there; verify that stays within the space the push allocated.
+        let sp_after_return = parameter_start + return_size;
+        assert!(
+            sp_after_return <= sp_after_push,
+            "the return stack pointer stays within the pushed frame"
+        );
     }
 }

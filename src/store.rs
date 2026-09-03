@@ -59,14 +59,19 @@ impl Store {
         self.modules.pop()
     }
 
-    /// Push a module onto the store
-    /// Panics if the store is at capacity
+    /// Push a module onto the store, returning the [`ModuleRef`] of the newly
+    /// appended module.
+    ///
+    /// Returns [`AllocError::OutOfMemory`] when the store is already at capacity
+    /// (the module count configured via [`Store::from_host_modules`] /
+    /// [`Engine::new`]) instead of panicking.
     #[inline(always)]
-    pub fn push_module(&mut self, module: Module) {
-        self.modules.push(module);
+    pub fn push_module(&mut self, module: Module) -> Result<ModuleRef, AllocError> {
+        self.modules.try_push(module)?;
+        Ok(ModuleRef((self.modules.len() - 1) as u8))
     }
 
-    pub fn get_memory(&mut self, module_ref: ModuleRef) -> &Rc<Memory> {
+    pub fn get_memory(&self, module_ref: ModuleRef) -> &Rc<Memory> {
         match &self.modules[module_ref.0 as usize].memory {
             None => &self.zero_memory,
             Some(MemoryKind::Owned(mem)) => mem,
@@ -85,7 +90,7 @@ impl Store {
         }
     }
 
-    pub fn get_table(&mut self, module_ref: ModuleRef) -> &Rc<[TableElement]> {
+    pub fn get_table(&self, module_ref: ModuleRef) -> &Rc<[TableElement]> {
         match &self.modules[module_ref.0 as usize].table {
             None => &self.zero_table,
             Some(TableKind::Owned(table)) => &table.0,
@@ -187,8 +192,7 @@ impl Engine {
     /// Note: The start function still needs to be run (if there is one)
     /// Returns the ModuleRef of the new module
     pub fn push_module(&mut self, module: Module) -> Result<ModuleRef, AllocError> {
-        self.store.modules.try_push(module)?;
-        Ok(ModuleRef((self.store.modules.len() - 1) as u8))
+        self.store.push_module(module)
     }
 
     /// Returns `true` if the engine is idle (not currently executing)
@@ -236,7 +240,9 @@ impl Engine {
         index: u16,
         args: &[Value],
     ) -> HostFunctionResult {
-        let f = self.store.host_modules[module.0 as usize].functions[index as usize].get_call();
+        let f = self.store.host_modules[module.0 as usize].functions[index as usize]
+            .get_call()
+            .unwrap(); // fails if someone took this function without finishing the call.
         let r = f(self, args);
         self.store.host_modules[module.0 as usize].functions[index as usize].finish_call(f);
         r

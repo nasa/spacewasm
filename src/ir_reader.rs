@@ -8,6 +8,17 @@ impl AddAssign<i32> for JumpTarget {
     }
 }
 
+impl JumpTarget {
+    fn advance(&mut self, words: u32) {
+        debug_assert!(
+            (self.0 as u64) + (words as u64) <= u32::MAX as u64,
+            "IR address overflow advancing {words} word(s) past {:#010x}",
+            self.0
+        );
+        *self += words as i32;
+    }
+}
+
 pub(crate) struct IrReader;
 impl IrReader {
     fn read(code: &[Box<TextPage>], address: &mut JumpTarget) -> u16 {
@@ -19,7 +30,7 @@ impl IrReader {
             if page >= code.len() || offset >= 256 {
                 panic!("invalid read address");
             } else {
-                *address += 1;
+                address.advance(1);
                 code[page].0[offset]
             }
         }
@@ -27,7 +38,7 @@ impl IrReader {
         #[cfg(not(feature = "strict-assertions"))]
         {
             let v = unsafe { code.get_unchecked(page).0.get_unchecked(offset) };
-            *address += 1;
+            address.advance(1);
             *v
         }
     }
@@ -66,6 +77,15 @@ impl IrReader {
         let opcode = (first >> 8) as u8;
         let imm = (first & 0xFF) as u8;
 
+        macro_rules! imm_valtype {
+            () => {
+                match ValType::from_repr(imm) {
+                    Some(ty) => ty,
+                    None => return visitor.unreachable(state),
+                }
+            };
+        }
+
         macro_rules! instruction {
             // Instruction with no operands
             ($name:ident) => {{
@@ -78,7 +98,7 @@ impl IrReader {
                 visitor.$name(
                     LocalVariable {
                         frame_offset,
-                        ty: imm.into(),
+                        ty: imm_valtype!(),
                     },
                     state,
                 )?;
@@ -184,10 +204,10 @@ impl IrReader {
 
             // Parametric instructions
             DROP => {
-                visitor.drop(imm.into(), state)?;
+                visitor.drop(imm_valtype!(), state)?;
             }
             SELECT => {
-                visitor.select(imm.into(), state)?;
+                visitor.select(imm_valtype!(), state)?;
             }
 
             // Variable instructions
@@ -425,7 +445,7 @@ impl IrReader {
             F64_CONVERT_I64_S => instruction!(f64_convert_i64_s),
             F64_CONVERT_I64_U => instruction!(f64_convert_i64_u),
             F64_PROMOTE_F32 => instruction!(f64_promote_f32),
-            _ => panic!("invalid opcode {opcode:?}"),
+            _ => return visitor.unreachable(state),
         }
 
         Ok(())
