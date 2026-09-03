@@ -95,8 +95,8 @@ enum spacewasm_status_t
     SPACEWASM_ERR_LABEL_JUMP_TOO_LARGE = 100,
     SPACEWASM_ERR_TYPE_MISMATCH = 101,
     SPACEWASM_ERR_BLOCK_RESULT_TYPE_MISMATCH = 102,
-    SPACEWASM_ERR_BR_TABLE_RESULT_TYPE_MISMATCH = 103,
-    SPACEWASM_ERR_FUNCTION_RESULT_TYPE_MISMATCH = 104,
+    SPACEWASM_ERR_FUNCTION_RESULT_TYPE_MISMATCH = 103,
+    SPACEWASM_ERR_BR_TABLE_RESULT_TYPE_MISMATCH = 104,
     SPACEWASM_ERR_ILLEGAL_MEMORY_GROW = 112,
     SPACEWASM_ERR_INVALID_ELEMENT_OFFSET = 113,
     SPACEWASM_ERR_INVALID_ELEMENT_OUT_OF_BOUNDS = 114,
@@ -706,7 +706,7 @@ spacewasm_status_t spacewasm_get_global(struct spacewasm_t *engine,
  `global_index` is out of range,
  [`spacewasm_status_t::SPACEWASM_ERR_GLOBAL_TYPE_MISMATCH`] when the value type
  does not match the global, and
- [`spacewasm_status_t::SPACEWASM_ERR_GLOBAL_IS_NOT_MUTABLE`] when the global is
+ [`spacewasm_status_t::SPACEWASM_ERR_GLOBAL_NOT_MUTABLE`] when the global is
  declared `const`.
 
  # Safety

@@ -63,7 +63,7 @@ pub use engine::*;
 #[cfg(any(test, kani))]
 pub mod test_support {
     use crate::alloc::{AllocError, Allocator};
-    use core::sync::atomic::{AtomicI32, Ordering};
+    use core::sync::atomic::{AtomicIsize, Ordering};
     extern crate std;
     use std::alloc::Layout;
 
@@ -72,8 +72,15 @@ pub mod test_support {
     #[derive(Clone, Copy)]
     pub struct RustSystemAllocator;
 
-    // Track allocation statistics
-    static TOTAL_ALLOCATED: AtomicI32 = AtomicI32::new(0);
+    /// Live bytes handed out by [`RustSystemAllocator`], as a running total.
+    static TOTAL_ALLOCATED: AtomicIsize = AtomicIsize::new(0);
+
+    impl RustSystemAllocator {
+        /// Live bytes currently handed out by this allocator.
+        pub fn total_allocated(&self) -> isize {
+            TOTAL_ALLOCATED.load(Ordering::Relaxed)
+        }
+    }
 
     unsafe impl Allocator for RustSystemAllocator {
         unsafe fn alloc(&self, layout: Layout) -> Result<*mut u8, AllocError> {
@@ -82,7 +89,7 @@ pub mod test_support {
             } else {
                 let ptr = unsafe { std::alloc::alloc(layout) };
                 if !ptr.is_null() {
-                    TOTAL_ALLOCATED.fetch_add(layout.size() as i32, Ordering::Relaxed);
+                    TOTAL_ALLOCATED.fetch_add(layout.size() as isize, Ordering::Relaxed);
                 }
                 Ok(ptr)
             }
@@ -96,7 +103,7 @@ pub mod test_support {
             unsafe {
                 std::alloc::dealloc(ptr, layout);
             }
-            TOTAL_ALLOCATED.fetch_sub(layout.size() as i32, Ordering::Relaxed);
+            TOTAL_ALLOCATED.fetch_sub(layout.size() as isize, Ordering::Relaxed);
         }
     }
 }

@@ -730,11 +730,7 @@ mod kani_proofs {
     fn proof_drop_safety() {
         let backing_alloc = RustSystemAllocator;
 
-        let initial_stats = backing_alloc.memory_statistics();
-        assert_eq!(
-            initial_stats.total_bytes, 0,
-            "Backing allocator must start empty"
-        );
+        let initial_bytes = backing_alloc.total_allocated();
 
         {
             let page_alloc = PageAllocator::<&RustSystemAllocator, 3>::new(&backing_alloc, 128);
@@ -752,8 +748,10 @@ mod kani_proofs {
             assert_eq!(stats.pages, 3, "Must have exactly 3 pages allocated");
 
             // Memory should be allocated
-            let mid_stats = backing_alloc.memory_statistics();
-            assert!(mid_stats.total_bytes > 0, "Memory must be allocated");
+            assert!(
+                backing_alloc.total_allocated() > initial_bytes,
+                "Memory must be allocated"
+            );
 
             // Keep pointers alive to prevent early dealloc
             core::mem::forget((ptr1, ptr2, ptr3));
@@ -762,10 +760,12 @@ mod kani_proofs {
             // in reverse order: page2, page1, page0
         }
 
-        // After drop, all memory must be freed
-        let final_stats = backing_alloc.memory_statistics();
+        // After drop, all memory must be freed. Compared against the baseline
+        // rather than 0: `TOTAL_ALLOCATED` is process-global, so only the delta
+        // owned by this proof is meaningful.
         assert_eq!(
-            final_stats.total_bytes, 0,
+            backing_alloc.total_allocated(),
+            initial_bytes,
             "Drop must free all allocated pages"
         );
     }

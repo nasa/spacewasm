@@ -46,7 +46,16 @@ impl<T: WasmMemoryAllocator> Rc<T> {
 /// `Memory` holds a raw pointer, so it is automatically `!Send + !Sync`.
 ///
 /// Needs to have inner mutability because multiple modules can point
-/// to it (via imports) and we use Rc<Memory> for reference counting these ownerships.
+/// to it (via imports) and we use `Rc<Memory>` for reference counting these ownerships.
+///
+/// # Aliasing model
+///
+/// The `store_*` mutators take `&self`, so the borrow checker will not stop you
+/// from writing these bytes while a shared reference into them is alive. Drop
+/// any [`Memory::load`] / [`Memory::get_slice`] slice before any write —
+/// `store_*`, [`Memory::grow`] (which may reallocate), a host callback, or guest
+/// re-entry. Holding one across a write is UB under Stacked Borrows.
+/// [`Memory::as_shared_cells`] is the one aliasing-tolerant accessor.
 pub struct Memory {
     ptr: *mut u8,
     size: usize,
@@ -306,6 +315,10 @@ impl Memory {
     }
 
     /// Expose linear memory as `&[UnsafeCell<u8>]`.
+    ///
+    /// Unlike [`get_slice`], this view stays valid across writes, which is what
+    /// makes it usable as a `wiggle` `GuestMemory::Shared` backing store. Still
+    /// invalidated by [`Memory::grow`]. Empty for the [`Memory::zero`] sentinel.
     ///
     /// [`get_slice`]: Memory::get_slice
     pub fn as_shared_cells(&self) -> &[core::cell::UnsafeCell<u8>] {

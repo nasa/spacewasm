@@ -675,7 +675,7 @@ pub unsafe extern "C" fn spacewasm_get_global(
 /// `global_index` is out of range,
 /// [`spacewasm_status_t::SPACEWASM_ERR_GLOBAL_TYPE_MISMATCH`] when the value type
 /// does not match the global, and
-/// [`spacewasm_status_t::SPACEWASM_ERR_GLOBAL_IS_NOT_MUTABLE`] when the global is
+/// [`spacewasm_status_t::SPACEWASM_ERR_GLOBAL_NOT_MUTABLE`] when the global is
 /// declared `const`.
 ///
 /// # Safety
