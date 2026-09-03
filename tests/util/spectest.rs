@@ -189,7 +189,12 @@ unsafe impl Allocator for SpecTestAllocator {
             AllocPhase::Loading { freed: false } | AllocPhase::Unchecked => {}
         });
 
-        unsafe { Ok(std::alloc::alloc(layout)) }
+        let ptr = unsafe { std::alloc::alloc(layout) };
+        if ptr.is_null() {
+            Err(AllocError::AllocationFailed)
+        } else {
+            Ok(ptr)
+        }
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
