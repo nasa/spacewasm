@@ -25,7 +25,7 @@ impl Store {
         }
 
         Ok(Store {
-            modules: Vec::new(max_modules as u32)?,
+            modules: Vec::new(max_modules)?,
             host_modules,
             zero_memory: Rc::new(Memory::zero())?,
             zero_table: Rc::new_slice_with_default(0)?,

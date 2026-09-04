@@ -502,7 +502,7 @@ impl<'wasm> Reader<'wasm> {
             return Err(ValidationError::VecTooLong);
         }
 
-        let mut out = Vec::new_in(alloc, len)?;
+        let mut out = Vec::new_in(alloc, len as usize)?;
         for _ in 0..len {
             out.push(read_element(self)?);
         }
@@ -566,8 +566,8 @@ mod tests {
             self.pos += n;
             Ok(Some(InnerVec {
                 ptr,
-                capacity: n as u32,
-                len: n as u32,
+                capacity: n,
+                len: n,
             }))
         }
 

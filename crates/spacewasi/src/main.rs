@@ -170,7 +170,7 @@ fn main() -> ExitCode {
     let mut code_builder = CodeBuilder::new(CompilerOptions {
         allow_memory_grow: true,
         max_backpatch_iterations: None,
-        max_code_pages: MAX_PAGES as u32,
+        max_code_pages: MAX_PAGES,
     })
     .unwrap();
     let mut engine = Engine::new(STACK_SIZE, 1, spacewasm::vec![preview1_module]).unwrap();

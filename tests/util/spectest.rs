@@ -309,9 +309,7 @@ impl WasmStream for ByteStream {
                 "wasm module length {} does not fit in u32",
                 vec.len()
             );
-            let inner = unsafe {
-                InnerVec::from_raw_parts(vec.as_mut_ptr(), vec.len() as u32, vec.len() as u32)
-            };
+            let inner = unsafe { InnerVec::from_raw_parts(vec.as_mut_ptr(), vec.len(), vec.len()) };
             Ok(Some(inner))
         } else {
             Ok(None)
@@ -324,7 +322,7 @@ impl WasmStream for ByteStream {
     }
 }
 
-const MAX_CODE_PAGES: u32 = 256;
+const MAX_CODE_PAGES: usize = 256;
 const MAX_CONTROL_FRAMES: usize = 128;
 const MAX_STACK_DEPTH: usize = 256;
 /// Instruction budget for a single invoke/resume, used to catch infinite loops.

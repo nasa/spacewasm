@@ -12,7 +12,7 @@ spacewasm::global_allocator!(
     PageAllocator::new(RustSystemAllocator, 8192)
 );
 
-const MAX_CODE_PAGES: u32 = 256;
+const MAX_CODE_PAGES: usize = 256;
 const MAX_CONTROL_FRAMES: usize = 64;
 const MAX_STACK_DEPTH: usize = 256;
 

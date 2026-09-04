@@ -14,8 +14,8 @@ use crate::AllocError;
 ///   responsible for both.
 pub struct InnerVec<T: Sized> {
     pub(crate) ptr: *mut T,
-    pub(crate) capacity: u32,
-    pub(crate) len: u32,
+    pub(crate) capacity: usize,
+    pub(crate) len: usize,
 }
 
 impl<T: core::fmt::Debug> core::fmt::Debug for InnerVec<T> {
@@ -49,7 +49,7 @@ impl<T: Sized> InnerVec<T> {
     /// - `InnerVec` neither frees the allocation nor drops its elements, so the
     ///   caller (typically [`crate::Vec`]) retains ownership and must keep the
     ///   allocation valid for as long as the returned value is used.
-    pub unsafe fn from_raw_parts(ptr: *mut T, capacity: u32, len: u32) -> InnerVec<T> {
+    pub unsafe fn from_raw_parts(ptr: *mut T, capacity: usize, len: usize) -> InnerVec<T> {
         InnerVec { ptr, capacity, len }
     }
 
@@ -59,7 +59,7 @@ impl<T: Sized> InnerVec<T> {
     }
 
     pub fn len(&self) -> usize {
-        self.len as usize
+        self.len
     }
 
     pub fn is_empty(&self) -> bool {
@@ -67,13 +67,13 @@ impl<T: Sized> InnerVec<T> {
     }
 
     pub fn capacity(&self) -> usize {
-        self.capacity as usize
+        self.capacity
     }
 
     pub fn try_push(&mut self, value: T) -> Result<(), AllocError> {
         if self.len < self.capacity {
             unsafe {
-                core::ptr::write(self.ptr.add(self.len as usize), value);
+                core::ptr::write(self.ptr.add(self.len), value);
             }
 
             self.len += 1;
@@ -95,7 +95,7 @@ impl<T: Sized> InnerVec<T> {
             None
         } else {
             self.len -= 1;
-            unsafe { Some(core::ptr::read(self.ptr.add(self.len as usize))) }
+            unsafe { Some(core::ptr::read(self.ptr.add(self.len))) }
         }
     }
 
@@ -110,7 +110,7 @@ impl<T> Deref for InnerVec<T> {
         if self.ptr.is_null() {
             &[]
         } else {
-            unsafe { core::slice::from_raw_parts(self.ptr, self.len as usize) }
+            unsafe { core::slice::from_raw_parts(self.ptr, self.len) }
         }
     }
 }
@@ -120,7 +120,7 @@ impl<T> DerefMut for InnerVec<T> {
         if self.ptr.is_null() {
             &mut []
         } else {
-            unsafe { core::slice::from_raw_parts_mut(self.ptr, self.len as usize) }
+            unsafe { core::slice::from_raw_parts_mut(self.ptr, self.len) }
         }
     }
 }
@@ -160,12 +160,15 @@ mod kani_proofs {
     use core::alloc::Layout;
 
     // Helper to create a valid InnerVec with allocated memory
-    unsafe fn create_valid_inner_vec<T>(capacity: u32, alloc: &RustSystemAllocator) -> InnerVec<T> {
+    unsafe fn create_valid_inner_vec<T>(
+        capacity: usize,
+        alloc: &RustSystemAllocator,
+    ) -> InnerVec<T> {
         if capacity == 0 {
             return InnerVec::zero();
         }
 
-        let layout = Layout::array::<T>(capacity as usize).unwrap();
+        let layout = Layout::array::<T>(capacity).unwrap();
         let ptr = unsafe { alloc.alloc(layout).unwrap() as *mut T };
 
         // SAFETY: `ptr` is a fresh allocation valid for `capacity` elements and
@@ -176,7 +179,7 @@ mod kani_proofs {
     // Helper to deallocate an InnerVec
     unsafe fn dealloc_inner_vec<T>(vec: InnerVec<T>, alloc: &RustSystemAllocator) {
         if vec.capacity > 0 && !vec.ptr.is_null() {
-            let layout = Layout::array::<T>(vec.capacity as usize).unwrap();
+            let layout = Layout::array::<T>(vec.capacity).unwrap();
             unsafe { alloc.dealloc(vec.ptr as *mut u8, layout) };
         }
     }
@@ -200,13 +203,13 @@ mod kani_proofs {
     fn verify_len_invariants() {
         unsafe {
             let alloc = RustSystemAllocator;
-            let capacity: u32 = kani::any();
+            let capacity: usize = kani::any();
             kani::assume(capacity > 0 && capacity <= 10);
 
             let mut vec = create_valid_inner_vec::<u32>(capacity, &alloc);
 
             // Start with arbitrary valid state
-            let initial_len: u32 = kani::any();
+            let initial_len: usize = kani::any();
             kani::assume(initial_len <= capacity);
             vec.len = initial_len;
 
@@ -219,10 +222,6 @@ mod kani_proofs {
 
                     // Verify no overflow on increment
                     assert!(vec.len == old_len + 1, "len must increment by 1");
-
-                    // Verify len as usize doesn't truncate
-                    let len_usize = vec.len as usize;
-                    assert!(len_usize == vec.len as usize);
                 }
                 1 if vec.len > 0 => {
                     let old_len = vec.len;
@@ -238,8 +237,7 @@ mod kani_proofs {
             assert!(vec.len <= vec.capacity, "len must never exceed capacity");
 
             //  Offset calculation should not overflow
-            let offset = vec.len as usize;
-            assert!(offset <= capacity as usize, "offset must fit in usize");
+            assert!(vec.len <= capacity, "offset must not exceed capacity");
 
             dealloc_inner_vec(vec, &alloc);
         }
@@ -250,20 +248,20 @@ mod kani_proofs {
     fn verify_pointer_arithmetic_in_bounds() {
         unsafe {
             let alloc = RustSystemAllocator;
-            let capacity: u32 = kani::any();
+            let capacity: usize = kani::any();
             kani::assume(capacity > 0 && capacity <= 10);
 
             let vec = create_valid_inner_vec::<u32>(capacity, &alloc);
 
             // Verify we can compute offsets for all valid indices
-            let index: u32 = kani::any();
+            let index: usize = kani::any();
             kani::assume(index < capacity);
 
             // This pointer arithmetic must be valid
-            let _offset_ptr = vec.ptr.add(index as usize);
+            let _offset_ptr = vec.ptr.add(index);
 
             // The pointer at capacity (one-past-end) should also be valid for iteration
-            let _end_ptr = vec.ptr.add(capacity as usize);
+            let _end_ptr = vec.ptr.add(capacity);
 
             dealloc_inner_vec(vec, &alloc);
         }
@@ -301,13 +299,13 @@ mod kani_proofs {
     #[kani::unwind(4)] // Limit loop unrolling
     fn verify_push_pop_operations() {
         let alloc = RustSystemAllocator;
-        let capacity: u32 = kani::any();
+        let capacity: usize = kani::any();
         kani::assume(capacity > 0 && capacity <= 3);
 
         let mut vec = unsafe { create_valid_inner_vec::<u32>(capacity, &alloc) };
 
         // Test push at different positions
-        let initial_len: u32 = kani::any();
+        let initial_len: usize = kani::any();
         kani::assume(initial_len < capacity);
         vec.len = initial_len;
 
@@ -320,7 +318,7 @@ mod kani_proofs {
         assert_eq!(vec.len, initial_len + 1, "push must increment len");
 
         //  Value is at the old len position (correct offset)
-        let written_value = unsafe { core::ptr::read(vec.ptr.add(push_position as usize)) };
+        let written_value = unsafe { core::ptr::read(vec.ptr.add(push_position)) };
         assert_eq!(written_value, value, "push must write at correct index");
 
         // Now test pop on the same vector
@@ -345,23 +343,23 @@ mod kani_proofs {
     #[kani::unwind(4)] // Limit loop unrolling
     fn verify_deref_only_initialized_region() {
         let alloc = RustSystemAllocator;
-        let capacity: u32 = kani::any();
+        let capacity: usize = kani::any();
         kani::assume(capacity > 0 && capacity <= 3); // Reduced bound
 
         let mut vec = unsafe { create_valid_inner_vec::<u32>(capacity, &alloc) };
 
-        let len: u32 = kani::any();
+        let len: usize = kani::any();
         kani::assume(len <= capacity);
 
         // Initialize elements [0, len)
         for i in 0..len {
             vec.len = i;
-            vec.push(i);
+            vec.push(i as u32);
         }
 
         // Deref creates slice of exactly len elements
         let slice: &[u32] = &*vec;
-        assert_eq!(slice.len(), len as usize);
+        assert_eq!(slice.len(), len);
 
         // Verify first element is accessible if len > 0
         if len > 0 {

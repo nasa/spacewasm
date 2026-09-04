@@ -10,14 +10,10 @@
 #include <stdint.h>
 #include <stddef.h>
 
-#if defined(__has_c_attribute)
-#  if __has_c_attribute(noreturn)
-#    define SPACEWASM_NORETURN [[noreturn]] /* Standard C23 attribute */
-#  endif
-#endif
-
 #if !defined(SPACEWASM_NORETURN)
-#  if defined(__STDC_VERSION__) && (__STDC_VERSION__ >= 201112L)
+#  if defined(__has_c_attribute) && __has_c_attribute(noreturn)
+#    define SPACEWASM_NORETURN [[noreturn]] /* Standard C23 attribute */
+#  elif defined(__STDC_VERSION__) && (__STDC_VERSION__ >= 201112L)
 #    define SPACEWASM_NORETURN _Noreturn /* Standard C11 keyword */
 #  elif defined(__GNUC__) || defined(__clang__)
 #    define SPACEWASM_NORETURN __attribute__((noreturn)) /* GCC / Clang extension */
@@ -390,8 +386,8 @@ typedef void (*spacewasm_dealloc_fn_t)(void *userdata, uint8_t *ptr, size_t size
 
 typedef struct spacewasm_host_t {
     struct spacewasm_host_module_t *ptr;
-    uint32_t capacity;
-    uint32_t len;
+    size_t capacity;
+    size_t len;
 } spacewasm_host_t;
 
 /*
@@ -452,7 +448,7 @@ typedef struct spacewasm_compiler_options_t {
      Maximum number of compiled code pages allowed across all modules loaded
      onto the store.
      */
-    uint32_t max_code_pages;
+    size_t max_code_pages;
 } spacewasm_compiler_options_t;
 
 /*
@@ -502,7 +498,7 @@ void spacewasm_allocator_destroy(struct spacewasm_allocator_t *allocator);
  # Safety
  `dest` must be null or a valid, live pointer to write the new host vector into.
  */
-spacewasm_status_t spacewasm_host_new(uint32_t len, struct spacewasm_host_t *dest);
+spacewasm_status_t spacewasm_host_new(size_t len, struct spacewasm_host_t *dest);
 
 /*
  Add a host module named `name` sized for `max_functions` functions and
@@ -513,8 +509,8 @@ spacewasm_status_t spacewasm_host_new(uint32_t len, struct spacewasm_host_t *des
  */
 spacewasm_status_t spacewasm_add_host_module(struct spacewasm_host_t *host,
                                              const char *name,
-                                             uint32_t max_functions,
-                                             uint32_t max_globals,
+                                             size_t max_functions,
+                                             size_t max_globals,
                                              uint32_t *out_idx);
 
 /*
@@ -583,7 +579,7 @@ spacewasm_status_t spacewasm_load_module(struct spacewasm_t *engine,
  */
 spacewasm_status_t spacewasm_new(struct spacewasm_host_t *host,
                                  size_t stack_size,
-                                 uint32_t max_modules,
+                                 size_t max_modules,
                                  struct spacewasm_compiler_options_t options,
                                  struct spacewasm_t **out_engine);
 

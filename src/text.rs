@@ -232,7 +232,7 @@ pub struct GlobalVariable {
 
 /// The IR encodes code addresses as 24-bit page indices (see [`JumpTarget`]),
 /// so no more than `2^24` code pages can ever be addressed.
-const MAX_ADDRESSABLE_CODE_PAGES: u32 = 1 << 24;
+const MAX_ADDRESSABLE_CODE_PAGES: usize = 1 << 24;
 
 #[derive(Debug, Copy, Clone)]
 pub struct CompilerOptions {
@@ -260,7 +260,7 @@ pub struct CompilerOptions {
     /// loaded onto the store). Oversizing it costs only the pointer table, not the page bodies.
     /// It must be strictly less than `MAX_ADDRESSABLE_CODE_PAGES` (`2^24`) and must be sized to
     /// fit inside a single heap memory page.
-    pub max_code_pages: u32,
+    pub max_code_pages: usize,
 }
 
 /// Low-level builder for paged IR code.
@@ -356,7 +356,7 @@ impl CodeBuilder {
         };
 
         // We support up to 24-bit page addresses
-        assert!(page_index < MAX_ADDRESSABLE_CODE_PAGES as usize);
+        assert!(page_index < MAX_ADDRESSABLE_CODE_PAGES);
         assert!(offset < 256);
 
         JumpTarget(((page_index as u32) << 8) | (offset as u32))
