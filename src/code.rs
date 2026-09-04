@@ -93,17 +93,20 @@ impl Module {
         let size = wasm.read_u32()?;
         let start = wasm.offset();
 
-        let empty_f = Func {
-            ty: TypeIdx(0),
-            stack_usage: 0,
-            local_size: 0,
-            parameter_size: 0,
-            return_ty: None,
-            locals: Vec::zero().into(),
-            expr: Expr::zero(),
+        let placeholder = {
+            let f = &self.functions[i];
+            Func {
+                ty: f.ty,
+                stack_usage: f.stack_usage,
+                local_size: f.local_size,
+                parameter_size: f.parameter_size,
+                return_ty: f.return_ty,
+                locals: Vec::zero().into(),
+                expr: Expr::zero(),
+            }
         };
 
-        let mut f = core::mem::replace(&mut self.functions[i], empty_f);
+        let mut f = core::mem::replace(&mut self.functions[i], placeholder);
 
         wasm.with_limit(size as usize, |wasm| {
             f.locals = wasm
