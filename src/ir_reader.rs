@@ -81,7 +81,12 @@ impl IrReader {
             () => {
                 match ValType::from_repr(imm) {
                     Some(ty) => ty,
-                    None => return visitor.unreachable(state),
+                    None => {
+                        #[cfg(feature = "strict-assertions")]
+                        panic!("invalid ValType immediate {imm:#04x} for opcode {opcode:?}");
+                        #[cfg(not(feature = "strict-assertions"))]
+                        return visitor.malformed_ir(state);
+                    }
                 }
             };
         }
@@ -445,7 +450,12 @@ impl IrReader {
             F64_CONVERT_I64_S => instruction!(f64_convert_i64_s),
             F64_CONVERT_I64_U => instruction!(f64_convert_i64_u),
             F64_PROMOTE_F32 => instruction!(f64_promote_f32),
-            _ => return visitor.unreachable(state),
+            _ => {
+                #[cfg(feature = "strict-assertions")]
+                panic!("invalid opcode {opcode:?}");
+                #[cfg(not(feature = "strict-assertions"))]
+                return visitor.malformed_ir(state);
+            }
         }
 
         Ok(())

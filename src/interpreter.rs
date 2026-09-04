@@ -77,7 +77,7 @@ impl Engine {
         // Make sure we have enough stack space for the function call
         let m = &self.store.modules()[self.module.0 as usize];
         let f = &m.functions[index as usize];
-        let required_stack_space = f.stack_usage as usize + 2 + f.local_size as usize;
+        let required_stack_space = f.required_stack_words();
         if self.stack.len() < self.sp + required_stack_space {
             return Err(InterpreterBreak::Trap(TrapReason::StackOverflow));
         }
@@ -136,7 +136,7 @@ impl Engine {
 
         // Validate parameters fit onto stack frame before writing them
         let params_words: usize = ty.params.iter().map(|t| t.size() / 4).sum();
-        let required = f.stack_usage as usize + 2 + f.local_size as usize;
+        let required = f.required_stack_words();
         if params_words + required > self.stack.len() {
             return Err(InvokeError::StackOverflow);
         }
@@ -171,8 +171,9 @@ impl Engine {
         self.memory = self.store.get_memory(self.module).clone();
         self.table = self.store.get_table(self.module).clone();
 
-        // This unwrap should be safe because we checked for stack overflow up-front.
-        self.call_impl(0, f_ref.index).unwrap();
+        // This expect should be safe because we checked for stack overflow up-front.
+        self.call_impl(0, f_ref.index)
+            .expect("unexpected call_impl overflowed the stack");
         self.jumped = false;
         self.result = None;
 
@@ -258,6 +259,8 @@ pub enum TrapReason {
     IntegerOverflow,
     /// Attempting to convert NaN to integer
     BadConversionToInteger,
+    /// The IR decoder reached an opcode or immediate it cannot interpret
+    MalformedIr,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -549,6 +552,10 @@ impl BaseVisitor for Interpreter {
 
     fn unreachable(&self, _: &mut Self::State) -> Result<(), Self::Error> {
         Err(InterpreterBreak::Trap(TrapReason::Unreachable))
+    }
+
+    fn malformed_ir(&self, _: &mut Self::State) -> Result<(), Self::Error> {
+        Err(InterpreterBreak::Trap(TrapReason::MalformedIr))
     }
 
     fn nop(&self, _: &mut Self::State) -> Result<(), Self::Error> {

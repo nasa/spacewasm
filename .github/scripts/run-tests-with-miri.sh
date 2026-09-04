@@ -5,7 +5,8 @@
 # Usage: .github/scripts/run-tests-with-miri.sh
 # Env:   MIRI_TEST_TIMEOUT_SECS (default 300)
 #        MIRI_TEST_JOBS (default: nproc)
-#        MIRI_TEST_TARGETS (default: all targets, space-separated)
+#        MIRI_TEST_TARGETS (space-separated. default: lib core_integration
+#                           regression_integration custom_page_sizes_integration)
 #        MIRIFLAGS (passed to `cargo miri test`)
 set -uo pipefail
 
@@ -30,29 +31,52 @@ targets=(${MIRI_TEST_TARGETS:-lib core_integration regression_integration custom
 
 pairs_file="$(mktemp)"
 results_file="$(mktemp)"
-trap 'rm -f "$pairs_file" "$results_file"' EXIT
+skipped_file="$(mktemp)"
+trap 'rm -f "$pairs_file" "$results_file" "$skipped_file"' EXIT
+
+list_tests() {
+  RUSTFLAGS="--cfg miri" cargo test --quiet $2 -- --list $1 2>&1
+}
 
 for label in "${targets[@]}"; do
   target="$(target_flag "$label")"
 
-  if ! listing="$(RUSTFLAGS="--cfg miri" cargo test --quiet $target -- --list 2>&1)"; then
+  if ! listing="$(list_tests '' "$target")"; then
     echo "!!! could not enumerate tests for target '${label}'" >&2
     echo "$listing" >&2
     exit 1
   fi
-
-  names="$(printf '%s\n' "$listing" | grep ': test$' | sed 's/: test$//' || true)"
-  if [ -z "$names" ]; then
-    echo "!!! target '${label}' enumerated zero tests" >&2
-    echo "    (stale MIRI_TEST_TARGETS entry, or every test is #[ignore]d?)" >&2
+  if ! ignored_listing="$(list_tests '--ignored' "$target")"; then
+    echo "!!! could not enumerate ignored tests for target '${label}'" >&2
+    echo "$ignored_listing" >&2
     exit 1
   fi
 
-  printf '%s\n' "$names" | sed "s/^/${label}\t/" >>"$pairs_file"
+  extract_names() { printf '%s\n' "$1" | grep ': test$' | sed 's/: test$//' || true; }
+
+  names="$(extract_names "$listing")"
+  ignored="$(extract_names "$ignored_listing")"
+
+  if [ -z "$names" ]; then
+    echo "!!! target '${label}' enumerated zero tests" >&2
+    echo "    (stale MIRI_TEST_TARGETS entry?)" >&2
+    exit 1
+  fi
+
+  if [ -n "$ignored" ]; then
+    printf '%s\n' "$ignored" | sed "s/^/${label}\t/" >>"$skipped_file"
+    # Keep only names absent from the ignored set.
+    names="$(comm -23 <(printf '%s\n' "$names" | sort) <(printf '%s\n' "$ignored" | sort))"
+  fi
+
+  if [ -n "$names" ]; then
+    printf '%s\n' "$names" | sed "s/^/${label}\t/" >>"$pairs_file"
+  fi
 done
 
 total=$(wc -l <"$pairs_file")
-echo "Running $total tests:"
+skipped=$(wc -l <"$skipped_file")
+echo "Running $total tests ($skipped ignored under Miri):"
 echo "Executors: $jobs"
 echo "Timeout: ${timeout_secs}s"
 
@@ -87,8 +111,12 @@ timeout_lines=$(grep '^TIMEOUT' "$results_file" || true)
 fail_lines=$(grep '^FAIL' "$results_file" || true)
 
 echo
-echo "$total / $pass_count tests passed."
+echo "$pass_count / $total tests passed."
 
+if [ "$skipped" -gt 0 ]; then
+  echo "Ignored under Miri ($skipped, not run):"
+  awk -F'\t' '{print "  - " $1 " :: " $2}' "$skipped_file"
+fi
 if [ -n "$timeout_lines" ]; then
   echo "Timed out:"
   echo "$timeout_lines" | awk -F'\t' '{print "  - " $2 " :: " $3}'
