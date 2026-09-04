@@ -442,7 +442,7 @@ mod kani_proofs {
     #[kani::proof]
     #[kani::unwind(3)]
     fn proof_alloc_dealloc_safety() {
-        let capacity: u32 = kani::any();
+        let capacity: usize = kani::any();
         kani::assume(capacity <= 2);
 
         let vec: Vec<u32, _> = Vec::new_in(RustSystemAllocator, capacity).unwrap();
@@ -478,13 +478,13 @@ mod kani_proofs {
     #[kani::proof]
     #[kani::unwind(4)]
     fn proof_vec_clone_correctness() {
-        let capacity: u32 = kani::any();
+        let capacity: usize = kani::any();
         kani::assume(capacity <= 3);
 
         let mut vec: Vec<u32, _> = Vec::new_in(RustSystemAllocator, capacity).unwrap();
 
         // Push symbolic values up to capacity
-        let len: u32 = kani::any();
+        let len: usize = kani::any();
         kani::assume(len <= capacity);
 
         for _ in 0..len {
@@ -518,7 +518,7 @@ mod kani_proofs {
     #[kani::proof]
     #[kani::unwind(4)]
     fn proof_vec_into_boxed_slice_correctness() {
-        let capacity: u32 = kani::any();
+        let capacity: usize = kani::any();
         kani::assume(capacity > 0 && capacity <= 3);
 
         let mut vec: Vec<u32, _> = Vec::new_in(RustSystemAllocator, capacity).unwrap();

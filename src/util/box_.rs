@@ -137,7 +137,7 @@ impl<T: ?Sized, A: Allocator> Box<T, A> {
     }
 }
 
-impl<T: ?Sized + Clone, A: Allocator + Clone> Box<[T], A> {
+impl<T: Clone, A: Allocator + Clone> Box<[T], A> {
     pub fn try_clone(&self) -> Result<Self, AllocError> {
         let mut n: Vec<T, A> = Vec::new_in(self.alloc.clone(), self.len())?;
 
@@ -152,7 +152,7 @@ impl<T: ?Sized + Clone, A: Allocator + Clone> Box<[T], A> {
     }
 }
 
-impl<T: ?Sized + Clone, A: Allocator + Clone> Clone for Box<[T], A> {
+impl<T: Clone, A: Allocator + Clone> Clone for Box<[T], A> {
     fn clone(&self) -> Self {
         self.try_clone().expect("Box<T> clone failed")
     }

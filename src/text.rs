@@ -356,7 +356,7 @@ impl CodeBuilder {
         };
 
         // We support up to 24-bit page addresses
-        assert!(page_index < MAX_ADDRESSABLE_CODE_PAGES as usize);
+        assert!(page_index < MAX_ADDRESSABLE_CODE_PAGES);
         assert!(offset < 256);
 
         JumpTarget(((page_index as u32) << 8) | (offset as u32))
