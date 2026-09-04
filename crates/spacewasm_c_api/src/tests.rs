@@ -551,7 +551,7 @@ fn check_func_signature() {
         // Malformed signature string: an invalid value-list character.
         assert_eq!(
             spacewasm_check_func_signature(store, idx, func, c"ix".as_ptr(), c"i".as_ptr()),
-            status::SPACEWASM_ERR_BAD_ARG,
+            status::SPACEWASM_ERR_BAD_SIGNATURE,
             "bad signature char"
         );
 
@@ -1337,16 +1337,24 @@ fn error_paths() {
     let _guard = ALLOC_LOCK.lock().unwrap();
     ensure_global_allocator();
 
-    // max_modules > 256 -> store_new returns ERR_BAD_ARG (consumes the host).
+    // max_modules > 256 -> ERR_VEC_TOO_LONG. This check runs *before* the host
+    // vector is read, so the caller still owns it and must destroy it — see the
+    // "Ownership of `host`" section on `spacewasm_new`. Capture the status first
+    // so the vector is released before `host` is reused below.
     let mut host = core::mem::MaybeUninit::<spacewasm_host_t>::uninit();
     assert_eq!(
         unsafe { spacewasm_host_new(0, host.as_mut_ptr()) },
         status::SPACEWASM_OK
     );
     let mut store: *mut CEngine = core::ptr::null_mut();
+    let oversized_st =
+        unsafe { spacewasm_new(host.as_mut_ptr(), 1024, 257, opts(256), &mut store) };
+    if oversized_st != status::SPACEWASM_OK {
+        unsafe { spacewasm_host_destroy(host.as_mut_ptr()) };
+    }
     assert_eq!(
-        unsafe { spacewasm_new(host.as_mut_ptr(), 1024, 257, opts(256), &mut store) },
-        status::SPACEWASM_ERR_BAD_ARG,
+        oversized_st,
+        status::SPACEWASM_ERR_VEC_TOO_LONG,
         "oversized max_modules"
     );
 
@@ -1371,7 +1379,7 @@ fn error_paths() {
                 Some(add_one),
                 core::ptr::null_mut(),
             ),
-            status::SPACEWASM_ERR_BAD_ARG,
+            status::SPACEWASM_ERR_BAD_SIGNATURE,
             "bad signature"
         );
         spacewasm_host_destroy(host.as_mut_ptr());
@@ -1874,7 +1882,7 @@ fn simple_error_mappers() {
     // Every HostFunctionError variant maps to a distinct, stable status code.
     assert_eq!(
         status::host_val_list_status(HostFunctionError::ValListInvalidItem),
-        status::SPACEWASM_ERR_BAD_ARG,
+        status::SPACEWASM_ERR_BAD_SIGNATURE,
         "invalid value-list character"
     );
     assert_eq!(
@@ -2744,14 +2752,14 @@ fn add_host_function_signature_errors() {
         // Invalid value-list character in the parameter signature.
         assert_eq!(
             add(c"bad_param", c"x", c""),
-            status::SPACEWASM_ERR_BAD_ARG,
+            status::SPACEWASM_ERR_BAD_SIGNATURE,
             "invalid param char -> ValListInvalidItem"
         );
 
         // Invalid value-list character in the return signature.
         assert_eq!(
             add(c"bad_ret", c"i", c"z"),
-            status::SPACEWASM_ERR_BAD_ARG,
+            status::SPACEWASM_ERR_BAD_SIGNATURE,
             "invalid return char -> ValListInvalidItem"
         );
 
@@ -3107,6 +3115,110 @@ fn pause_and_resume_with_value() {
         status::SPACEWASM_OK
     );
     assert_eq!(unsafe { out.u.i32_ }, 99);
+
+    unsafe {
+        spacewasm_destroy(store);
+        spacewasm_allocator_destroy(alloc);
+    }
+}
+
+/// A mistyped resume value is reported distinctly from "not paused", and leaves
+/// the pause intact so the caller can retry. Collapsing both onto `WRONG_STATE`
+/// would make that retry unreachable from C.
+#[test]
+fn resume_with_wrong_type_is_retryable() {
+    let _guard = ALLOC_LOCK.lock().unwrap();
+    ensure_global_allocator();
+
+    let mut host = core::mem::MaybeUninit::<spacewasm_host_t>::uninit();
+    assert_eq!(
+        unsafe { spacewasm_host_new(1, host.as_mut_ptr()) },
+        status::SPACEWASM_OK
+    );
+
+    let mut hmod = 0u32;
+    unsafe {
+        assert_eq!(
+            spacewasm_add_host_module(host.as_mut_ptr(), c"env".as_ptr(), 1, 0, &mut hmod),
+            status::SPACEWASM_OK
+        );
+        assert_eq!(
+            spacewasm_add_host_function(
+                host.as_mut_ptr(),
+                hmod,
+                c"pause_i32".as_ptr(),
+                c"".as_ptr(),
+                c"i".as_ptr(),
+                Some(pause_i32_host),
+                core::ptr::null_mut(),
+            ),
+            status::SPACEWASM_OK
+        );
+    }
+
+    let mut store: *mut CEngine = core::ptr::null_mut();
+    assert_eq!(
+        unsafe { spacewasm_new(host.as_mut_ptr(), 1024, 1, opts(256), &mut store) },
+        status::SPACEWASM_OK
+    );
+
+    let alloc = new_guest_allocator();
+    let idx = load_module_onto(alloc, store, c"main", PAUSE_I32_WASM, 0).expect("load");
+
+    let mut func = 0u32;
+    assert_eq!(
+        unsafe { spacewasm_find_export_func(store, idx, c"test_pause_i32".as_ptr(), &mut func) },
+        status::SPACEWASM_OK
+    );
+
+    assert_eq!(
+        unsafe { spacewasm_invoke(store, idx, func, core::ptr::null(), 0) },
+        status::SPACEWASM_OK
+    );
+
+    let mut trap = spacewasm_trap_t::SPACEWASM_TRAP_NONE;
+    assert_eq!(
+        unsafe { spacewasm_run(store, 10000, &mut trap) },
+        spacewasm_run_status_t::SPACEWASM_RUN_PAUSE,
+        "should pause"
+    );
+
+    // The host function declared an i32 result. Resuming with an f64 is a type
+    // error, not a state error -- and must be distinguishable from WRONG_STATE.
+    let f64_val = spacewasm_value_t {
+        tag: spacewasm_valtype_t::SPACEWASM_F64,
+        u: spacewasm_value_payload_t { f64_: 1.5 },
+    };
+    assert_eq!(
+        unsafe { spacewasm_resume_value(store, f64_val) },
+        status::SPACEWASM_ERR_PARAM_TYPE_MISMATCH,
+        "mistyped resume value"
+    );
+
+    // Resuming with no value at all is the same class of error.
+    assert_eq!(
+        unsafe { spacewasm_resume(store) },
+        status::SPACEWASM_ERR_PARAM_TYPE_MISMATCH,
+        "missing resume value for a value-returning host function"
+    );
+
+    // The pause survived both rejections, so the correct value still works.
+    assert_eq!(
+        unsafe { spacewasm_resume_value(store, i32_val(7)) },
+        status::SPACEWASM_OK,
+        "retry after a rejected resume"
+    );
+    assert_eq!(
+        run_to_completion(store, &mut trap),
+        spacewasm_run_status_t::SPACEWASM_RUN_FINISHED
+    );
+
+    let mut out = i32_val(0);
+    assert_eq!(
+        unsafe { spacewasm_get_result(store, spacewasm_valtype_t::SPACEWASM_I32, &mut out) },
+        status::SPACEWASM_OK
+    );
+    assert_eq!(unsafe { out.u.i32_ }, 7, "retried value took effect");
 
     unsafe {
         spacewasm_destroy(store);

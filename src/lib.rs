@@ -88,10 +88,12 @@ pub mod test_support {
                 Ok(core::ptr::null_mut())
             } else {
                 let ptr = unsafe { std::alloc::alloc(layout) };
-                if !ptr.is_null() {
+                if ptr.is_null() {
+                    Err(AllocError::AllocationFailed)
+                } else {
                     TOTAL_ALLOCATED.fetch_add(layout.size() as isize, Ordering::Relaxed);
+                    Ok(ptr)
                 }
-                Ok(ptr)
             }
         }
 

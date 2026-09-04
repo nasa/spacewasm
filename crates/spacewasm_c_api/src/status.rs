@@ -3,7 +3,7 @@
 
 use spacewasm::{
     AllocError, ConstantExprError, HostFunctionError, HostNameError, InterpreterResult,
-    InvokeError, MemoryError, ParseError, TrapReason, ValidationError,
+    InvokeError, MemoryError, ParseError, ResumeError, TrapReason, ValidationError,
 };
 
 /// Operation status returned by most `spacewasm_*` functions.
@@ -192,6 +192,8 @@ pub enum spacewasm_trap_t {
     SPACEWASM_TRAP_INTEGER_OVERFLOW = 13,
     /// Attempted to convert NaN to an integer.
     SPACEWASM_TRAP_BAD_CONVERSION_TO_INTEGER = 14,
+    /// The IR decoder reached an opcode or immediate it cannot interpret.
+    SPACEWASM_TRAP_MALFORMED_IR = 15,
 }
 
 pub use spacewasm_trap_t::*;
@@ -213,6 +215,7 @@ pub fn trap_reason_code(t: TrapReason) -> spacewasm_trap_t {
         TrapReason::UnrepresentableResult => SPACEWASM_TRAP_UNREPRESENTABLE_RESULT,
         TrapReason::IntegerOverflow => SPACEWASM_TRAP_INTEGER_OVERFLOW,
         TrapReason::BadConversionToInteger => SPACEWASM_TRAP_BAD_CONVERSION_TO_INTEGER,
+        TrapReason::MalformedIr => SPACEWASM_TRAP_MALFORMED_IR,
     }
 }
 
@@ -364,10 +367,18 @@ pub fn host_name_status(_e: HostNameError) -> spacewasm_status_t {
 
 pub fn host_val_list_status(e: HostFunctionError) -> spacewasm_status_t {
     match e {
-        HostFunctionError::ValListInvalidItem => SPACEWASM_ERR_BAD_ARG,
+        HostFunctionError::ValListInvalidItem => SPACEWASM_ERR_BAD_SIGNATURE,
         HostFunctionError::ParameterListTooLong => SPACEWASM_ERR_FUNCTION_PARAMETERS_TOO_LARGE,
         HostFunctionError::MultiReturnNotAllowed => SPACEWASM_ERR_FUNCTION_RETURNS_TOO_LARGE,
         HostFunctionError::AllocError(ae) => alloc_status(ae),
+    }
+}
+
+/// Translate a [`ResumeError`] into a status code.
+pub fn resume_status(e: ResumeError) -> spacewasm_status_t {
+    match e {
+        ResumeError::NotPaused => SPACEWASM_ERR_WRONG_STATE,
+        ResumeError::ResultTypeMismatch => SPACEWASM_ERR_PARAM_TYPE_MISMATCH,
     }
 }
 

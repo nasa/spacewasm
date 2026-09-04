@@ -65,21 +65,25 @@ impl WasmStream for FileStream {
             )
         });
 
-        let n = self.file.read(&mut buf).map_err(|err| {
-            eprintln!("Failed to read file: {}", err);
-            errno_to_code(err.raw_os_error())
-        })?;
+        match self.file.read(&mut buf) {
+            Err(err) => {
+                eprintln!("Failed to read file: {}", err);
+                self.ready.push_back(buf);
+                Err(errno_to_code(err.raw_os_error()))
+            }
+            Ok(0) => {
+                self.ready.push_back(buf);
+                Ok(None)
+            }
+            Ok(n) => {
+                let m = unsafe {
+                    InnerVec::from_raw_parts(buf.as_mut_ptr(), buf.capacity() as u32, n as u32)
+                };
 
-        if n == 0 {
-            Ok(None)
-        } else {
-            let m = unsafe {
-                InnerVec::from_raw_parts(buf.as_mut_ptr(), buf.capacity() as u32, n as u32)
-            };
-
-            self.n += n;
-            self.used.insert(buf.as_mut_ptr(), buf);
-            Ok(Some(m))
+                self.n += n;
+                self.used.insert(buf.as_mut_ptr(), buf);
+                Ok(Some(m))
+            }
         }
     }
 
@@ -128,5 +132,51 @@ mod tests {
         // A nonzero sentinel keeps `0` free for "no error" and guarantees the
         // passthrough range never produces it.
         assert_ne!(UNKNOWN_IO_ERROR, 0);
+    }
+
+    /// A buffer is only handed to the caller on a non-empty read, so the EOF path
+    /// must put it back itself. Reading an empty file more times than the pool
+    /// has buffers used to exhaust it and panic.
+    #[test]
+    fn eof_reads_do_not_drain_the_buffer_pool() {
+        let path = std::env::temp_dir().join("spacewasm_filestream_eof_test");
+        std::fs::write(&path, b"").expect("create empty file");
+        let mut stream = FileStream::new(std::fs::File::open(&path).expect("open"));
+
+        for i in 0..(BUFFER_POOL_SIZE * 2 + 1) {
+            match stream.read() {
+                Ok(None) => {}
+                other => panic!("read {i} of an empty file should be Ok(None), got {other:?}"),
+            }
+            assert_eq!(
+                stream.ready.len(),
+                BUFFER_POOL_SIZE,
+                "pool shrank after {} EOF read(s)",
+                i + 1
+            );
+        }
+        assert!(stream.used.is_empty(), "no buffer should be checked out");
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// The complement: a buffer handed out on a real read is checked out until
+    /// `return_`, and comes back to the pool afterwards.
+    #[test]
+    fn read_checks_out_a_buffer_and_return_restores_it() {
+        let path = std::env::temp_dir().join("spacewasm_filestream_roundtrip_test");
+        std::fs::write(&path, b"hello").expect("create file");
+        let mut stream = FileStream::new(std::fs::File::open(&path).expect("open"));
+
+        let chunk = stream.read().expect("read ok").expect("a chunk");
+        assert_eq!(stream.ready.len(), BUFFER_POOL_SIZE - 1, "buffer taken");
+        assert_eq!(stream.used.len(), 1, "buffer tracked as in use");
+        assert_eq!(stream.len(), 5);
+
+        stream.return_(chunk);
+        assert_eq!(stream.ready.len(), BUFFER_POOL_SIZE, "buffer returned");
+        assert!(stream.used.is_empty());
+
+        std::fs::remove_file(&path).ok();
     }
 }

@@ -242,7 +242,7 @@ impl Engine {
     ) -> HostFunctionResult {
         let f = self.store.host_modules[module.0 as usize].functions[index as usize]
             .get_call()
-            .unwrap(); // fails if someone took this function without finishing the call.
+            .expect("host function is already executing");
         let r = f(self, args);
         self.store.host_modules[module.0 as usize].functions[index as usize].finish_call(f);
         r
