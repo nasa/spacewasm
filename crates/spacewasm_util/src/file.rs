@@ -73,9 +73,7 @@ impl WasmStream for FileStream {
         if n == 0 {
             Ok(None)
         } else {
-            let m = unsafe {
-                InnerVec::from_raw_parts(buf.as_mut_ptr(), buf.capacity() as u32, n as u32)
-            };
+            let m = unsafe { InnerVec::from_raw_parts(buf.as_mut_ptr(), buf.capacity(), n) };
 
             self.n += n;
             self.used.insert(buf.as_mut_ptr(), buf);

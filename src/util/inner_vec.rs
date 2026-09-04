@@ -14,8 +14,8 @@ use crate::AllocError;
 ///   responsible for both.
 pub struct InnerVec<T: Sized> {
     pub(crate) ptr: *mut T,
-    pub(crate) capacity: u32,
-    pub(crate) len: u32,
+    pub(crate) capacity: usize,
+    pub(crate) len: usize,
 }
 
 impl<T: core::fmt::Debug> core::fmt::Debug for InnerVec<T> {
@@ -49,7 +49,7 @@ impl<T: Sized> InnerVec<T> {
     /// - `InnerVec` neither frees the allocation nor drops its elements, so the
     ///   caller (typically [`crate::Vec`]) retains ownership and must keep the
     ///   allocation valid for as long as the returned value is used.
-    pub unsafe fn from_raw_parts(ptr: *mut T, capacity: u32, len: u32) -> InnerVec<T> {
+    pub unsafe fn from_raw_parts(ptr: *mut T, capacity: usize, len: usize) -> InnerVec<T> {
         InnerVec { ptr, capacity, len }
     }
 
@@ -59,7 +59,7 @@ impl<T: Sized> InnerVec<T> {
     }
 
     pub fn len(&self) -> usize {
-        self.len as usize
+        self.len
     }
 
     pub fn is_empty(&self) -> bool {
@@ -67,7 +67,7 @@ impl<T: Sized> InnerVec<T> {
     }
 
     pub fn capacity(&self) -> usize {
-        self.capacity as usize
+        self.capacity
     }
 
     pub fn try_push(&mut self, value: T) -> Result<(), AllocError> {

@@ -340,7 +340,7 @@ static GLOBAL_IMPORTER_WASM: &[u8] = &[
 // ---- shared driving helpers -------------------------------------------------
 
 /// Default compiler options bounding a test store to `max_code_pages` pages.
-fn opts(max_code_pages: u32) -> spacewasm_compiler_options_t {
+fn opts(max_code_pages: usize) -> spacewasm_compiler_options_t {
     spacewasm_compiler_options_t {
         allow_memory_grow: false,
         max_backpatch_iterations: 0,
@@ -349,7 +349,7 @@ fn opts(max_code_pages: u32) -> spacewasm_compiler_options_t {
 }
 
 /// Create an empty (no host modules) store with the given capacities.
-fn new_store(stack_size: usize, max_modules: u32, max_code_pages: u32) -> *mut CEngine {
+fn new_store(stack_size: usize, max_modules: usize, max_code_pages: usize) -> *mut CEngine {
     let mut host = core::mem::MaybeUninit::<spacewasm_host_t>::uninit();
     let st = unsafe { spacewasm_host_new(0, host.as_mut_ptr()) };
     assert_eq!(st, status::SPACEWASM_OK, "host_new");

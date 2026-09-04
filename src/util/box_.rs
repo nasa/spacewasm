@@ -15,7 +15,7 @@ pub struct Box<T: ?Sized, A: Allocator = GlobalAllocator> {
     alloc: A,
 }
 
-impl<A: Allocator, T: core::fmt::Debug> core::fmt::Debug for Box<T, A> {
+impl<A: Allocator, T: ?Sized + core::fmt::Debug> core::fmt::Debug for Box<T, A> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         (**self).fmt(f)
     }
@@ -137,6 +137,27 @@ impl<T: ?Sized, A: Allocator> Box<T, A> {
     }
 }
 
+impl<T: ?Sized + Clone, A: Allocator + Clone> Box<[T], A> {
+    pub fn try_clone(&self) -> Result<Self, AllocError> {
+        let mut n: Vec<T, A> = Vec::new_in(self.alloc.clone(), self.len())?;
+
+        for i in 0..self.len() {
+            // `self.len() <= capacity == n.capacity`, so `push` never overflows.
+            // `self[i].clone()` is evaluated before `push` takes ownership, so a
+            // panic there leaves `n` holding only the already-cloned prefix.
+            n.push(self[i].clone());
+        }
+
+        Ok(n.into())
+    }
+}
+
+impl<T: ?Sized + Clone, A: Allocator + Clone> Clone for Box<[T], A> {
+    fn clone(&self) -> Self {
+        self.try_clone().expect("Box<T> clone failed")
+    }
+}
+
 impl<T: ?Sized, A: Allocator> Deref for Box<T, A> {
     type Target = T;
     fn deref(&self) -> &T {
@@ -193,6 +214,22 @@ impl<T: Ord, A: Allocator> Ord for Box<T, A> {
 impl<T, A: Allocator> From<Vec<T, A>> for Box<[T], A> {
     fn from(v: Vec<T, A>) -> Self {
         v.into_boxed_slice()
+    }
+}
+
+impl<'a, T, A: Allocator> IntoIterator for &'a Box<[T], A> {
+    type Item = &'a T;
+    type IntoIter = core::slice::Iter<'a, T>;
+    fn into_iter(self) -> Self::IntoIter {
+        (**self).iter()
+    }
+}
+
+impl<'a, T, A: Allocator> IntoIterator for &'a mut Box<[T], A> {
+    type Item = &'a mut T;
+    type IntoIter = core::slice::IterMut<'a, T>;
+    fn into_iter(self) -> Self::IntoIter {
+        (**self).iter_mut()
     }
 }
 
@@ -278,6 +315,36 @@ mod tests {
         assert_eq!(b.len(), 3);
         assert_eq!(&*b, &[1, 2, 3]);
         drop(b);
+    }
+
+    fn boxed_slice(values: &[u32]) -> Box<[u32]> {
+        let mut v = Vec::new(values.len()).unwrap();
+        for &value in values {
+            v.push(value);
+        }
+        v.into_boxed_slice()
+    }
+
+    #[test]
+    fn test_iter_by_ref() {
+        let mut b = boxed_slice(&[1, 2, 3]);
+
+        let mut sum = 0;
+        for value in &b {
+            sum += *value;
+        }
+        assert_eq!(sum, 6);
+
+        for value in &mut b {
+            *value *= 2;
+        }
+        assert_eq!(&*b, &[2, 4, 6]);
+    }
+
+    #[test]
+    fn test_iter_by_ref_empty() {
+        let b = boxed_slice(&[]);
+        assert_eq!((&b).into_iter().next(), None);
     }
 }
 

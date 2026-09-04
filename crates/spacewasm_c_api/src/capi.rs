@@ -44,7 +44,7 @@ pub struct spacewasm_compiler_options_t {
 
     /// Maximum number of compiled code pages allowed across all modules loaded
     /// onto the store.
-    pub max_code_pages: u32,
+    pub max_code_pages: usize,
 }
 
 impl From<spacewasm_compiler_options_t> for CompilerOptions {
@@ -107,8 +107,8 @@ pub unsafe extern "C" fn spacewasm_allocator_destroy(allocator: *mut CAllocator)
 #[repr(C)]
 pub struct spacewasm_host_t {
     ptr: *mut HostModule,
-    capacity: u32,
-    len: u32,
+    capacity: usize,
+    len: usize,
 }
 
 impl From<Vec<HostModule>> for spacewasm_host_t {
@@ -146,7 +146,7 @@ const _: () = {
 /// `dest` must be null or a valid, live pointer to write the new host vector into.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn spacewasm_host_new(
-    len: u32,
+    len: usize,
     dest: *mut spacewasm_host_t,
 ) -> spacewasm_status_t {
     if dest.is_null() {
@@ -167,8 +167,8 @@ pub unsafe extern "C" fn spacewasm_host_new(
 pub unsafe extern "C" fn spacewasm_add_host_module(
     host: *mut spacewasm_host_t,
     name: *const c_char,
-    max_functions: u32,
-    max_globals: u32,
+    max_functions: usize,
+    max_globals: usize,
     out_idx: *mut u32,
 ) -> spacewasm_status_t {
     let functions = check!(Vec::new(max_functions).map_err(status::alloc_status));
@@ -333,7 +333,7 @@ pub unsafe extern "C" fn spacewasm_load_module(
 pub unsafe extern "C" fn spacewasm_new(
     host: *mut spacewasm_host_t,
     stack_size: usize,
-    max_modules: u32,
+    max_modules: usize,
     options: spacewasm_compiler_options_t,
     out_engine: *mut *mut CEngine,
 ) -> spacewasm_status_t {
@@ -353,9 +353,8 @@ pub unsafe extern "C" fn spacewasm_new(
         unsafe { host.read() }.into()
     };
 
-    let engine = check!(
-        Engine::new(stack_size, max_modules as usize, host_modules).map_err(status::memory_status)
-    );
+    let engine =
+        check!(Engine::new(stack_size, max_modules, host_modules).map_err(status::memory_status));
 
     let code_builder = check!(CodeBuilder::new(options.into()).map_err(status::alloc_status));
 

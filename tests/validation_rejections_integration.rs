@@ -85,8 +85,8 @@ impl WasmStream for ByteStream {
         Ok(Some(unsafe {
             InnerVec::from_raw_parts(
                 self.buffer.as_mut_ptr(),
-                self.buffer.len() as u32,
-                self.buffer.len() as u32,
+                self.buffer.len(),
+                self.buffer.len(),
             )
         }))
     }

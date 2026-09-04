@@ -24,8 +24,7 @@ impl<T> Vec<T, GlobalAllocator> {
     /// length does not fit in a `u32` (instead of silently truncating the cast)
     /// or if allocating the backing buffer fails.
     pub fn from_exact_iter(iter: impl ExactSizeIterator<Item = T>) -> Result<Self, AllocError> {
-        let capacity = u32::try_from(iter.len()).map_err(|_| AllocError::AllocationFailed)?;
-        let mut o = Self::new(capacity)?;
+        let mut o = Self::new(iter.len())?;
         for i in iter {
             o.push(i);
         }
@@ -56,14 +55,6 @@ impl<A: Allocator, T: core::fmt::Debug> core::fmt::Debug for Vec<T, A> {
 }
 
 impl<T: Clone, A: Allocator + Clone> Vec<T, A> {
-    /// Attempt to clone the vector, returning [`AllocError`] if allocating the
-    /// new backing buffer fails. The clone preserves both length and capacity.
-    ///
-    /// This is panic-safe: if an element's [`Clone`] implementation panics
-    /// part-way through, every element cloned so far is dropped before the
-    /// panic propagates, so nothing is leaked. The guard is the new `Vec`'s own
-    /// [`Drop`] — [`Vec::push`] advances its `len` only *after* each element is
-    /// written, and on unwind `Drop` reclaims exactly that initialized prefix.
     pub fn try_clone(&self) -> Result<Self, AllocError> {
         let mut n: Vec<T, A> = Vec::new_in(self.alloc.clone(), self.inner.capacity)?;
 
@@ -97,7 +88,7 @@ impl<T: Eq, A: Allocator> Eq for Vec<T, A> {}
 
 impl<T: Sized> Vec<T, GlobalAllocator> {
     pub fn from_array<const N: usize>(a: [T; N]) -> Result<Self, AllocError> {
-        let mut v = Vec::new(N as u32)?;
+        let mut v = Vec::new(N)?;
         for i in a {
             v.push(i);
         }
@@ -105,7 +96,7 @@ impl<T: Sized> Vec<T, GlobalAllocator> {
         Ok(v)
     }
 
-    pub fn new(capacity: u32) -> Result<Vec<T>, AllocError> {
+    pub fn new(capacity: usize) -> Result<Vec<T>, AllocError> {
         Vec::new_in(GlobalAllocator, capacity)
     }
 
@@ -121,7 +112,7 @@ impl<T: Sized> Vec<T, GlobalAllocator> {
     /// - Ownership of that allocation is transferred to the returned `Vec`: it
     ///   must not be freed, aliased, or otherwise used elsewhere, since the
     ///   `Vec`'s `Drop` will free it with the same allocator and layout.
-    pub unsafe fn new_from(ptr: *mut T, capacity: u32) -> Vec<T> {
+    pub unsafe fn new_from(ptr: *mut T, capacity: usize) -> Vec<T> {
         Vec {
             // SAFETY: guaranteed by this function's contract; `len == 0` so no
             // element is claimed initialized.
@@ -144,7 +135,7 @@ impl<T: Sized, A: Allocator> Vec<T, A> {
     /// - Ownership of that allocation is transferred to the returned `Vec`: it
     ///   must not be freed, aliased, or otherwise used elsewhere, since the
     ///   `Vec`'s `Drop` will free it with `alloc` and the same layout.
-    pub unsafe fn new_from_with_alloc(ptr: *mut T, capacity: u32, alloc: A) -> Vec<T, A> {
+    pub unsafe fn new_from_with_alloc(ptr: *mut T, capacity: usize, alloc: A) -> Vec<T, A> {
         Vec {
             // SAFETY: guaranteed by this function's contract; `len == 0` so no
             // element is claimed initialized.
@@ -153,15 +144,14 @@ impl<T: Sized, A: Allocator> Vec<T, A> {
         }
     }
 
-    pub fn new_in(alloc: A, capacity: u32) -> Result<Vec<T, A>, AllocError> {
+    pub fn new_in(alloc: A, capacity: usize) -> Result<Vec<T, A>, AllocError> {
         // We don't want to handle ZST
         const {
             assert!(size_of::<T>() != 0);
         }
 
         let ptr = if capacity > 0 {
-            let layout =
-                Layout::array::<T>(capacity as usize).map_err(|_| AllocError::AllocationFailed)?;
+            let layout = Layout::array::<T>(capacity).map_err(|_| AllocError::AllocationFailed)?;
             unsafe { alloc.alloc(layout)? }
         } else {
             core::ptr::null_mut()
@@ -304,7 +294,7 @@ impl<T: Sized, A: Allocator> Vec<T, A> {
 
             core::mem::forget(self);
 
-            let slice_ptr: *mut [T] = core::ptr::slice_from_raw_parts_mut(ptr, cap as usize);
+            let slice_ptr: *mut [T] = core::ptr::slice_from_raw_parts_mut(ptr, cap);
 
             Box::from_raw(alloc, slice_ptr)
         }
@@ -331,7 +321,7 @@ impl<T: Sized, A: Allocator> Drop for Vec<T, A> {
             unsafe {
                 self.alloc.dealloc(
                     self.inner.ptr as *mut u8,
-                    Layout::array::<T>(self.inner.capacity as usize).unwrap(),
+                    Layout::array::<T>(self.inner.capacity).unwrap(),
                 );
             }
         }
@@ -347,8 +337,8 @@ impl<T, A: Allocator> IntoIterator for Vec<T, A> {
 
         // Can't destructure Vec since it's Drop
         let ptr = vec.inner.ptr;
-        let cap = vec.inner.capacity as usize;
-        let len = vec.inner.len as usize;
+        let cap = vec.inner.capacity;
+        let len = vec.inner.len;
 
         // SAFETY: move the allocator out of the `ManuallyDrop` wrapper into the IntoIter
         let alloc = unsafe { core::ptr::read(&vec.alloc) };
@@ -451,7 +441,7 @@ mod kani_proofs {
 
         let vec: Vec<u32, _> = Vec::new_in(RustSystemAllocator, capacity).unwrap();
 
-        assert_eq!(vec.capacity(), capacity as usize);
+        assert_eq!(vec.capacity(), capacity);
         assert_eq!(vec.len(), 0);
 
         if capacity == 0 {
@@ -529,15 +519,12 @@ mod kani_proofs {
 
         // Fill to capacity (required by into_boxed_slice)
         let values: [u32; 3] = kani::any();
-        for i in 0..(capacity as usize) {
+        for i in 0..(capacity) {
             vec.push(values[i]);
         }
 
         let len = vec.len();
-        assert_eq!(
-            len, capacity as usize,
-            "Vec must be full for into_boxed_slice"
-        );
+        assert_eq!(len, capacity, "Vec must be full for into_boxed_slice");
 
         let boxed_slice = vec.into_boxed_slice();
 
@@ -798,8 +785,8 @@ mod tests {
 
     #[test]
     fn test_new_from() {
-        let capacity = 3u32;
-        let layout = Layout::array::<i32>(capacity as usize).unwrap();
+        let capacity = 3usize;
+        let layout = Layout::array::<i32>(capacity).unwrap();
         let ptr = unsafe { GlobalAllocator.alloc(layout).unwrap() as *mut i32 };
 
         // SAFETY: `ptr` is a fresh GlobalAllocator allocation for `capacity`
@@ -818,8 +805,8 @@ mod tests {
     fn test_new_from_with_alloc() {
         use crate::test_support::RustSystemAllocator;
 
-        let capacity = 2u32;
-        let layout = Layout::array::<i32>(capacity as usize).unwrap();
+        let capacity = 2usize;
+        let layout = Layout::array::<i32>(capacity).unwrap();
         let ptr = unsafe { RustSystemAllocator.alloc(layout).unwrap() as *mut i32 };
 
         // SAFETY: `ptr` is a fresh RustSystemAllocator allocation for `capacity`
@@ -844,13 +831,13 @@ mod tests {
 
     #[test]
     fn test_assume_init() {
-        let capacity = 3u32;
-        let layout = Layout::array::<i32>(capacity as usize).unwrap();
+        let capacity = 3usize;
+        let layout = Layout::array::<i32>(capacity).unwrap();
         let ptr = unsafe { GlobalAllocator.alloc(layout).unwrap() as *mut i32 };
 
         // Initialize every slot up to capacity before calling assume_init.
         unsafe {
-            for i in 0..capacity as usize {
+            for i in 0..capacity {
                 core::ptr::write(ptr.add(i), (i as i32) * 100);
             }
         }

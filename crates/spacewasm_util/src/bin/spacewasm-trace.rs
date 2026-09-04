@@ -19,7 +19,7 @@ use std::fs;
 use std::io::{self, Read};
 use std::process;
 
-const MAX_CODE_PAGES: u32 = 128;
+const MAX_CODE_PAGES: usize = 128;
 const MAX_CONTROL_FRAMES: usize = 128;
 const MAX_STACK_DEPTH: usize = 256;
 
@@ -48,8 +48,8 @@ impl WasmStream for ByteStream {
         let inner = unsafe {
             InnerVec::from_raw_parts(
                 self.buffer.as_mut_ptr(),
-                self.buffer.len() as u32,
-                self.buffer.len() as u32,
+                self.buffer.len(),
+                self.buffer.len(),
             )
         };
         Ok(Some(inner))

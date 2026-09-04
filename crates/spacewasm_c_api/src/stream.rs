@@ -86,7 +86,7 @@ impl WasmStream for CallbackStream {
                 // `capacity: 0` ensures the `Chunk` drop assertion holds and no
                 // deallocation of borrowed memory is attempted.
                 Ok(Some(unsafe {
-                    InnerVec::from_raw_parts(out_buf as *mut u8, 0, out_len as u32)
+                    InnerVec::from_raw_parts(out_buf as *mut u8, 0, out_len)
                 }))
             }
         }

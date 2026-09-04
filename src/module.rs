@@ -27,13 +27,13 @@ pub enum TableElement {
 #[derive(Debug)]
 pub struct Module {
     pub name: String,
-    pub types: Vec<FuncType>,
-    pub functions: Vec<Func>,
+    pub types: Box<[FuncType]>,
+    pub functions: Box<[Func]>,
     pub table: Option<TableKind>,
     pub memory: Option<MemoryKind>,
-    pub globals: Vec<Global>,
-    pub imports: Vec<Import>,
-    pub exports: Vec<Export>,
+    pub globals: Box<[Global]>,
+    pub imports: Box<[Import]>,
+    pub exports: Box<[Export]>,
     pub start: Option<Ref>,
 }
 
@@ -120,13 +120,13 @@ impl Module {
 
         let mut module = Module {
             name: name.try_into()?,
-            types: Vec::zero(),
-            functions: Vec::zero(),
+            types: Vec::zero().into(),
+            functions: Vec::zero().into(),
             table: None,
             memory: None,
-            globals: Vec::zero(),
-            imports: Vec::zero(),
-            exports: Vec::zero(),
+            globals: Vec::zero().into(),
+            imports: Vec::zero().into(),
+            exports: Vec::zero().into(),
             start: None,
         };
 
@@ -208,10 +208,10 @@ impl Module {
                 CustomSection::read(wasm, section_size, custom_handler)?;
             }
             Type => {
-                self.types = TypeSection::read(wasm)?;
+                self.types = TypeSection::read(wasm)?.into();
             }
             Import => {
-                self.imports = ImportSection::read(wasm, store, self)?;
+                self.imports = ImportSection::read(wasm, store, self)?.into();
 
                 // We need to resolve some imports into the module (i.e. memory and table)
                 for import in &self.imports {
@@ -278,7 +278,7 @@ impl Module {
                 }
             }
             Function => {
-                self.functions = FunctionSection::read(wasm, self)?;
+                self.functions = FunctionSection::read(wasm, self)?.into();
             }
             Table => {
                 if self.table.is_some() {
@@ -291,10 +291,10 @@ impl Module {
                 self.memory = MemorySection::read(wasm, self, allocator)?;
             }
             Global => {
-                self.globals = GlobalSection::read(wasm, store, self)?;
+                self.globals = GlobalSection::read(wasm, store, self)?.into();
             }
             Export => {
-                self.exports = ExportSection::read(wasm, self)?;
+                self.exports = ExportSection::read(wasm, self)?.into();
             }
             Start => {
                 let idx = FuncIdx::read(wasm)?;
@@ -600,7 +600,7 @@ impl Func {
             local_size: 0,
             parameter_size: parameter_size as u8,
             return_ty,
-            locals: Vec::zero(),
+            locals: Vec::zero().into(),
             expr: Expr::zero(),
         })
     }
@@ -786,7 +786,7 @@ pub struct ExportSection;
 impl ExportSection {
     pub fn read(wasm: &mut Reader, module: &Module) -> Result<Vec<Export>, ValidationError> {
         let len = wasm.read_u32()?;
-        let mut out: Vec<Export> = Vec::new(len)?;
+        let mut out: Vec<Export> = Vec::new(len as usize)?;
         for _ in 0..len {
             let e = Export::read(wasm, module)?;
             // Check for duplicate export name

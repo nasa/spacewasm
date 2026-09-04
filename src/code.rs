@@ -76,7 +76,7 @@ pub struct Func {
 
     /// Local variables allocated in this functions frame
     /// Read in the code section
-    pub locals: Vec<(u16, ValType)>,
+    pub locals: Box<[(u16, ValType)]>,
 
     /// Functions entry point
     pub expr: Expr,
@@ -93,20 +93,31 @@ impl Module {
         let size = wasm.read_u32()?;
         let start = wasm.offset();
 
-        let empty_f = self.functions[i].clone();
+        let empty_f = Func {
+            ty: TypeIdx(0),
+            stack_usage: 0,
+            local_size: 0,
+            parameter_size: 0,
+            return_ty: None,
+            locals: Vec::zero().into(),
+            expr: Expr::zero(),
+        };
+
         let mut f = core::mem::replace(&mut self.functions[i], empty_f);
 
         wasm.with_limit(size as usize, |wasm| {
-            f.locals = wasm.read_vec(|w| {
-                let n = w.read_u32()?;
-                let t = ValType::read(w)?;
+            f.locals = wasm
+                .read_vec(|w| {
+                    let n = w.read_u32()?;
+                    let t = ValType::read(w)?;
 
-                if n > 0xFFFF {
-                    return Err(ValidationError::TooManyLocals);
-                }
+                    if n > 0xFFFF {
+                        return Err(ValidationError::TooManyLocals);
+                    }
 
-                Ok((n as u16, t))
-            })?;
+                    Ok((n as u16, t))
+                })?
+                .into();
 
             // Compute the local size in words
             let mut total_size: usize = 0;

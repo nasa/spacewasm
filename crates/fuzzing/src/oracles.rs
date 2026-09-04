@@ -70,9 +70,7 @@ impl WasmStream for ByteStream {
 
         if let Some(ref mut vec) = self.buffer {
             self.consumed = true;
-            let inner = unsafe {
-                InnerVec::from_raw_parts(vec.as_mut_ptr(), vec.len() as u32, vec.len() as u32)
-            };
+            let inner = unsafe { InnerVec::from_raw_parts(vec.as_mut_ptr(), vec.len(), vec.len()) };
             Ok(Some(inner))
         } else {
             Ok(None)
@@ -170,7 +168,7 @@ mod fuzz_alloc {
     spacewasm::global_allocator!(SystemAllocator, SystemAllocator);
 }
 
-const MAX_CODE_PAGES: u32 = 128;
+const MAX_CODE_PAGES: usize = 128;
 const MAX_CONTROL_FRAMES: usize = 128;
 const MAX_STACK_DEPTH: usize = 256;
 

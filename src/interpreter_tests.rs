@@ -50,8 +50,8 @@ mod tests {
         // Create a minimal valid module
         let module = Module {
             name: "test".try_into().unwrap(),
-            types: crate::Vec::zero(),
-            functions: crate::Vec::zero(),
+            types: crate::Vec::zero().into(),
+            functions: crate::Vec::zero().into(),
             table: None,
             memory: Some(MemoryKind::Owned(
                 crate::Rc::new(
@@ -69,10 +69,10 @@ mod tests {
                 )
                 .unwrap(),
             )),
-            globals: crate::Vec::zero(),
+            globals: crate::Vec::zero().into(),
             start: None,
-            imports: crate::Vec::zero(),
-            exports: crate::Vec::zero(),
+            imports: crate::Vec::zero().into(),
+            exports: crate::Vec::zero().into(),
         };
 
         let module_ref = engine.push_module(module).unwrap();
