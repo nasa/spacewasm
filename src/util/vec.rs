@@ -294,6 +294,12 @@ impl<T: Sized, A: Allocator> Vec<T, A> {
 
             core::mem::forget(self);
 
+            let ptr = if cap == 0 {
+                core::ptr::NonNull::<T>::dangling().as_ptr()
+            } else {
+                ptr
+            };
+
             let slice_ptr: *mut [T] = core::ptr::slice_from_raw_parts_mut(ptr, cap);
 
             Box::from_raw(alloc, slice_ptr)
@@ -552,6 +558,20 @@ mod tests {
         let vec: Vec<i32> = Vec::zero();
         assert_eq!(vec.len(), 0);
         assert_eq!(vec.capacity(), 0);
+    }
+
+    #[test]
+    fn test_zero_into_boxed_slice_is_derefable() {
+        // A zero-capacity `Vec` holds a null pointer, which must not reach the
+        // `Box` it converts into: `Box` derefs unconditionally, so a null there
+        // traps under optimization.
+        let b = Vec::<i32>::zero().into_boxed_slice();
+        assert!(b.is_empty());
+        assert_eq!(&*b, &[] as &[i32]);
+        drop(b);
+
+        let b = Vec::<i32>::new(0).unwrap().into_boxed_slice();
+        assert_eq!(&*b, &[] as &[i32]);
     }
 
     #[test]
