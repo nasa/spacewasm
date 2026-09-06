@@ -644,133 +644,142 @@ mod kani_proofs {
     use super::*;
     use crate::test_support::RustSystemAllocator;
 
-    /// Verify reference counting correctness: clone increments, drop decrements
-    /// Counter invariants: never zero while Rc exists, never overflows
+    /// `count >= 1` for all new `Rc`
     #[kani::proof]
-    fn proof_rc_reference_counting() {
+    fn proof_new_satisfies_invariant() {
+        let rc = Rc::new_in(RustSystemAllocator, 42u32);
+        kani::assume(rc.is_ok());
+        let rc = rc.unwrap();
+
+        assert_eq!(rc.inner().count(), 1, "a new Rc must start with count 1");
+    }
+
+    /// Increment only increments by 1
+    #[kani::proof]
+    fn proof_inc_step_invariant() {
         let rc1 = Rc::new_in(RustSystemAllocator, 42u32);
         kani::assume(rc1.is_ok());
         let rc1 = rc1.unwrap();
 
-        // Initial state: count must be 1
-        assert_eq!(rc1.inner().count(), 1, "Initial count must be 1");
+        let count: u32 = kani::any();
+        kani::assume(count >= 1 && count < u32::MAX);
+        rc1.inner().count.set(count);
 
-        // Clone increments count
         let rc2 = rc1.clone();
-        assert_eq!(rc1.inner().count(), 2, "Count must be 2 after first clone");
-        assert_eq!(rc2.inner().count(), 2, "Both Rcs must see same count");
-        assert_eq!(*rc1, 42, "Value must be accessible through rc1");
-        assert_eq!(*rc2, 42, "Value must be accessible through rc2");
 
-        // Second clone increments again
-        let rc3 = rc1.clone();
-        assert_eq!(rc1.inner().count(), 3, "Count must be 3 after second clone");
-        assert_eq!(rc2.inner().count(), 3, "All Rcs must see same count");
-        assert_eq!(rc3.inner().count(), 3, "All Rcs must see same count");
-
-        // Drop rc3 - count decrements
-        drop(rc3);
-        assert_eq!(rc1.inner().count(), 2, "Count must be 2 after dropping rc3");
         assert_eq!(
-            rc2.inner().count(),
-            2,
-            "Both remaining Rcs must see count 2"
+            rc1.inner().count(),
+            (count + 1) as usize,
+            "inc must increase the count by exactly one"
         );
+        assert!(rc1.inner().count() >= 1, "count must stay >= 1 after inc");
 
-        // Drop rc2 - count decrements to 1
-        drop(rc2);
-        assert_eq!(rc1.inner().count(), 1, "Count must be 1 after dropping rc2");
-
-        // rc1 drops at end of scope - count becomes 0, memory deallocated
+        core::mem::forget(rc1);
+        core::mem::forget(rc2);
     }
 
-    /// Verify that Rc properly deallocates when last reference is dropped
-    /// Tests the drop path and ensures no memory leaks
+    /// Incrementing at `u32::MAX` must abort
     #[kani::proof]
-    fn proof_rc_last_drop_deallocates() {
-        let value: u32 = kani::any();
-
-        {
-            let rc1 = Rc::new_in(RustSystemAllocator, value);
-            kani::assume(rc1.is_ok());
-            let rc1 = rc1.unwrap();
-            assert_eq!(rc1.inner().count(), 1, "Count must be 1");
-
-            {
-                let rc2 = rc1.clone();
-                assert_eq!(rc1.inner().count(), 2, "Count must be 2");
-                assert_eq!(*rc2, value, "Value must match");
-                // rc2 drops here
-            }
-
-            assert_eq!(rc1.inner().count(), 1, "Count must be 1 after rc2 dropped");
-            assert_eq!(*rc1, value, "Value still accessible");
-            // rc1 drops here - this triggers deallocation
-        }
-
-        // After this scope, all memory must be freed
-        // Kani will verify no memory leaks
-    }
-
-    /// Verify get_mut returns Some only when unique (count == 1)
-    /// Ensures exclusive access invariant is maintained
-    #[kani::proof]
-    fn proof_rc_get_mut_uniqueness() {
-        let value: u32 = kani::any();
-
-        let rc1 = Rc::new_in(RustSystemAllocator, value);
-        kani::assume(rc1.is_ok());
-        let mut rc1 = rc1.unwrap();
-
-        // When unique, get_mut should succeed
-        assert_eq!(rc1.inner().count(), 1, "Count must be 1");
-        let mut_ref = rc1.get_mut();
-        assert!(mut_ref.is_some(), "get_mut must return Some when unique");
-
-        let new_value: u32 = kani::any();
-        *mut_ref.unwrap() = new_value;
-        assert_eq!(*rc1, new_value, "Mutation must be visible");
-
-        // After clone, get_mut should fail
-        let _rc2 = rc1.clone();
-        assert_eq!(rc1.inner().count(), 2, "Count must be 2");
-        let mut_ref2 = rc1.get_mut();
-        assert!(
-            mut_ref2.is_none(),
-            "get_mut must return None when not unique"
-        );
-
-        // After drop, get_mut should succeed again
-        drop(_rc2);
-        assert_eq!(rc1.inner().count(), 1, "Count must be 1 again");
-        let mut_ref3 = rc1.get_mut();
-        assert!(
-            mut_ref3.is_some(),
-            "get_mut must return Some when unique again"
-        );
-    }
-
-    /// Verify is_unique correctly identifies when Rc has no other references
-    #[kani::proof]
-    fn proof_rc_is_unique() {
-        let rc1 = Rc::new_in(RustSystemAllocator, 100u32);
+    #[kani::should_panic]
+    fn proof_inc_overflow_aborts() {
+        let rc1 = Rc::new_in(RustSystemAllocator, 42u32);
         kani::assume(rc1.is_ok());
         let rc1 = rc1.unwrap();
 
-        // Initially unique
-        assert!(rc1.is_unique(), "Must be unique initially");
-        assert_eq!(rc1.inner().count(), 1, "Count must be 1");
-
-        // After clone, not unique
+        rc1.inner().count.set(u32::MAX);
         let rc2 = rc1.clone();
-        assert!(!rc1.is_unique(), "Must not be unique after clone");
-        assert!(!rc2.is_unique(), "Must not be unique after clone");
-        assert_eq!(rc1.inner().count(), 2, "Count must be 2");
 
-        // After drop, unique again
-        drop(rc2);
-        assert!(rc1.is_unique(), "Must be unique again after drop");
-        assert_eq!(rc1.inner().count(), 1, "Count must be 1 again");
+        core::mem::forget(rc1);
+        core::mem::forget(rc2);
+    }
+
+    /// Decrement only decrements by 1
+    #[kani::proof]
+    fn proof_dec_step_invariant() {
+        let rc1 = Rc::new_in(RustSystemAllocator, 42u32);
+        kani::assume(rc1.is_ok());
+        let rc1 = rc1.unwrap();
+
+        let count: u32 = kani::any();
+        kani::assume(count >= 1);
+        rc1.inner().count.set(count);
+
+        let new_count = rc1.inner().dec();
+
+        assert_eq!(
+            new_count,
+            (count - 1) as usize,
+            "dec must decrease the count by exactly one"
+        );
+        assert_eq!(
+            new_count == 0,
+            count == 1,
+            "dec must reach 0 exactly when the last reference is dropped"
+        );
+
+        core::mem::forget(rc1);
+    }
+
+    /// Access granted only when `count == 1`.
+    #[kani::proof]
+    fn proof_get_mut_step_invariant() {
+        let rc1 = Rc::new_in(RustSystemAllocator, 42u32);
+        kani::assume(rc1.is_ok());
+        let mut rc1 = rc1.unwrap();
+
+        let count: u32 = kani::any();
+        kani::assume(count >= 1);
+        rc1.inner().count.set(count);
+
+        assert_eq!(
+            rc1.is_unique(),
+            count == 1,
+            "is_unique must reflect count == 1"
+        );
+        assert_eq!(
+            rc1.get_mut().is_some(),
+            count == 1,
+            "get_mut must return Some iff count == 1"
+        );
+
+        rc1.inner().count.set(1);
+    }
+
+    /// End-to-end clone/drop
+    #[kani::proof]
+    fn proof_rc_lifecycle_regression() {
+        let backing_alloc = RustSystemAllocator;
+        let initial_bytes = backing_alloc.total_allocated();
+
+        {
+            let rc1 = Rc::new_in(backing_alloc, 42u32).unwrap();
+            assert_eq!(rc1.inner().count(), 1, "Initial count must be 1");
+
+            let rc2 = rc1.clone();
+            assert_eq!(rc1.inner().count(), 2, "Count must be 2 after first clone");
+            assert_eq!(rc2.inner().count(), 2, "Both Rcs must see same count");
+
+            let rc3 = rc1.clone();
+            assert_eq!(rc1.inner().count(), 3, "Count must be 3 after second clone");
+
+            drop(rc3);
+            assert_eq!(rc1.inner().count(), 2, "Count must be 2 after dropping rc3");
+
+            drop(rc2);
+            assert_eq!(rc1.inner().count(), 1, "Count must be 1 after dropping rc2");
+
+            assert!(
+                backing_alloc.total_allocated() > initial_bytes,
+                "allocation must still be live while rc1 holds it"
+            );
+            // rc1 drops here, deallocating.
+        }
+
+        assert_eq!(
+            backing_alloc.total_allocated(),
+            initial_bytes,
+            "the final drop must free the allocation exactly once"
+        );
     }
 
     /// Verify Rc::new_slice allocates correct layout and initializes all elements
@@ -895,49 +904,4 @@ mod kani_proofs {
         assert_eq!(ref2, ref3, "All derefs must point to same address");
     }
 
-    /// Verify count increments correctly right up to the edge of overflow.
-    /// Directly seeds the private count field near `u32::MAX` instead of
-    /// looping from 1, since reaching that boundary by cloning one at a
-    /// time is infeasible to unwind (it would take billions of iterations).
-    #[kani::proof]
-    fn proof_rc_count_increment_near_max() {
-        let rc1 = Rc::new_in(RustSystemAllocator, 42u32);
-        kani::assume(rc1.is_ok());
-        let rc1 = rc1.unwrap();
-
-        let count: u32 = kani::any();
-        kani::assume(count >= u32::MAX - 2 && count < u32::MAX);
-        rc1.inner().count.set(count);
-
-        let rc2 = rc1.clone();
-        assert_eq!(
-            rc1.inner().count(),
-            (count + 1) as usize,
-            "Count must increment correctly up to the boundary"
-        );
-
-        // Prevent Drop from decrementing a count it never incremented for real
-        core::mem::forget(rc1);
-        core::mem::forget(rc2);
-    }
-
-    /// Verify that incrementing the count past `u32::MAX` aborts instead of
-    /// silently wrapping to 0 (which would cause a premature deallocation
-    /// while other `Rc`s are still alive).
-    #[kani::proof]
-    #[kani::should_panic]
-    fn proof_rc_count_overflow_aborts() {
-        let rc1 = Rc::new_in(RustSystemAllocator, 42u32);
-        kani::assume(rc1.is_ok());
-        let rc1 = rc1.unwrap();
-
-        rc1.inner().count.set(u32::MAX);
-        let rc2 = rc1.clone();
-
-        // The clone above is expected to abort before reaching here. If CBMC
-        // continues past the failed assertion anyway, prevent Drop from
-        // running on the corrupted (wrapped-to-0) count.
-        core::mem::forget(rc1);
-        core::mem::forget(rc2);
-    }
 }
