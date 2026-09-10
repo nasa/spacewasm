@@ -6,5 +6,8 @@
     (call $invalid_should_return_none) unreachable)
 )
 
-;; This function should cause a panic because the host function is invalid
+;; Invoking "call" panics because the host function is invalid, so the
+;; assert_return below is never reached. The panic is the actual pass
+;; criterion, asserted by the #[should_panic] attribute on
+;; host_func_invalid_should_panic_none in tests/regression_integration.rs.
 (assert_return (invoke "call") (i32.const 0))

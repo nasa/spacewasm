@@ -2,14 +2,13 @@
 // (https://github.com/rust-lang/rust), licensed under Apache-2.0. These
 // portions have been modified for SpaceWasm.
 
-use crate::util::Vec;
-use crate::{Allocator, GlobalAllocator, ValidationError};
+use crate::{Allocator, Box, GlobalAllocator, ValidationError, Vec};
 use core::fmt;
 use core::fmt::Formatter;
 use core::ops::Deref;
 
 #[derive(Clone)]
-pub struct String<A: Allocator = GlobalAllocator>(Vec<u8, A>);
+pub struct String<A: Allocator = GlobalAllocator>(Box<[u8], A>);
 
 impl TryFrom<&[u8]> for String<GlobalAllocator> {
     type Error = ValidationError;
@@ -38,11 +37,11 @@ impl TryFrom<&str> for String<GlobalAllocator> {
     type Error = ValidationError;
 
     fn try_from(value: &str) -> Result<Self, ValidationError> {
-        let mut v = Vec::new(value.len() as u32)?;
+        let mut v = Vec::new(value.len())?;
         for byte in value.as_bytes() {
             v.push(*byte);
         }
-        Ok(String(v))
+        Ok(String(v.into()))
     }
 }
 
@@ -80,7 +79,7 @@ impl<A: Allocator> TryFrom<Vec<u8, A>> for String<A> {
     fn try_from(value: Vec<u8, A>) -> Result<Self, Self::Error> {
         // Validate the integrity of the string
         match core::str::from_utf8(&value) {
-            Ok(_) => Ok(String(value)),
+            Ok(_) => Ok(String(value.into())),
             Err(_) => Err(ValidationError::MalformedUtf8),
         }
     }
@@ -160,14 +159,6 @@ mod tests {
         let s = String::try_from("as ref").unwrap();
         let r: &str = s.as_ref();
         assert_eq!(r, "as ref");
-    }
-
-    #[test]
-    fn test_clone() {
-        let s = String::try_from("clone me").unwrap();
-        let c = s.clone();
-        assert_eq!(&*c, "clone me");
-        assert_eq!(&*s, &*c);
     }
 
     #[test]

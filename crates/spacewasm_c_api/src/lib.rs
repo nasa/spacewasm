@@ -34,13 +34,3 @@ pub use host::{SpacewasmCaller, spacewasm_host_fn_t, spacewasm_hostcall_result_t
 pub use status::{spacewasm_run_status_t, spacewasm_status_t, spacewasm_trap_t};
 pub use stream::{spacewasm_read_fn_t, spacewasm_read_result_t};
 pub use value::{spacewasm_valtype_t, spacewasm_value_t};
-
-/// FFI-safe copy of [`spacewasm::MemoryStatistics`] (already `#[repr(C)]`).
-pub use spacewasm::MemoryStatistics as spacewasm_memory_statistics_t;
-
-/// Global allocator statistics. Independent of the interpreter configuration,
-/// so it takes no const-generic parameters.
-#[unsafe(no_mangle)]
-pub extern "C" fn spacewasm_memory_statistics() -> spacewasm_memory_statistics_t {
-    spacewasm::Allocator::memory_statistics(&spacewasm::GlobalAllocator)
-}

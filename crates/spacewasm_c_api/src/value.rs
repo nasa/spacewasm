@@ -12,6 +12,25 @@ pub enum spacewasm_valtype_t {
     SPACEWASM_F64 = 3,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InvalidValtypeTag;
+
+impl TryFrom<&spacewasm_valtype_t> for ValType {
+    type Error = InvalidValtypeTag;
+
+    fn try_from(tag: &spacewasm_valtype_t) -> Result<Self, Self::Error> {
+        // SAFETY: `spacewasm_valtype_t` is `#[repr(u8)]`
+        let raw = unsafe { *(tag as *const spacewasm_valtype_t).cast::<u8>() };
+        match raw {
+            0 => Ok(ValType::I32),
+            1 => Ok(ValType::I64),
+            2 => Ok(ValType::F32),
+            3 => Ok(ValType::F64),
+            _ => Err(InvalidValtypeTag),
+        }
+    }
+}
+
 impl From<ValType> for spacewasm_valtype_t {
     fn from(v: ValType) -> Self {
         match v {
@@ -19,17 +38,6 @@ impl From<ValType> for spacewasm_valtype_t {
             ValType::I64 => spacewasm_valtype_t::SPACEWASM_I64,
             ValType::F32 => spacewasm_valtype_t::SPACEWASM_F32,
             ValType::F64 => spacewasm_valtype_t::SPACEWASM_F64,
-        }
-    }
-}
-
-impl From<spacewasm_valtype_t> for ValType {
-    fn from(v: spacewasm_valtype_t) -> Self {
-        match v {
-            spacewasm_valtype_t::SPACEWASM_I32 => ValType::I32,
-            spacewasm_valtype_t::SPACEWASM_I64 => ValType::I64,
-            spacewasm_valtype_t::SPACEWASM_F32 => ValType::F32,
-            spacewasm_valtype_t::SPACEWASM_F64 => ValType::F64,
         }
     }
 }
@@ -50,20 +58,6 @@ pub union spacewasm_value_payload_t {
 pub struct spacewasm_value_t {
     pub tag: spacewasm_valtype_t,
     pub u: spacewasm_value_payload_t,
-}
-
-impl From<spacewasm_value_t> for Value {
-    fn from(value: spacewasm_value_t) -> Self {
-        // SAFETY: reading the union field that the tag designates as active.
-        unsafe {
-            match value.tag {
-                spacewasm_valtype_t::SPACEWASM_I32 => Value::I32(value.u.i32_),
-                spacewasm_valtype_t::SPACEWASM_I64 => Value::I64(value.u.i64_),
-                spacewasm_valtype_t::SPACEWASM_F32 => Value::F32(value.u.f32_),
-                spacewasm_valtype_t::SPACEWASM_F64 => Value::F64(value.u.f64_),
-            }
-        }
-    }
 }
 
 impl From<Value> for spacewasm_value_t {
@@ -90,8 +84,21 @@ impl From<Value> for spacewasm_value_t {
 }
 
 impl spacewasm_value_t {
-    pub fn to_value(self) -> Value {
-        self.into()
+    /// Validated conversion of a value received from C into a core [`Value`].
+    ///
+    /// Returns `None` when `tag` is not valid
+    pub fn try_to_value(&self) -> Option<Value> {
+        let ty = ValType::try_from(&self.tag).ok()?;
+        // SAFETY: the union field read is selected by the validated tag; every
+        // bit pattern is a valid value of the corresponding scalar type.
+        Some(unsafe {
+            match ty {
+                ValType::I32 => Value::I32(self.u.i32_),
+                ValType::I64 => Value::I64(self.u.i64_),
+                ValType::F32 => Value::F32(self.u.f32_),
+                ValType::F64 => Value::F64(self.u.f64_),
+            }
+        })
     }
 
     pub fn from_value(v: Value) -> spacewasm_value_t {

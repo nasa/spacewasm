@@ -35,7 +35,6 @@ impl ModuleConfig {
             // Disable imports - SpaceWasm tests don't provide import environment
             min_imports: 0,
             max_imports: 0,
-            // Memory limits (SpaceWasm supports max 256 pages = 16MB)
             memory_max_size_required: false,
             max_memory32_bytes: 65536 * 32,
             // Wasm 1.0 MVP compliance - disable all post-MVP features
@@ -67,16 +66,6 @@ impl ModuleConfig {
     /// Generate a WebAssembly module from unstructured input.
     pub fn generate(&self, u: &mut Unstructured<'_>) -> Result<wasm_smith::Module> {
         wasm_smith::Module::new(self.config.clone(), u)
-    }
-
-    /// Get the underlying wasm-smith config.
-    pub fn smith_config(&self) -> &SmithConfig {
-        &self.config
-    }
-
-    /// Get a mutable reference to the underlying wasm-smith config.
-    pub fn smith_config_mut(&mut self) -> &mut SmithConfig {
-        &mut self.config
     }
 }
 

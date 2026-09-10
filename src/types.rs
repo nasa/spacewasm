@@ -26,24 +26,6 @@ pub enum ValType {
     F64,
 }
 
-impl From<u8> for ValType {
-    fn from(val: u8) -> Self {
-        #[cfg(feature = "strict-assertions")]
-        match val {
-            0 => ValType::I32,
-            1 => ValType::I64,
-            2 => ValType::F32,
-            3 => ValType::F64,
-            _ => unreachable!(),
-        }
-
-        #[cfg(not(feature = "strict-assertions"))]
-        unsafe {
-            core::mem::transmute(val)
-        }
-    }
-}
-
 /// A runtime type-tracked value
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Value {
@@ -60,6 +42,18 @@ impl ValType {
             ValType::I64 => 8,
             ValType::F32 => 4,
             ValType::F64 => 8,
+        }
+    }
+
+    /// Convert the internal `#[repr(u8)]` discriminant back into a [`ValType`],
+    /// returning `None` for any tag that is not a valid ValType.
+    pub(crate) fn from_repr(tag: u8) -> Option<ValType> {
+        match tag {
+            0 => Some(ValType::I32),
+            1 => Some(ValType::I64),
+            2 => Some(ValType::F32),
+            3 => Some(ValType::F64),
+            _ => None,
         }
     }
 
@@ -226,7 +220,7 @@ impl Limit {
             0x01 => {
                 let min = wasm.read_u32()?;
 
-                // Note: We are disabling `max` memory size since we don't support memory.grow
+                // A maximum is present: read it and ensure it is not smaller than the minimum.
                 let max = wasm.read_u32()?;
                 if max < min {
                     return Err(ValidationError::InvalidMaxLimit);
@@ -466,6 +460,17 @@ impl GlobalType {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn valtype_from_repr_roundtrips_and_rejects() {
+        // Every valid discriminant round-trips through `as u8` / `from_repr`.
+        for vt in [ValType::I32, ValType::I64, ValType::F32, ValType::F64] {
+            assert_eq!(ValType::from_repr(vt as u8), Some(vt));
+        }
+        // Any out-of-range tag is rejected instead of being transmuted.
+        assert_eq!(ValType::from_repr(4), None);
+        assert_eq!(ValType::from_repr(0xFF), None);
+    }
 
     #[test]
     fn raw_value_roundtrip_word() {

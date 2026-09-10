@@ -294,21 +294,25 @@ impl<'a> WasmVisitor for ConstantCompiler<'a> {
             .get_global_ref(x)
             .ok_or(ConstantExprError::InvalidGlobal)?
         {
-            Ref::Module(idx) => self
-                .module
-                .globals
-                .get(idx as usize)
-                .ok_or(ConstantExprError::InvalidGlobal)?
-                .value(),
+            // Non-imported (module-local) global: not allowed in a const-expr.
+            Ref::Module(_) => return Err(ConstantExprError::InvalidConstantInstruction),
             Ref::Host { module, index } => {
                 // Look up the host module/global and read its value
-                self.store
+                let global = self
+                    .store
                     .host_modules()
                     .get(module.0 as usize)
                     .ok_or(ConstantExprError::InvalidGlobal)?
                     .globals
                     .get(index as usize)
-                    .ok_or(ConstantExprError::InvalidGlobal)?
+                    .ok_or(ConstantExprError::InvalidGlobal)?;
+
+                // Mutable globals cannot appear in a constant expression.
+                if global.value.mutable() {
+                    return Err(ConstantExprError::InvalidConstantInstruction);
+                }
+
+                global
                     .value
                     .read()
                     .ok()
@@ -316,14 +320,21 @@ impl<'a> WasmVisitor for ConstantCompiler<'a> {
             }
             Ref::Extern { module, index } => {
                 // Look up the external wasm module and read the globals value
-                self.store
+                let global = self
+                    .store
                     .modules()
                     .get(module.0 as usize)
                     .ok_or(ConstantExprError::InvalidGlobal)?
                     .globals
                     .get(index as usize)
-                    .ok_or(ConstantExprError::InvalidGlobal)?
-                    .value()
+                    .ok_or(ConstantExprError::InvalidGlobal)?;
+
+                // Mutable globals cannot appear in a constant expression.
+                if global.type_.mutable {
+                    return Err(ConstantExprError::InvalidConstantInstruction);
+                }
+
+                global.value()
             }
         };
 

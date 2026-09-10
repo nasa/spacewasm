@@ -76,10 +76,19 @@ pub struct Func {
 
     /// Local variables allocated in this functions frame
     /// Read in the code section
-    pub locals: Vec<(u16, ValType)>,
+    pub locals: Box<[(u16, ValType)]>,
 
     /// Functions entry point
     pub expr: Expr,
+}
+
+impl Func {
+    /// Stack words a call to this function needs above the caller's stack
+    /// pointer: the two-word call frame, the locals, and the peak operand usage.
+    #[inline]
+    pub fn required_stack_words(&self) -> usize {
+        self.stack_usage as usize + 2 + self.local_size as usize
+    }
 }
 
 impl Module {
@@ -93,34 +102,55 @@ impl Module {
         let size = wasm.read_u32()?;
         let start = wasm.offset();
 
-        let empty_f = self.functions[i].clone();
-        let mut f = core::mem::replace(&mut self.functions[i], empty_f);
+        let placeholder = {
+            let f = &self.functions[i];
+            Func {
+                ty: f.ty,
+                stack_usage: f.stack_usage,
+                local_size: f.local_size,
+                parameter_size: f.parameter_size,
+                return_ty: f.return_ty,
+                locals: Vec::zero().into(),
+                expr: Expr::zero(),
+            }
+        };
 
-        f.locals = wasm.read_vec(|w| {
-            let n = w.read_u32()?;
-            let t = ValType::read(w)?;
+        let mut f = core::mem::replace(&mut self.functions[i], placeholder);
 
-            if n > 0xFFFF {
+        wasm.with_limit(size as usize, |wasm| {
+            f.locals = wasm
+                .read_vec(|w| {
+                    let n = w.read_u32()?;
+                    let t = ValType::read(w)?;
+
+                    if n > 0xFFFF {
+                        return Err(ValidationError::TooManyLocals);
+                    }
+
+                    Ok((n as u16, t))
+                })?
+                .into();
+
+            // Compute the local size in words
+            let mut total_size: usize = 0;
+            for (n, ty) in f.locals.iter() {
+                total_size = (*n as usize)
+                    .checked_mul(ty.size())
+                    .and_then(|v| total_size.checked_add(v))
+                    .ok_or(ValidationError::TooManyLocals)?;
+            }
+            let size_in_words = total_size / 4;
+
+            if size_in_words > 0xFFFF {
                 return Err(ValidationError::TooManyLocals);
             }
 
-            Ok((n as u16, t))
+            f.local_size = size_in_words as u16;
+            (f.expr, f.stack_usage) =
+                Expr::read::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(wasm, builder, store, self, &f)?;
+
+            Ok(())
         })?;
-
-        // Compute the local size in words
-        let size_in_words = f
-            .locals
-            .iter()
-            .fold(0, |sum, (n, ty)| sum + (*n as usize) * ty.size())
-            / 4;
-
-        if size_in_words > 0xFFFF {
-            return Err(ValidationError::TooManyLocals);
-        }
-
-        f.local_size = size_in_words as u16;
-        (f.expr, f.stack_usage) =
-            Expr::read::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(wasm, builder, store, self, &f)?;
 
         // Bound the worst-case call frame this function can produce. When a
         // function performs a call, the frame it leaves behind is

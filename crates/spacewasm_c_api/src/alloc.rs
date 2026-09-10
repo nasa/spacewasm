@@ -109,8 +109,9 @@ pub unsafe fn allocator_clone_rc(handle: *const CAllocator) -> Option<Rc<dyn Was
         return None;
     }
 
-    // Transmut to manually drop since `CAllocator` is really a &Rc<Allocator> but the lifetime is not
-    // defined from the C side.
+    // The handle is a leaked `Rc<CAllocator>` (a pointer owning a refcount).
+    // Wrapping the reconstructed `Rc` in `ManuallyDrop` lets us clone from it
+    // without decrementing the borrowed refcount when this binding drops.
     let handle: core::mem::ManuallyDrop<Rc<CAllocator>> =
         unsafe { core::mem::transmute::<*const CAllocator, _>(handle) };
     Some(Rc::clone(&handle).into_wasm_memory_allocator())

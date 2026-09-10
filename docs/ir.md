@@ -59,7 +59,7 @@ Wasm instructions represented in the IR fall in the following categories:
        [16:operand_[0-15]]
        [16:operand_[16-31]]
        [16:operand_[32-47]]
-       [16:operand_[48-64]]
+       [16:operand_[48-63]]
        ```
 6. Local Operand
    ```
@@ -75,12 +75,12 @@ Wasm instructions represented in the IR fall in the following categories:
 
 ## Limitations
 
-Are several limitations enforced by the interpreter that generally stem
+There are several limitations enforced by the interpreter that generally stem
 from tuned fixed-width integer constraints imposed by the IR design and
 datastructures within the implementation.
 
 > [!NOTE]
-> We have found that these limitations are generally not highly restrictive and even got a Pyiodide interpreter running inside SpaceWasm.
+> We have found that these limitations are generally not highly restrictive and even got a Pyodide interpreter running inside SpaceWasm.
 
 ### Module & Store Limits
 
@@ -88,20 +88,22 @@ datastructures within the implementation.
 - **Host modules**: Maximum 256 host modules
 - **Function parameters**: Maximum 255 32-bit words
 - **Local variables**: Maximum 65,535 32-bit words total per function
+- **Import names**: Each import's module name and field name are limited to 32 bytes; a longer name is rejected at decode time
+- **Custom-section names**: Limited to 32 bytes; a longer name is rejected at decode time
 
 ### Linear Memory
 
 These follow the WebAssembly 1.0 specification and are validated at decode time.
 
 - **Page size**: 64 KiB or 1 B — [custom-page-sizes proposal](https://github.com/WebAssembly/custom-page-sizes) is implemented.
-- **Maximum pages**: 4 GiB per memory. A declared `min` or `max` above this is rejected.
+- **Maximum memory size**: 4 GiB per memory. A declared `min` or `max` above this is rejected.
 
 ### IR Code Pages
 
 These pages hold the compiled IR (not raw Wasm bytecode) and are distinct from linear-memory pages. This limit comes
 from the encoding of program counters and the design choices of the IR.
 
-- **Code pages**: Configurable via generic parameter `MAX_CODE_PAGES`, typically set at module instantiation
+- **Code pages**: Configurable via the runtime option `max_code_pages`, set at module instantiation and validated against the 24-bit page-index bound
 - **Page size**: 256 16-bit words (512 bytes)
 - **Maximum page index**: 24-bit (16,777,216 pages)
 - **Word offset in page**: 8-bit (0-255)

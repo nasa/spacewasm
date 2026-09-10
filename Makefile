@@ -1,4 +1,4 @@
-.PHONY: help fuzz fuzz-validate fuzz-validate-differential fuzz-malformed seed-to-wasm trace-wasm trace trace-debug clean-artifacts
+.PHONY: help fuzz fuzz-validate fuzz-validate-differential fuzz-malformed seed-to-wasm trace-wasm trace-wasm-debug trace trace-debug clean-artifacts gen-header
 
 # Target Configuration (auto-detect if not set)
 SPACEWASM_TARGET ?= $(shell rustc -vV | grep 'host:' | cut -d' ' -f2)
@@ -27,6 +27,9 @@ help:
 	@echo "  make trace CRASH=fuzz/artifacts/no_traps/crash-abc123"
 	@echo "  make trace-debug CRASH=crash-abc123 LIMIT=100"
 	@echo "  make trace-wasm WASM=output.wasm LIMIT=50"
+	@echo ""
+	@echo "C API:"
+	@echo "  make gen-header                    Regenerate crates/spacewasm_c_api/include/spacewasm.h with cbindgen"
 	@echo ""
 	@echo "Utilities:"
 	@echo "  make clean-artifacts               Delete all fuzzer artifacts"
@@ -96,6 +99,12 @@ trace-wasm-debug:
 		exit 1; \
 	fi
 	RUSTFLAGS="-Zsanitizer=address" cargo run --target $(SPACEWASM_TARGET) -p spacewasm_util --bin spacewasm-trace -- $(WASM) --limit $(or $(LIMIT),200)
+
+# Regenerate the C API header from the Rust source with cbindgen. The header is
+# written as a side effect of building spacewasm_c_api with the `codegen` feature.
+gen-header:
+	cargo build -p spacewasm_c_api --features codegen
+	@echo "Regenerated crates/spacewasm_c_api/include/spacewasm.h"
 
 # Clean fuzzer artifacts
 clean-artifacts:

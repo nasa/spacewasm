@@ -6,7 +6,8 @@ use core::ptr;
 use core::sync::atomic::{AtomicPtr, Ordering};
 
 use crate::config::{GLOBAL_ALLOCATOR_MAX_PAGES, GLOBAL_ALLOCATOR_PAGE_SIZE};
-use spacewasm::{AllocError, Allocator, MemoryStatistics, PageAllocator};
+use crate::spacewasm_status_t;
+use spacewasm::{AllocError, Allocator, PageAllocator};
 
 /// Allocate `size` bytes aligned to `align`. Return NULL on failure. Per page allocation.
 pub type spacewasm_global_alloc_fn_t =
@@ -81,13 +82,6 @@ unsafe impl Allocator for CPageBackend {
             )
         };
     }
-
-    fn memory_statistics(&self) -> MemoryStatistics {
-        MemoryStatistics {
-            total_bytes: 0,
-            pad_bytes: 0,
-        }
-    }
 }
 
 static BACKEND: CPageBackend = CPageBackend::new();
@@ -108,9 +102,9 @@ pub extern "C" fn spacewasm_set_global_allocator(
     alloc: spacewasm_global_alloc_fn_t,
     dealloc: spacewasm_global_dealloc_fn_t,
     userdata: *mut c_void,
-) -> i32 {
+) -> spacewasm_status_t {
     let (Some(alloc), Some(dealloc)) = (alloc, dealloc) else {
-        return 1; // a null callback
+        return spacewasm_status_t::SPACEWASM_ERR_BAD_ARG;
     };
 
     // Publish userdata before the callbacks so a reader that observes a
@@ -118,5 +112,5 @@ pub extern "C" fn spacewasm_set_global_allocator(
     BACKEND.userdata.store(userdata, Ordering::Release);
     BACKEND.dealloc.store(dealloc as *mut (), Ordering::Release);
     BACKEND.alloc.store(alloc as *mut (), Ordering::Release);
-    0
+    spacewasm_status_t::SPACEWASM_OK
 }

@@ -10,7 +10,16 @@ pub trait WasmMemoryAllocator {
     /// Allocate a new memory region for linear memory
     fn allocate(&self, layout: Layout) -> Result<NonNull<u8>, AllocError>;
 
-    /// Reallocate a memory region moving data if needed
+    /// Reallocate a memory region, moving data if needed.
+    ///
+    /// On success, returns a pointer to a block of `layout` whose leading
+    /// `old_layout.size()` bytes hold the previous contents; the old allocation
+    /// (`ptr`/`old_layout`) has been consumed and must not be used again.
+    ///
+    /// # Failure ownership contract
+    ///
+    /// On `Err`, the implementation MUST leave the original allocation
+    /// (`ptr` with `old_layout`) valid, unmoved, and still owned by the caller.
     fn reallocate(
         &self,
         ptr: NonNull<u8>,
@@ -31,6 +40,22 @@ impl<T: WasmMemoryAllocator> Rc<T> {
     }
 }
 
+/// A WebAssembly linear memory
+///
+/// Linear memory implements inner mutability so it is not thread-safe.
+/// `Memory` holds a raw pointer, so it is automatically `!Send + !Sync`.
+///
+/// Needs to have inner mutability because multiple modules can point
+/// to it (via imports) and we use `Rc<Memory>` for reference counting these ownerships.
+///
+/// # Aliasing model
+///
+/// The `store_*` mutators take `&self`, so the borrow checker will not stop you
+/// from writing these bytes while a shared reference into them is alive. Drop
+/// any [`Memory::load`] / [`Memory::get_slice`] slice before any write —
+/// `store_*`, [`Memory::grow`] (which may reallocate), a host callback, or guest
+/// re-entry. Holding one across a write is UB under Stacked Borrows.
+/// [`Memory::as_shared_cells`] is the one aliasing-tolerant accessor.
 pub struct Memory {
     ptr: *mut u8,
     size: usize,
@@ -288,6 +313,26 @@ impl Memory {
             unsafe { slice::from_raw_parts(self.ptr, self.size) }
         }
     }
+
+    /// Expose linear memory as `&[UnsafeCell<u8>]`.
+    ///
+    /// Unlike [`get_slice`], this view stays valid across writes, which is what
+    /// makes it usable as a `wiggle` `GuestMemory::Shared` backing store. Still
+    /// invalidated by [`Memory::grow`]. Empty for the [`Memory::zero`] sentinel.
+    ///
+    /// [`get_slice`]: Memory::get_slice
+    pub fn as_shared_cells(&self) -> &[core::cell::UnsafeCell<u8>] {
+        if self.ptr.is_null() {
+            &[]
+        } else {
+            unsafe {
+                core::slice::from_raw_parts(
+                    self.ptr as *const core::cell::UnsafeCell<u8>,
+                    self.size,
+                )
+            }
+        }
+    }
 }
 
 impl Drop for Memory {
@@ -479,6 +524,31 @@ mod tests {
     fn effective_address_rejects_overflow_on_32bit() {
         // On 64-bit `usize`, base+offset always fits; the sum is exact.
         assert_eq!(Memory::effective_address(10, 20).unwrap(), 30);
+    }
+
+    #[test]
+    fn as_shared_cells_aliases_and_mutates() {
+        let mem = Memory::new(mem_type(1, None), allocator()).unwrap();
+
+        // The cell view covers exactly the linear memory bytes.
+        let cells = mem.as_shared_cells();
+        assert_eq!(cells.len(), mem.get_slice().len());
+
+        // A store is observable through the cell view...
+        mem.store_u8(3, 0x5A).unwrap();
+        assert_eq!(unsafe { *cells[3].get() }, 0x5A);
+
+        // ...and a write through a cell is observable through a load, which is
+        // the shared-but-mutable access wiggle relies on.
+        unsafe {
+            *cells[7].get() = 0xC3;
+        }
+        assert_eq!(mem.load_u8(7).unwrap(), 0xC3);
+    }
+
+    #[test]
+    fn as_shared_cells_zero_memory_is_empty() {
+        assert!(Memory::zero().as_shared_cells().is_empty());
     }
 
     #[test]

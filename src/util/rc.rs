@@ -10,6 +10,8 @@ use core::ops::Deref;
 use core::panic::{RefUnwindSafe, UnwindSafe};
 use core::ptr::NonNull;
 
+/// The inner heap allocation shared by every clone of an [`Rc`].
+#[repr(C)]
 struct RcInner<T: ?Sized> {
     count: Cell<u32>,
     value: T,
@@ -90,20 +92,6 @@ impl<T, A: Allocator + Clone> Rc<[T], A> {
         len: usize,
     ) -> Result<(*mut T, Rc<[T], A>), AllocError> {
         unsafe {
-            if len == 0 {
-                // For empty slices, just allocate the RcInner with empty slice
-                let layout = core::alloc::Layout::new::<Cell<u32>>();
-                let ptr = alloc.alloc(layout)?;
-                core::ptr::write(ptr as *mut Cell<u32>, Cell::new(1));
-
-                let rc_inner_ptr =
-                    core::ptr::slice_from_raw_parts_mut(ptr as *mut (), 0) as *mut RcInner<[T]>;
-
-                let rc = Self::from_inner_in(NonNull::new_unchecked(rc_inner_ptr), alloc);
-                return Ok((core::ptr::null_mut(), rc));
-            }
-
-            // Calculate the layout we need: Cell<u32> + align padding + [T; len]
             let count_layout = core::alloc::Layout::new::<Cell<u32>>();
             let slice_layout =
                 core::alloc::Layout::array::<T>(len).map_err(|_| AllocError::OutOfMemory)?;
@@ -210,6 +198,21 @@ impl<T: ?Sized, A: Allocator> Rc<T, A> {
         union PtrCast<T: ?Sized> {
             ptr: *const T,
             fat: core::mem::ManuallyDrop<FatPtr>,
+        }
+
+        // The `const` block validates memory layout assumptions made across the
+        // fat pointer conversion boundary
+        const {
+            let word = core::mem::size_of::<*const ()>();
+            assert!(
+                core::mem::size_of::<*const U>() == 2 * word,
+                "Rc::into_dyn requires `U` to be an unsized type whose pointer \
+                 is a two-word fat pointer (trait object or slice)"
+            );
+            assert!(
+                core::mem::size_of::<*const RcInner<U>>() == 2 * word,
+                "Rc::into_dyn requires `RcInner<U>` to be a two-word fat pointer"
+            );
         }
 
         unsafe {
