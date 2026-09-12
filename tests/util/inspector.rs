@@ -23,6 +23,12 @@ impl<T> LimitedVec<T> {
     }
 }
 
+impl<T> Default for LimitedVec<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T> From<LimitedVec<T>> for Vec<T> {
     fn from(value: LimitedVec<T>) -> Self {
         value.0.into_iter().collect()
