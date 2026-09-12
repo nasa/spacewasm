@@ -903,5 +903,4 @@ mod kani_proofs {
         assert_eq!(ref1, ref2, "All derefs must point to same address");
         assert_eq!(ref2, ref3, "All derefs must point to same address");
     }
-
 }

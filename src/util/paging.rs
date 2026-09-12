@@ -673,7 +673,10 @@ mod kani_proofs {
             "n_allocations must decrease by exactly one"
         );
         assert!(page.has_deallocated, "has_deallocated must become true");
-        assert_eq!(page.allocated, old_allocated, "dealloc must not move allocated");
+        assert_eq!(
+            page.allocated, old_allocated,
+            "dealloc must not move allocated"
+        );
         assert_eq!(page.wasted, old_wasted, "dealloc must not change wasted");
 
         core::mem::forget(page);
