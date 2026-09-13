@@ -18,14 +18,14 @@ pub struct ByteStream {
 
 impl ByteStream {
     pub fn new(bytes: &[u8]) -> ByteStream {
-        let bytes_vec: Vec<u8> = Vec::from_exact_iter(bytes.iter().copied());
+        let bytes_vec: Vec<u8> = Vec::from_exact_iter(bytes.iter().copied()).unwrap();
         let mut chunks: Vec<Vec<u8>> = Vec::new(10).expect("could not allocate vector");
 
         let mut i = 0;
         while i < bytes_vec.len() {
             let n = core::cmp::min(1024, bytes_vec.len() - i);
 
-            chunks.push(Vec::from_exact_iter(bytes_vec[i..(i + n)].iter().copied()));
+            chunks.push(Vec::from_exact_iter(bytes_vec[i..(i + n)].iter().copied()).unwrap());
 
             i += n;
         }
@@ -39,11 +39,11 @@ impl WasmStream for ByteStream {
         if self.index == self.chunks.len() {
             Ok(None)
         } else {
-            let m = InnerVec {
-                ptr: self.chunks[self.index].as_mut_ptr(),
-                capacity: 1024,
-                len: self.chunks[self.index].len() as u32,
-            };
+            let m = unsafe { InnerVec::from_raw_parts(
+                self.chunks[self.index].as_mut_ptr(),
+                1024,
+                self.chunks[self.index].len(),
+            )};
 
             self.index += 1;
 

@@ -18,7 +18,7 @@ use core::{
 };
 
 use embedded_alloc::LlffHeap as Heap;
-use spacewasm::{AllocError, Allocator, MemoryStatistics, WasmMemoryAllocator};
+use spacewasm::{AllocError, Allocator, WasmMemoryAllocator};
 
 #[global_allocator]
 static HEAP: Heap = Heap::empty();
@@ -37,10 +37,6 @@ unsafe impl Allocator for BareMetalAllocator {
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         unsafe { HEAP.dealloc(ptr, layout) }
-    }
-
-    fn memory_statistics(&self) -> MemoryStatistics {
-        panic!("The page allocator should be tracking it's own memory statistics.")
     }
 }
 
