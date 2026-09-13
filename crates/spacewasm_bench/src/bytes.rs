@@ -39,11 +39,13 @@ impl WasmStream for ByteStream {
         if self.index == self.chunks.len() {
             Ok(None)
         } else {
-            let m = unsafe { InnerVec::from_raw_parts(
-                self.chunks[self.index].as_mut_ptr(),
-                1024,
-                self.chunks[self.index].len(),
-            )};
+            let m = unsafe {
+                InnerVec::from_raw_parts(
+                    self.chunks[self.index].as_mut_ptr(),
+                    1024,
+                    self.chunks[self.index].len(),
+                )
+            };
 
             self.index += 1;
 
