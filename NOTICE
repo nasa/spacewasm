@@ -105,3 +105,21 @@ Copyright (c) 2026 Knapp, K. B., & The Clap Community.
 
 This product includes software developed by [crossterm](https://github.com/crossterm-rs/crossterm/).
 Licensed under the MIT License.
+
+---
+
+This product includes software developed by the [Rust Embedded Community](https://github.com/rust-embedded).
+The cortex-m, cortex-m-rt, riscv, and riscv-rt crates are dual-licensed 
+under MIT OR Apache-2.0; the code is used under the Apache License, Version 2.0.
+
+---
+
+This product includes software developed by Taiki Endo: <https://github.com/taiki-e/semihosting>.
+The semihosting crate is dual-licensed under MIT OR Apache-2.0; the code is used
+under the Apache License, Version 2.0.
+
+---
+
+This product includes software developed by rtic-rs: <https://github.com/rtic-rs/rtic-monotonic>.
+The rtic-monotonic project is dual-licensed under MIT OR Apache-2.0; the code is used
+under the Apache License, Version 2.0.

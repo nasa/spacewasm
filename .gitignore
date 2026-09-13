@@ -65,5 +65,8 @@ dkms.conf
 /fuzz/artifacts
 /fuzz/coverage
 
+# Benchmark artifacts
+/bench/target
+
 # MacOS
 .DS_Store
