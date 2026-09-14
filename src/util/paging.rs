@@ -229,6 +229,8 @@ impl Page {
         // Make sure out buffer can fit in here
         let final_offset = (aligned_start - self.ptr as usize) + layout.size();
         if final_offset <= self.size {
+            assert!(!self.has_deallocated);
+
             self.wasted += alignment_offset;
             self.allocated = final_offset;
             self.n_allocations += 1;
