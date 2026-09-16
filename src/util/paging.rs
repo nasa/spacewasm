@@ -408,10 +408,18 @@ mod tests {
 
             // Begin teardown for page 0
             page_alloc.dealloc(a, layout);
-            assert_eq!(page_alloc.stats().pages, 1, "page 0 must stay live while its sibling remains");
+            assert_eq!(
+                page_alloc.stats().pages,
+                1,
+                "page 0 must stay live while its sibling remains"
+            );
 
             let _c = page_alloc.alloc(layout).unwrap();
-            assert_eq!(page_alloc.stats().pages, 2, "a page mid-teardown must not receive a new allocation");
+            assert_eq!(
+                page_alloc.stats().pages,
+                2,
+                "a page mid-teardown must not receive a new allocation"
+            );
         }
     }
 
