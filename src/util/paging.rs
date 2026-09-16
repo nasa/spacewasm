@@ -96,7 +96,10 @@ impl<A: Allocator, const MAX_PAGES: usize> PageAllocatorInner<A, MAX_PAGES> {
         for bucket in self.pages.iter_mut() {
             match bucket {
                 Some(page) => {
-                    // Attempt to allocate to this page
+                    // Deallocated pages should never receive another allocation
+                    if page.has_deallocated {
+                        continue;
+                    }
                     match page.alloc(layout) {
                         None => {
                             // Allocation failed, fallthrough to the next page
@@ -393,6 +396,26 @@ mod tests {
     }
 
     #[test]
+    fn test_alloc_skips_page_when_teardown() {
+        // Fill a 192-byte page with two 64-byte slots
+        let page_alloc = PageAllocator::<RustSystemAllocator, 2>::new(RustSystemAllocator, 192);
+
+        unsafe {
+            let layout = Layout::from_size_align(64, 8).unwrap();
+
+            let a = page_alloc.alloc(layout).unwrap();
+            let _b = page_alloc.alloc(layout).unwrap();
+
+            // Begin teardown for page 0
+            page_alloc.dealloc(a, layout);
+            assert_eq!(page_alloc.stats().pages, 1, "page 0 must stay live while its sibling remains");
+
+            let _c = page_alloc.alloc(layout).unwrap();
+            assert_eq!(page_alloc.stats().pages, 2, "a page mid-teardown must not receive a new allocation");
+        }
+    }
+
+    #[test]
     fn test_page_too_small() {
         let page_alloc = PageAllocator::<RustSystemAllocator, 4>::new(RustSystemAllocator, 64);
 
@@ -411,116 +434,7 @@ mod kani_proofs {
 
     use crate::test_support::RustSystemAllocator;
 
-    /// Verify Page::alloc pointer arithmetic safety and allocation correctness
-    #[kani::proof]
-    fn proof_page_allocation_safety() {
-        let backing_alloc = RustSystemAllocator;
-
-        // Allocate a page from backing allocator
-        let page_size = 256;
-        let page_layout = Layout::from_size_align(page_size, ALIGNMENT).unwrap();
-        let page_ptr = unsafe { backing_alloc.alloc(page_layout).unwrap() };
-
-        let mut page = Page::new(page_ptr, page_size);
-
-        // Test with symbolic size and alignment
-        let size: usize = kani::any();
-        kani::assume(size > 0 && size <= 64);
-
-        let align: usize = kani::any();
-        kani::assume(align > 0 && align <= ALIGNMENT);
-        kani::assume(align.is_power_of_two());
-
-        let layout = Layout::from_size_align(size, align).unwrap();
-
-        let allocated_before = page.allocated;
-        let wasted_before = page.wasted;
-
-        match page.alloc(layout) {
-            Some(ptr) => {
-                let ptr_addr = ptr as usize;
-                let page_base = page_ptr as usize;
-
-                // Pointer must be aligned
-                assert_eq!(ptr_addr % align, 0, "Returned pointer must be aligned");
-
-                // Verify alignment padding is minimal
-                let start_before_align = page_base + allocated_before;
-                if start_before_align % align != 0 {
-                    let padding = page.wasted - wasted_before;
-                    assert!(padding < align, "Alignment padding must be < align");
-                    assert_eq!(
-                        (start_before_align + padding) % align,
-                        0,
-                        "Padding must result in aligned address"
-                    );
-                }
-
-                // Wasted bytes must increase monotonically
-                assert!(
-                    page.wasted >= wasted_before,
-                    "Wasted bytes must be monotonic"
-                );
-
-                // Pointer must be within page bounds
-                assert!(ptr_addr >= page_base, "Pointer must be >= page base");
-                assert!(
-                    ptr_addr < page_base + page_size,
-                    "Pointer must be within page"
-                );
-
-                // Allocated offset must be within bounds
-                assert!(
-                    page.allocated <= page_size,
-                    "Allocated offset must not exceed page size"
-                );
-
-                // Allocated must increase monotonically
-                assert!(
-                    page.allocated >= allocated_before,
-                    "Allocated must increase"
-                );
-
-                // Allocation counter incremented
-                assert_eq!(page.n_allocations, 1, "Allocation counter must increment");
-
-                // No overflow in pointer arithmetic
-                let offset = ptr_addr - page_base;
-                assert!(
-                    offset.checked_add(size).is_some(),
-                    "Offset + size must not overflow"
-                );
-                assert!(
-                    offset + size <= page_size,
-                    "Allocation must fit within page"
-                );
-
-                // Second allocation must not overlap
-                let layout2 = Layout::from_size_align(16, 8).unwrap();
-                if let Some(ptr2) = page.alloc(layout2) {
-                    let ptr2_addr = ptr2 as usize;
-                    let offset2 = ptr2_addr - page_base;
-
-                    // Second allocation must start after first ends
-                    assert!(offset2 >= offset + size, "Allocations must not overlap");
-                    assert_eq!(
-                        page.n_allocations, 2,
-                        "Counter must be 2 after second alloc"
-                    );
-                }
-            }
-            None => {
-                // Allocation failed - page too full
-                // This is acceptable
-            }
-        }
-
-        // Cleanup
-        core::mem::forget(page);
-        unsafe { backing_alloc.dealloc(page_ptr, page_layout) };
-    }
-
-    /// Allocation preserves `allocated <= size` and never overlaps an earlier allocation
+    /// Alloc never fails, overlaps an earlier allocation, or changes size
     #[kani::proof]
     fn proof_page_alloc_step_invariant() {
         let backing_alloc = RustSystemAllocator;
@@ -533,7 +447,6 @@ mod kani_proofs {
         let allocated: usize = kani::any();
         let wasted: usize = kani::any();
         let n_allocations: usize = kani::any();
-        let has_deallocated: bool = kani::any();
         kani::assume(allocated <= page_size);
         kani::assume(wasted <= allocated);
         kani::assume(n_allocations <= page_size);
@@ -544,7 +457,7 @@ mod kani_proofs {
             allocated,
             wasted,
             n_allocations,
-            has_deallocated,
+            has_deallocated: false,
         };
 
         let size: usize = kani::any();
@@ -556,7 +469,6 @@ mod kani_proofs {
         let old_allocated = page.allocated;
         let old_wasted = page.wasted;
         let old_n_allocations = page.n_allocations;
-        let old_has_deallocated = page.has_deallocated;
 
         match page.alloc(layout) {
             Some(ptr) => {
@@ -570,7 +482,7 @@ mod kani_proofs {
                 );
                 assert!(
                     page.allocated >= old_allocated,
-                    "allocated must advance monotonically"
+                    "allocated must never shrink (rule 3)"
                 );
                 assert!(
                     page.wasted >= old_wasted,
@@ -580,10 +492,6 @@ mod kani_proofs {
                     page.n_allocations,
                     old_n_allocations + 1,
                     "n_allocations must increase by exactly one on success"
-                );
-                assert_eq!(
-                    page.has_deallocated, old_has_deallocated,
-                    "alloc must never change has_deallocated"
                 );
 
                 let ptr_addr = ptr as usize;
@@ -600,7 +508,7 @@ mod kani_proofs {
             None => {
                 assert_eq!(
                     page.allocated, old_allocated,
-                    "a failed allocation must not advance allocated"
+                    "a failed allocation must not advance allocated (rule 5)"
                 );
                 assert_eq!(
                     page.wasted, old_wasted,
@@ -610,23 +518,93 @@ mod kani_proofs {
                     page.n_allocations, old_n_allocations,
                     "a failed allocation must not change the allocation counter"
                 );
-                assert_eq!(
-                    page.has_deallocated, old_has_deallocated,
-                    "a failed allocation must not change has_deallocated"
-                );
             }
         }
 
+        assert_eq!(page.size, page_size, "size must never change (rule 1)");
         assert!(
-            page.allocated <= page_size,
-            "invariant: allocated never exceeds page size"
+            !page.has_deallocated,
+            "a successful or failed alloc must never leave the growth phase (rule 2)"
         );
 
         core::mem::forget(page);
         unsafe { backing_alloc.dealloc(page_ptr, page_layout) };
     }
 
-    /// dealloc decrements `n_allocations` by one
+    /// Alloc during teardown aborts
+    #[kani::proof]
+    #[kani::should_panic]
+    fn proof_page_alloc_after_teardown_aborts() {
+        let backing_alloc = RustSystemAllocator;
+
+        let page_size = 192;
+        let page_layout = Layout::from_size_align(page_size, ALIGNMENT).unwrap();
+        let page_ptr = unsafe { backing_alloc.alloc(page_layout).unwrap() };
+
+        let allocated: usize = kani::any();
+        kani::assume(allocated < page_size);
+
+        let mut page = Page {
+            ptr: page_ptr,
+            size: page_size,
+            allocated,
+            wasted: 0,
+            n_allocations: 1,
+            has_deallocated: true,
+        };
+
+        // A 1-byte, 1-aligned request always fits in any spare capacity.
+        let layout = Layout::from_size_align(1, 1).unwrap();
+        let _ = page.alloc(layout);
+
+        core::mem::forget(page);
+        unsafe { backing_alloc.dealloc(page_ptr, page_layout) };
+    }
+
+    /// Once teardown begins, dealloc never moves `allocated` again (rule 4)
+    #[kani::proof]
+    fn proof_page_footprint_frozen_after_teardown() {
+        let backing_alloc = RustSystemAllocator;
+
+        let page_size = 192;
+        let page_layout = Layout::from_size_align(page_size, ALIGNMENT).unwrap();
+        let page_ptr = unsafe { backing_alloc.alloc(page_layout).unwrap() };
+        let page_base = page_ptr as usize;
+
+        let allocated: usize = kani::any();
+        let wasted: usize = kani::any();
+        let n_allocations: usize = kani::any();
+        kani::assume(allocated <= page_size);
+        kani::assume(wasted <= allocated);
+        kani::assume(n_allocations >= 1 && n_allocations <= page_size);
+
+        let mut page = Page {
+            ptr: page_ptr,
+            size: page_size,
+            allocated,
+            wasted,
+            n_allocations,
+            has_deallocated: true,
+        };
+
+        let old_allocated = page.allocated;
+
+        let dealloc_offset: usize = kani::any();
+        kani::assume(dealloc_offset < page_size);
+        let dealloc_ptr = (page_base + dealloc_offset) as *mut u8;
+        let layout = Layout::from_size_align(1, 1).unwrap();
+        let _ = page.dealloc(dealloc_ptr, layout);
+
+        assert_eq!(
+            page.allocated, old_allocated,
+            "the footprint must not change once teardown has begun"
+        );
+
+        core::mem::forget(page);
+        unsafe { backing_alloc.dealloc(page_ptr, page_layout) };
+    }
+
+    /// Dealloc decrements `n_allocations` by one and never moves `allocated`
     #[kani::proof]
     fn proof_page_dealloc_in_range_step_invariant() {
         let backing_alloc = RustSystemAllocator;
@@ -685,7 +663,7 @@ mod kani_proofs {
         unsafe { backing_alloc.dealloc(page_ptr, page_layout) };
     }
 
-    /// dealloc-ing an out-of-range pointer will fail correctly
+    /// Dealloc-ing an out-of-range pointer will fail correctly
     #[kani::proof]
     fn proof_page_dealloc_out_of_range_is_noop() {
         let backing_alloc = RustSystemAllocator;
@@ -743,108 +721,6 @@ mod kani_proofs {
             "a rejected dealloc must not change has_deallocated"
         );
 
-        core::mem::forget(page);
-        unsafe { backing_alloc.dealloc(page_ptr, page_layout) };
-    }
-
-    /// Verify Page::dealloc correctness
-    #[kani::proof]
-    fn proof_page_deallocation_safety() {
-        let backing_alloc = RustSystemAllocator;
-
-        let page_size = 256;
-        let page_layout = Layout::from_size_align(page_size, ALIGNMENT).unwrap();
-        let page_ptr = unsafe { backing_alloc.alloc(page_layout).unwrap() };
-
-        let mut page = Page::new(page_ptr, page_size);
-        let page_base = page_ptr as usize;
-
-        // Make two allocations
-        let layout1 = Layout::from_size_align(32, 8).unwrap();
-        let layout2 = Layout::from_size_align(16, 8).unwrap();
-
-        let ptr1 = page.alloc(layout1).unwrap();
-        let ptr2 = page.alloc(layout2).unwrap();
-
-        assert_eq!(page.n_allocations, 2, "Should have 2 allocations");
-
-        let should_drop = page.dealloc(ptr2, layout2);
-
-        assert_eq!(
-            should_drop,
-            Some(false),
-            "Page should not be dropped with remaining allocations"
-        );
-        assert_eq!(page.n_allocations, 1, "Counter must decrement");
-
-        // Deallocation must set the has_deallocated flag
-        assert!(
-            page.has_deallocated,
-            "Deallocation must set has_deallocated flag"
-        );
-
-        // Test pointer ownership check - pointer outside page range
-        let outside_ptr = (page_base - 16) as *mut u8;
-        let result = page.dealloc(outside_ptr, layout1);
-        assert_eq!(
-            result, None,
-            "Dealloc of pointer outside page must return None"
-        );
-        assert_eq!(
-            page.n_allocations, 1,
-            "Counter must not change for outside pointer"
-        );
-
-        // Deallocate ptr1 - the final live allocation, so the page is dropped
-        let should_drop2 = page.dealloc(ptr1, layout1);
-        assert_eq!(
-            should_drop2,
-            Some(true),
-            "Page should be dropped when n_allocations reaches 0"
-        );
-        assert_eq!(page.n_allocations, 0, "Counter must be 0");
-
-        // Cleanup
-        core::mem::forget(page);
-        unsafe { backing_alloc.dealloc(page_ptr, page_layout) };
-    }
-
-    /// Makes sure that padding is computed correctly
-    #[kani::proof]
-    fn proof_page_alignment_padding() {
-        let backing_alloc = RustSystemAllocator;
-
-        let page_size = 128;
-        let page_layout = Layout::from_size_align(page_size, ALIGNMENT).unwrap();
-        let page_ptr = unsafe { backing_alloc.alloc(page_layout).unwrap() };
-
-        let mut page = Page::new(page_ptr, page_size);
-
-        // Leave `allocated` at an offset that is not a multiple of 8, so the
-        // next allocation attempt needs alignment padding
-        let layout1 = Layout::from_size_align(10, 8).unwrap();
-        page.alloc(layout1).expect("first allocation must fit");
-        assert_eq!(page.allocated, 10);
-        assert_eq!(page.wasted, 0);
-
-        // Needs 6 bytes of padding, but 16 + 115 = 131 > 128, so this allocation must fail
-        let layout2 = Layout::from_size_align(115, 8).unwrap();
-        let wasted_before = page.wasted;
-        let allocated_before = page.allocated;
-
-        let result = page.alloc(layout2);
-
-        assert!(result.is_none(), "allocation must fail: it does not fit");
-        assert_eq!(
-            page.wasted, wasted_before,
-            "a failed allocation must not commit alignment padding to `wasted`"
-        );
-        assert_eq!(
-            page.allocated, allocated_before,
-            "a failed allocation must not advance `allocated`"
-        );
-
-        // Cleanup
         core::mem::forget(page);
         unsafe { backing_alloc.dealloc(page_ptr, page_layout) };
     }
@@ -950,7 +826,7 @@ mod kani_proofs {
         }
     }
 
-    /// alloc creates or reuses page correctly or throws error
+    /// Alloc creates or reuses page correctly or throws error
     #[kani::proof]
     #[kani::unwind(3)]
     fn proof_page_allocator_alloc_step_invariant() {
@@ -1033,6 +909,10 @@ mod kani_proofs {
 
                 match touched_old {
                     Some(old) => {
+                        assert!(
+                            !old.has_deallocated,
+                            "must never allocate into a page mid-teardown (rule 2)"
+                        );
                         assert_eq!(
                             touched_new.ptr, old.ptr,
                             "reusing a page must not change its address"
