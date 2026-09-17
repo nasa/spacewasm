@@ -114,6 +114,7 @@ jobs:
             if (benchmark) {
                 const data = benchmark.current;
                 const old_data = benchmark.baseline;
+                const nm_url = benchmark.nm_artifacts_url;
 
                 let triples = benchmark.current.triples;
                 let elf_sections = benchmark.current.elf_sections;
@@ -131,10 +132,16 @@ jobs:
                     }
                     comment += "\n";
                 }
-                comment += "\n<details><summary><i>view detailed section sizes...</i></summary>\n\n";
+                comment += "\n<details><summary><i>view detailed section sizes and symbol table...</i></summary>\n\n";
+                comment += "<br><small>You can also download the <a href='"+nm_url+"'>full symbol tables</a>.</small>\n\n";
                 for (let triple of triples) {
                     comment += "### `"+triple+"`\n";
-                    comment += "```\n"+data[triple]["details"]+"\n```\n";
+                    comment += "```\n"+data[triple]["details"]+"\n";
+                    comment += "\nSymbol Table:\n";
+                    for (let symbol of data[triple]["nm"]) {
+                      comment += "\t" + symbol + "\n";
+                    }
+                    comment += "\t...truncated (see artifact for full table)...\n```\n";
                 }
                 comment += "</details>\n\n";
 

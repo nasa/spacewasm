@@ -231,6 +231,13 @@ jobs:
           echo "$output" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
+      - name: Upload NM artifacts
+        id: upload_nm_artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nm-artifacts
+          path: nm-artifact_*.txt
+
       - name: Run Baseline Benchmark
         id: baseline
         continue-on-error: true
@@ -262,7 +269,8 @@ jobs:
           {
             "prNumber": "${{ github.event.pull_request.number }}",
             "current": ${{ steps.benchmark.outputs.out }},
-            "baseline": ${{ steps.baseline.outputs.out }}
+            "baseline": ${{ steps.baseline.outputs.out }},
+            "nm_artifacts_url": "${{ steps.upload_nm_artifacts.outputs.artifact-url }}"
           }
           EOF
 

@@ -94,6 +94,23 @@ def get_sizes(triple):
 
     return out
 
+def get_nm(triple):
+    """build target triple and runs cargo nm over it"""
+
+    command = ["cargo", "nm", "-q", "--release", "-p", "spacewasm_bench", "--target", triple, "--"]
+    command += ["--demangle", "-r", "--size-sort"]
+    proc = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+    sys.stderr.write(" ".join(command) + "\n")
+    sys.stderr.flush()
+
+    nm_content = proc.stdout.decode()
+
+    with open(f"nm-artifact_{triple}.txt", "w+") as f:
+        f.write(nm_content)
+
+    return nm_content.splitlines()
+
 def main():
     if len(sys.argv) != 2:
         print(f"usage: {sys.argv[0]} <shift value>\n\n\t(note that  0 <= shift value <= 10)")
@@ -114,6 +131,7 @@ def main():
 
     for triple in triples:
         data[triple] = get_sizes(triple)
+        data[triple]["nm"] = get_nm(triple)[:10]
 
     # start all threads and wait for them to join
     for i in threads: i.start()
