@@ -120,7 +120,7 @@ def main():
     for i in threads: i.join()
     while not q.empty():
         triple, score, t = q.get()
-        data[triple]["coremark"] = score
+        data[triple]["coremark"] = round(score, 2)
         data[triple]["coremark_time"] = t
         data[triple]["qemu_info"] = qemu_info[triple]
 
