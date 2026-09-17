@@ -133,7 +133,7 @@ jobs:
                     comment += "\n";
                 }
                 comment += "\n<details><summary><i>view detailed section sizes and symbol table...</i></summary>\n\n";
-                comment += "<br><br><small>You can also download the <a href='"+nm_url+"'>full symbol tables</a>.</small>\n\n";
+                comment += "<br><small>You can also download the <a href='"+nm_url+"'>full symbol tables</a>.</small>\n\n";
                 for (let triple of triples) {
                     comment += "### `"+triple+"`\n";
                     comment += "```\n"+data[triple]["details"]+"\n";
