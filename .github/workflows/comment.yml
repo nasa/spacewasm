@@ -90,7 +90,7 @@ jobs:
             }
 
             function colorize(new_value, old, lower_better) {
-                let color = "normalcolor";
+                let color = "";
                 let change_text = "";
 
                 if (old != new_value) {
@@ -100,14 +100,14 @@ jobs:
                         pct_change = (100 * (new_value - old) / old).toFixed(1);
                     }
                     if (pct_change > 0) {
-                        color = lower_better ? "red" : "green";
+                        color = lower_better ? "🔴 " : "🟢 ";
                         change_text = "(↑" + String(pct_change) + "% from " + String(old) + ")";
                     } else {
-                        color = lower_better ? "green" : "red";
+                        color = lower_better ? "🟢 " : "🔴 ";
                         change_text = "(↓" + String(-pct_change) + "% from " + String(old) + ")";
                     }
                 }
-                return "$${\\color{" + color + "}{" + String(new_value) + "}}$$<br>" + change_text;
+                return color + String(new_value) + "<br>" + change_text;
             }
 
             const benchmark = readResults('benchmark-results');
