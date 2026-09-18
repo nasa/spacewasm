@@ -24,11 +24,12 @@ jobs:
           echo "Releasing version: $tag_version"
           # Replace the 0.0.0 placeholder under [workspace.package] with the tag version.
           sed -i 's/^version = "0\.0\.0"$/version = "'"$tag_version"'"/' Cargo.toml
-          # Pin spacewasm_c_api's dependency on spacewasm to the exact tag version.
-          # Its manifest carries a `version = "=0.0.0"` placeholder for this.
+          # Pin the spacewasm_c_api and spacewasi dependencies on spacewasm to the exact tag version.
+          # Their manifests carry a `version = "=0.0.0"` placeholder for this.
           sed -i 's/version = "=0\.0\.0"/version = "='"$tag_version"'"/' crates/spacewasm_c_api/Cargo.toml
+          sed -i 's/version = "=0\.0\.0"/version = "='"$tag_version"'"/' crates/spacewasi/Cargo.toml
           # Fail if any placeholder was not found / not replaced.
-          for pkg in spacewasm spacewasm_c_api; do
+          for pkg in spacewasm spacewasm_c_api spacewasi; do
             crate_version=$(cargo metadata --no-deps --format-version 1 \
               | jq -r '.packages[] | select(.name == "'"$pkg"'") | .version')
             if [ "$crate_version" != "$tag_version" ]; then
@@ -40,6 +41,12 @@ jobs:
             | jq -r '.packages[] | select(.name == "spacewasm_c_api") | .dependencies[] | select(.name == "spacewasm") | .req')
           if [ "$dep_version" != "=$tag_version" ]; then
             echo "::error::spacewasm_c_api's spacewasm dependency resolves to '$dep_version', expected '=$tag_version'. Is the =0.0.0 placeholder still present?"
+            exit 1
+          fi
+          dep_version=$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "spacewasi") | .dependencies[] | select(.name == "spacewasm") | .req')
+          if [ "$dep_version" != "=$tag_version" ]; then
+            echo "::error::spacewasi's spacewasm dependency resolves to '$dep_version', expected '=$tag_version'. Is the =0.0.0 placeholder still present?"
             exit 1
           fi
 
