@@ -872,6 +872,9 @@ mod kani_proofs {
         let old_page0 = page0.clone();
         let old_page1 = page1.clone();
 
+        let poisoned = old_page0.as_ref().is_some_and(|p| p.has_deallocated)
+            || old_page1.as_ref().is_some_and(|p| p.has_deallocated);
+
         let mut inner = PageAllocatorInner::<RustSystemAllocator, MAX_PAGES> {
             page_allocator: backing_alloc,
             page_size,
@@ -891,6 +894,13 @@ mod kani_proofs {
         let new_total = backing_alloc.total_allocated();
         let slot0_changed = old_page0 != inner.pages[0];
         let slot1_changed = old_page1 != inner.pages[1];
+
+        if poisoned {
+            assert!(
+                result.is_err(),
+                "a dealloc must poison every future allocation"
+            );
+        }
 
         match result {
             Ok(ptr) => {
@@ -991,7 +1001,7 @@ mod kani_proofs {
         }
     }
 
-    /// dealloc only removes the correct page
+    /// dealloc only removes the correct page.
     #[kani::proof]
     #[kani::unwind(3)]
     fn proof_page_allocator_dealloc_step_invariant() {
@@ -1084,6 +1094,21 @@ mod kani_proofs {
                 "freeing a non-final allocation must not touch the backing allocator"
             );
         }
+
+        let heap_all_empty = inner.pages.iter().all(Option::is_none);
+
+        let next_size: usize = kani::any();
+        kani::assume(next_size > 0 && next_size <= 32);
+        let next_align: usize = kani::any();
+        kani::assume(next_align > 0 && next_align <= ALIGNMENT && next_align.is_power_of_two());
+        let next_layout = Layout::from_size_align(next_size, next_align).unwrap();
+
+        let next_result = unsafe { inner.alloc(next_layout) };
+
+        assert!(
+            heap_all_empty || next_result.is_err(),
+            "every future allocation after a dealloc must fail until the whole heap has been freed"
+        );
     }
 
     /// Verify Drop frees all pages in correct order
