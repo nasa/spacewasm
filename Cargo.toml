@@ -67,7 +67,6 @@ panic = "abort"
 [profile.release.package.spacewasm_bench]
 opt-level = "s"
 codegen-units = 1
-strip = true
 
 [profile.bench]
 opt-level = 3

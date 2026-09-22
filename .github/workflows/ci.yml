@@ -225,11 +225,18 @@ jobs:
         id: benchmark
         run: |
           # Build and run the benchmark from workspace root, capturing output
-          output=$(python3 crates/spacewasm_bench/scripts/run_all.py 4)
+          output=$(python3 .github/scripts/run_benchmark.py 4)
           echo "$output"
           echo "out<<EOF" >> $GITHUB_OUTPUT
           echo "$output" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Upload NM artifacts
+        id: upload_nm_artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nm-artifacts
+          path: nm-artifact_*.txt
 
       - name: Run Baseline Benchmark
         id: baseline
@@ -239,7 +246,7 @@ jobs:
           if [ "${{ github.event_name }}" == "pull_request" ]; then
             git fetch origin main:main
             git checkout main
-            output=$(python3 crates/spacewasm_bench/scripts/run_all.py 4) || true
+            output=$(python3 .github/scripts/run_benchmark.py 4) || true
             git checkout -
 
             if [ -n "$output" ]; then
@@ -262,7 +269,8 @@ jobs:
           {
             "prNumber": "${{ github.event.pull_request.number }}",
             "current": ${{ steps.benchmark.outputs.out }},
-            "baseline": ${{ steps.baseline.outputs.out }}
+            "baseline": ${{ steps.baseline.outputs.out }},
+            "nm_artifacts_url": "${{ steps.upload_nm_artifacts.outputs.artifact-url }}"
           }
           EOF
 
