@@ -63,6 +63,7 @@ struct PageAllocatorInner<A: Allocator, const MAX_PAGES: usize> {
     page_allocator: A,
     page_size: usize,
     pages: [Option<Page>; MAX_PAGES],
+    poisoned: bool,
 }
 
 impl<A: Allocator, const MAX_PAGES: usize> PageAllocatorInner<A, MAX_PAGES> {
@@ -71,6 +72,7 @@ impl<A: Allocator, const MAX_PAGES: usize> PageAllocatorInner<A, MAX_PAGES> {
             page_allocator: alloc,
             page_size,
             pages: [const { None }; MAX_PAGES],
+            poisoned: false,
         }
     }
 }
@@ -91,15 +93,16 @@ impl<A: Allocator, const MAX_PAGES: usize> PageAllocatorInner<A, MAX_PAGES> {
             return Err(AllocError::AllocationFailed);
         }
 
+        // All allocations fail if the heap is poisoned
+        if self.poisoned {
+            return Err(AllocError::OutOfMemory);
+        }
+
         // Go through each page one-by-one and try to allocate
         // If we reach a 'None' page, allocate the page and allocate this request there
         for bucket in self.pages.iter_mut() {
             match bucket {
                 Some(page) => {
-                    // Deallocated pages should never receive another allocation
-                    if page.has_deallocated {
-                        continue;
-                    }
                     match page.alloc(layout) {
                         None => {
                             // Allocation failed, fallthrough to the next page
@@ -148,6 +151,9 @@ impl<A: Allocator, const MAX_PAGES: usize> PageAllocatorInner<A, MAX_PAGES> {
                         // Fallthrough to the next page
                     }
                     Some(drop_page) => {
+                        // deallocation poisons the heap
+                        self.poisoned = true;
+
                         if drop_page {
                             unsafe {
                                 self.page_allocator.dealloc(
@@ -157,6 +163,11 @@ impl<A: Allocator, const MAX_PAGES: usize> PageAllocatorInner<A, MAX_PAGES> {
                             }
 
                             bucket.take();
+                        }
+
+                        // Clear poison flag once the heap is empty
+                        if self.pages.iter().all(Option::is_none) {
+                            self.poisoned = false;
                         }
 
                         return;
@@ -878,6 +889,7 @@ mod kani_proofs {
             page_allocator: backing_alloc,
             page_size,
             pages: [page0, page1],
+            poisoned,
         };
 
         let old_total = backing_alloc.total_allocated();
@@ -895,10 +907,11 @@ mod kani_proofs {
         let slot1_changed = old_page1 != inner.pages[1];
 
         if poisoned {
-            assert!(
-                result.is_err(),
-                "a dealloc must poison every future allocation"
-            );
+            // Every allocation fails on a poisoned heap
+            assert!(result.is_err(), "a dealloc must poison every allocation");
+            assert!(!slot0_changed && !slot1_changed, "pages must be untouched");
+            assert_eq!(new_total, old_total, "no backing memory allocated");
+            return;
         }
 
         match result {
@@ -1031,10 +1044,13 @@ mod kani_proofs {
         let old_page0 = make_page();
         let old_page1 = make_page();
 
+        let poisoned = old_page0.has_deallocated || old_page1.has_deallocated;
+
         let mut inner = PageAllocatorInner::<RustSystemAllocator, MAX_PAGES> {
             page_allocator: backing_alloc,
             page_size,
             pages: [Some(old_page0.clone()), Some(old_page1.clone())],
+            poisoned,
         };
 
         let old_total = backing_alloc.total_allocated();
