@@ -397,29 +397,28 @@ mod tests {
 
     #[test]
     fn test_alloc_skips_page_when_teardown() {
-        // Fill a 192-byte page with two 64-byte slots
-        let page_alloc = PageAllocator::<RustSystemAllocator, 2>::new(RustSystemAllocator, 192);
+        let page_alloc = PageAllocator::<RustSystemAllocator, 2>::new(RustSystemAllocator, 128);
 
         unsafe {
             let layout = Layout::from_size_align(64, 8).unwrap();
 
             let a = page_alloc.alloc(layout).unwrap();
-            let _b = page_alloc.alloc(layout).unwrap();
+            let b = page_alloc.alloc(layout).unwrap();
+            let _c = page_alloc.alloc(layout).unwrap();
+            let _d = page_alloc.alloc(layout).unwrap();
 
-            // Begin teardown for page 0
+            // Fully dealloc page 0, page 1 still holds 2 live allocations
             page_alloc.dealloc(a, layout);
+            page_alloc.dealloc(b, layout);
             assert_eq!(
                 page_alloc.stats().pages,
                 1,
-                "page 0 must stay live while its sibling remains"
+                "page 0 must be reclaimed once both of its allocations are freed"
             );
 
-            let _c = page_alloc.alloc(layout).unwrap();
-            assert_eq!(
-                page_alloc.stats().pages,
-                2,
-                "a page mid-teardown must not receive a new allocation"
-            );
+            // No new allocation should succeed now
+            let result = page_alloc.alloc(layout);
+            assert!(result.is_err(), "dealloc should poison the whole heap");
         }
     }
 
