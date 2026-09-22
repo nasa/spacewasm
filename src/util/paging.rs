@@ -902,6 +902,11 @@ mod kani_proofs {
 
         let result = unsafe { inner.alloc(layout) };
 
+        assert_eq!(
+            inner.poisoned, poisoned,
+            "alloc must never change the poison flag"
+        );
+
         let new_total = backing_alloc.total_allocated();
         let slot0_changed = old_page0 != inner.pages[0];
         let slot1_changed = old_page1 != inner.pages[1];
@@ -1123,6 +1128,71 @@ mod kani_proofs {
         assert!(
             heap_all_empty || next_result.is_err(),
             "every future allocation after a dealloc must fail until the whole heap has been freed"
+        );
+    }
+
+    /// Poison is set after dealloc iff at least one page is still resident
+    #[kani::proof]
+    #[kani::unwind(4)]
+    fn proof_poison_clears_when_heap_empties() {
+        const MAX_PAGES: usize = 3;
+        let backing_alloc = RustSystemAllocator;
+        let page_size: usize = 128;
+        let page_layout = Layout::from_size_align(page_size, ALIGNMENT).unwrap();
+
+        let make_page = |is_some: bool| -> Option<Page> {
+            if !is_some {
+                return None;
+            }
+            let ptr = unsafe { backing_alloc.alloc(page_layout).unwrap() };
+            let allocated: usize = kani::any();
+            let wasted: usize = kani::any();
+            let n_allocations: usize = kani::any();
+            let has_deallocated: bool = kani::any();
+            kani::assume(allocated <= page_size);
+            kani::assume(wasted <= allocated);
+            kani::assume(n_allocations >= 1 && n_allocations <= page_size);
+            Some(Page {
+                ptr,
+                size: page_size,
+                allocated,
+                wasted,
+                n_allocations,
+                has_deallocated,
+            })
+        };
+
+        let target: usize = kani::any();
+        kani::assume(target < MAX_PAGES);
+
+        let page0 = make_page(target == 0 || kani::any());
+        let page1 = make_page(target == 1 || kani::any());
+        let page2 = make_page(target == 2 || kani::any());
+
+        let poisoned = page0.as_ref().is_some_and(|p| p.has_deallocated)
+            || page1.as_ref().is_some_and(|p| p.has_deallocated)
+            || page2.as_ref().is_some_and(|p| p.has_deallocated);
+
+        let mut inner = PageAllocatorInner::<RustSystemAllocator, MAX_PAGES> {
+            page_allocator: backing_alloc,
+            page_size,
+            pages: [page0, page1, page2],
+            poisoned,
+        };
+
+        let target_ptr = inner.pages[target].as_ref().unwrap().ptr;
+        let offset: usize = kani::any();
+        kani::assume(offset < page_size);
+        let dealloc_ptr = (target_ptr as usize + offset) as *mut u8;
+        let layout = Layout::from_size_align(1, 1).unwrap();
+
+        unsafe { inner.dealloc(dealloc_ptr, layout) };
+
+        let all_empty = inner.pages.iter().all(Option::is_none);
+
+        assert_eq!(
+            inner.poisoned, !all_empty,
+            "poison is set iff a page is still resident"
         );
     }
 
