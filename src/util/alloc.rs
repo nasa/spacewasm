@@ -14,6 +14,9 @@ pub enum AllocError {
 
     /// Page was too small to fit this allocation
     PageTooSmall,
+
+    /// A dealloc has occurred, and no new allocs are allowed
+    HeapPoisoned,
 }
 
 impl From<u32> for AllocError {
@@ -21,6 +24,7 @@ impl From<u32> for AllocError {
         match value {
             1 => AllocError::OutOfMemory,
             2 => AllocError::PageTooSmall,
+            3 => AllocError::HeapPoisoned,
             _ => AllocError::AllocationFailed,
         }
     }
@@ -162,6 +166,7 @@ mod tests {
     fn test_alloc_error_from_u32() {
         assert_eq!(AllocError::from(1u32), AllocError::OutOfMemory);
         assert_eq!(AllocError::from(2u32), AllocError::PageTooSmall);
+        assert_eq!(AllocError::from(3u32), AllocError::HeapPoisoned);
         assert_eq!(AllocError::from(0u32), AllocError::AllocationFailed);
         // Any unrecognized code falls back to the generic failure.
         assert_eq!(AllocError::from(42u32), AllocError::AllocationFailed);
@@ -172,6 +177,7 @@ mod tests {
         assert_eq!(u32::from(AllocError::AllocationFailed), 0);
         assert_eq!(u32::from(AllocError::OutOfMemory), 1);
         assert_eq!(u32::from(AllocError::PageTooSmall), 2);
+        assert_eq!(u32::from(AllocError::HeapPoisoned), 3);
     }
 
     #[test]
@@ -180,6 +186,7 @@ mod tests {
             AllocError::AllocationFailed,
             AllocError::OutOfMemory,
             AllocError::PageTooSmall,
+            AllocError::HeapPoisoned,
         ] {
             let code: u32 = err.clone().into();
             assert_eq!(AllocError::from(code), err);

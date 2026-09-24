@@ -28,6 +28,7 @@ pub enum spacewasm_status_t {
     SPACEWASM_ERR_ALLOC_FAILED = 16,
     SPACEWASM_ERR_OUT_OF_MEMORY = 17,
     SPACEWASM_ERR_PAGE_TOO_SMALL = 18,
+    SPACEWASM_ERR_HEAP_POISONED = 19,
 
     // Memory access errors
     SPACEWASM_ERR_MEM_OUT_OF_BOUNDS = 32,
@@ -224,6 +225,7 @@ pub fn alloc_status(e: AllocError) -> spacewasm_status_t {
         AllocError::AllocationFailed => SPACEWASM_ERR_ALLOC_FAILED,
         AllocError::OutOfMemory => SPACEWASM_ERR_OUT_OF_MEMORY,
         AllocError::PageTooSmall => SPACEWASM_ERR_PAGE_TOO_SMALL,
+        AllocError::HeapPoisoned => SPACEWASM_ERR_HEAP_POISONED,
     }
 }
 
@@ -233,6 +235,7 @@ pub fn memory_status(e: MemoryError) -> spacewasm_status_t {
         MemoryError::OutOfMemory => SPACEWASM_ERR_OUT_OF_MEMORY,
         MemoryError::AllocationFailed => SPACEWASM_ERR_ALLOC_FAILED,
         MemoryError::PageTooSmall => SPACEWASM_ERR_PAGE_TOO_SMALL,
+        MemoryError::HeapPoisoned => SPACEWASM_ERR_HEAP_POISONED,
     }
 }
 

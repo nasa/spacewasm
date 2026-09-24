@@ -95,7 +95,7 @@ impl<A: Allocator, const MAX_PAGES: usize> PageAllocatorInner<A, MAX_PAGES> {
 
         // All allocations fail if the heap is poisoned
         if self.poisoned {
-            return Err(AllocError::OutOfMemory);
+            return Err(AllocError::HeapPoisoned);
         }
 
         // Go through each page one-by-one and try to allocate
@@ -423,7 +423,10 @@ mod tests {
 
             // No new allocation should succeed now
             let result = page_alloc.alloc(layout);
-            assert!(result.is_err(), "dealloc should poison the whole heap");
+            assert!(
+                matches!(result, Err(AllocError::HeapPoisoned)),
+                "dealloc should poison the whole heap"
+            );
         }
     }
 
@@ -816,8 +819,10 @@ mod kani_proofs {
         let slot1_changed = old_page1 != inner.pages[1];
 
         if poisoned {
-            // Every allocation fails on a poisoned heap
-            assert!(result.is_err(), "a dealloc must poison every allocation");
+            assert!(
+                matches!(result, Err(AllocError::HeapPoisoned)),
+                "a poisoned heap cannot accept a new allocation"
+            );
             assert!(!slot0_changed && !slot1_changed, "pages must be untouched");
             assert_eq!(new_total, old_total, "no backing memory allocated");
             return;
@@ -1023,7 +1028,7 @@ mod kani_proofs {
         let next_result = unsafe { inner.alloc(next_layout) };
 
         assert!(
-            heap_all_empty || next_result.is_err(),
+            heap_all_empty || matches!(next_result, Err(AllocError::HeapPoisoned)),
             "every future allocation after a dealloc must fail until the whole heap has been freed"
         );
     }
