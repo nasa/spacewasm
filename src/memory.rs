@@ -75,6 +75,7 @@ pub enum MemoryError {
     OutOfMemory,
     AllocationFailed,
     PageTooSmall,
+    HeapPoisoned,
 }
 
 impl From<AllocError> for MemoryError {
@@ -83,6 +84,7 @@ impl From<AllocError> for MemoryError {
             AllocError::AllocationFailed => MemoryError::AllocationFailed,
             AllocError::OutOfMemory => MemoryError::OutOfMemory,
             AllocError::PageTooSmall => MemoryError::PageTooSmall,
+            AllocError::HeapPoisoned => MemoryError::HeapPoisoned,
         }
     }
 }
@@ -564,6 +566,10 @@ mod tests {
         assert_eq!(
             MemoryError::from(AllocError::PageTooSmall),
             MemoryError::PageTooSmall
+        );
+        assert_eq!(
+            MemoryError::from(AllocError::HeapPoisoned),
+            MemoryError::HeapPoisoned
         );
     }
 }

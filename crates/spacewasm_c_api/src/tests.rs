@@ -1784,6 +1784,10 @@ fn validation_error_codes_map() {
             status::SPACEWASM_ERR_PAGE_TOO_SMALL,
         ),
         (
+            AllocError(AllocError::HeapPoisoned),
+            status::SPACEWASM_ERR_HEAP_POISONED,
+        ),
+        (
             MemoryError(MemoryError::OutOfBounds),
             status::SPACEWASM_ERR_MEM_OUT_OF_BOUNDS,
         ),
@@ -1798,6 +1802,10 @@ fn validation_error_codes_map() {
         (
             MemoryError(MemoryError::PageTooSmall),
             status::SPACEWASM_ERR_PAGE_TOO_SMALL,
+        ),
+        (
+            MemoryError(MemoryError::HeapPoisoned),
+            status::SPACEWASM_ERR_HEAP_POISONED,
         ),
         // Miscellaneous
         (
@@ -1827,6 +1835,10 @@ fn alloc_status_maps() {
         status::alloc_status(PageTooSmall),
         status::SPACEWASM_ERR_PAGE_TOO_SMALL
     );
+    assert_eq!(
+        status::alloc_status(HeapPoisoned),
+        status::SPACEWASM_ERR_HEAP_POISONED
+    );
 }
 
 #[test]
@@ -1847,6 +1859,10 @@ fn memory_status_maps() {
     assert_eq!(
         status::memory_status(PageTooSmall),
         status::SPACEWASM_ERR_PAGE_TOO_SMALL
+    );
+    assert_eq!(
+        status::memory_status(HeapPoisoned),
+        status::SPACEWASM_ERR_HEAP_POISONED
     );
 }
 
@@ -1900,6 +1916,7 @@ fn simple_error_mappers() {
         spacewasm::AllocError::AllocationFailed,
         spacewasm::AllocError::OutOfMemory,
         spacewasm::AllocError::PageTooSmall,
+        spacewasm::AllocError::HeapPoisoned,
     ] {
         assert_eq!(
             status::host_val_list_status(HostFunctionError::AllocError(ae.clone())),
