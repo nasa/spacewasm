@@ -214,7 +214,6 @@ struct Page {
     allocated: usize,
     n_allocations: usize,
     wasted: usize,
-    has_deallocated: bool,
 }
 
 impl Page {
@@ -225,7 +224,6 @@ impl Page {
             allocated: 0,
             n_allocations: 0,
             wasted: 0,
-            has_deallocated: false,
         }
     }
 
@@ -243,8 +241,6 @@ impl Page {
         // Make sure out buffer can fit in here
         let final_offset = (aligned_start - self.ptr as usize) + layout.size();
         if final_offset <= self.size {
-            assert!(!self.has_deallocated);
-
             self.wasted += alignment_offset;
             self.allocated = final_offset;
             self.n_allocations += 1;
@@ -264,9 +260,7 @@ impl Page {
             // This is our pointer, 'free' it
             assert!(self.n_allocations > 0);
 
-            // Check is we can deallocate this pointer without marking this page with a dealloc flag
             self.n_allocations -= 1;
-            self.has_deallocated = true;
             Some(self.n_allocations == 0)
         } else {
             None
@@ -475,7 +469,6 @@ mod kani_proofs {
             allocated,
             wasted,
             n_allocations,
-            has_deallocated: false,
         };
 
         let size: usize = kani::any();
@@ -540,83 +533,6 @@ mod kani_proofs {
         }
 
         assert_eq!(page.size, page_size, "size must never change (rule 1)");
-        assert!(
-            !page.has_deallocated,
-            "a successful or failed alloc must never leave the growth phase (rule 2)"
-        );
-
-        core::mem::forget(page);
-        unsafe { backing_alloc.dealloc(page_ptr, page_layout) };
-    }
-
-    /// Alloc during teardown aborts
-    #[kani::proof]
-    #[kani::should_panic]
-    fn proof_page_alloc_after_teardown_aborts() {
-        let backing_alloc = RustSystemAllocator;
-
-        let page_size = 192;
-        let page_layout = Layout::from_size_align(page_size, ALIGNMENT).unwrap();
-        let page_ptr = unsafe { backing_alloc.alloc(page_layout).unwrap() };
-
-        let allocated: usize = kani::any();
-        kani::assume(allocated < page_size);
-
-        let mut page = Page {
-            ptr: page_ptr,
-            size: page_size,
-            allocated,
-            wasted: 0,
-            n_allocations: 1,
-            has_deallocated: true,
-        };
-
-        // A 1-byte, 1-aligned request always fits in any spare capacity.
-        let layout = Layout::from_size_align(1, 1).unwrap();
-        let _ = page.alloc(layout);
-
-        core::mem::forget(page);
-        unsafe { backing_alloc.dealloc(page_ptr, page_layout) };
-    }
-
-    /// Once teardown begins, dealloc never moves `allocated` again (rule 4)
-    #[kani::proof]
-    fn proof_page_footprint_frozen_after_teardown() {
-        let backing_alloc = RustSystemAllocator;
-
-        let page_size = 192;
-        let page_layout = Layout::from_size_align(page_size, ALIGNMENT).unwrap();
-        let page_ptr = unsafe { backing_alloc.alloc(page_layout).unwrap() };
-        let page_base = page_ptr as usize;
-
-        let allocated: usize = kani::any();
-        let wasted: usize = kani::any();
-        let n_allocations: usize = kani::any();
-        kani::assume(allocated <= page_size);
-        kani::assume(wasted <= allocated);
-        kani::assume(n_allocations >= 1 && n_allocations <= page_size);
-
-        let mut page = Page {
-            ptr: page_ptr,
-            size: page_size,
-            allocated,
-            wasted,
-            n_allocations,
-            has_deallocated: true,
-        };
-
-        let old_allocated = page.allocated;
-
-        let dealloc_offset: usize = kani::any();
-        kani::assume(dealloc_offset < page_size);
-        let dealloc_ptr = (page_base + dealloc_offset) as *mut u8;
-        let layout = Layout::from_size_align(1, 1).unwrap();
-        let _ = page.dealloc(dealloc_ptr, layout);
-
-        assert_eq!(
-            page.allocated, old_allocated,
-            "the footprint must not change once teardown has begun"
-        );
 
         core::mem::forget(page);
         unsafe { backing_alloc.dealloc(page_ptr, page_layout) };
@@ -635,7 +551,6 @@ mod kani_proofs {
         let allocated: usize = kani::any();
         let wasted: usize = kani::any();
         let n_allocations: usize = kani::any();
-        let has_deallocated: bool = kani::any();
         kani::assume(allocated <= page_size);
         kani::assume(wasted <= allocated);
         kani::assume(n_allocations >= 1 && n_allocations <= page_size);
@@ -646,7 +561,6 @@ mod kani_proofs {
             allocated,
             wasted,
             n_allocations,
-            has_deallocated,
         };
 
         let dealloc_offset: usize = kani::any();
@@ -670,7 +584,6 @@ mod kani_proofs {
             old_n_allocations - 1,
             "n_allocations must decrease by exactly one"
         );
-        assert!(page.has_deallocated, "has_deallocated must become true");
         assert_eq!(
             page.allocated, old_allocated,
             "dealloc must not move allocated"
@@ -694,7 +607,6 @@ mod kani_proofs {
         let allocated: usize = kani::any();
         let wasted: usize = kani::any();
         let n_allocations: usize = kani::any();
-        let has_deallocated: bool = kani::any();
         kani::assume(allocated <= page_size);
         kani::assume(wasted <= allocated);
         kani::assume(n_allocations <= page_size);
@@ -705,7 +617,6 @@ mod kani_proofs {
             allocated,
             wasted,
             n_allocations,
-            has_deallocated,
         };
 
         // A pointer strictly past the end of the page's byte range.
@@ -733,10 +644,6 @@ mod kani_proofs {
         assert_eq!(
             page.n_allocations, old_page.n_allocations,
             "a rejected dealloc must not change n_allocations"
-        );
-        assert_eq!(
-            page.has_deallocated, old_page.has_deallocated,
-            "a rejected dealloc must not change has_deallocated"
         );
 
         core::mem::forget(page);
@@ -861,7 +768,6 @@ mod kani_proofs {
             let allocated: usize = kani::any();
             let wasted: usize = kani::any();
             let n_allocations: usize = kani::any();
-            let has_deallocated: bool = kani::any();
             kani::assume(allocated <= page_size);
             kani::assume(wasted <= allocated);
             kani::assume(n_allocations >= 1 && n_allocations <= page_size);
@@ -871,7 +777,6 @@ mod kani_proofs {
                 allocated,
                 wasted,
                 n_allocations,
-                has_deallocated,
             })
         };
 
@@ -882,8 +787,7 @@ mod kani_proofs {
         let old_page0 = page0.clone();
         let old_page1 = page1.clone();
 
-        let poisoned = old_page0.as_ref().is_some_and(|p| p.has_deallocated)
-            || old_page1.as_ref().is_some_and(|p| p.has_deallocated);
+        let poisoned: bool = kani::any();
 
         let mut inner = PageAllocatorInner::<RustSystemAllocator, MAX_PAGES> {
             page_allocator: backing_alloc,
@@ -944,10 +848,6 @@ mod kani_proofs {
 
                 match touched_old {
                     Some(old) => {
-                        assert!(
-                            !old.has_deallocated,
-                            "must never allocate into a page mid-teardown (rule 2)"
-                        );
                         assert_eq!(
                             touched_new.ptr, old.ptr,
                             "reusing a page must not change its address"
@@ -1032,7 +932,6 @@ mod kani_proofs {
             let allocated: usize = kani::any();
             let wasted: usize = kani::any();
             let n_allocations: usize = kani::any();
-            let has_deallocated: bool = kani::any();
             kani::assume(allocated <= page_size);
             kani::assume(wasted <= allocated);
             kani::assume(n_allocations >= 1 && n_allocations <= page_size);
@@ -1042,14 +941,13 @@ mod kani_proofs {
                 allocated,
                 wasted,
                 n_allocations,
-                has_deallocated,
             }
         };
 
         let old_page0 = make_page();
         let old_page1 = make_page();
 
-        let poisoned = old_page0.has_deallocated || old_page1.has_deallocated;
+        let poisoned: bool = kani::any();
 
         let mut inner = PageAllocatorInner::<RustSystemAllocator, MAX_PAGES> {
             page_allocator: backing_alloc,
@@ -1108,7 +1006,6 @@ mod kani_proofs {
                 touched.allocated, target_old.allocated,
                 "dealloc must not move the bump pointer"
             );
-            assert!(touched.has_deallocated, "has_deallocated must become true");
             assert_eq!(
                 new_total, old_total,
                 "freeing a non-final allocation must not touch the backing allocator"
@@ -1131,6 +1028,42 @@ mod kani_proofs {
         );
     }
 
+    /// Deallocing a pointer that doesn't match a page should panic
+    #[kani::proof]
+    #[kani::should_panic]
+    fn proof_page_allocator_dealloc_foreign_pointer_aborts() {
+        const MAX_PAGES: usize = 2;
+        let backing_alloc = RustSystemAllocator;
+        let page_size: usize = 128;
+        let page_layout = Layout::from_size_align(page_size, ALIGNMENT).unwrap();
+
+        let ptr0 = unsafe { backing_alloc.alloc(page_layout).unwrap() };
+        let ptr1 = unsafe { backing_alloc.alloc(page_layout).unwrap() };
+        let page0_base = ptr0 as usize;
+        let page1_base = ptr1 as usize;
+
+        let poisoned: bool = kani::any();
+
+        let mut inner = PageAllocatorInner::<RustSystemAllocator, MAX_PAGES> {
+            page_allocator: backing_alloc,
+            page_size,
+            pages: [
+                Some(Page::new(ptr0, page_size)),
+                Some(Page::new(ptr1, page_size)),
+            ],
+            poisoned,
+        };
+
+        let past_end_offset: usize = kani::any();
+        kani::assume(past_end_offset < 1024);
+        let foreign_addr = page0_base + page_size + past_end_offset;
+        kani::assume(foreign_addr < page1_base || foreign_addr >= page1_base + page_size);
+        let foreign_ptr = foreign_addr as *mut u8;
+        let layout = Layout::from_size_align(1, 1).unwrap();
+
+        unsafe { inner.dealloc(foreign_ptr, layout) };
+    }
+
     /// Poison is set after dealloc iff at least one page is still resident
     #[kani::proof]
     #[kani::unwind(4)]
@@ -1148,7 +1081,6 @@ mod kani_proofs {
             let allocated: usize = kani::any();
             let wasted: usize = kani::any();
             let n_allocations: usize = kani::any();
-            let has_deallocated: bool = kani::any();
             kani::assume(allocated <= page_size);
             kani::assume(wasted <= allocated);
             kani::assume(n_allocations >= 1 && n_allocations <= page_size);
@@ -1158,7 +1090,6 @@ mod kani_proofs {
                 allocated,
                 wasted,
                 n_allocations,
-                has_deallocated,
             })
         };
 
@@ -1169,9 +1100,7 @@ mod kani_proofs {
         let page1 = make_page(target == 1 || kani::any());
         let page2 = make_page(target == 2 || kani::any());
 
-        let poisoned = page0.as_ref().is_some_and(|p| p.has_deallocated)
-            || page1.as_ref().is_some_and(|p| p.has_deallocated)
-            || page2.as_ref().is_some_and(|p| p.has_deallocated);
+        let poisoned: bool = kani::any();
 
         let mut inner = PageAllocatorInner::<RustSystemAllocator, MAX_PAGES> {
             page_allocator: backing_alloc,
