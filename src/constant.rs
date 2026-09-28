@@ -232,6 +232,11 @@ impl<'a> BaseVisitor for ConstantCompiler<'a> {
 
     // Numeric instructions - conversions
     invalid_constant_fn!(i32_wrap_i64);
+    invalid_constant_fn!(i32_extend8_s);
+    invalid_constant_fn!(i32_extend16_s);
+    invalid_constant_fn!(i64_extend8_s);
+    invalid_constant_fn!(i64_extend16_s);
+    invalid_constant_fn!(i64_extend32_s);
     invalid_constant_fn!(i32_trunc_f32_s);
     invalid_constant_fn!(i32_trunc_f32_u);
     invalid_constant_fn!(i32_trunc_f64_s);
