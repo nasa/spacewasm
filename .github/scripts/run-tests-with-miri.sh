@@ -92,7 +92,17 @@ run_one() {
   status=$?
 
   if [ "$status" -eq 0 ]; then
-    printf 'PASS\t%s\t%s\n' "$label" "$name"
+    # `--exact` with a name libtest cannot match is a *successful* run of zero
+    # tests, so a zero exit status alone does not distinguish "passed" from
+    # "never ran". libtest prints "running 0 tests" in exactly that case; a
+    # test that is present but ignored still prints "running 1 test".
+    if printf '%s\n' "$out" | grep -q '^running 0 tests$'; then
+      printf 'NOTRUN\t%s\t%s\n' "$label" "$name"
+      echo "!!! DID NOT RUN: $label :: $name" >&2
+      echo "$out" >&2
+    else
+      printf 'PASS\t%s\t%s\n' "$label" "$name"
+    fi
   elif [ "$status" -eq 124 ]; then
     printf 'TIMEOUT\t%s\t%s\n' "$label" "$name"
     echo "!!! TIMED OUT after ${TIMEOUT_SECS}s: $label :: $name" >&2
@@ -104,11 +114,18 @@ run_one() {
 }
 export -f run_one
 
-xargs -P "$jobs" -L1 bash -c 'run_one "$@"' _ <"$pairs_file" >>"$results_file"
+xargs_status=0
+xargs -P "$jobs" -L1 bash -c 'run_one "$@"' _ <"$pairs_file" >>"$results_file" || xargs_status=$?
 
 pass_count=$(grep -c '^PASS' "$results_file" || true)
 timeout_lines=$(grep '^TIMEOUT' "$results_file" || true)
 fail_lines=$(grep '^FAIL' "$results_file" || true)
+notrun_lines=$(grep '^NOTRUN' "$results_file" || true)
+# Every enumerated test must have produced a line above. A worker that dies
+# before it prints one — an OOM kill, a cancelled job, xargs failing to fork —
+# is otherwise counted as neither a pass nor a failure.
+accounted=$(wc -l <"$results_file")
+unaccounted=$(comm -23 <(sort "$pairs_file") <(cut -f2,3 "$results_file" | sort))
 
 echo
 echo "$pass_count / $total tests passed."
@@ -125,7 +142,19 @@ if [ -n "$fail_lines" ]; then
   echo "Failed:"
   echo "$fail_lines" | awk -F'\t' '{print "  - " $2 " :: " $3}'
 fi
+if [ -n "$notrun_lines" ]; then
+  echo "Did not run (filter matched no test):"
+  echo "$notrun_lines" | awk -F'\t' '{print "  - " $2 " :: " $3}'
+fi
+if [ -n "$unaccounted" ]; then
+  echo "No result reported ($((total - accounted)) of $total):"
+  echo "$unaccounted" | awk -F'\t' '{print "  - " $1 " :: " $2}'
+fi
+if [ "$xargs_status" -ne 0 ]; then
+  echo "!!! xargs exited $xargs_status" >&2
+fi
 
-if [ -n "$timeout_lines" ] || [ -n "$fail_lines" ]; then
+if [ -n "$timeout_lines" ] || [ -n "$fail_lines" ] || [ -n "$notrun_lines" ] ||
+  [ -n "$unaccounted" ] || [ "$xargs_status" -ne 0 ]; then
   exit 1
 fi
