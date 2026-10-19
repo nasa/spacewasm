@@ -273,6 +273,7 @@ pub fn validation_status(e: &ValidationError) -> spacewasm_status_t {
         ValidationError::InvalidMaxLimit => SPACEWASM_ERR_INVALID_MAX_LIMIT,
         ValidationError::ExpectedTerminal(_) => SPACEWASM_ERR_EXPECTED_TERMINAL,
         ValidationError::InvalidOpcode(_) => SPACEWASM_ERR_INVALID_OPCODE,
+        ValidationError::InvalidFcOpcode(_) => SPACEWASM_ERR_INVALID_OPCODE,
         ValidationError::MalformedCodeSize => SPACEWASM_ERR_MALFORMED_CODE_SIZE,
         ValidationError::InvalidCodeSectionFunctionCount => {
             SPACEWASM_ERR_INVALID_CODE_SECTION_FUNCTION_COUNT

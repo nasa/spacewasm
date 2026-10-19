@@ -1574,6 +1574,7 @@ fn validation_error_codes_map() {
         (InvalidMaxLimit, status::SPACEWASM_ERR_INVALID_MAX_LIMIT),
         (ExpectedTerminal(0), status::SPACEWASM_ERR_EXPECTED_TERMINAL),
         (InvalidOpcode(0), status::SPACEWASM_ERR_INVALID_OPCODE),
+        (InvalidFcOpcode(10), status::SPACEWASM_ERR_INVALID_OPCODE),
         (MalformedCodeSize, status::SPACEWASM_ERR_MALFORMED_CODE_SIZE),
         (
             InvalidCodeSectionFunctionCount,
