@@ -204,7 +204,7 @@ Below is a table of the implemented and planned WebAssembly proposals with links
 | [Custom page sizes](https://github.com/WebAssembly/custom-page-sizes)                                        | [≥0.2.0](https://github.com/nasa/spacewasm/pull/84)     |
 | [Bulk memory operations](https://github.com/WebAssembly/bulk-memory-operations)                              | [Planned](https://github.com/nasa/spacewasm/issues/54)  |
 | [Sign-extension operators](https://github.com/WebAssembly/sign-extension-ops)                                | [Planned](https://github.com/nasa/spacewasm/issues/55)  |
-| [Non-trapping float-to-int conversions](https://github.com/WebAssembly/nontrapping-float-to-int-conversions) | [Planned](https://github.com/nasa/spacewasm/issues/56)  |
+| [Non-trapping float-to-int conversions](https://github.com/WebAssembly/nontrapping-float-to-int-conversions) | [≥0.8.0](https://github.com/nasa/spacewasm/pull/212)    |
 | [SIMD](https://github.com/WebAssembly/simd)                                                                  | [Planned](https://github.com/nasa/spacewasm/issues/187) |
 | [Multi-value](https://github.com/WebAssembly/multi-value)                                                    | Under Consideration                                     |
 | [Multiple memories](https://github.com/WebAssembly/multi-memory)                                             | Under Consideration                                     |
