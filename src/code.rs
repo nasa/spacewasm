@@ -468,6 +468,24 @@ impl<'wasm> Reader<'wasm> {
                 F32_REINTERPRET_I32 => instruction!(f32_reinterpret_i32),
                 F64_REINTERPRET_I64 => instruction!(f64_reinterpret_i64),
 
+                // FC Extensions
+                EXTENDED_FC => {
+                    let ext = self.read_u32()?;
+                    match ext {
+                        // Non-trapping float-to-int
+                        fc::I32_TRUNC_SAT_F32_S => instruction!(i32_trunc_sat_f32_s),
+                        fc::I32_TRUNC_SAT_F32_U => instruction!(i32_trunc_sat_f32_u),
+                        fc::I32_TRUNC_SAT_F64_S => instruction!(i32_trunc_sat_f64_s),
+                        fc::I32_TRUNC_SAT_F64_U => instruction!(i32_trunc_sat_f64_u),
+                        fc::I64_TRUNC_SAT_F32_S => instruction!(i64_trunc_sat_f32_s),
+                        fc::I64_TRUNC_SAT_F32_U => instruction!(i64_trunc_sat_f32_u),
+                        fc::I64_TRUNC_SAT_F64_S => instruction!(i64_trunc_sat_f64_s),
+                        fc::I64_TRUNC_SAT_F64_U => instruction!(i64_trunc_sat_f64_u),
+
+                        _ => Err(ValidationError::InvalidFcOpcode(ext as u8))?,
+                    }
+                }
+
                 op => Err(ValidationError::InvalidOpcode(op))?,
             }
         }

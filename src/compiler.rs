@@ -43,6 +43,15 @@ macro_rules! instruction {
         }
     };
 
+    // Extended opcode, no operands (extended opcode embedded into immediate)
+    ($name:ident, ext, $ext_opcode:expr, $opcode:expr, ($($in_ty:ident)*) -> ($($out_ty:ident)*)) => {
+        fn $name(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+            validate!(state, ($($in_ty)*) -> ($($out_ty)*));
+            state.instr_imm_8($ext_opcode, $opcode)?;
+            Ok(())
+        }
+    };
+
     // An instruction with a MemArg operand
     ($name:ident, $opcode:expr, mem, $ty_align:tt, ($($in_ty:ident)*) -> ($($out_ty:ident)*)) => {
         fn $name(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
@@ -597,4 +606,13 @@ impl<'a, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize> BaseVisi
     instruction!(f64_convert_i64_s, F64_CONVERT_I64_S, (I64) -> (F64));
     instruction!(f64_convert_i64_u, F64_CONVERT_I64_U, (I64) -> (F64));
     instruction!(f64_promote_f32, F64_PROMOTE_F32, (F32) -> (F64));
+
+    instruction!(i32_trunc_sat_f32_s, ext, EXTENDED_FC, fc::I32_TRUNC_SAT_F32_S as u8, (F32) -> (I32));
+    instruction!(i32_trunc_sat_f32_u, ext, EXTENDED_FC, fc::I32_TRUNC_SAT_F32_U as u8, (F32) -> (I32));
+    instruction!(i32_trunc_sat_f64_s, ext, EXTENDED_FC, fc::I32_TRUNC_SAT_F64_S as u8, (F64) -> (I32));
+    instruction!(i32_trunc_sat_f64_u, ext, EXTENDED_FC, fc::I32_TRUNC_SAT_F64_U as u8, (F64) -> (I32));
+    instruction!(i64_trunc_sat_f32_s, ext, EXTENDED_FC, fc::I64_TRUNC_SAT_F32_S as u8, (F32) -> (I64));
+    instruction!(i64_trunc_sat_f32_u, ext, EXTENDED_FC, fc::I64_TRUNC_SAT_F32_U as u8, (F32) -> (I64));
+    instruction!(i64_trunc_sat_f64_s, ext, EXTENDED_FC, fc::I64_TRUNC_SAT_F64_S as u8, (F64) -> (I64));
+    instruction!(i64_trunc_sat_f64_u, ext, EXTENDED_FC, fc::I64_TRUNC_SAT_F64_U as u8, (F64) -> (I64));
 }

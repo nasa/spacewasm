@@ -59,6 +59,7 @@ pub enum ValidationError {
     InvalidMaxLimit,
     ExpectedTerminal(u8),
     InvalidOpcode(u8),
+    InvalidFcOpcode(u8),
     MalformedCodeSize,
     InvalidCodeSectionFunctionCount,
     VecTooLong,

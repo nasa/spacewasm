@@ -336,6 +336,16 @@ impl<'a, T: BaseVisitor<State = Engine, Error = E>, E> BaseVisitor for StateTrac
     trace_visit_fn!(f64_convert_i64_s);
     trace_visit_fn!(f64_convert_i64_u);
     trace_visit_fn!(f64_promote_f32);
+
+    // Non-trapping float to int
+    trace_visit_fn!(i32_trunc_sat_f32_s);
+    trace_visit_fn!(i32_trunc_sat_f32_u);
+    trace_visit_fn!(i32_trunc_sat_f64_s);
+    trace_visit_fn!(i32_trunc_sat_f64_u);
+    trace_visit_fn!(i64_trunc_sat_f32_s);
+    trace_visit_fn!(i64_trunc_sat_f32_u);
+    trace_visit_fn!(i64_trunc_sat_f64_s);
+    trace_visit_fn!(i64_trunc_sat_f64_u);
 }
 
 impl<'a, T, E> IrVisitor for StateTracer<'a, T, E>

@@ -252,6 +252,14 @@ impl<'a> BaseVisitor for ConstantCompiler<'a> {
     invalid_constant_fn!(f64_convert_i64_s);
     invalid_constant_fn!(f64_convert_i64_u);
     invalid_constant_fn!(f64_promote_f32);
+    invalid_constant_fn!(i32_trunc_sat_f32_s);
+    invalid_constant_fn!(i32_trunc_sat_f32_u);
+    invalid_constant_fn!(i32_trunc_sat_f64_s);
+    invalid_constant_fn!(i32_trunc_sat_f64_u);
+    invalid_constant_fn!(i64_trunc_sat_f32_s);
+    invalid_constant_fn!(i64_trunc_sat_f32_u);
+    invalid_constant_fn!(i64_trunc_sat_f64_s);
+    invalid_constant_fn!(i64_trunc_sat_f64_u);
 }
 
 impl<'a> WasmVisitor for ConstantCompiler<'a> {

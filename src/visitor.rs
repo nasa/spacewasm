@@ -212,6 +212,16 @@ pub trait BaseVisitor {
     visit_fn!(f64_convert_i64_s);
     visit_fn!(f64_convert_i64_u);
     visit_fn!(f64_promote_f32);
+
+    // Non-trapping float to int
+    visit_fn!(i32_trunc_sat_f32_s);
+    visit_fn!(i32_trunc_sat_f32_u);
+    visit_fn!(i32_trunc_sat_f64_s);
+    visit_fn!(i32_trunc_sat_f64_u);
+    visit_fn!(i64_trunc_sat_f32_s);
+    visit_fn!(i64_trunc_sat_f32_u);
+    visit_fn!(i64_trunc_sat_f64_s);
+    visit_fn!(i64_trunc_sat_f64_u);
 }
 
 /// An abstraction over Wasm Bytecode.

@@ -450,9 +450,32 @@ impl IrReader {
             F64_CONVERT_I64_S => instruction!(f64_convert_i64_s),
             F64_CONVERT_I64_U => instruction!(f64_convert_i64_u),
             F64_PROMOTE_F32 => instruction!(f64_promote_f32),
+
+            EXTENDED_FC => {
+                // Expected opcode embedded into the immediate
+                match imm as u32 {
+                    // Non-trapping float-to-int
+                    fc::I32_TRUNC_SAT_F32_S => instruction!(i32_trunc_sat_f32_s),
+                    fc::I32_TRUNC_SAT_F32_U => instruction!(i32_trunc_sat_f32_u),
+                    fc::I32_TRUNC_SAT_F64_S => instruction!(i32_trunc_sat_f64_s),
+                    fc::I32_TRUNC_SAT_F64_U => instruction!(i32_trunc_sat_f64_u),
+                    fc::I64_TRUNC_SAT_F32_S => instruction!(i64_trunc_sat_f32_s),
+                    fc::I64_TRUNC_SAT_F32_U => instruction!(i64_trunc_sat_f32_u),
+                    fc::I64_TRUNC_SAT_F64_S => instruction!(i64_trunc_sat_f64_s),
+                    fc::I64_TRUNC_SAT_F64_U => instruction!(i64_trunc_sat_f64_u),
+
+                    _ => {
+                        #[cfg(feature = "strict-assertions")]
+                        panic!("invalid opcode {opcode} {imm}");
+                        #[cfg(not(feature = "strict-assertions"))]
+                        return visitor.malformed_ir(state);
+                    }
+                }
+            }
+
             _ => {
                 #[cfg(feature = "strict-assertions")]
-                panic!("invalid opcode {opcode:?}");
+                panic!("invalid opcode {opcode}");
                 #[cfg(not(feature = "strict-assertions"))]
                 return visitor.malformed_ir(state);
             }

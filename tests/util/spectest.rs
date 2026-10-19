@@ -1168,7 +1168,12 @@ pub fn convert_wast_for_miri() {
     // The `tests/` subdirectories containing `.wast` files. Hard-coded
     // rather than walked, since it's a fixed, small set; add to this list
     // if a new `.wast` suite subdirectory is introduced.
-    let wast_dirs: &[&str] = &["core", "regression", "custom-page-sizes"];
+    let wast_dirs: &[&str] = &[
+        "core",
+        "regression",
+        "custom-page-sizes",
+        "nontrapping-float-to-int",
+    ];
 
     for subdir in wast_dirs {
         let dir = tests_dir.join(subdir);
