@@ -14,7 +14,6 @@
 // (DLR).
 // Copyright © 2024-2025 OxidOS Automotive SRL.
 
-
 #![allow(unused)]
 
 pub(crate) const UNREACHABLE: u8 = 0x00;
