@@ -123,6 +123,7 @@ impl<T: ?Sized, A: Allocator> Box<T, A> {
     /// not be used again after this call. Reconstructing a box twice from the
     /// same pointer is undefined behavior (double free).
     pub unsafe fn from_raw(alloc: A, ptr: *mut T) -> Box<T, A> {
+        assert!(!ptr.is_null(), "Box::from_raw received a null pointer");
         Box { ptr, alloc }
     }
 
@@ -161,12 +162,14 @@ impl<T: Clone, A: Allocator + Clone> Clone for Box<[T], A> {
 impl<T: ?Sized, A: Allocator> Deref for Box<T, A> {
     type Target = T;
     fn deref(&self) -> &T {
+        debug_assert!(!self.ptr.is_null(), "Box internal pointer must be non-null");
         unsafe { &*self.ptr }
     }
 }
 
 impl<T: ?Sized, A: Allocator> DerefMut for Box<T, A> {
     fn deref_mut(&mut self) -> &mut T {
+        debug_assert!(!self.ptr.is_null(), "Box internal pointer must be non-null");
         unsafe { &mut *self.ptr }
     }
 }
