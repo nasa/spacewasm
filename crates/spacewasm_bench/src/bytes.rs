@@ -18,16 +18,13 @@ pub struct ByteStream {
 
 impl ByteStream {
     pub fn new(bytes: &[u8]) -> ByteStream {
-        let bytes_vec: Vec<u8> = Vec::from_exact_iter(bytes.iter().copied()).unwrap();
-        let mut chunks: Vec<Vec<u8>> = Vec::new(10).expect("could not allocate vector");
+        // Avoid temporary allocations here: the PageAllocator poisons the heap
+        // on any deallocation, so nothing allocated here may be dropped.
+        let mut chunks: Vec<Vec<u8>> =
+            Vec::new(bytes.len().div_ceil(1024)).expect("could not allocate vector");
 
-        let mut i = 0;
-        while i < bytes_vec.len() {
-            let n = core::cmp::min(1024, bytes_vec.len() - i);
-
-            chunks.push(Vec::from_exact_iter(bytes_vec[i..(i + n)].iter().copied()).unwrap());
-
-            i += n;
+        for chunk in bytes.chunks(1024) {
+            chunks.push(Vec::from_exact_iter(chunk.iter().copied()).unwrap());
         }
 
         ByteStream { index: 0, chunks }

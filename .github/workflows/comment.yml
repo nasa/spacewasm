@@ -150,8 +150,12 @@ jobs:
                 comment += "||QEMU CPU / Board|Coremark Score|Host Time|\n";
                 comment += "|--:|:-:|:-:|:-:|\n";
                 for (let triple of triples) {
-                    let score = data[triple]["coremark"]
-                    let t = data[triple]["coremark_time"]
+                    let score = data[triple]["coremark"];
+                    let t = finiteOrNull(data[triple]["coremark_time"]);
+                    if (score === undefined || t === null) {
+                        comment += "|**`"+triple+"`**|"+(data[triple]["qemu_info"] ?? "")+"|❌ failed|-|\n";
+                        continue;
+                    }
                     let old_score = (old_data[triple] ?? {})["coremark"] ?? score;
                     comment += "|**`"+triple+"`**|"+data[triple]["qemu_info"]+"|"+colorize(score, old_score, false)+"|"+t.toFixed(2)+" s|\n";
                 }

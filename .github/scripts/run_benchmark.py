@@ -142,6 +142,12 @@ def main():
         data[triple]["coremark_time"] = t
         data[triple]["qemu_info"] = qemu_info[triple]
 
+    # exceptions in the coremark threads do not propagate, so check for them here
+    failed = [i for i in triples if "coremark" not in data[i]]
+    if failed:
+        sys.stderr.write(f"coremark failed for: {', '.join(failed)}\n")
+        return 1
+
     data["triples"] = triples
     data["elf_sections"] = elf_sections
 
