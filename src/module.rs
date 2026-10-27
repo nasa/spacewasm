@@ -609,7 +609,14 @@ impl Func {
 struct FunctionSection;
 impl FunctionSection {
     pub fn read(wasm: &mut Reader, module: &Module) -> Result<Vec<Func>, ValidationError> {
-        wasm.read_vec(|w| Func::read_func_section(w, module))
+        let functions = wasm.read_vec(|w| Func::read_func_section(w, module))?;
+
+        // Module functions are referenced by a 16-bit index (`Ref::Module`)
+        if functions.len() > u16::MAX as usize {
+            return Err(ValidationError::IdxTooLarge);
+        }
+
+        Ok(functions)
     }
 }
 
@@ -715,7 +722,14 @@ impl GlobalSection {
         store: &Store,
         module: &Module,
     ) -> Result<Vec<Global>, ValidationError> {
-        wasm.read_vec(|wasm| Global::read(wasm, store, module))
+        let globals = wasm.read_vec(|wasm| Global::read(wasm, store, module))?;
+
+        // Module globals are referenced by a 16-bit index (`Ref::Module`)
+        if globals.len() > u16::MAX as usize {
+            return Err(ValidationError::IdxTooLarge);
+        }
+
+        Ok(globals)
     }
 }
 
