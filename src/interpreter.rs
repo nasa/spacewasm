@@ -1300,20 +1300,20 @@ impl BaseVisitor for Interpreter {
     }
 
     fn i64_extend8_s(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        let f = state.stack.read_u64(state.sp - 1) as i8;
-        state.stack.write_u64(state.sp - 1, f as i64 as u64);
+        let f = state.stack.read_u64(state.sp - 2) as i8;
+        state.stack.write_u64(state.sp - 2, f as i64 as u64);
         Ok(())
     }
 
     fn i64_extend16_s(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        let f = state.stack.read_u64(state.sp - 1) as i16;
-        state.stack.write_u64(state.sp - 1, f as i64 as u64);
+        let f = state.stack.read_u64(state.sp - 2) as i16;
+        state.stack.write_u64(state.sp - 2, f as i64 as u64);
         Ok(())
     }
 
     fn i64_extend32_s(&self, state: &mut Self::State) -> Result<(), Self::Error> {
-        let f = state.stack.read_u64(state.sp - 1) as i32;
-        state.stack.write_u64(state.sp - 1, f as i64 as u64);
+        let f = state.stack.read_u64(state.sp - 2) as i32;
+        state.stack.write_u64(state.sp - 2, f as i64 as u64);
         Ok(())
     }
 
