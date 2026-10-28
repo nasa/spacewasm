@@ -1287,6 +1287,36 @@ impl BaseVisitor for Interpreter {
         Ok(())
     }
 
+    fn i32_extend8_s(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        let f = state.stack.read_u32(state.sp - 1) as i8;
+        state.stack.write_u32(state.sp - 1, f as i32 as u32);
+        Ok(())
+    }
+
+    fn i32_extend16_s(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        let f = state.stack.read_u32(state.sp - 1) as i16;
+        state.stack.write_u32(state.sp - 1, f as i32 as u32);
+        Ok(())
+    }
+
+    fn i64_extend8_s(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        let f = state.stack.read_u64(state.sp - 1) as i8;
+        state.stack.write_u64(state.sp - 1, f as i64 as u64);
+        Ok(())
+    }
+
+    fn i64_extend16_s(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        let f = state.stack.read_u64(state.sp - 1) as i16;
+        state.stack.write_u64(state.sp - 1, f as i64 as u64);
+        Ok(())
+    }
+
+    fn i64_extend32_s(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        let f = state.stack.read_u64(state.sp - 1) as i32;
+        state.stack.write_u64(state.sp - 1, f as i64 as u64);
+        Ok(())
+    }
+
     fn i32_trunc_sat_f32_s(&self, state: &mut Self::State) -> Result<(), Self::Error> {
         let f = state.stack.read_f32(state.sp - 1);
         state.stack.write_u32(state.sp - 1, f as i32 as u32);
