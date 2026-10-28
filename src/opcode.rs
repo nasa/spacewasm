@@ -203,6 +203,12 @@ pub(crate) const I64_REINTERPRET_F64: u8 = 0xBD;
 pub(crate) const F32_REINTERPRET_I32: u8 = 0xBE;
 pub(crate) const F64_REINTERPRET_I64: u8 = 0xBF;
 
+pub(crate) const I32_EXTEND_8_S: u8 = 0xC0;
+pub(crate) const I32_EXTEND_16_S: u8 = 0xC1;
+pub(crate) const I64_EXTEND_8_S: u8 = 0xC2;
+pub(crate) const I64_EXTEND_16_S: u8 = 0xC3;
+pub(crate) const I64_EXTEND_32_S: u8 = 0xC4;
+
 pub(crate) const EXTENDED_FC: u8 = 0xFC;
 
 pub mod fc {
