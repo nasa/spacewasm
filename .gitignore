@@ -54,6 +54,7 @@ dkms.conf
 # IDE
 .vscode
 .idea
+.*.swp
 
 
 # Added by cargo
