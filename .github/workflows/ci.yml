@@ -199,9 +199,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             qemu-system-arm \
-            qemu-system-riscv64 \
-            qemu-system-riscv32 \
-            qemu-kvm \
+            qemu-system-riscv \
             qemu-utils
 
       - name: Install Cargo binutils
