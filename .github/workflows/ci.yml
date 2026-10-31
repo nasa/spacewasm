@@ -195,12 +195,7 @@ jobs:
           targets: riscv32imc-unknown-none-elf,riscv64gc-unknown-none-elf,thumbv7m-none-eabi,thumbv7em-none-eabihf
 
       - name: Install QEMU
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            qemu-system-arm \
-            qemu-system-riscv \
-            qemu-utils
+        uses: ./.github/actions/install-qemu
 
       - name: Install Cargo binutils
         run: |
