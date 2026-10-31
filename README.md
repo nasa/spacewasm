@@ -13,11 +13,20 @@
 SpaceWasm is an implementation of the [Wasm 1.0](https://webassembly.github.io/spec/versions/core/WebAssembly-1.0.pdf)
 specification meant to interpret Wasm binary on-board spacecraft. It is developed at [NASA JPL](https://www.jpl.nasa.gov).
 
+SpaceWasm is the interpreter behind [F´](https://github.com/nasa/fprime)'s
+[`Svc::WasmSequencer`](https://fprime.jpl.nasa.gov/latest/Svc/WasmSequencer/docs/sdd/), released in
+[F´ v4.4.0](https://github.com/nasa/fprime/releases/tag/v4.4.0). F´ is JPL's open-source flight-software framework and
+[flew on the Ingenuity Mars Helicopter](https://www.jpl.nasa.gov/news/meet-the-open-source-software-powering-nasas-ingenuity-mars-helicopter/).
+
 ## Rationale
 
-1. **Sequencing**: High-level spacecraft activities are typically encoded outside of the embedded flight-software in a command sequence.
+1. **Command sequencing**: High-level spacecraft activities are typically encoded outside of the embedded flight-software in command sequences.
 These activities can include anything from driving the Mars rover and operating its arm, to checking temperature ranges are nominal.
-Historically, the form and capability of sequences has varied from mission to mission, resulting in assorted/fragmented implementations.
+Curiosity has executed [more than 76,000 unique sequences](https://www-robotics.jpl.nasa.gov/media/documents/IEEE25-sequence-traceability-v3.pdf) on Mars.
+Historically, the form and capability of sequences has varied from mission to mission, even within JPL.
+Several deep-space missions use [VML](https://ntrs.nasa.gov/citations/20150014761).
+Curiosity and Perseverance share a couple sequencing languages, and Europa Clipper has another.
+JWST uses [JavaScript](https://doi.org/10.1117/12.671403) and Euclid uses [MicroPython](https://essr.esa.int/project/micropython-for-leon-pre-qualified-version).
 SpaceWasm implements an industry standard, providing consolidation.
 
 2. **Sandboxing**: The cost and time of flight-software development is high due to its constrained requirements and scope. Validating a new flight-software capability
@@ -25,7 +34,13 @@ often involves validating interactions with the entire system. This extends the 
 get new autonomy software into flight. WebAssembly gives the opportunity for untrusted or low-trust executables to make their way on-board in a
 way that flight-software can restrict access and compute time as well as monitor health and safety.
 
+   On EO-1, the [Autonomous Sciencecraft Experiment](https://doi.org/10.1145/1082473.1082798) encountered two anomalies in flight.
+   CPU load hit 100% against 80% on the testbed, which starved a memory-scrub task and triggered a fault response.
+   Later, a new algorithm overwrote planner memory and the processor was restarted.
+   Wasm modules avoid these issues. SpaceWasm's [fuel](docs/REQUIREMENTS.md) (REQ-5) caps how many instructions run per call before control returns to flight software, and a load or store outside the module's linear memory traps.
+
 3. **Portability**: WebAssembly provides well-defined interfaces and sandboxing that make transferring to another platform trivial.
+This includes platforms that flight computers typically target like PowerPC (the RAD750 on Perseverance), SPARC, ARM (the Snapdragon on Ingenuity), and RISC-V.
 
 4. **Tooling**: Standardizing to WebAssembly opens doors into a wide community of rich tooling and research!
 
