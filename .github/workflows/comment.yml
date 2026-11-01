@@ -59,6 +59,42 @@ jobs:
               return Number.isFinite(n) ? n : null;
             }
 
+            // Validates that a URL comes from the expected GitHub Actions
+            // artifact domain. Artifact download URLs are always served from
+            // github.com or objects.githubusercontent.com; anything else
+            // (e.g. javascript: URIs or attacker-controlled domains) is
+            // rejected to prevent URL injection via a malicious artifact.
+            function safeArtifactUrl(url) {
+              try {
+                const parsed = new URL(String(url));
+                const allowed = [
+                  'github.com',
+                  'objects.githubusercontent.com',
+                  'pipelines.actions.githubusercontent.com',
+                ];
+                if (
+                  (parsed.protocol === 'https:') &&
+                  allowed.some(h => parsed.hostname === h || parsed.hostname.endsWith('.' + h))
+                ) {
+                  return parsed.href;
+                }
+              } catch (_) { /* invalid URL */ }
+              console.log(`Rejected unsafe artifact URL: ${url}`);
+              return null;
+            }
+
+            // Escapes a string for safe embedding inside a Markdown code span
+            // or table cell. Strips backticks and pipe characters that would
+            // otherwise break the Markdown structure, and trims to a
+            // reasonable length so a malicious artifact cannot produce an
+            // unboundedly large comment.
+            function sanitizeMd(value, maxLen = 256) {
+              return String(value)
+                .replace(/[`|]/g, '')
+                .replace(/[\r\n]+/g, ' ')
+                .slice(0, maxLen);
+            }
+
             // Creates a new comment or updates the existing bot comment that
             // contains `marker` in its body.
             async function upsertComment(prNumber, marker, body) {
@@ -101,10 +137,10 @@ jobs:
                     }
                     if (pct_change > 0) {
                         color = lower_better ? "🔴 " : "🟢 ";
-                        change_text = "(↑" + String(pct_change) + "% from " + String(old) + ")";
+                        change_text = "(⬆️ " + String(pct_change) + "% from " + String(old) + ")";
                     } else {
                         color = lower_better ? "🟢 " : "🔴 ";
-                        change_text = "(↓" + String(-pct_change) + "% from " + String(old) + ")";
+                        change_text = "(⬇️ " + String(-pct_change) + "% from " + String(old) + ")";
                     }
                 }
                 return color + String(new_value) + "<br>" + change_text;
@@ -114,16 +150,24 @@ jobs:
             if (benchmark) {
                 const data = benchmark.current;
                 const old_data = benchmark.baseline;
-                const nm_url = benchmark.nm_artifacts_url;
+
+                // Validate nm_artifacts_url against the allowed GitHub domains
+                // before embedding it in the comment HTML. A malicious artifact
+                // could otherwise inject an arbitrary URL (including javascript:
+                // URIs) into the <a href> attribute.
+                const raw_nm_url = benchmark.nm_artifacts_url;
+                const nm_url = safeArtifactUrl(raw_nm_url);
 
                 let triples = benchmark.current.triples;
                 let elf_sections = benchmark.current.elf_sections;
 
                 let comment = "# ELF Section Sizes\n";
-                comment += "||" + elf_sections.map(i => "`"+i+"`").join("|") + "|\n";
+                // sanitizeMd guards section and triple names coming from the
+                // artifact so they cannot inject Markdown table-breaking chars.
+                comment += "||" + elf_sections.map(i => "`"+sanitizeMd(i)+"`").join("|") + "|\n";
                 comment += "|--:|" + ":-:|".repeat(triples.length) + "\n";
                 for (let triple of triples) {
-                    comment += "|**`"+triple+"`**|";
+                    comment += "|**`"+sanitizeMd(triple)+"`**|";
                     for (let section_name of elf_sections) {
                         let size = data[triple][section_name];
                         let old_size = (old_data[triple] ?? {})[section_name] ?? size;
@@ -133,13 +177,18 @@ jobs:
                     comment += "\n";
                 }
                 comment += "\n<details><summary><i>view detailed section sizes and symbol table...</i></summary>\n\n";
-                comment += "<br><small>You can also download the <a href='"+nm_url+"'>full symbol tables</a>.</small>\n\n";
+                // Only embed the link if the URL passed the allowlist check.
+                if (nm_url !== null) {
+                  comment += "<br><small>You can also download the <a href='"+nm_url+"'>full symbol tables</a>.</small>\n\n";
+                } else {
+                  comment += "<br><small>Symbol table artifact URL was not available.</small>\n\n";
+                }
                 for (let triple of triples) {
-                    comment += "### `"+triple+"`\n";
-                    comment += "```\n"+data[triple]["details"]+"\n";
+                    comment += "### `"+sanitizeMd(triple)+"`\n";
+                    comment += "```\n"+sanitizeMd(data[triple]["details"], 4096)+"\n";
                     comment += "\nSymbol Table:\n";
                     for (let symbol of data[triple]["nm"]) {
-                      comment += "\t" + symbol + "\n";
+                      comment += "\t" + sanitizeMd(symbol) + "\n";
                     }
                     comment += "\t...truncated (see artifact for full table)...\n```\n";
                 }
@@ -153,11 +202,11 @@ jobs:
                     let score = data[triple]["coremark"];
                     let t = finiteOrNull(data[triple]["coremark_time"]);
                     if (score === undefined || t === null) {
-                        comment += "|**`"+triple+"`**|"+(data[triple]["qemu_info"] ?? "")+"|❌ failed|-|\n";
+                        comment += "|**`"+sanitizeMd(triple)+"`**|"+(sanitizeMd(data[triple]["qemu_info"] ?? ""))+"|❌ failed|-|\n";
                         continue;
                     }
                     let old_score = (old_data[triple] ?? {})["coremark"] ?? score;
-                    comment += "|**`"+triple+"`**|"+data[triple]["qemu_info"]+"|"+colorize(score, old_score, false)+"|"+t.toFixed(2)+" s|\n";
+                    comment += "|**`"+sanitizeMd(triple)+"`**|"+sanitizeMd(data[triple]["qemu_info"])+"|"+colorize(score, old_score, false)+"|"+t.toFixed(2)+" s|\n";
                 }
                 comment += "\n";
 
@@ -202,4 +251,3 @@ jobs:
                 );
               }
             }
-
