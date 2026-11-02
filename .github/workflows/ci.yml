@@ -23,10 +23,10 @@ jobs:
         include:
           # macOS ARM64
           - os: macos-arm64
-            runner: macos-14
+            runner: macos-15
             profile: debug
           - os: macos-arm64
-            runner: macos-14
+            runner: macos-15
             profile: release
 
           # Linux x86_64
@@ -159,7 +159,7 @@ jobs:
       matrix:
         include:
           - os: macos-arm64
-            runner: macos-14
+            runner: macos-15
           - os: linux-x86
             runner: ubuntu-latest
           - os: linux-arm64
@@ -195,14 +195,7 @@ jobs:
           targets: riscv32imc-unknown-none-elf,riscv64gc-unknown-none-elf,thumbv7m-none-eabi,thumbv7em-none-eabihf
 
       - name: Install QEMU
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            qemu-system-arm \
-            qemu-system-riscv64 \
-            qemu-system-riscv32 \
-            qemu-kvm \
-            qemu-utils
+        uses: ./.github/actions/install-qemu
 
       - name: Install Cargo binutils
         run: |
