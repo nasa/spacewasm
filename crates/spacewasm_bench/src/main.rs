@@ -32,7 +32,7 @@ use spacewasm_util::RustSystemAllocator as Allocator;
 #[cfg(target_os = "none")]
 mod alloc;
 #[cfg(target_os = "none")]
-use {alloc::BareMetalAllocator as Allocator, bench::entry, semihosting::print};
+use {alloc::BareMetalAllocator as Allocator, bench::entry, semihosting::io::Write};
 
 use spacewasm::{
     CodeBuilder, CompilerOptions, Engine, ExportDesc, HostFunction, HostModule, Interpreter,
@@ -143,9 +143,50 @@ fn entrypoint() -> ! {
     bench::clock_setup();
 
     let result: f32 = coremark();
-    print!("{result}");
+    print_score(result);
 
     bench::exit(0);
+}
+
+/// Print the score as fixed-point decimal without `core::fmt`. Float formatting
+/// pulls in the grisu/dragon `flt2dec` machinery which dominates `.text` on
+/// embedded targets.
+#[cfg(target_os = "none")]
+fn print_score(score: f32) {
+    const FRAC_DIGITS: usize = 6;
+
+    let scaled = (score as f64 * 1e6 + 0.5) as u64;
+    let mut buf = [0u8; 32];
+    let mut i = buf.len();
+    let mut n = scaled;
+    let mut digits = 0;
+    while n > 0 || digits <= FRAC_DIGITS {
+        if digits == FRAC_DIGITS {
+            i -= 1;
+            buf[i] = b'.';
+        }
+        i -= 1;
+        buf[i] = b'0' + (n % 10) as u8;
+        n /= 10;
+        digits += 1;
+    }
+
+    if let Ok(mut stdout) = semihosting::io::stdout() {
+        let _ = stdout.write_all(&buf[i..]);
+    }
+}
+
+#[cfg(not(target_os = "none"))]
+fn print_score(score: f32) {
+    print!("{score}");
+}
+
+/// Exit without formatting the panic message: `PanicInfo`'s `Display` impl
+/// drags in `core::fmt` and every `Debug` impl reachable from an `unwrap()`.
+#[cfg(target_os = "none")]
+#[panic_handler]
+fn panic(_: &core::panic::PanicInfo) -> ! {
+    bench::exit(101);
 }
 
 #[cfg(not(target_os = "none"))]
