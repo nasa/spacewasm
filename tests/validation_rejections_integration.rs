@@ -227,3 +227,71 @@ fn backpatch_chain_exceeding_limit_is_rejected() {
     };
     assert!(compile(WASM, unlimited).is_ok());
 }
+
+/// Decode `wasm` as a module called `name` into `engine`'s store, returning the
+/// innermost [`ValidationError`] on rejection. Unlike [`compile`], the store is
+/// supplied by the caller so that successive modules see one another.
+fn load_named(
+    engine: &mut Engine,
+    code_builder: &mut CodeBuilder,
+    name: &str,
+    wasm: &[u8],
+) -> Result<Module, ValidationError> {
+    let mut stream = ByteStream::new(wasm);
+
+    Module::new::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
+        name,
+        &mut stream,
+        &mut engine.store,
+        code_builder,
+        spacewasm::Rc::new(GuestMemoryAllocator)
+            .unwrap()
+            .into_wasm_memory_allocator(),
+    )
+    .map_err(|e| e.err.err)
+}
+
+/// A module whose name is already taken in the store is rejected.
+/// `Module::new` compares the incoming name against the store's modules, and
+/// the empty name is exempt by design because an unnamed module cannot be
+/// imported. Neither half is expressible as a `.wast` file: the harness loads
+/// every module under a name of its own choosing, so the collision can only be
+/// set up by calling `Module::new` twice against one store.
+#[test]
+fn duplicate_module_name_rejected() {
+    // (module) — magic and version only, the smallest module that decodes.
+    const EMPTY_MODULE: &[u8] = &[0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00];
+
+    let opts = CompilerOptions {
+        allow_memory_grow: true,
+        max_backpatch_iterations: None,
+        max_code_pages: 16,
+    };
+
+    let mut engine = Engine::new(1024, 256, spacewasm::vec![]).unwrap();
+    let mut code_builder = CodeBuilder::new(opts).unwrap();
+
+    // The first `dup` is accepted and pushed, so the second one collides.
+    let first = load_named(&mut engine, &mut code_builder, "dup", EMPTY_MODULE)
+        .expect("first module named `dup` should decode");
+    engine.push_module(first).unwrap();
+
+    let collision = load_named(&mut engine, &mut code_builder, "dup", EMPTY_MODULE);
+    assert!(
+        matches!(collision, Err(ValidationError::DuplicateModuleName)),
+        "expected DuplicateModuleName, got {:?}",
+        collision.map(|_| ()),
+    );
+
+    // A different name over the same store still compiles, proving the
+    // rejection comes from the collision rather than from the store's state.
+    let other = load_named(&mut engine, &mut code_builder, "other", EMPTY_MODULE)
+        .expect("a distinct name should decode");
+    engine.push_module(other).unwrap();
+
+    // Boundary: the empty name is explicitly allowed to repeat.
+    let anon = load_named(&mut engine, &mut code_builder, "", EMPTY_MODULE)
+        .expect("first unnamed module should decode");
+    engine.push_module(anon).unwrap();
+    assert!(load_named(&mut engine, &mut code_builder, "", EMPTY_MODULE).is_ok());
+}

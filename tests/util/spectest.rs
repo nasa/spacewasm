@@ -989,6 +989,9 @@ fn check_decode_error(err: ParseError, text: String) {
             | "malformed value type",
         ) => {}
         (ValidationError::VecTooLong, "length out of bounds") => {}
+        (ValidationError::InvalidOpcode(_), "illegal opcode") => {}
+        (ValidationError::InvalidFcOpcode(_), "illegal fc opcode") => {}
+        (ValidationError::MalformedCodeSize, "function body size mismatch") => {}
 
         // --- Value / type descriptors ---
         (ValidationError::MalformedValueType(_), "malformed value type") => {}
@@ -1062,6 +1065,7 @@ fn check_decode_error(err: ParseError, text: String) {
         (ValidationError::GlobalNotMutable, "immutable global" | "incompatible import type") => {}
 
         // --- Limits / sizing ---
+        (ValidationError::FunctionParametersTooLarge, "too many parameters") => {}
         (ValidationError::InvalidMaxLimit, "size minimum must not be greater than maximum") => {}
         // Two upstream phrasings for the same 4 GiB memory cap.
         (

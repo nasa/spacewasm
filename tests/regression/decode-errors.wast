@@ -190,3 +190,76 @@
 (assert_invalid
   (module binary "\00asm\01\00\00\00\01\05\ff\ff\ff\ff\0f")
   "length out of bounds")
+
+;; -------------------------------------------------------------------------
+;; An undefined opcode byte in a function body is rejected. The text
+;; format has no syntax for a raw opcode byte, so this needs a binary
+;; module; no test in this repository asserted the decoder's catch-all
+;; opcode arm before now.
+;; type (id 1): [] -> []   func (id 3): type 0
+;; code (id 10): one body = `0xff` (no locals, undefined opcode)
+;; -------------------------------------------------------------------------
+(assert_malformed
+  (module binary
+    "\00\61\73\6d\01\00\00\00\01\04\01\60\00\00\03\02\01\00\0a\04"
+    "\01\02\00\ff")
+  "illegal opcode")
+
+;; -------------------------------------------------------------------------
+;; A `0xfc`-prefixed instruction with an undefined sub-opcode is
+;; rejected. The `0xfc` space currently holds only the eight
+;; non-trapping float-to-int conversions, so sub-opcode 127 reaches the
+;; catch-all arm. As above, the text format cannot name an undefined
+;; sub-opcode, and no test asserted this arm before now.
+;; code (id 10): one body = `0xfc 0x7f`
+;; -------------------------------------------------------------------------
+(assert_malformed
+  (module binary
+    "\00\61\73\6d\01\00\00\00\01\04\01\60\00\00\03\02\01\00\0a\05"
+    "\01\03\00\fc\7f")
+  "illegal fc opcode")
+
+;; -------------------------------------------------------------------------
+;; A code entry must consume exactly the number of bytes its size prefix
+;; declares. This entry declares 3 bytes but its body ends after 2
+;; (`locals=0`, `end`), leaving a trailing byte inside the entry. `wat`
+;; computes the size itself and so always emits a consistent one, which
+;; is why this check had no test.
+;; code (id 10): one entry, declared size 3, body = `0x00 0x0b 0x0b`
+;; -------------------------------------------------------------------------
+(assert_malformed
+  (module binary
+    "\00\61\73\6d\01\00\00\00\01\04\01\60\00\00\03\02\01\00\0a\05"
+    "\01\03\00\0b\0b")
+  "function body size mismatch")
+
+;; -------------------------------------------------------------------------
+;; A function whose parameters exceed 255 32-bit words is rejected. The
+;; bound is on the parameter *word* count, which is the quantity the
+;; call-frame layout indexes; 256 i32 parameters is the first value above
+;; it. Unlike the cases above this one is expressible in the text format,
+;; but it is a SpaceWasm bound rather than a spec one, so the upstream
+;; suite has no reason to carry it, much as with the `call frame too
+;; large` case earlier in this file. Written as a binary module to keep
+;; the 256-entry parameter vector readable.
+;; type (id 1): one type, 256 i32 parameters, no results
+;; func (id 3): type 0      code (id 10): one body = `end`
+;; -------------------------------------------------------------------------
+(assert_invalid
+  (module binary
+    "\00\61\73\6d\01\00\00\00\01\85\02\01\60\80\02\7f\7f\7f\7f\7f"
+    "\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f"
+    "\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f"
+    "\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f"
+    "\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f"
+    "\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f"
+    "\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f"
+    "\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f"
+    "\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f"
+    "\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f"
+    "\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f"
+    "\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f"
+    "\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f"
+    "\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\7f\00\03\02\01\00\0a\04\01\02"
+    "\00\0b")
+  "too many parameters")
