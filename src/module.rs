@@ -851,13 +851,14 @@ impl Element {
             return Err(ValidationError::InvalidTableIndex);
         }
 
-        let Value::I32(offset) = Expr::read_constant(wasm, store, module)? else {
-            return Err(ValidationError::InvalidElementOffset);
+        let offset = match Expr::read_constant(wasm, store, module)? {
+            Value::I32(i) => i as u32,
+            _ => return Err(ValidationError::InvalidElementOffset),
         };
 
         let init_len = wasm.read_u32()?;
         if let Some(table) = module.get_table(store)? {
-            if offset < 0 || (offset as usize) > table.len() {
+            if offset as usize > table.len() {
                 return Err(ValidationError::InvalidElementOffset);
             } else if (offset as u64 + init_len as u64) > table.len() as u64 {
                 return Err(ValidationError::InvalidElementOutOfBounds);
@@ -967,18 +968,9 @@ impl Data {
         // Make sure we actually defined a linear memory for this module
         module.check_memory_defined()?;
 
-        let offset = Expr::read_constant(wasm, store, module)?;
-        let offset = match offset {
-            Value::I32(i) => {
-                if i < 0 {
-                    return Err(ValidationError::InvalidNegativeMemOffset);
-                }
-
-                i as u32
-            }
-            Value::I64(_) => return Err(ValidationError::InvalidMemOffsetType),
-            Value::F32(_) => return Err(ValidationError::InvalidMemOffsetType),
-            Value::F64(_) => return Err(ValidationError::InvalidMemOffsetType),
+        let offset = match Expr::read_constant(wasm, store, module)? {
+            Value::I32(i) => i as u32,
+            _ => return Err(ValidationError::InvalidMemOffsetType),
         };
 
         // Read the data onto the linear memory
