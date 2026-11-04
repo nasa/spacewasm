@@ -241,8 +241,7 @@ fn load_module(wasm: &[u8]) -> bool {
 /// reject at load while wasmi's validator accepts: guest-memory allocation
 /// (`GuestMemoryAllocationFailure`, bounded to 64 MiB here), out-of-bounds active
 /// element segments (`InvalidElementOffset`, `InvalidElementOutOfBounds`), and
-/// out-of-bounds active data segments (`InvalidNegativeMemOffset`, or a
-/// `MemoryError` from the eager memory write).
+/// out-of-bounds active data segments (`MemoryError` from the eager memory write).
 ///
 /// **wasmi feature-gating leniency.** wasmi -- even with the bulk-memory proposal
 /// disabled -- accepts encodings SpaceWasm's strict MVP decoder rejects: a
@@ -277,7 +276,6 @@ fn is_benign_rejection(err: &ValidationError) -> bool {
             | ValidationError::GuestMemoryAllocationFailure
             | ValidationError::InvalidElementOffset
             | ValidationError::InvalidElementOutOfBounds
-            | ValidationError::InvalidNegativeMemOffset
             // wasmi feature-gating leniency (bulk-memory encodings it accepts
             // even with the proposal disabled).
             | ValidationError::MalformedSectionId(12)
