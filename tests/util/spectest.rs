@@ -1519,8 +1519,10 @@ fn run_wast_command(
                 .position(|m| m.name == as_name.as_str())
                 .filter(|&i| i != module_index)
             {
-                ctx.engine.store.modules_mut()[shadowed].name =
-                    format!("\0shadowed#{shadowed}").as_str().try_into().unwrap();
+                ctx.engine.store.modules_mut()[shadowed].name = format!("\0shadowed#{shadowed}")
+                    .as_str()
+                    .try_into()
+                    .unwrap();
             }
 
             // Update the module name in the store to the registered alias
