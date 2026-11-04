@@ -202,6 +202,18 @@ fn table_ref_not_unique() {
 }
 
 #[test]
+fn register_shadowing() {
+    run("regression/register_shadowing");
+}
+
+#[test]
+#[cfg(target_pointer_width = "64")]
+#[cfg_attr(miri, ignore = "allocates over 2 GiB")]
+fn data_high_offset() {
+    run("regression/data_high_offset");
+}
+
+#[test]
 fn pause_resume() {
     run("regression/pause-resume");
 }

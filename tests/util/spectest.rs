@@ -1085,7 +1085,6 @@ fn check_decode_error(err: ParseError, text: String) {
         ) => {}
 
         // --- Data / element segment placement ---
-        (ValidationError::InvalidNegativeMemOffset, "data segment does not fit") => {}
         (ValidationError::MemoryError(MemoryError::OutOfBounds), "data segment does not fit") => {}
         (ValidationError::InvalidElementOutOfBounds, "elements segment does not fit") => {}
         // A bad element offset is either a type mismatch on the offset
@@ -1506,6 +1505,23 @@ fn run_wast_command(
             } else {
                 ctx.current_module_index()
             };
+
+            // A later `register` under an existing name shadows the earlier
+            // module for subsequent imports. The engine rejects duplicate
+            // module names, so rename the shadowed module to a name no import
+            // can spell. It stays in the store, so existing links into it and
+            // `$name` references remain valid.
+            if let Some(shadowed) = ctx
+                .engine
+                .store
+                .modules()
+                .iter()
+                .position(|m| m.name == as_name.as_str())
+                .filter(|&i| i != module_index)
+            {
+                ctx.engine.store.modules_mut()[shadowed].name =
+                    format!("\0shadowed#{shadowed}").as_str().try_into().unwrap();
+            }
 
             // Update the module name in the store to the registered alias
             // This allows linking to find it by the registered name

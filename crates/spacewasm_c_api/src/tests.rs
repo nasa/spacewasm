@@ -1643,10 +1643,6 @@ fn validation_error_codes_map() {
             InvalidMemOffsetType,
             status::SPACEWASM_ERR_INVALID_MEM_OFFSET_TYPE,
         ),
-        (
-            InvalidNegativeMemOffset,
-            status::SPACEWASM_ERR_INVALID_NEGATIVE_MEM_OFFSET,
-        ),
         (InvalidMemOffset, status::SPACEWASM_ERR_INVALID_MEM_OFFSET),
         (MultipleMemories, status::SPACEWASM_ERR_MULTIPLE_MEMORIES),
         (MultipleTables, status::SPACEWASM_ERR_MULTIPLE_TABLES),

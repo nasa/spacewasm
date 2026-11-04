@@ -87,7 +87,6 @@ pub enum ValidationError {
     InvalidMemIndex,
     MemoryNotDefined,
     InvalidMemOffsetType,
-    InvalidNegativeMemOffset,
     InvalidMemOffset,
     InvalidLabelIndex,
     InvalidElseBlock,
