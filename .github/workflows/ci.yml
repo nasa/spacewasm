@@ -9,6 +9,12 @@ on:
 permissions:
   contents: read
 
+# Superseded PR runs are cancelled to free capacity-constrained macOS runners.
+# Runs on main are queued instead, so every commit on main gets a result.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   RUST_BACKTRACE: 1
   CARGO_TERM_COLOR: always
