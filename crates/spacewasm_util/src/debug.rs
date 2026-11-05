@@ -216,6 +216,13 @@ impl<'a, ST: OutputStream, S, E, T: BaseVisitor<State = S, Error = E>> BaseVisit
     visit_fn!(f64_convert_i64_u);
     visit_fn!(f64_promote_f32);
 
+    // Sign extensions
+    visit_fn!(i32_extend8_s);
+    visit_fn!(i32_extend16_s);
+    visit_fn!(i64_extend8_s);
+    visit_fn!(i64_extend16_s);
+    visit_fn!(i64_extend32_s);
+
     // Non-trapping float to int
     visit_fn!(i32_trunc_sat_f32_s);
     visit_fn!(i32_trunc_sat_f32_u);

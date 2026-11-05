@@ -515,8 +515,9 @@ pub fn no_traps(wasm: &[u8]) {
 
 /// Build the wasmi `Engine` used for *validation* differential testing.
 ///
-/// Matched to SpaceWasm's accepted language: Wasm 1.0 MVP **plus custom page
-/// sizes** (SpaceWasm's one supported post-MVP proposal). Feature parity matters
+/// Matched to SpaceWasm's accepted language: Wasm 1.0 MVP **plus** the post-MVP
+/// proposals SpaceWasm supports (custom page sizes, sign-extension operators, and
+/// non-trapping float-to-int conversions). Feature parity matters
 /// here -- a feature one validator enables and the other doesn't would make them
 /// disagree for reasons that are not bugs. Fuel is irrelevant to validation.
 #[cfg(feature = "differential")]
@@ -528,11 +529,11 @@ fn build_wasmi_validate_engine() -> wasmi::Engine {
         // SpaceWasm supports custom page sizes; enable it so the two validators
         // agree on modules that use them.
         .wasm_custom_page_sizes(true)
+        .wasm_sign_extension(true)
+        .wasm_saturating_float_to_int(true)
         // Everything else post-MVP: off.
         .wasm_multi_value(false)
         .wasm_multi_memory(false)
-        .wasm_sign_extension(false)
-        .wasm_saturating_float_to_int(false)
         .wasm_bulk_memory(false)
         .wasm_reference_types(false)
         .wasm_tail_call(false)
