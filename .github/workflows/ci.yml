@@ -158,8 +158,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-arm64
-            runner: macos-15
+          # macOS is omitted: the macOS Test jobs already build the workspace
+          # in debug and release, and macOS runners are capacity-constrained.
           - os: linux-x86
             runner: ubuntu-latest
           - os: linux-arm64
