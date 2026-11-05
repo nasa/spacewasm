@@ -173,7 +173,7 @@ impl Engine {
 
         // This expect should be safe because we checked for stack overflow up-front.
         self.call_impl(0, f_ref.index)
-            .expect("unexpected call_impl overflowed the stack");
+            .expect_nofmt("unexpected call_impl overflowed the stack");
         self.jumped = false;
         self.result = None;
 
@@ -1533,22 +1533,22 @@ impl IrVisitor for Interpreter {
             match p_ty {
                 ValType::I32 => {
                     sv.push(Value::I32(state.stack.read_u32(state.sp + offset) as i32))
-                        .unwrap();
+                        .unwrap_nofmt();
                     offset += 1;
                 }
                 ValType::I64 => {
                     sv.push(Value::I64(state.stack.read_u64(state.sp + offset) as i64))
-                        .unwrap();
+                        .unwrap_nofmt();
                     offset += 2;
                 }
                 ValType::F32 => {
                     sv.push(Value::F32(state.stack.read_f32(state.sp + offset)))
-                        .unwrap();
+                        .unwrap_nofmt();
                     offset += 1;
                 }
                 ValType::F64 => {
                     sv.push(Value::F64(state.stack.read_f64(state.sp + offset)))
-                        .unwrap();
+                        .unwrap_nofmt();
                     offset += 2;
                 }
             }
@@ -1576,10 +1576,8 @@ impl IrVisitor for Interpreter {
                         state.stack.write_f64(state.sp, f);
                         state.sp += 2;
                     }
-                    (got, expected) => {
-                        panic!(
-                            "host function returned {got:?} while declaration expecting {expected:?}"
-                        )
+                    _ => {
+                        panic!("host function return value does not match its declared type")
                     }
                 }
 

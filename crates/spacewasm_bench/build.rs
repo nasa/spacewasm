@@ -20,15 +20,29 @@ use std::path::PathBuf;
 fn main() {
     let arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap();
 
+    // Some targets can run on more than one board (e.g. thumbv7em-none-eabihf
+    // on both a Cortex-M4 and a Cortex-M7). SPACEWASM_BENCH_BOARD selects a
+    // non-default board, which has its own memory layout and clock setup.
+    println!("cargo:rustc-check-cfg=cfg(board_mps2_an500)");
+    println!("cargo:rerun-if-env-changed=SPACEWASM_BENCH_BOARD");
+    let board = env::var("SPACEWASM_BENCH_BOARD").ok();
+
     // we don't need to have a custom build script for these:
     if arch == "aarch64" || arch == "x86_64" {
         return;
     }
 
+    let layout = match board.as_deref() {
+        None | Some("") => format!("memory/{arch}.x"),
+        Some("mps2-an500") if arch == "arm" => {
+            println!("cargo:rustc-cfg=board_mps2_an500");
+            "memory/arm-mps2-an500.x".to_string()
+        }
+        Some(other) => panic!("unsupported SPACEWASM_BENCH_BOARD `{other}` for {arch}"),
+    };
+
     let mut memory_layout: Vec<u8> = Vec::new();
-    let _ = File::open(format!("memory/{arch}.x"))
-        .unwrap()
-        .read_to_end(&mut memory_layout);
+    let _ = File::open(&layout).unwrap().read_to_end(&mut memory_layout);
 
     let out = &PathBuf::from(env::var_os("OUT_DIR").unwrap());
     File::create(out.join("memory.x"))
@@ -36,7 +50,7 @@ fn main() {
         .write_all(&memory_layout)
         .unwrap();
     println!("cargo:rustc-link-search={}", out.display());
-    println!("cargo:rerun-if-changed=memory/{arch}.x");
+    println!("cargo:rerun-if-changed={layout}");
     println!("cargo:rustc-link-arg=--nmagic");
 
     // riscv memory.x layouts include builtin link.x, but

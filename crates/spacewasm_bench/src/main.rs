@@ -37,7 +37,7 @@ use {alloc::BareMetalAllocator as Allocator, bench::entry, semihosting::io::Writ
 use spacewasm::{
     CodeBuilder, CompilerOptions, Engine, ExportDesc, HostFunction, HostModule, Interpreter,
     InterpreterResult, InterpreterRunner, InvokeError, ModuleRef, PageAllocator, RawValue, Ref,
-    TrapReason, Value, WasmRef,
+    TrapReason, UnwrapNoFmt, Value, WasmRef,
 };
 
 const STACK_SIZE: usize = 1024;
@@ -73,8 +73,8 @@ fn coremark() -> f32 {
         max_backpatch_iterations: None,
         max_code_pages: MAX_PAGES,
     })
-    .unwrap();
-    let mut engine = Engine::new(STACK_SIZE, 1, spacewasm::vec![env]).unwrap();
+    .unwrap_nofmt();
+    let mut engine = Engine::new(STACK_SIZE, 1, spacewasm::vec![env]).unwrap_nofmt();
 
     let mut file_stream = bytes::ByteStream::new(include_bytes!("coremark.wasm"));
 
@@ -84,12 +84,12 @@ fn coremark() -> f32 {
         &mut engine.store,
         &mut code_builder,
         spacewasm::Rc::new(Allocator)
-            .unwrap()
+            .unwrap_nofmt()
             .into_wasm_memory_allocator(),
     )
-    .unwrap();
+    .unwrap_nofmt();
 
-    let module_ref = engine.push_module(module).unwrap();
+    let module_ref = engine.push_module(module).unwrap_nofmt();
     let init_result = match engine.module_start(module_ref) {
         None => InterpreterResult::Finished,
         Some(start) => match engine.invoke(start, &[]) {
@@ -125,7 +125,7 @@ fn coremark() -> f32 {
             },
             &[],
         )
-        .unwrap();
+        .unwrap_nofmt();
 
     let mut result = InterpreterResult::OutOfFuel;
     while result == InterpreterResult::OutOfFuel {

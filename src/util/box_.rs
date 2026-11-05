@@ -3,7 +3,7 @@
 // portions have been modified for SpaceWasm.
 
 use crate::alloc::{AllocError, Allocator, GlobalAllocator};
-use crate::util::Vec;
+use crate::util::{UnwrapNoFmt, Vec};
 use core::alloc::Layout;
 use core::ops::{Deref, DerefMut};
 use core::{mem, ptr};
@@ -40,7 +40,8 @@ impl<T: Clone, A: Allocator + Clone> Clone for Box<T, A> {
     /// (Mirrors the fallible-allocation decision documented on
     /// [`crate::Vec::clone`].)
     fn clone(&self) -> Self {
-        self.try_clone().expect("Box::clone: allocation failed")
+        self.try_clone()
+            .expect_nofmt("Box::clone: allocation failed")
     }
 }
 
@@ -154,7 +155,7 @@ impl<T: Clone, A: Allocator + Clone> Box<[T], A> {
 
 impl<T: Clone, A: Allocator + Clone> Clone for Box<[T], A> {
     fn clone(&self) -> Self {
-        self.try_clone().expect("Box<T> clone failed")
+        self.try_clone().expect_nofmt("Box<T> clone failed")
     }
 }
 

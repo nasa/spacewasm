@@ -1,4 +1,5 @@
 #![no_std]
+#![cfg_attr(not(test), deny(clippy::disallowed_methods))]
 
 pub mod util;
 pub use util::*;

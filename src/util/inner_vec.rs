@@ -1,6 +1,6 @@
 use core::ops::{Deref, DerefMut};
 
-use crate::AllocError;
+use crate::{AllocError, UnwrapNoFmt};
 
 /// The raw backing store shared by [`crate::Vec`] and the streaming API.
 ///
@@ -87,7 +87,7 @@ impl<T: Sized> InnerVec<T> {
     /// If the capacity is exceeded, this will panic
     pub fn push(&mut self, value: T) {
         self.try_push(value)
-            .expect("attempting to push beyond Vec capacity");
+            .expect_nofmt("attempting to push beyond Vec capacity");
     }
 
     pub fn pop(&mut self) -> Option<T> {
