@@ -10,7 +10,7 @@
   <a href="#license"><img src="https://img.shields.io/badge/license-Apache%202.0-blue" alt="license" /></a>
 </p>
 
-SpaceWasm is an implementation of the [Wasm 1.0](https://webassembly.github.io/spec/versions/core/WebAssembly-1.0.pdf)
+SpaceWasm is an implementation of the [WebAssembly](https://webassembly.org/)
 specification meant to interpret Wasm binary on-board spacecraft. It is developed at [NASA JPL](https://www.jpl.nasa.gov).
 
 SpaceWasm is the interpreter behind [F´](https://github.com/nasa/fprime)'s
@@ -217,17 +217,17 @@ make trace CRASH=fuzz/artifacts/no_traps/crash-xxx
 
 Below is a table of the implemented and planned WebAssembly proposals with links to their tracking issue / implementation pull-request.
 
-| Feature                                                                                                      | Status                                                  |
-| ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------- |
-| [Wasm MVP](https://www.w3.org/TR/2019/REC-wasm-core-1-20191205/)                                             | All Versions                                            |
-| [Mutable globals](https://github.com/WebAssembly/mutable-global)                                             | All Versions                                            |
-| [Custom page sizes](https://github.com/WebAssembly/custom-page-sizes)                                        | [≥0.2.0](https://github.com/nasa/spacewasm/pull/84)     |
-| [Bulk memory operations](https://github.com/WebAssembly/bulk-memory-operations)                              | [Planned](https://github.com/nasa/spacewasm/issues/54)  |
-| [Sign-extension operators](https://github.com/WebAssembly/sign-extension-ops)                                | [≥0.8.0](https://github.com/nasa/spacewasm/pull/216)  |
-| [Non-trapping float-to-int conversions](https://github.com/WebAssembly/nontrapping-float-to-int-conversions) | [≥0.8.0](https://github.com/nasa/spacewasm/pull/212)    |
-| [SIMD](https://github.com/WebAssembly/simd)                                                                  | [Planned](https://github.com/nasa/spacewasm/issues/187) |
-| [Multi-value](https://github.com/WebAssembly/multi-value)                                                    | Under Consideration                                     |
-| [Multiple memories](https://github.com/WebAssembly/multi-memory)                                             | Under Consideration                                     |
+| Feature                                                                                                      | Status                                                              |
+| ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------- |
+| [Wasm MVP](https://www.w3.org/TR/2019/REC-wasm-core-1-20191205/)                                             | All Versions                                                        |
+| [Mutable globals](https://github.com/WebAssembly/mutable-global)                                             | All Versions                                                        |
+| [Custom page sizes](https://github.com/WebAssembly/custom-page-sizes)                                        | [≥0.2.0](https://github.com/nasa/spacewasm/pull/84)                 |
+| [Bulk memory operations](https://github.com/WebAssembly/bulk-memory-operations)                              | [Planned](https://github.com/nasa/spacewasm/issues/54)              |
+| [Sign-extension operators](https://github.com/WebAssembly/sign-extension-ops)                                | [≥0.8.0](https://github.com/nasa/spacewasm/pull/216)                |
+| [Non-trapping float-to-int conversions](https://github.com/WebAssembly/nontrapping-float-to-int-conversions) | [≥0.8.0](https://github.com/nasa/spacewasm/pull/212)                |
+| [SIMD](https://github.com/WebAssembly/simd)                                                                  | [Under Consideration](https://github.com/nasa/spacewasm/issues/187) |
+| [Multi-value](https://github.com/WebAssembly/multi-value)                                                    | Under Consideration                                                 |
+| [Multiple memories](https://github.com/WebAssembly/multi-memory)                                             | Under Consideration                                                 |
 
 Currently, all other proposals are not implemented, planned or considered.
 

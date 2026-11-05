@@ -37,9 +37,12 @@ impl ModuleConfig {
             max_imports: 0,
             memory_max_size_required: false,
             max_memory32_bytes: 65536 * 32,
-            // Wasm 1.0 MVP compliance - disable all post-MVP features
             allow_start_export: true,
-            // Post-MVP proposals - all disabled for MVP compliance
+            // Post-MVP proposals supported by SpaceWasm
+            saturating_float_to_int_enabled: true,
+            sign_extension_ops_enabled: true,
+            custom_page_sizes_enabled: true,
+            // Post-MVP proposals not supported by SpaceWasm
             bulk_memory_enabled: false,
             reference_types_enabled: false,
             simd_enabled: false,
@@ -48,14 +51,11 @@ impl ModuleConfig {
             memory64_enabled: false,
             threads_enabled: false,
             multi_value_enabled: false,
-            saturating_float_to_int_enabled: false,
-            sign_extension_ops_enabled: false,
             tail_call_enabled: false,
             extended_const_enabled: false,
             wide_arithmetic_enabled: false,
             // GC and advanced features
             gc_enabled: false,
-            custom_page_sizes_enabled: false,
             shared_everything_threads_enabled: false,
             ..Default::default()
         };
