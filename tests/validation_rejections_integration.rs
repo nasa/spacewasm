@@ -227,3 +227,92 @@ fn backpatch_chain_exceeding_limit_is_rejected() {
     };
     assert!(compile(WASM, unlimited).is_ok());
 }
+
+/// Append `value` to `out` as an unsigned LEB128.
+fn write_leb_u32(out: &mut Vec<u8>, mut value: u32) {
+    loop {
+        let byte = (value & 0x7F) as u8;
+        value >>= 7;
+        if value == 0 {
+            out.push(byte);
+            return;
+        }
+        out.push(byte | 0x80);
+    }
+}
+
+/// Append a section with id `id` whose payload is `count` copies of `entry`
+/// (i.e. a `vec` of identical entries).
+fn write_vec_section(out: &mut Vec<u8>, id: u8, count: u32, entry: &[u8]) {
+    let mut payload = Vec::new();
+    write_leb_u32(&mut payload, count);
+    for _ in 0..count {
+        payload.extend_from_slice(entry);
+    }
+
+    out.push(id);
+    write_leb_u32(out, payload.len() as u32);
+    out.extend_from_slice(&payload);
+}
+
+const WASM_HEADER: &[u8] = &[0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00];
+
+/// A module defining `count` functions of type `() -> ()`, each with an empty
+/// body. Generated at runtime because a module at the 16-bit boundary is far
+/// too large to check in as a `.wast` binary literal.
+fn module_with_functions(count: u32) -> Vec<u8> {
+    let mut wasm = WASM_HEADER.to_vec();
+    write_vec_section(&mut wasm, 1, 1, &[0x60, 0x00, 0x00]); // type: () -> ()
+    write_vec_section(&mut wasm, 3, count, &[0x00]); // function: type 0
+    write_vec_section(&mut wasm, 10, count, &[0x02, 0x00, 0x0B]); // code: size 2, 0 locals, end
+    wasm
+}
+
+/// A module defining `count` immutable `i32` globals initialized to `0`.
+/// Generated at runtime for the same reason as [`module_with_functions`].
+fn module_with_globals(count: u32) -> Vec<u8> {
+    let mut wasm = WASM_HEADER.to_vec();
+    // global: i32, const, `i32.const 0` `end`
+    write_vec_section(&mut wasm, 6, count, &[0x7F, 0x00, 0x41, 0x00, 0x0B]);
+    wasm
+}
+
+/// Module-defined functions are referenced by a 16-bit `Ref::Module` index, so
+/// a function section declaring more than `u16::MAX` entries must be rejected
+/// with `IdxTooLarge` rather than silently truncating the index.
+#[test]
+fn function_count_exceeding_u16_is_rejected() {
+    let options = CompilerOptions {
+        allow_memory_grow: false,
+        max_backpatch_iterations: None,
+        max_code_pages: 1024,
+    };
+
+    assert_eq!(
+        compile(&module_with_functions(u16::MAX as u32 + 1), options),
+        Err(ValidationError::IdxTooLarge),
+    );
+
+    // Boundary: exactly `u16::MAX` functions still fit the index and compile.
+    assert!(compile(&module_with_functions(u16::MAX as u32), options).is_ok());
+}
+
+/// Module-defined globals are referenced by a 16-bit `Ref::Module` index, so
+/// a global section declaring more than `u16::MAX` entries must be rejected
+/// with `IdxTooLarge` rather than silently truncating the index.
+#[test]
+fn global_count_exceeding_u16_is_rejected() {
+    let options = CompilerOptions {
+        allow_memory_grow: false,
+        max_backpatch_iterations: None,
+        max_code_pages: 256,
+    };
+
+    assert_eq!(
+        compile(&module_with_globals(u16::MAX as u32 + 1), options),
+        Err(ValidationError::IdxTooLarge),
+    );
+
+    // Boundary: exactly `u16::MAX` globals still fit the index and compile.
+    assert!(compile(&module_with_globals(u16::MAX as u32), options).is_ok());
+}
