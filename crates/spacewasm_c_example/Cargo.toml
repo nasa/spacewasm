@@ -17,3 +17,6 @@ path = "src/lib.rs"
 # staticlib whose baked-in `#[panic_handler]` cannot be linked into a `std` crate.
 # This runner drives it purely as a C library — it builds the staticlib with
 # `cargo` and compiles/links C test programs against the archive + header.
+
+[lints]
+workspace = true

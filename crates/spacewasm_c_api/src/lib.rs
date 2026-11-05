@@ -3,6 +3,9 @@
 //! C-ABI support layer for the [`spacewasm`] interpreter
 #![no_std]
 #![allow(non_camel_case_types)]
+// Flight code must not format errors on panic; see `clippy.toml`. Test
+// code is exempt.
+#![cfg_attr(not(test), deny(clippy::disallowed_methods))]
 
 pub mod alloc;
 pub mod capi;

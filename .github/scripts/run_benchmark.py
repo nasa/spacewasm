@@ -26,22 +26,55 @@ qemu_commands = {
     "riscv64gc-unknown-none-elf": "qemu-system-riscv64 -icount shift={shift} -bios none -cpu rv64 -machine virt -m 256M {flags}",
     "thumbv7m-none-eabi": "qemu-system-arm -icount shift={shift} -cpu cortex-m4 -machine netduinoplus2 {flags}",
     "thumbv7em-none-eabihf": "qemu-system-arm -icount shift={shift} -cpu cortex-m4 -machine netduinoplus2 {flags}",
+    "thumbv7em-none-eabihf (cortex-m7)": "qemu-system-arm -icount shift={shift} -cpu cortex-m7 -machine mps2-an500 {flags}",
 }
 qemu_info = {
     "riscv32imc-unknown-none-elf": "rv32 / virt",
     "riscv64gc-unknown-none-elf": "rv64 / virt",
     "thumbv7m-none-eabi": "cortex-m4 / netduinoplus2 @ 1GHz",
     "thumbv7em-none-eabihf": "cortex-m4 / netduinoplus2 @ 1GHz",
+    "thumbv7em-none-eabihf (cortex-m7)": "cortex-m7 / mps2-an500 @ 1GHz",
+}
+
+# Variants of a target triple that are built with extra settings. Each
+# variant gets its own target directory so it doesn't clobber the plain
+# triple's build. Keys not listed here are plain triples.
+variants = {
+    # Cortex-M7 with a double-precision FPU (FPv5-D16), so f64 is in hardware.
+    "thumbv7em-none-eabihf (cortex-m7)": {
+        "triple": "thumbv7em-none-eabihf",
+        "target_dir": "target/cortex-m7",
+        "env": {
+            "CARGO_TARGET_THUMBV7EM_NONE_EABIHF_RUSTFLAGS": "-C target-cpu=cortex-m7",
+            "SPACEWASM_BENCH_BOARD": "mps2-an500",
+        },
+    },
 }
 triples = list(qemu_commands.keys())
 elf_sections = [".text", ".rodata", ".data", ".bss"]
+
+def triple_of(name):
+    return variants.get(name, {}).get("triple", name)
+
+def target_dir_of(name):
+    return variants.get(name, {}).get("target_dir", "target")
+
+def env_of(name):
+    env = dict(os.environ)
+    if name in variants:
+        env["CARGO_TARGET_DIR"] = target_dir_of(name)
+        env.update(variants[name]["env"])
+    return env
+
+def artifact_name(name):
+    return name.replace(" ", "_").replace("(", "").replace(")", "")
 
 def get_coremark(triple, q, shift):
     """runs QEMU over target triple"""
 
     command = [
         *qemu_commands[triple].format(shift=shift, flags=qemu_flags).split(" "),
-        f"target/{triple}/release/spacewasm_bench"
+        f"{target_dir_of(triple)}/{triple_of(triple)}/release/spacewasm_bench"
     ]
 
     sys.stderr.write(" ".join(command) + "\n")
@@ -64,8 +97,8 @@ def get_sizes(triple):
 
     out = {}
 
-    command = ["cargo", "readobj", "-q", "--release", "-p", "spacewasm_bench", "--target", triple, "--", "--sections"]
-    proc = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    command = ["cargo", "readobj", "-q", "--release", "-p", "spacewasm_bench", "--target", triple_of(triple), "--", "--sections"]
+    proc = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env_of(triple))
 
     sys.stderr.write(" ".join(command) + "\n")
     sys.stderr.flush()
@@ -76,6 +109,7 @@ def get_sizes(triple):
         [*command, "--elf-output-style=JSON"],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        env=env_of(triple),
     )
 
     try:
@@ -97,16 +131,16 @@ def get_sizes(triple):
 def get_nm(triple):
     """build target triple and runs cargo nm over it"""
 
-    command = ["cargo", "nm", "-q", "--release", "-p", "spacewasm_bench", "--target", triple, "--"]
+    command = ["cargo", "nm", "-q", "--release", "-p", "spacewasm_bench", "--target", triple_of(triple), "--"]
     command += ["--demangle", "-r", "--size-sort"]
-    proc = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    proc = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env_of(triple))
 
     sys.stderr.write(" ".join(command) + "\n")
     sys.stderr.flush()
 
     nm_content = proc.stdout.decode()
 
-    with open(f"nm-artifact_{triple}.txt", "w+") as f:
+    with open(f"nm-artifact_{artifact_name(triple)}.txt", "w+") as f:
         f.write(nm_content)
 
     return nm_content.splitlines()

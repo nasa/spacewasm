@@ -24,3 +24,5 @@ rtic-monotonics = { version = "2.2.1", features = ["cortex-m-systick"] }
 semihosting = { version = "0.1.25", features = ["stdio"] }
 embedded-alloc = "0.7.0"
 
+[lints]
+workspace = true

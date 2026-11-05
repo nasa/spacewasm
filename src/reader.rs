@@ -106,6 +106,8 @@ impl<'wasm> Reader<'wasm> {
     /// `capacity()`, so clamping `to_copy` to `capacity()` never overfills and
     /// `CircularBuffer::push` (which overwrites the oldest element when full)
     /// never actually overwrites live data.
+    #[cold]
+    #[inline(never)]
     fn fill_buffer(&mut self) -> Result<(), ValidationError> {
         // If buffer already has data, we're done
         if !self.buffer.is_empty() {
@@ -201,53 +203,65 @@ impl<'wasm> Reader<'wasm> {
         Ok(result)
     }
 
-    /// Parses a variable-length `u32` as specified by [LEB128](https://en.wikipedia.org/wiki/LEB128#Unsigned_LEB128).
+    /// Decode a LEB128 integer of at most `bits` bits (32 or 64), returning
+    /// the raw (unsigned, zero-extended) bits. When `signed`, the result is
+    /// sign-extended to 64 bits and unused bits in the final byte must match
+    /// the sign bit; otherwise they must be zero.
+    ///
+    /// A single shared loop keeps code size down on embedded targets compared
+    /// to fully unrolled decoders for each width.
+    ///
     /// Note: If `Err`, the [Reader] object is no longer guaranteed to be in a valid state
-    /// This implementation is heavily based off of DLR's Wasm interpreter:
+    /// This implementation is based off of DLR's Wasm interpreter:
     /// <https://github.com/DLR-FT/wasm-interpreter>
-    pub fn read_u32(&mut self) -> Result<u32, ValidationError> {
-        /// Because up to 5 bytes (each storing 7 bits) may be used to store 32 bits,
-        /// some bits in the last byte will be left unused. This is a bitmask for
-        /// exactly these bits in the last byte.
-        const PADDING_IN_LAST_BYTE_BIT_MASK: u8 = 0b01110000;
+    #[inline(never)]
+    fn read_leb128(&mut self, bits: u32, signed: bool) -> Result<u64, ValidationError> {
+        let mut result: u64 = 0;
+        let mut shift: u32 = 0;
+        loop {
+            let byte = self.read_u8()?;
+            result |= u64::from(byte & INTEGER_BIT_FLAG) << shift;
+            shift += 7;
 
-        let mut result: u32 = 0;
+            if shift >= bits {
+                // This is the last byte permitted for this width.
+                if byte & CONTINUATION_BIT != 0 {
+                    return Err(ValidationError::MalformedInteger);
+                }
 
-        let byte = self.read_u8()?;
-        result |= u32::from(byte & INTEGER_BIT_FLAG);
-        if byte & CONTINUATION_BIT == 0 {
-            return Ok(result);
+                // Bits of the final byte beyond `bits` (plus the sign bit
+                // when signed) must be all zeros, or all ones when signed.
+                let used = bits - (shift - 7);
+                let unused_mask = INTEGER_BIT_FLAG & !((1u8 << used) - 1);
+                let check_mask = if signed {
+                    unused_mask | (1u8 << (used - 1))
+                } else {
+                    unused_mask
+                };
+                let unused = byte & check_mask;
+                if unused != 0 && !(signed && unused == check_mask) {
+                    return Err(ValidationError::MalformedInteger);
+                }
+                break;
+            }
+
+            if byte & CONTINUATION_BIT == 0 {
+                break;
+            }
         }
 
-        let byte = self.read_u8()?;
-        result |= u32::from(byte & INTEGER_BIT_FLAG) << 7;
-        if byte & CONTINUATION_BIT == 0 {
-            return Ok(result);
-        }
-
-        let byte = self.read_u8()?;
-        result |= u32::from(byte & INTEGER_BIT_FLAG) << 14;
-        if byte & CONTINUATION_BIT == 0 {
-            return Ok(result);
-        }
-
-        let byte = self.read_u8()?;
-        result |= u32::from(byte & INTEGER_BIT_FLAG) << 21;
-        if byte & CONTINUATION_BIT == 0 {
-            return Ok(result);
-        }
-
-        let byte = self.read_u8()?;
-        result |= u32::from(byte & INTEGER_BIT_FLAG) << 28;
-
-        // there can only be a maximum number of 5 bytes for a 32-bit integer
-        let has_next_byte = byte & CONTINUATION_BIT > 0;
-        let padding_bits_are_not_zero = byte & PADDING_IN_LAST_BYTE_BIT_MASK > 0;
-        if has_next_byte || padding_bits_are_not_zero {
-            return Err(ValidationError::MalformedInteger);
+        if signed && shift < 64 {
+            let unspecified = 64 - shift;
+            result = (((result << unspecified) as i64) >> unspecified) as u64;
         }
 
         Ok(result)
+    }
+
+    /// Parses a variable-length `u32` as specified by [LEB128](https://en.wikipedia.org/wiki/LEB128#Unsigned_LEB128).
+    /// Note: If `Err`, the [Reader] object is no longer guaranteed to be in a valid state
+    pub fn read_u32(&mut self) -> Result<u32, ValidationError> {
+        Ok(self.read_leb128(32, false)? as u32)
     }
 
     /// Read a little-endian `f64` and return its raw bit pattern.
@@ -256,79 +270,8 @@ impl<'wasm> Reader<'wasm> {
         Ok(u64::from_le_bytes(bytes))
     }
 
-    /// This implementation is heavily based off of DLR's Wasm interpreter:
-    /// <https://github.com/DLR-FT/wasm-interpreter>
     pub fn read_i32(&mut self) -> Result<i32, ValidationError> {
-        /// Because up to 5 bytes (each storing 7 bits) may be used to store 32 bits,
-        /// some bits in the last byte will be left unused. This is a bitmask for
-        /// exactly these bits in the last byte.
-        const PADDING_IN_LAST_BYTE_BITMASK: u8 = 0b01110000;
-
-        /// This bitflag defines the position of the sign bit in the last byte.
-        const SIGN_IN_LAST_BYTE_BITFLAG: u8 = 0b00001000;
-
-        /// Number of bits in this number type
-        const NUM_BITS: u32 = 32;
-
-        let mut result: i32 = 0;
-
-        let byte = self.read_u8()?;
-        result |= i32::from(byte & INTEGER_BIT_FLAG);
-        if byte & CONTINUATION_BIT == 0 {
-            /// before returning the result, we need to sign extend the unspecified bits
-            const NUM_UNSPECIFIED_BITS: u32 = NUM_BITS - 7;
-            let sign_extended_result = (result << NUM_UNSPECIFIED_BITS) >> NUM_UNSPECIFIED_BITS;
-            return Ok(sign_extended_result);
-        }
-
-        let byte = self.read_u8()?;
-        result |= i32::from(byte & INTEGER_BIT_FLAG) << 7;
-        if byte & CONTINUATION_BIT == 0 {
-            const NUM_UNSPECIFIED_BITS: u32 = NUM_BITS - 14;
-            let sign_extended_result = (result << NUM_UNSPECIFIED_BITS) >> NUM_UNSPECIFIED_BITS;
-            return Ok(sign_extended_result);
-        }
-
-        let byte = self.read_u8()?;
-        result |= i32::from(byte & INTEGER_BIT_FLAG) << 14;
-        if byte & CONTINUATION_BIT == 0 {
-            const NUM_UNSPECIFIED_BITS: u32 = NUM_BITS - 21;
-            let sign_extended_result = (result << NUM_UNSPECIFIED_BITS) >> NUM_UNSPECIFIED_BITS;
-            return Ok(sign_extended_result);
-        }
-
-        let byte = self.read_u8()?;
-        result |= i32::from(byte & INTEGER_BIT_FLAG) << 21;
-        if byte & CONTINUATION_BIT == 0 {
-            const NUM_UNSPECIFIED_BITS: u32 = NUM_BITS - 28;
-            let sign_extended_result = (result << NUM_UNSPECIFIED_BITS) >> NUM_UNSPECIFIED_BITS;
-            return Ok(sign_extended_result);
-        }
-
-        let byte = self.read_u8()?;
-        result |= i32::from(byte & INTEGER_BIT_FLAG) << 28;
-
-        // there can only be a maximum number of 5 bytes for a 32-bit integer
-        let has_next_byte = byte & CONTINUATION_BIT > 0;
-        if has_next_byte {
-            return Err(ValidationError::MalformedInteger);
-        }
-
-        // Verify that the padding and sign bits are either all ones or all
-        // zeros. To do this we count the ones and check if that number is zero
-        // or equal to the number of ones in both bitmasks combined.
-        const PADDING_AND_SIGN_BITMASK: u8 =
-            PADDING_IN_LAST_BYTE_BITMASK | SIGN_IN_LAST_BYTE_BITFLAG;
-        let number_of_ones_in_padding_and_sign_bits =
-            (byte & PADDING_AND_SIGN_BITMASK).count_ones();
-        let padding_bits_match_sign_bit = number_of_ones_in_padding_and_sign_bits
-            == PADDING_AND_SIGN_BITMASK.count_ones()
-            || number_of_ones_in_padding_and_sign_bits == 0;
-        if !padding_bits_match_sign_bit {
-            return Err(ValidationError::MalformedInteger);
-        }
-
-        Ok(result)
+        Ok(self.read_leb128(32, true)? as i32)
     }
 
     /// Read a little-endian `f32` and return its raw bit pattern.
@@ -338,116 +281,7 @@ impl<'wasm> Reader<'wasm> {
     }
 
     pub fn read_i64(&mut self) -> Result<i64, ValidationError> {
-        /// Because up to 10 bytes (each storing 7 bits) may be used to store 64 bits,
-        /// some bits in the last byte will be left unused. This is a bitmask for
-        /// exactly these bits in the last byte.
-        const PADDING_IN_LAST_BYTE_BITMASK: u8 = 0b01111110;
-
-        /// This bitflag defines the position of the sign bit in the last byte.
-        const SIGN_IN_LAST_BYTE_BITFLAG: u8 = 0b00000001;
-
-        /// Number of bits in this number type
-        const NUM_BITS: u32 = 64;
-
-        let mut result: i64 = 0;
-
-        let byte = self.read_u8()?;
-        result |= i64::from(byte & INTEGER_BIT_FLAG);
-        if byte & CONTINUATION_BIT == 0 {
-            /// before returning the result, we need to sign extend the unspecified bits
-            const NUM_UNSPECIFIED_BITS: u32 = NUM_BITS - 7;
-            let sign_extended_result = (result << NUM_UNSPECIFIED_BITS) >> NUM_UNSPECIFIED_BITS;
-            return Ok(sign_extended_result);
-        }
-
-        let byte = self.read_u8()?;
-        result |= i64::from(byte & INTEGER_BIT_FLAG) << 7;
-        if byte & CONTINUATION_BIT == 0 {
-            const NUM_UNSPECIFIED_BITS: u32 = NUM_BITS - 14;
-            let sign_extended_result = (result << NUM_UNSPECIFIED_BITS) >> NUM_UNSPECIFIED_BITS;
-            return Ok(sign_extended_result);
-        }
-
-        let byte = self.read_u8()?;
-        result |= i64::from(byte & INTEGER_BIT_FLAG) << 14;
-        if byte & CONTINUATION_BIT == 0 {
-            const NUM_UNSPECIFIED_BITS: u32 = NUM_BITS - 21;
-            let sign_extended_result = (result << NUM_UNSPECIFIED_BITS) >> NUM_UNSPECIFIED_BITS;
-            return Ok(sign_extended_result);
-        }
-
-        let byte = self.read_u8()?;
-        result |= i64::from(byte & INTEGER_BIT_FLAG) << 21;
-        if byte & CONTINUATION_BIT == 0 {
-            const NUM_UNSPECIFIED_BITS: u32 = NUM_BITS - 28;
-            let sign_extended_result = (result << NUM_UNSPECIFIED_BITS) >> NUM_UNSPECIFIED_BITS;
-            return Ok(sign_extended_result);
-        }
-
-        let byte = self.read_u8()?;
-        result |= i64::from(byte & INTEGER_BIT_FLAG) << 28;
-        if byte & CONTINUATION_BIT == 0 {
-            const NUM_UNSPECIFIED_BITS: u32 = NUM_BITS - 35;
-            let sign_extended_result = (result << NUM_UNSPECIFIED_BITS) >> NUM_UNSPECIFIED_BITS;
-            return Ok(sign_extended_result);
-        }
-
-        let byte = self.read_u8()?;
-        result |= i64::from(byte & INTEGER_BIT_FLAG) << 35;
-        if byte & CONTINUATION_BIT == 0 {
-            const NUM_UNSPECIFIED_BITS: u32 = NUM_BITS - 42;
-            let sign_extended_result = (result << NUM_UNSPECIFIED_BITS) >> NUM_UNSPECIFIED_BITS;
-            return Ok(sign_extended_result);
-        }
-
-        let byte = self.read_u8()?;
-        result |= i64::from(byte & INTEGER_BIT_FLAG) << 42;
-        if byte & CONTINUATION_BIT == 0 {
-            const NUM_UNSPECIFIED_BITS: u32 = NUM_BITS - 49;
-            let sign_extended_result = (result << NUM_UNSPECIFIED_BITS) >> NUM_UNSPECIFIED_BITS;
-            return Ok(sign_extended_result);
-        }
-
-        let byte = self.read_u8()?;
-        result |= i64::from(byte & INTEGER_BIT_FLAG) << 49;
-        if byte & CONTINUATION_BIT == 0 {
-            const NUM_UNSPECIFIED_BITS: u32 = NUM_BITS - 56;
-            let sign_extended_result = (result << NUM_UNSPECIFIED_BITS) >> NUM_UNSPECIFIED_BITS;
-            return Ok(sign_extended_result);
-        }
-
-        let byte = self.read_u8()?;
-        result |= i64::from(byte & INTEGER_BIT_FLAG) << 56;
-        if byte & CONTINUATION_BIT == 0 {
-            const NUM_UNSPECIFIED_BITS: u32 = NUM_BITS - 63;
-            let sign_extended_result = (result << NUM_UNSPECIFIED_BITS) >> NUM_UNSPECIFIED_BITS;
-            return Ok(sign_extended_result);
-        }
-
-        let byte = self.read_u8()?;
-        result |= i64::from(byte & INTEGER_BIT_FLAG) << 63;
-
-        // there can only be a maximum number of 10 bytes for a 64-bit integer
-        let has_next_byte = byte & CONTINUATION_BIT > 0;
-        if has_next_byte {
-            return Err(ValidationError::MalformedInteger);
-        }
-
-        // Verify that the padding and sign bits are either all ones or all
-        // zeros. To do this we count the ones and check if that number is zero
-        // or equal to the number of ones in both bitmasks combined.
-        const PADDING_AND_SIGN_BITMASK: u8 =
-            PADDING_IN_LAST_BYTE_BITMASK | SIGN_IN_LAST_BYTE_BITFLAG;
-        let number_of_ones_in_padding_and_sign_bits =
-            (byte & PADDING_AND_SIGN_BITMASK).count_ones();
-        let padding_bits_match_sign_bit = number_of_ones_in_padding_and_sign_bits
-            == PADDING_AND_SIGN_BITMASK.count_ones()
-            || number_of_ones_in_padding_and_sign_bits == 0;
-        if !padding_bits_match_sign_bit {
-            return Err(ValidationError::MalformedInteger);
-        }
-
-        Ok(result)
+        Ok(self.read_leb128(64, true)? as i64)
     }
 
     /// Skip over a fixed set of bytes and ignore them

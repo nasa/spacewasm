@@ -4,7 +4,7 @@
 
 use crate::Box;
 use crate::alloc::{AllocError, Allocator, GlobalAllocator};
-use crate::util::InnerVec;
+use crate::util::{InnerVec, UnwrapNoFmt};
 use core::alloc::Layout;
 use core::ops::{Deref, DerefMut};
 
@@ -38,7 +38,10 @@ macro_rules! vec {
         $crate::Vec::zero()
     );
     ($($x:expr),+ $(,)?) => (
-        $crate::Vec::from_array([$($x),+]).unwrap()
+        $crate::UnwrapNoFmt::expect_nofmt(
+            $crate::Vec::from_array([$($x),+]),
+            "vec!: allocation failed",
+        )
     );
 }
 
@@ -74,7 +77,8 @@ impl<T: Clone, A: Allocator + Clone> Clone for Vec<T, A> {
     /// Panics if allocating the new backing buffer fails. Use
     /// [`Vec::try_clone`] to handle allocation failure without panicking.
     fn clone(&self) -> Self {
-        self.try_clone().expect("Vec::clone: allocation failed")
+        self.try_clone()
+            .expect_nofmt("Vec::clone: allocation failed")
     }
 }
 
@@ -285,7 +289,10 @@ impl<T: Sized, A: Allocator> Vec<T, A> {
     ///
     /// Panics if the vector's length does not equal its capacity.
     pub fn into_boxed_slice(self) -> Box<[T], A> {
-        assert_eq!(self.capacity(), self.len());
+        assert!(
+            self.capacity() == self.len(),
+            "into_boxed_slice requires len == capacity"
+        );
 
         unsafe {
             let ptr = self.inner.ptr;
@@ -320,14 +327,30 @@ impl<T, A: Allocator> DerefMut for Vec<T, A> {
     }
 }
 
+/// The layout of a `[T; n]` allocation, without re-validating it.
+///
+/// Used on deallocation paths: the layout was already checked by
+/// `Layout::array` when the buffer was allocated, and rechecking it with
+/// `.unwrap()` would keep `LayoutError`'s `Debug` impl (and `core::fmt`) alive
+/// in embedded builds.
+///
+/// # Safety
+/// `Layout::array::<T>(n)` must have succeeded for this `n`.
+#[inline]
+unsafe fn array_layout_unchecked<T>(n: usize) -> Layout {
+    unsafe { Layout::from_size_align_unchecked(size_of::<T>() * n, align_of::<T>()) }
+}
+
 impl<T: Sized, A: Allocator> Drop for Vec<T, A> {
     fn drop(&mut self) {
         if self.inner.capacity != 0 {
             while self.pop().is_some() {}
             unsafe {
+                // SAFETY: the array layout was validated when this buffer
+                // was allocated (or is guaranteed by `from_raw_parts_in`).
                 self.alloc.dealloc(
                     self.inner.ptr as *mut u8,
-                    Layout::array::<T>(self.inner.capacity).unwrap(),
+                    array_layout_unchecked::<T>(self.inner.capacity),
                 );
             }
         }
@@ -426,9 +449,11 @@ impl<T, A: Allocator> Drop for IntoIter<T, A> {
         if self.cap != 0 {
             // drop any remaining elements
             for _ in &mut *self {}
-            let layout = Layout::array::<T>(self.cap).unwrap();
             unsafe {
-                self.alloc.dealloc(self.buf as *mut u8, layout);
+                // SAFETY: this buffer came from a `Vec`, whose array layout
+                // was validated when it was allocated.
+                self.alloc
+                    .dealloc(self.buf as *mut u8, array_layout_unchecked::<T>(self.cap));
             }
         }
     }

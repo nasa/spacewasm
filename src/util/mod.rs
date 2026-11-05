@@ -24,3 +24,6 @@ pub(crate) use static_vec::*;
 
 mod string;
 pub(crate) use string::*;
+
+mod panic;
+pub use panic::*;

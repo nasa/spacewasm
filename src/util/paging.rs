@@ -87,7 +87,11 @@ unsafe impl<A: Allocator, const MAX_PAGES: usize> Allocator for PageAllocator<A,
     }
 }
 
+// `alloc` and `dealloc` are kept out of line: every drop of a `Vec`/`Box`
+// reaches them through `__spacewasm_dealloc`, and inlining them at each of
+// those sites costs several KB of code on embedded targets.
 impl<A: Allocator, const MAX_PAGES: usize> PageAllocatorInner<A, MAX_PAGES> {
+    #[inline(never)]
     unsafe fn alloc(&mut self, layout: Layout) -> Result<*mut u8, AllocError> {
         if layout.size() == 0 {
             return Err(AllocError::AllocationFailed);
@@ -115,7 +119,8 @@ impl<A: Allocator, const MAX_PAGES: usize> PageAllocatorInner<A, MAX_PAGES> {
                 None => {
                     // We have reached an empty page
                     // Allocate the page and place the allocation here
-                    let page_layout = Layout::from_size_align(self.page_size, ALIGNMENT).unwrap();
+                    let page_layout = Layout::from_size_align(self.page_size, ALIGNMENT)
+                        .map_err(|_| AllocError::PageTooSmall)?;
                     let addr = unsafe { self.page_allocator.alloc(page_layout)? };
 
                     // Attempt to allocate this memory into the page
@@ -142,6 +147,7 @@ impl<A: Allocator, const MAX_PAGES: usize> PageAllocatorInner<A, MAX_PAGES> {
         Err(AllocError::OutOfMemory)
     }
 
+    #[inline(never)]
     unsafe fn dealloc(&mut self, ptr: *mut u8, layout: Layout) {
         for bucket in self.pages.iter_mut() {
             if let Some(page) = bucket {
@@ -156,9 +162,11 @@ impl<A: Allocator, const MAX_PAGES: usize> PageAllocatorInner<A, MAX_PAGES> {
 
                         if drop_page {
                             unsafe {
+                                // SAFETY: the page layout was validated when
+                                // this page was allocated.
                                 self.page_allocator.dealloc(
                                     page.ptr,
-                                    Layout::from_size_align(self.page_size, ALIGNMENT).unwrap(),
+                                    Layout::from_size_align_unchecked(self.page_size, ALIGNMENT),
                                 );
                             }
 
@@ -194,9 +202,11 @@ impl<A: Allocator, const MAX_PAGES: usize> Drop for PageAllocatorInner<A, MAX_PA
                 None => {}
                 Some(page) => {
                     unsafe {
+                        // SAFETY: the page layout was validated when this
+                        // page was allocated.
                         self.page_allocator.dealloc(
                             page.ptr,
-                            Layout::from_size_align(self.page_size, ALIGNMENT).unwrap(),
+                            Layout::from_size_align_unchecked(self.page_size, ALIGNMENT),
                         );
                     }
 

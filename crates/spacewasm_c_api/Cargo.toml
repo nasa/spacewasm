@@ -31,3 +31,6 @@ spacewasm = { path = "../..", version = "=0.0.0" }
 
 [build-dependencies]
 cbindgen = { version = "0.29", optional = true }
+
+[lints]
+workspace = true
