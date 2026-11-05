@@ -451,6 +451,12 @@ impl IrReader {
             F64_CONVERT_I64_U => instruction!(f64_convert_i64_u),
             F64_PROMOTE_F32 => instruction!(f64_promote_f32),
 
+            I32_EXTEND_8_S => instruction!(i32_extend8_s),
+            I32_EXTEND_16_S => instruction!(i32_extend16_s),
+            I64_EXTEND_8_S => instruction!(i64_extend8_s),
+            I64_EXTEND_16_S => instruction!(i64_extend16_s),
+            I64_EXTEND_32_S => instruction!(i64_extend32_s),
+
             EXTENDED_FC => {
                 // Expected opcode embedded into the immediate
                 match imm as u32 {

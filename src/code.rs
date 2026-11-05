@@ -468,6 +468,13 @@ impl<'wasm> Reader<'wasm> {
                 F32_REINTERPRET_I32 => instruction!(f32_reinterpret_i32),
                 F64_REINTERPRET_I64 => instruction!(f64_reinterpret_i64),
 
+                // Sign Extension
+                I32_EXTEND_8_S => instruction!(i32_extend8_s),
+                I32_EXTEND_16_S => instruction!(i32_extend16_s),
+                I64_EXTEND_8_S => instruction!(i64_extend8_s),
+                I64_EXTEND_16_S => instruction!(i64_extend16_s),
+                I64_EXTEND_32_S => instruction!(i64_extend32_s),
+
                 // FC Extensions
                 EXTENDED_FC => {
                     let ext = self.read_u32()?;
