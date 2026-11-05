@@ -9,6 +9,12 @@ on:
 permissions:
   contents: read
 
+# Superseded PR runs are cancelled to free capacity-constrained macOS runners.
+# Runs on main are queued instead, so every commit on main gets a result.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   RUST_BACKTRACE: 1
   CARGO_TERM_COLOR: always
@@ -158,8 +164,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-arm64
-            runner: macos-15
+          # macOS is omitted: the macOS Test jobs already build the workspace
+          # in debug and release, and macOS runners are capacity-constrained.
           - os: linux-x86
             runner: ubuntu-latest
           - os: linux-arm64
