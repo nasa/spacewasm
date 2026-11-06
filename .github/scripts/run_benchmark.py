@@ -104,6 +104,11 @@ def get_nm(triple):
     sys.stderr.write(" ".join(command) + "\n")
     sys.stderr.flush()
 
+    if proc.returncode != 0:
+        sys.stderr.write(proc.stderr.decode())
+        sys.stderr.flush()
+        sys.exit(proc.returncode)
+
     nm_content = proc.stdout.decode()
 
     with open(f"nm-artifact_{triple}.txt", "w+") as f:
