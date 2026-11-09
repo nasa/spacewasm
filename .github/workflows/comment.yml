@@ -118,6 +118,32 @@ jobs:
                 return [base, delta];
             }
 
+            // A single summary cell: the value followed by a short percentage
+            // change against `old`, if there is one.
+            function summarize(value, old, lower_better) {
+                let cell = fmt(value, 0, " B");
+                if (old === null || old == value) {
+                    return cell;
+                }
+                const better = lower_better ? value < old : value > old;
+                const sign = value > old ? "+" : "−";
+                const pct = old == 0 ? "" : Math.abs(100 * (value - old) / old).toFixed(1) + "%";
+                return cell + " " + (better ? "🟢 " : "🔴 ") + sign + pct;
+            }
+
+            // Sums the named sections, or null if any of them is missing.
+            function total(sizes, names) {
+                let sum = 0;
+                for (let name of names) {
+                    const n = finiteOrNull((sizes ?? {})[name]);
+                    if (n === null) {
+                        return null;
+                    }
+                    sum += n;
+                }
+                return sum;
+            }
+
             const benchmark = readResults('benchmark-results');
             if (benchmark) {
                 const data = benchmark.current;
@@ -127,7 +153,25 @@ jobs:
                 let triples = benchmark.current.triples;
                 let elf_sections = benchmark.current.elf_sections;
 
-                let comment = "## ELF Section Sizes\n\n";
+                // .data is stored in flash and copied into RAM at startup, so
+                // it counts towards both.
+                const flash_sections = [".text", ".rodata", ".data"];
+                const ram_sections = [".data", ".bss"];
+
+                let comment = "## Size Summary\n\n";
+                comment += "| Target | Flash | RAM (static) | Heap |\n";
+                comment += "| :-- | --: | --: | --: |\n";
+                for (let triple of triples) {
+                    const old = old_data[triple];
+                    const heap = finiteOrNull(data[triple]["heap"]);
+                    comment += "| **`"+triple+"`** | "
+                        + summarize(total(data[triple], flash_sections), total(old, flash_sections), true) + " | "
+                        + summarize(total(data[triple], ram_sections), total(old, ram_sections), true) + " | "
+                        + (heap === null ? "-" : summarize(heap, finiteOrNull((old ?? {})["heap"]), true)) + " |\n";
+                }
+                comment += "\n_Flash: `.text` + `.rodata` + `.data`. RAM: `.data` + `.bss`. Heap: bytes allocated from the SpaceWasm global allocator after running coremark. The embedded wasm module and its linear memory are excluded._\n";
+
+                comment += "\n<details><summary><i>view per-section sizes...</i></summary>\n\n";
                 comment += "| Target | Section | This PR | base | Delta |\n";
                 comment += "| :-- | :-- | --: | --: | --: |\n";
                 for (let triple of triples) {
@@ -148,8 +192,8 @@ jobs:
                         comment += "| | heap | "+fmt(heap, 0, " B")+" | "+base+" | "+delta+" |\n";
                     }
                 }
-                comment += "\n_heap: bytes allocated from the SpaceWasm global allocator's pages after running coremark (excludes wasm linear memory)._\n";
-                comment += "\n<details><summary><i>view detailed section sizes and symbol table...</i></summary>\n\n";
+                comment += "\n</details>\n";
+                comment += "\n<details><summary><i>view ELF section headers and symbol table...</i></summary>\n\n";
                 comment += "<br><small>You can also download the <a href='"+nm_url+"'>full symbol tables</a>.</small>\n\n";
                 for (let triple of triples) {
                     comment += "### `"+triple+"`\n";
