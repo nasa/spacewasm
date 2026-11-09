@@ -60,4 +60,11 @@ fn main() {
     } else {
         println!("cargo:rustc-link-arg=-Tlink.x");
     }
+
+    // Keep the embedded wasm module out of .rodata (see memory/wasm.x)
+    println!("cargo:rerun-if-changed=memory/wasm.x");
+    println!(
+        "cargo:rustc-link-arg=-T{}/memory/wasm.x",
+        env::var("CARGO_MANIFEST_DIR").unwrap()
+    );
 }

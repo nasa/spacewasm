@@ -45,6 +45,12 @@ const MAX_PAGES: usize = 256;
 const MAX_CONTROL_FRAMES: usize = 64;
 const MAX_STACK_DEPTH: usize = 256;
 
+/// The coremark module, placed in its own `.wasm_module` section on embedded
+/// targets so it is not counted towards `.rodata`.
+#[cfg_attr(target_os = "none", unsafe(link_section = ".wasm_module"))]
+static COREMARK_WASM: [u8; include_bytes!("coremark.wasm").len()] =
+    *include_bytes!("coremark.wasm");
+
 spacewasm::global_allocator!(
     PageAllocator<Allocator, MAX_PAGES>,
     PageAllocator::new(Allocator, 8192)
@@ -79,7 +85,7 @@ fn coremark() -> (f32, u32) {
     .unwrap_nofmt();
     let mut engine = Engine::new(STACK_SIZE, 1, spacewasm::vec![env]).unwrap_nofmt();
 
-    let mut file_stream = bytes::ByteStream::new(include_bytes!("coremark.wasm"));
+    let mut file_stream = bytes::ByteStream::new(&COREMARK_WASM);
 
     let module = spacewasm::Module::new::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
         "main",
