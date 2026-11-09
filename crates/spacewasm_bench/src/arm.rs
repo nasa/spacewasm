@@ -21,7 +21,12 @@ use rtic_monotonics::systick::prelude::*;
 
 pub use cortex_m_rt::entry;
 
+#[cfg(not(board_mps2_an500))]
 const TIMER_HZ: u32 = 1_000_000_000; // 1 GHz
+
+// SysTick on the MPS2 boards is clocked from the 25 MHz SYSCLK.
+#[cfg(board_mps2_an500)]
+const TIMER_HZ: u32 = 25_000_000;
 
 systick_monotonic!(Mono, 1_000);
 

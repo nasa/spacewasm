@@ -19,3 +19,6 @@ differential = ["dep:wasmi"]
 
 [dev-dependencies]
 wat = "1"
+
+[lints]
+workspace = true

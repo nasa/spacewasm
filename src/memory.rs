@@ -340,11 +340,13 @@ impl Memory {
 impl Drop for Memory {
     fn drop(&mut self) {
         if !self.ptr.is_null() {
-            let allocator = self.allocator.take().unwrap();
-            allocator.deallocate(
-                NonNull::new(self.ptr).unwrap(),
-                Layout::from_size_align(self.size, self.ty.page_alignment()).unwrap(),
-            )
+            // A non-null `ptr` is only ever set alongside an allocator, and
+            // its layout was validated when it was (re)allocated.
+            if let Some(allocator) = self.allocator.take() {
+                allocator.deallocate(unsafe { NonNull::new_unchecked(self.ptr) }, unsafe {
+                    Layout::from_size_align_unchecked(self.size, self.ty.page_alignment())
+                })
+            }
         }
     }
 }

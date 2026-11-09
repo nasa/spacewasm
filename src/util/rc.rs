@@ -306,7 +306,7 @@ impl<T: ?Sized> RcInner<T> {
         // `strong` is widened to usize, but the backing field is u32, so the
         // wraparound-to-zero we're detecting only happens in the `as u32`
         // truncation above - check the truncated value, not `strong` itself.
-        assert_ne!(strong as u32, 0);
+        assert!(strong as u32 != 0, "Rc strong count overflowed");
     }
 
     #[inline]

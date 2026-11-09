@@ -225,7 +225,7 @@ impl HostValList {
     /// signature. Intended for compile-time string literals in Rust code; use
     /// [`HostValList::try_new`] on caller-supplied input.
     pub fn new(s: &str) -> Self {
-        HostValList::try_new(s).expect("invalid host value signature")
+        HostValList::try_new(s).expect_nofmt("invalid host value signature")
     }
 
     /// Fallibly construct a signature list. Returns an error if any character
@@ -384,7 +384,7 @@ impl HostFunction {
         f: impl Fn(&mut Engine, &[Value]) -> HostFunctionResult + 'static,
     ) -> Self {
         HostFunction::try_new(name.into(), params, returns, f)
-            .expect("host function signature too large or invalid return value")
+            .expect_nofmt("host function signature too large or invalid return value")
     }
 
     /// Fallibly construct a host function, returning an error if the parameter

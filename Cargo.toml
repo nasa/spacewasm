@@ -3,6 +3,12 @@
 members = ["crates/*"]
 exclude = ["fuzz"]
 
+# `clippy::disallowed_methods` (configured in clippy.toml) is only enforced in
+# the flight crates, which deny it in their `lib.rs`. Everything else, including
+# tests, tools and build scripts, may use `Result::unwrap`/`expect` freely.
+[workspace.lints.clippy]
+disallowed_methods = "allow"
+
 [workspace.package]
 version = "0.0.0"
 edition = "2024"
@@ -26,6 +32,9 @@ categories = ["wasm", "no-std", "embedded"]
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
+
+[lints.clippy]
+disallowed_methods = "allow"
 
 [lib]
 name = "spacewasm"

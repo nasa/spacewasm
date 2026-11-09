@@ -219,13 +219,13 @@ fn pause_resume() {
 }
 
 #[test]
-#[should_panic = "host function returned Some(I32(1)) while declaration expecting None"]
+#[should_panic = "host function return value does not match its declared type"]
 fn host_func_invalid_should_panic_none() {
     run("regression/host_func_invalid_should_panic_none");
 }
 
 #[test]
-#[should_panic = "host function returned None while declaration expecting Some(I32)"]
+#[should_panic = "host function return value does not match its declared type"]
 fn host_func_invalid_should_panic_some() {
     run("regression/host_func_invalid_should_panic_some");
 }

@@ -10,7 +10,7 @@
 /// <http://www.apache.org/licenses/LICENSE-2.0>
 ///
 /// ---
-use spacewasm::{InnerVec, Vec, WasmStream};
+use spacewasm::{InnerVec, UnwrapNoFmt, Vec, WasmStream};
 pub struct ByteStream {
     index: usize,
     chunks: Vec<Vec<u8>>,
@@ -21,10 +21,10 @@ impl ByteStream {
         // Avoid temporary allocations here: the PageAllocator poisons the heap
         // on any deallocation, so nothing allocated here may be dropped.
         let mut chunks: Vec<Vec<u8>> =
-            Vec::new(bytes.len().div_ceil(1024)).expect("could not allocate vector");
+            Vec::new(bytes.len().div_ceil(1024)).expect_nofmt("could not allocate vector");
 
         for chunk in bytes.chunks(1024) {
-            chunks.push(Vec::from_exact_iter(chunk.iter().copied()).unwrap());
+            chunks.push(Vec::from_exact_iter(chunk.iter().copied()).unwrap_nofmt());
         }
 
         ByteStream { index: 0, chunks }

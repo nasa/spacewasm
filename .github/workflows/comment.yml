@@ -89,25 +89,33 @@ jobs:
                 }
             }
 
-            function colorize(new_value, old, lower_better) {
-                let color = "";
-                let change_text = "";
+            // Formats a number with thousands separators, wrapped in code.
+            function fmt(value, digits = 0, unit = "") {
+                const s = value.toLocaleString('en-US', {
+                    minimumFractionDigits: digits,
+                    maximumFractionDigits: digits,
+                });
+                return "`" + s + "`" + unit;
+            }
 
-                if (old != new_value) {
-                    if (old == 0) {
-                        pct_change = new_value > 0 ? Infinity : -Infinity;
-                    } else {
-                        pct_change = (100 * (new_value - old) / old).toFixed(1);
-                    }
-                    if (pct_change > 0) {
-                        color = lower_better ? "🔴 " : "🟢 ";
-                        change_text = "(↑" + String(pct_change) + "% from " + String(old) + ")";
-                    } else {
-                        color = lower_better ? "🟢 " : "🔴 ";
-                        change_text = "(↓" + String(-pct_change) + "% from " + String(old) + ")";
-                    }
+            // Returns the "base" and "Delta" cells comparing `value` against
+            // `old`. A missing baseline is reported as a new entry.
+            function compare(value, old, lower_better, digits = 0, unit = "") {
+                if (old === undefined || old === null) {
+                    return ["—", "new"];
                 }
-                return color + String(new_value) + "<br>" + change_text;
+                const base = fmt(old, digits, unit);
+                const diff = value - old;
+                if (diff.toFixed(digits) == 0) {
+                    return [base, "no change"];
+                }
+                const better = lower_better ? diff < 0 : diff > 0;
+                const sign = diff > 0 ? "+" : "−";
+                let delta = (better ? "🟢 " : "🔴 ") + sign + fmt(Math.abs(diff), digits, unit);
+                if (old != 0) {
+                    delta += " (" + sign + Math.abs(100 * diff / old).toFixed(1) + "%)";
+                }
+                return [base, delta];
             }
 
             const benchmark = readResults('benchmark-results');
@@ -119,18 +127,17 @@ jobs:
                 let triples = benchmark.current.triples;
                 let elf_sections = benchmark.current.elf_sections;
 
-                let comment = "# ELF Section Sizes\n";
-                comment += "||" + elf_sections.map(i => "`"+i+"`").join("|") + "|\n";
-                comment += "|--:|" + ":-:|".repeat(triples.length) + "\n";
+                let comment = "## ELF Section Sizes\n\n";
+                comment += "| Target | Section | This PR | base | Delta |\n";
+                comment += "| :-- | :-- | --: | --: | --: |\n";
                 for (let triple of triples) {
-                    comment += "|**`"+triple+"`**|";
-                    for (let section_name of elf_sections) {
+                    elf_sections.forEach((section_name, i) => {
                         let size = data[triple][section_name];
-                        let old_size = (old_data[triple] ?? {})[section_name] ?? size;
-
-                        comment += colorize(size, old_size, true) + "|";
-                    }
-                    comment += "\n";
+                        let old_size = (old_data[triple] ?? {})[section_name];
+                        let target = i == 0 ? "**`"+triple+"`**" : "";
+                        let [base, delta] = compare(size, old_size, true, 0, " B");
+                        comment += "| "+target+" | `"+section_name+"` | "+fmt(size, 0, " B")+" | "+base+" | "+delta+" |\n";
+                    });
                 }
                 comment += "\n<details><summary><i>view detailed section sizes and symbol table...</i></summary>\n\n";
                 comment += "<br><small>You can also download the <a href='"+nm_url+"'>full symbol tables</a>.</small>\n\n";
@@ -145,19 +152,19 @@ jobs:
                 }
                 comment += "</details>\n\n";
 
-                comment += "# Coremark Scores\n";
-
-                comment += "||QEMU CPU / Board|Coremark Score|Host Time|\n";
-                comment += "|--:|:-:|:-:|:-:|\n";
+                comment += "## Coremark Scores\n\n";
+                comment += "| Target | QEMU CPU / Board | This PR | base | Delta | Host Time |\n";
+                comment += "| :-- | :-- | --: | --: | --: | --: |\n";
                 for (let triple of triples) {
-                    let score = data[triple]["coremark"];
+                    let score = finiteOrNull(data[triple]["coremark"]);
                     let t = finiteOrNull(data[triple]["coremark_time"]);
-                    if (score === undefined || t === null) {
-                        comment += "|**`"+triple+"`**|"+(data[triple]["qemu_info"] ?? "")+"|❌ failed|-|\n";
+                    if (score === null || t === null) {
+                        comment += "| **`"+triple+"`** | "+(data[triple]["qemu_info"] ?? "")+" | ❌ failed | - | - | - |\n";
                         continue;
                     }
-                    let old_score = (old_data[triple] ?? {})["coremark"] ?? score;
-                    comment += "|**`"+triple+"`**|"+data[triple]["qemu_info"]+"|"+colorize(score, old_score, false)+"|"+t.toFixed(2)+" s|\n";
+                    let old_score = finiteOrNull((old_data[triple] ?? {})["coremark"]);
+                    let [base, delta] = compare(score, old_score, false, 2);
+                    comment += "| **`"+triple+"`** | "+data[triple]["qemu_info"]+" | "+fmt(score, 2)+" | "+base+" | "+delta+" | "+t.toFixed(2)+" s |\n";
                 }
                 comment += "\n";
 
