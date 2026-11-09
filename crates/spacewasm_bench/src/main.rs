@@ -45,12 +45,21 @@ const MAX_PAGES: usize = 256;
 const MAX_CONTROL_FRAMES: usize = 64;
 const MAX_STACK_DEPTH: usize = 256;
 
+/// The coremark module, placed in its own `.wasm_module` section on embedded
+/// targets so it is not counted towards `.rodata`.
+#[cfg_attr(target_os = "none", unsafe(link_section = ".wasm_module"))]
+static COREMARK_WASM: [u8; include_bytes!("coremark.wasm").len()] =
+    *include_bytes!("coremark.wasm");
+
 spacewasm::global_allocator!(
     PageAllocator<Allocator, MAX_PAGES>,
     PageAllocator::new(Allocator, 8192)
 );
 
-fn coremark() -> f32 {
+/// Runs coremark and returns the score along with the number of bytes
+/// handed out by SpaceWasm's global allocator. Wasm linear memory is
+/// allocated separately and is not included in the heap usage.
+fn coremark() -> (f32, u32) {
     let env = HostModule {
         name: "env".into(),
         globals: spacewasm::vec![],
@@ -76,7 +85,7 @@ fn coremark() -> f32 {
     .unwrap_nofmt();
     let mut engine = Engine::new(STACK_SIZE, 1, spacewasm::vec![env]).unwrap_nofmt();
 
-    let mut file_stream = bytes::ByteStream::new(include_bytes!("coremark.wasm"));
+    let mut file_stream = bytes::ByteStream::new(&COREMARK_WASM);
 
     let module = spacewasm::Module::new::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
         "main",
@@ -132,7 +141,12 @@ fn coremark() -> f32 {
         result = Interpreter.run(code_builder.pages(), &mut engine, usize::MAX);
     }
 
-    engine.result.unwrap_or(RawValue::from_32(0)).read_f32()
+    // Sample the heap before `engine` and `code_builder` are dropped and
+    // return their pages to the allocator.
+    let heap_bytes = unsafe { (*GLOBAL_ALLOCATOR).stats() }.total_bytes;
+
+    let score = engine.result.unwrap_or(RawValue::from_32(0)).read_f32();
+    (score, heap_bytes)
 }
 
 #[cfg_attr(target_os = "none", entry)]
@@ -142,26 +156,38 @@ fn entrypoint() -> ! {
 
     bench::clock_setup();
 
-    let result: f32 = coremark();
-    print_score(result);
+    let (score, heap_bytes) = coremark();
+    print_results(score, heap_bytes);
 
     bench::exit(0);
 }
 
-/// Print the score as fixed-point decimal without `core::fmt`. Float formatting
-/// pulls in the grisu/dragon `flt2dec` machinery which dominates `.text` on
-/// embedded targets.
+/// Print the score and heap usage on separate lines without `core::fmt`.
+/// Float formatting pulls in the grisu/dragon `flt2dec` machinery which
+/// dominates `.text` on embedded targets.
 #[cfg(target_os = "none")]
-fn print_score(score: f32) {
-    const FRAC_DIGITS: usize = 6;
+fn print_results(score: f32, heap_bytes: u32) {
+    if let Ok(mut stdout) = semihosting::io::stdout() {
+        let mut buf = [0u8; 32];
+        let _ = stdout.write_all(write_decimal(
+            &mut buf,
+            (score as f64 * 1e6 + 0.5) as u64,
+            6,
+        ));
+        let _ = stdout.write_all(b"\n");
+        let _ = stdout.write_all(write_decimal(&mut buf, heap_bytes as u64, 0));
+    }
+}
 
-    let scaled = (score as f64 * 1e6 + 0.5) as u64;
-    let mut buf = [0u8; 32];
+/// Write `value / 10^frac_digits` as a fixed-point decimal into the tail of
+/// `buf`, returning the written slice.
+#[cfg(target_os = "none")]
+fn write_decimal(buf: &mut [u8; 32], value: u64, frac_digits: usize) -> &[u8] {
     let mut i = buf.len();
-    let mut n = scaled;
+    let mut n = value;
     let mut digits = 0;
-    while n > 0 || digits <= FRAC_DIGITS {
-        if digits == FRAC_DIGITS {
+    while n > 0 || digits <= frac_digits {
+        if digits == frac_digits && frac_digits > 0 {
             i -= 1;
             buf[i] = b'.';
         }
@@ -171,14 +197,12 @@ fn print_score(score: f32) {
         digits += 1;
     }
 
-    if let Ok(mut stdout) = semihosting::io::stdout() {
-        let _ = stdout.write_all(&buf[i..]);
-    }
+    &buf[i..]
 }
 
 #[cfg(not(target_os = "none"))]
-fn print_score(score: f32) {
-    print!("{score}");
+fn print_results(score: f32, heap_bytes: u32) {
+    print!("{score}\n{heap_bytes}");
 }
 
 /// Exit without formatting the panic message: `PanicInfo`'s `Display` impl
