@@ -23,9 +23,19 @@ use spacewasm::{AllocError, Allocator, WasmMemoryAllocator};
 #[global_allocator]
 static HEAP: Heap = Heap::empty();
 
+const HEAP_SIZE: usize = 100000;
+
+/// Backing memory for the heap. This is placed in `.uninit` (a `NOLOAD`
+/// section provided by the riscv-rt and cortex-m-rt linker scripts) rather
+/// than `.bss` so that the fixed-size memory handed to the wasm module is not
+/// counted against the size of SpaceWasm itself in the benchmark report.
+#[unsafe(link_section = ".uninit.HEAP_MEM")]
+static mut HEAP_MEM: [core::mem::MaybeUninit<u8>; HEAP_SIZE] =
+    [core::mem::MaybeUninit::uninit(); HEAP_SIZE];
+
 pub fn init() {
     unsafe {
-        embedded_alloc::init!(HEAP, 100000);
+        HEAP.init(&raw mut HEAP_MEM as usize, HEAP_SIZE);
     }
 }
 
