@@ -138,7 +138,17 @@ jobs:
                         let [base, delta] = compare(size, old_size, true, 0, " B");
                         comment += "| "+target+" | `"+section_name+"` | "+fmt(size, 0, " B")+" | "+base+" | "+delta+" |\n";
                     });
+
+                    // Bytes handed out by the global allocator after running
+                    // coremark. Wasm linear memory is not included.
+                    let heap = finiteOrNull(data[triple]["heap"]);
+                    if (heap !== null) {
+                        let old_heap = finiteOrNull((old_data[triple] ?? {})["heap"]);
+                        let [base, delta] = compare(heap, old_heap, true, 0, " B");
+                        comment += "| | heap | "+fmt(heap, 0, " B")+" | "+base+" | "+delta+" |\n";
+                    }
                 }
+                comment += "\n_heap: bytes allocated from the SpaceWasm global allocator's pages after running coremark (excludes wasm linear memory)._\n";
                 comment += "\n<details><summary><i>view detailed section sizes and symbol table...</i></summary>\n\n";
                 comment += "<br><small>You can also download the <a href='"+nm_url+"'>full symbol tables</a>.</small>\n\n";
                 for (let triple of triples) {

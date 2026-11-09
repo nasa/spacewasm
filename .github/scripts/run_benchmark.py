@@ -88,9 +88,11 @@ def get_coremark(triple, q, shift):
     sys.stderr.write(proc.stderr.decode())
     sys.stderr.flush()
 
-    output = float(proc.stdout.decode()) * (2 ** shift)
+    # the benchmark prints the coremark score, then the global allocator heap usage in bytes
+    score, heap_bytes = proc.stdout.decode().split()
+    output = float(score) * (2 ** shift)
 
-    q.put((triple, output, full_time))
+    q.put((triple, output, int(heap_bytes), full_time))
 
 def get_sizes(triple):
     """build target triple and runs cargo readobj over it"""
@@ -171,8 +173,9 @@ def main():
     for i in threads: i.start()
     for i in threads: i.join()
     while not q.empty():
-        triple, score, t = q.get()
+        triple, score, heap_bytes, t = q.get()
         data[triple]["coremark"] = round(score, 2)
+        data[triple]["heap"] = heap_bytes
         data[triple]["coremark_time"] = t
         data[triple]["qemu_info"] = qemu_info[triple]
 
