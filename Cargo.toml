@@ -51,6 +51,11 @@ strict-assertions = []
 # Disables inline asm (e.g. x86 `sqrtss`) for Miri
 miri-soft-floats = ["libm/force-soft-floats"]
 
+# Ground-only: enables `CompilerOptions::pc_ir_callback` to map IR program
+# counters back to Wasm bytecode offsets (e.g. to build a symbol file).
+# Not intended for flight builds.
+ir-map = []
+
 [dependencies]
 libm = "=0.2.16"
 

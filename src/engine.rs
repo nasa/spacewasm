@@ -35,4 +35,8 @@ pub struct Engine {
 
     /// The interpreter result when finished executing
     pub result: Option<RawValue>,
+
+    /// IR address of the instruction that caused the last trap.
+    /// Cleared when a new call is invoked or the engine is reset.
+    pub trap_pc: Option<JumpTarget>,
 }

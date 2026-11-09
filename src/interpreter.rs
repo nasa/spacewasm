@@ -176,6 +176,7 @@ impl Engine {
             .expect_nofmt("unexpected call_impl overflowed the stack");
         self.jumped = false;
         self.result = None;
+        self.trap_pc = None;
 
         Ok(())
     }
@@ -367,7 +368,8 @@ impl<T: IrVisitor<State = Engine, Error = InterpreterBreak>> InterpreterRunner f
     ) -> InterpreterResult {
         // Run up to n instructions
         for _ in 0..n_instructions {
-            let mut pc = state.pc;
+            let instruction_pc = state.pc;
+            let mut pc = instruction_pc;
 
             // If PC is SENTINEL, we're not executing anything
             if pc == JumpTarget::SENTINEL {
@@ -386,8 +388,10 @@ impl<T: IrVisitor<State = Engine, Error = InterpreterBreak>> InterpreterRunner f
             match i_res {
                 Ok(_) => {}
                 Err(InterpreterBreak::Trap(trap_reason)) => {
-                    // TODO(tumbar) How do we expose a backtrace?
-                    // We trapped, we need to unwind and reset the state
+                    // Record the start of the faulting instruction before unwinding.
+                    // Without the reset the engine would report busy and could be
+                    // resumed past the trap with an inconsistent stack.
+                    state.trap_pc = Some(instruction_pc);
                     state.sp = 0;
                     state.pc = JumpTarget::SENTINEL;
                     state.fp = 0;

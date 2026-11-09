@@ -207,3 +207,23 @@ pub unsafe fn mem_size(
     unsafe { *out_pages = state.memory.size() };
     crate::status::SPACEWASM_OK
 }
+
+/// Report the IR program counter of the `call` instruction that invoked the
+/// current host function, from within a host callback.
+///
+/// # Safety
+/// `caller` must be a live caller handle; `out_pc` must be a valid pointer.
+pub unsafe fn caller_pc(
+    caller: *const SpacewasmCaller,
+    out_pc: *mut u32,
+) -> crate::status::spacewasm_status_t {
+    let Some(state) = (unsafe { SpacewasmCaller::state(caller) }) else {
+        return crate::status::SPACEWASM_ERR_NULL_ARG;
+    };
+    if out_pc.is_null() {
+        return crate::status::SPACEWASM_ERR_NULL_ARG;
+    }
+    // SAFETY: out_pc is non-null and valid per the contract.
+    unsafe { *out_pc = state.pc.0 };
+    crate::status::SPACEWASM_OK
+}

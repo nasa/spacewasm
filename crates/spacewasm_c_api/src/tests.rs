@@ -2058,6 +2058,88 @@ fn trap_is_reported() {
 }
 
 #[test]
+fn trap_records_pc_and_returns_to_idle() {
+    let _guard = ALLOC_LOCK.lock().unwrap();
+    ensure_global_allocator();
+
+    let store = new_store(1024, 1, 256);
+    let alloc = new_guest_allocator();
+    let idx = load_module_onto(alloc, store, c"main", TRAP_WASM, 0).expect("load");
+
+    let mut func = 0u32;
+    assert_eq!(
+        unsafe { spacewasm_find_export_func(store, idx, c"boom".as_ptr(), &mut func) },
+        status::SPACEWASM_OK
+    );
+
+    let mut pc = 0u32;
+    assert_eq!(
+        unsafe { spacewasm_trap_pc(store, &mut pc) },
+        status::SPACEWASM_ERR_NOT_FOUND,
+        "no trap yet"
+    );
+
+    // Before running, the PC is the function entry: the `unreachable` itself.
+    assert_eq!(
+        unsafe { spacewasm_invoke(store, idx, func, core::ptr::null(), 0) },
+        status::SPACEWASM_OK
+    );
+    let mut entry_pc = 0u32;
+    assert_eq!(
+        unsafe { spacewasm_pc(store, &mut entry_pc) },
+        status::SPACEWASM_OK
+    );
+
+    let mut trap = spacewasm_trap_t::SPACEWASM_TRAP_NONE;
+    assert_eq!(
+        run_to_completion(store, &mut trap),
+        spacewasm_run_status_t::SPACEWASM_RUN_TRAP
+    );
+
+    // The trap PC points at the faulting instruction, not the one after it.
+    assert_eq!(
+        unsafe { spacewasm_trap_pc(store, &mut pc) },
+        status::SPACEWASM_OK
+    );
+    assert_eq!(pc, entry_pc);
+
+    // The engine is idle again: no live PC, and it can't be run past the trap.
+    assert_eq!(
+        unsafe { spacewasm_pc(store, &mut pc) },
+        status::SPACEWASM_ERR_WRONG_STATE
+    );
+    assert_eq!(
+        unsafe { spacewasm_run(store, 64, &mut trap) },
+        spacewasm_run_status_t::SPACEWASM_RUN_TRAP
+    );
+    assert_eq!(trap, spacewasm_trap_t::SPACEWASM_TRAP_NONE);
+
+    // A new call can be invoked without a reset, and clears the trap PC.
+    assert_eq!(
+        unsafe { spacewasm_invoke(store, idx, func, core::ptr::null(), 0) },
+        status::SPACEWASM_OK
+    );
+    assert_eq!(
+        unsafe { spacewasm_trap_pc(store, &mut pc) },
+        status::SPACEWASM_ERR_NOT_FOUND
+    );
+
+    assert_eq!(
+        unsafe { spacewasm_pc(core::ptr::null(), &mut pc) },
+        status::SPACEWASM_ERR_NULL_ARG
+    );
+    assert_eq!(
+        unsafe { spacewasm_trap_pc(store, core::ptr::null_mut()) },
+        status::SPACEWASM_ERR_NULL_ARG
+    );
+
+    unsafe {
+        spacewasm_destroy(store);
+        spacewasm_allocator_destroy(alloc);
+    }
+}
+
+#[test]
 fn module_with_start_runs() {
     let _guard = ALLOC_LOCK.lock().unwrap();
     ensure_global_allocator();
@@ -2188,7 +2270,15 @@ fn run_slices_out_of_fuel_then_resumes() {
     let final_status = loop {
         let rs = unsafe { spacewasm_run(store, 64, &mut trap) };
         match rs {
-            spacewasm_run_status_t::SPACEWASM_RUN_OUT_OF_FUEL => saw_out_of_fuel = true,
+            spacewasm_run_status_t::SPACEWASM_RUN_OUT_OF_FUEL => {
+                saw_out_of_fuel = true;
+                let mut pc = 0u32;
+                assert_eq!(
+                    unsafe { spacewasm_pc(store, &mut pc) },
+                    status::SPACEWASM_OK,
+                    "pc is readable between run slices"
+                );
+            }
             other => break other,
         }
     };
@@ -2494,6 +2584,22 @@ unsafe extern "C" fn mem_probe(
     );
     assert_eq!(
         unsafe { spacewasm_mem_read(caller, 0, core::ptr::null_mut(), 4) },
+        status::SPACEWASM_ERR_NULL_ARG
+    );
+
+    // The caller PC is a live IR address (not the idle sentinel).
+    let mut pc = u32::MAX;
+    assert_eq!(
+        unsafe { spacewasm_caller_pc(caller, &mut pc) },
+        status::SPACEWASM_OK
+    );
+    assert_ne!(pc, u32::MAX, "caller pc is set during a host call");
+    assert_eq!(
+        unsafe { spacewasm_caller_pc(core::ptr::null_mut(), &mut pc) },
+        status::SPACEWASM_ERR_NULL_ARG
+    );
+    assert_eq!(
+        unsafe { spacewasm_caller_pc(caller, core::ptr::null_mut()) },
         status::SPACEWASM_ERR_NULL_ARG
     );
 

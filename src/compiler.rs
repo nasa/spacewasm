@@ -70,6 +70,19 @@ macro_rules! instruction {
 impl<'a, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize> WasmVisitor
     for Compiler<'a, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>
 {
+    #[cfg(feature = "ir-map")]
+    fn before_instruction(
+        &self,
+        state: &mut Self::State,
+        wasm_offset: usize,
+    ) -> Result<(), Self::Error> {
+        if let Some(callback) = state.options().pc_ir_callback {
+            callback(state.pc(), wasm_offset)
+        }
+
+        Ok(())
+    }
+
     fn drop(&self, state: &mut Self::State) -> Result<(), Self::Error> {
         let ty = state.pop_stack_t()?;
         state.instr_imm_8(

@@ -947,6 +947,68 @@ pub unsafe extern "C" fn spacewasm_get_result(
     }
 }
 
+/// Write the engine's current IR program counter to `out_pc`.
+///
+/// While a call is in progress (paused or out of fuel) this is the address of
+/// the next instruction to execute. The value is an address into the IR of
+/// every module loaded onto this engine, so mapping it back to Wasm requires an
+/// IR map built from the same modules, loaded in the same order, with the same
+/// compiler options.
+///
+/// Returns [`spacewasm_status_t::SPACEWASM_ERR_WRONG_STATE`] if the engine is
+/// idle. Must not be called while [`spacewasm_run`] is executing; from inside a
+/// host function use [`spacewasm_caller_pc`] instead.
+///
+/// # Safety
+/// `engine` must be live; `out_pc` valid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn spacewasm_pc(
+    engine: *const CEngine,
+    out_pc: *mut u32,
+) -> spacewasm_status_t {
+    let Some(cengine) = (unsafe { engine.as_ref() }) else {
+        return status::SPACEWASM_ERR_NULL_ARG;
+    };
+    if out_pc.is_null() {
+        return status::SPACEWASM_ERR_NULL_ARG;
+    }
+    if cengine.engine.is_idle() {
+        return status::SPACEWASM_ERR_WRONG_STATE;
+    }
+
+    unsafe { *out_pc = cengine.engine.pc.0 };
+    status::SPACEWASM_OK
+}
+
+/// Write the IR program counter of the instruction that caused the last trap
+/// to `out_pc`. See [`spacewasm_pc`] for how to interpret the value.
+///
+/// Returns [`spacewasm_status_t::SPACEWASM_ERR_NOT_FOUND`] if no trap has
+/// occurred since the last [`spacewasm_invoke`] or [`spacewasm_reset`].
+///
+/// # Safety
+/// `engine` must be live; `out_pc` valid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn spacewasm_trap_pc(
+    engine: *const CEngine,
+    out_pc: *mut u32,
+) -> spacewasm_status_t {
+    let Some(cengine) = (unsafe { engine.as_ref() }) else {
+        return status::SPACEWASM_ERR_NULL_ARG;
+    };
+    if out_pc.is_null() {
+        return status::SPACEWASM_ERR_NULL_ARG;
+    }
+
+    match cengine.engine.trap_pc {
+        Some(pc) => {
+            unsafe { *out_pc = pc.0 };
+            status::SPACEWASM_OK
+        }
+        None => status::SPACEWASM_ERR_NOT_FOUND,
+    }
+}
+
 /// Destroy an engine and free its resources. No-op on null.
 ///
 /// # Safety
@@ -1000,4 +1062,18 @@ pub unsafe extern "C" fn spacewasm_mem_size(
     out_pages: *mut u32,
 ) -> spacewasm_status_t {
     unsafe { host::mem_size(caller, out_pages) }
+}
+
+/// Write the IR program counter of the `call` instruction that invoked the
+/// current host function to `out_pc`. Intended for use from within a host
+/// function. See [`spacewasm_pc`] for how to interpret the value.
+///
+/// # Safety
+/// `caller` must be a live caller handle; `out_pc` must be a valid pointer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn spacewasm_caller_pc(
+    caller: *mut SpacewasmCaller,
+    out_pc: *mut u32,
+) -> spacewasm_status_t {
+    unsafe { host::caller_pc(caller, out_pc) }
 }

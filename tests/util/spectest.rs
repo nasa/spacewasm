@@ -358,6 +358,8 @@ impl TestContext {
                 allow_memory_grow: true,
                 max_backpatch_iterations: None,
                 max_code_pages: MAX_CODE_PAGES,
+                #[cfg(feature = "ir-map")]
+                pc_ir_callback: None,
             })
             .unwrap(),
             instance_names: std::collections::HashMap::new(),

@@ -166,6 +166,7 @@ impl Engine {
             store,
             result: None,
             host_pause_result: None,
+            trap_pc: None,
         })
     }
 
@@ -176,6 +177,7 @@ impl Engine {
         self.jumped = false;
         self.result = None;
         self.host_pause_result = None;
+        self.trap_pc = None;
         self.clear_memory();
         self.clear_table();
     }
