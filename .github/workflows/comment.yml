@@ -157,8 +157,10 @@ jobs:
                 // it counts towards both.
                 const flash_sections = [".text", ".rodata", ".data"];
                 const ram_sections = [".data", ".bss"];
+                const bench_pr = parseInt(benchmark.prNumber, 10);
 
-                let comment = "## Size Summary\n\n";
+                const size_marker = "<!-- spacewasm-size-report -->";
+                let comment = size_marker + "\n## Size Summary\n\n";
                 comment += "| Target | Flash | RAM (static) | Heap |\n";
                 comment += "| :-- | --: | --: | --: |\n";
                 for (let triple of triples) {
@@ -204,9 +206,13 @@ jobs:
                     }
                     comment += "\t...truncated (see artifact for full table)...\n```\n";
                 }
-                comment += "</details>\n\n";
+                comment += "</details>\n";
 
-                comment += "## Coremark Scores\n\n";
+                await upsertComment(bench_pr, size_marker, comment);
+
+                // The coremark comment keeps matching on its heading so the
+                // combined comment posted before this split is reused.
+                comment = "## Coremark Scores\n\n";
                 comment += "| Target | QEMU CPU / Board | This PR | base | Delta | Host Time |\n";
                 comment += "| :-- | :-- | --: | --: | --: | --: |\n";
                 for (let triple of triples) {
@@ -220,14 +226,8 @@ jobs:
                     let [base, delta] = compare(score, old_score, false, 2);
                     comment += "| **`"+triple+"`** | "+data[triple]["qemu_info"]+" | "+fmt(score, 2)+" | "+base+" | "+delta+" | "+t.toFixed(2)+" s |\n";
                 }
-                comment += "\n";
 
-                
-                await upsertComment(
-                    parseInt(benchmark.prNumber, 10),
-                    'Coremark Scores',
-                    comment
-                );
+                await upsertComment(bench_pr, 'Coremark Scores', comment);
             }
 
             const coverage = readResults('coverage-results');
