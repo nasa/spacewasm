@@ -110,6 +110,31 @@ at runtime.
 
 Wasm linear memory pages are allocated outside of dynamic memory pages.
 
+### A Failed Module Load Invalidates the Engine
+
+> [!IMPORTANT]
+> Any error returned while loading a module (`Module::new`, `Engine::push_module`, or any non-OK status from
+> `spacewasm_load_module`, including `SPACEWASM_ERR_CAPACITY`) leaves the engine in an unusable state. The embedder
+> **must** drop the entire engine (store, `CodeBuilder`, and all loaded modules) and reconstruct it before loading or
+> invoking anything else. `Engine::reset` / `spacewasm_reset` only resets execution state and is _not_ a recovery path
+> for a failed load.
+
+This is an intentional divergence from the WebAssembly specification, which requires instantiation to be atomic:
+
+- **No rollback of imported state.** Data and element segments are applied directly to their target memory or table
+  as they are streamed in, rather than buffered until the whole module validates. Buffering would require a second
+  allocation holding every module's segment data, which is too costly on small platforms. When the target is an
+  _imported_ memory or table, a rejected module can therefore leave writes in another module's memory or table,
+  including table entries that reference the module index the rejected module would have received.
+- **No rollback of allocations.** Because deallocation cannot precede allocation (rule 2 above), freeing the partial
+  state of a rejected module _poisons_ the page allocator. Every later allocation fails with `HeapPoisoned`
+  (`SPACEWASM_ERR_HEAP_POISONED`) until all pages are released, so no further module can be loaded. Code pages
+  already consumed by the rejected module are not returned to the `max_code_pages` budget.
+
+Because the engine must be discarded, the leftover writes above are never observable by a correctly behaving
+embedder. Reports that rely on continuing to use an engine after a failed load are out of scope for
+[security reporting](./SECURITY.md).
+
 ## Streaming
 
 _Peak_ memory usage is often an important constraint on small systems found on spacecraft. Many Wasm interpreters
@@ -145,7 +170,7 @@ For more information about this command and basic WASI compilation, see [`spacew
 
 ## Interpreter Limitations
 
-This Wasm interpreter imposes additional constraints beyond the WebAssembly 1.0 specification to support
+This Wasm interpreter imposes additional constraints beyond the WebAssembly specification to support
 resource-constrained spacecraft environments.
 
 See our [IR SPEC](./docs/ir.md#limitations) for the full list of limitations.

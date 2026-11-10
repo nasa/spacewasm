@@ -541,7 +541,16 @@ spacewasm_status_t spacewasm_add_host_function(struct spacewasm_host_t *host,
  [`spacewasm_invoke`] for that. `allocator` supplies the
  guest linear memory (see [`spacewasm_allocator_new`]). Writes the new module's
  index to `out_module_idx` (if non-null). May be called repeatedly to load
- several modules onto the same engine.
+ several modules onto the same engine, as long as every prior load succeeded.
+
+ # Failure invalidates the engine
+
+ Any status other than [`spacewasm_status_t::SPACEWASM_OK`] (including
+ [`spacewasm_status_t::SPACEWASM_ERR_CAPACITY`]) leaves the engine unusable:
+ segments may already have been written into imported memories and tables,
+ and the page allocator is poisoned. The caller must destroy the engine with
+ [`spacewasm_destroy`] and create a new one; [`spacewasm_reset`] does not
+ recover from a failed load.
 
  # Safety
  `engine` and `allocator` must be live handles; `read` a valid callback;
