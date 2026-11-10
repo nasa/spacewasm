@@ -191,6 +191,9 @@ impl Engine {
     /// Append a module to the store without running its start function.
     /// Note: The start function still needs to be run (if there is one)
     /// Returns the ModuleRef of the new module
+    ///
+    /// An `Err` here is a failed module load and invalidates the engine; see
+    /// [`Module::new`].
     pub fn push_module(&mut self, module: Module) -> Result<ModuleRef, AllocError> {
         self.store.push_module(module)
     }

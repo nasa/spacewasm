@@ -63,6 +63,17 @@ impl CustomSectionHandler for DefaultCustomSectionHandler {
 }
 
 impl Module {
+    /// Decode, validate, compile, and instantiate a module from `stream` in a
+    /// single pass.
+    ///
+    /// # Errors invalidate the engine
+    ///
+    /// Unlike the Wasm specification, instantiation is not atomic. Data and
+    /// element segments are written into their target memory or table as they
+    /// are read, including memories and tables imported from other modules,
+    /// and partial allocations poison the page allocator when freed. After an
+    /// `Err` (or a failed [`Engine::push_module`]) the embedder must drop the
+    /// entire [`Engine`] and its [`CodeBuilder`] and reconstruct them.
     pub fn new<const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize>(
         name: &str,
         stream: &mut dyn WasmStream,
@@ -990,7 +1001,8 @@ impl Data {
         // Read the data onto the linear memory
         // Note! This is a deviation from the Wasm specification, technically we
         // should be reading into a separate buffer and only populating the linear memory
-        // _after_ the full module validates.
+        // _after_ the full module validates. This is sound because any load failure
+        // invalidates the engine (see `Module::new`).
         let len = wasm.read_u32()?;
         for i in 0..len {
             memory.store_u8(Memory::effective_address(offset, i)?, wasm.read_u8()?)?;
