@@ -145,20 +145,7 @@ impl<T, A: Allocator + Clone> Rc<[T], A> {
 }
 
 impl<T: ?Sized, A: Allocator + Clone> Clone for Rc<T, A> {
-    /// Makes a clone of the `Rc` pointer.
-    ///
-    /// This creates another pointer to the same allocation, increasing the
-    /// strong reference count.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use std::rc::Rc;
-    ///
-    /// let five = Rc::new(5);
-    ///
-    /// let _ = Rc::clone(&five);
-    /// ```
+    /// Another pointer to the same allocation; increments the strong count.
     #[inline]
     fn clone(&self) -> Self {
         unsafe {
@@ -174,14 +161,10 @@ impl<T: ?Sized, A: Allocator> Rc<T, A> {
         self.inner().count() == 1
     }
 
-    /// Convert `Rc<T>` into `Rc<U>` using a coercion function (e.g., for trait objects)
-    ///
-    /// The coercion function should convert a reference `&T` to `&U`, typically for
-    /// trait object coercion like `|x| x as &dyn Trait`.
+    /// Convert `Rc<T>` to `Rc<U>` with `coerce`, e.g. `|x| x as &dyn Trait`.
     ///
     /// # Safety
-    /// The caller must ensure that the coercion is valid and that the resulting
-    /// `RcInner<U>` has the same memory layout as `RcInner<T>`.
+    /// `RcInner<U>` must have the same layout as `RcInner<T>`.
     pub unsafe fn into_dyn<U: ?Sized, F>(self, coerce: F) -> Rc<U, A>
     where
         F: FnOnce(&T) -> &U,

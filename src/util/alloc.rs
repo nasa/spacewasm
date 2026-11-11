@@ -46,23 +46,12 @@ unsafe extern "C" {
     fn __spacewasm_dealloc(ptr: *mut u8, size: usize, align: usize);
 }
 
-/// Installs the process-global allocator that backs the `__spacewasm_alloc` and
-/// `__spacewasm_dealloc` FFI symbols.
+/// Install the process-global allocator behind `__spacewasm_alloc` and
+/// `__spacewasm_dealloc`.
 ///
-/// # Single-threaded requirement (UB otherwise)
-///
-/// The generated code stores the allocator instance and a pointer to it in
-/// `static mut` globals and dereferences them from the exported `extern "C"`
-/// functions **without any synchronization**. This is only sound in a
-/// single-threaded environment, which is the model SpaceWasm targets: the
-/// interpreter and its allocator run on a single thread.
-///
-/// Calling any of the generated `__spacewasm_*` functions concurrently from
-/// more than one thread (or re-entrantly, e.g. allocating from within an
-/// allocator callback that is itself mid-allocation) creates aliasing
-/// `&mut`/`&` references to the `static mut` state and is **undefined
-/// behavior**. Embedders that need multi-threaded access must provide their own
-/// synchronization *around* these entry points.
+/// # Safety
+/// The state is an unsynchronized `static mut`: calling the generated functions
+/// from more than one thread, or re-entrantly, is undefined behavior.
 #[macro_export]
 macro_rules! global_allocator {
     ($ty: ty, $val:expr) => {
@@ -109,16 +98,11 @@ macro_rules! global_allocator {
     };
 }
 
-/// Our allocator trait. This is very similar to [core::alloc::GlobalAlloc].
-/// We are not using that trait since it doesn't return Result<...> it just panics
-/// if an allocation fails. An adaptor is automatically implemented
+/// A fallible [`core::alloc::GlobalAlloc`].
 ///
 /// # Safety
-///
-/// layout must have non-zero size. Attempting to allocate for a zero-sized layout will
-/// result in undefined behavior.
-///
-/// The implementation must guarentee Ok() results are valid pointers against the requested layout.
+/// `Ok` pointers must be valid for the requested layout. Zero-sized layouts
+/// are not allowed.
 pub unsafe trait Allocator {
     /// # Safety
     /// The caller must ensure that the layout has non-zero size.

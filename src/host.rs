@@ -366,18 +366,11 @@ pub struct HostModule {
 }
 
 impl HostFunction {
-    /// Construct a host function. `name`, `params`, and `returns` are checked
-    /// via the panicking [`HostName::new`] / [`HostValList::new`] constructors,
-    /// so this is only appropriate for compile-time-known values in Rust code.
-    /// FFI callers should validate input and use [`HostFunction::try_new`].
+    /// Construct a host function from values known at compile time.
     ///
     /// # Panics
-    ///
-    /// Panics if the parameter/result signature is too large or contains
-    /// multiple returns, or if the closure allocation fails
-    /// ([`HostFunctionError::AllocError`]). [`HostFunction::try_new`] routes all
-    /// of these through a `Result` instead of panicking; prefer it on
-    /// caller-supplied input.
+    /// If the signature is invalid or allocation fails. Use
+    /// [`HostFunction::try_new`] for caller-supplied input.
     pub fn new(
         name: impl Into<HostName<HOST_FUNCTION_NAME_CAP>>,
         params: HostValList,
@@ -433,19 +426,9 @@ impl HostFunction {
         self.params.iter().fold(0, |n, i| n + i.size()) / 4
     }
 
-    /// Move the host closure out for the duration of a single call.
-    ///
-    /// The closure must be taken out of `self` because invoking it requires a
-    /// `&mut Engine` that mutably borrows the store which owns this
-    /// `HostFunction`; leaving `None` behind avoids that borrow conflict without
-    /// allocating a placeholder. The caller MUST return the closure via
-    /// [`HostFunction::finish_call`] before this function can be reached again.
-    ///
-    /// # Reentrancy
-    ///
-    /// The engine is single-threaded and a host function is not permitted to
-    /// reenter itself (directly or transitively). If it does, the closure has
-    /// already been taken and this returns `None`.
+    /// Take the closure out for one call, so it can borrow the engine that owns it.
+    /// Return it with [`HostFunction::finish_call`]. `None` if already taken, i.e.
+    /// the host function re-entered itself.
     pub fn get_call(&mut self) -> Option<HostFunctionFn> {
         self.f.take()
     }

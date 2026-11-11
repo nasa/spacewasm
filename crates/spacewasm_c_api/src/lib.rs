@@ -28,7 +28,10 @@ mod tests;
 
 // Re-exports for C callers and downstream Rust consumers.
 pub use alloc::{CAllocator, spacewasm_alloc_fn_t, spacewasm_dealloc_fn_t, spacewasm_realloc_fn_t};
-pub use capi::{CEngine, spacewasm_compiler_options_t};
+pub use capi::{
+    CEngine, spacewasm_compiler_options_t, spacewasm_control_frame_t, spacewasm_decoder_stack_t,
+    spacewasm_operand_t,
+};
 #[cfg(feature = "provide-global-allocator")]
 pub use global_alloc::{
     spacewasm_global_alloc_fn_t, spacewasm_global_dealloc_fn_t, spacewasm_set_global_allocator,

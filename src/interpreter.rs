@@ -182,15 +182,9 @@ impl Engine {
         Ok(())
     }
 
-    /// Resume the interpreter after a host pause.
-    /// Optionally pushes a value to the operand stack as a host function return value,
-    /// then moves [`Engine::pc`] past the call that paused.
-    ///
-    /// Returns [`ResumeError::NotPaused`] if the engine is not currently paused
-    /// waiting for a host function result, and [`ResumeError::ResultTypeMismatch`]
-    /// if `resume_value` does not match the paused host function's declared
-    /// result type (in which case the pending pause is left intact so the caller
-    /// may retry).
+    /// Resume after a host pause, pushing `resume_value` as the host function's
+    /// result. On [`ResumeError::ResultTypeMismatch`] the pause is kept, so the
+    /// call can be retried.
     pub fn resume(&mut self, resume_value: Option<Value>) -> Result<(), ResumeError> {
         // `resume` is only valid when a host function has paused the engine and
         // is awaiting a result. If nothing is pending, report it instead of
@@ -343,19 +337,10 @@ impl Interpreter {
     }
 }
 
-/// This is a meta-trait that provides an auto implementation of run() for all IrVisitors
-/// of a certain shape.
-///
-/// For all types that implement [IrVisitor<State = Engine, Error = InstructionError>],
-/// this trait will be implemented to execute instructions given the state and store.
+/// Runs the interpreter; implemented for every `IrVisitor` over [`Engine`].
 pub trait InterpreterRunner {
-    /// Run the interpreter for a fixed number of cycles or until a trap/host pause.
-    ///
-    /// The `code` parameter contains the compiled IR pages. It's passed separately from
-    /// the engine to allow the interpreter to borrow it immutably while mutating the engine state.
-    ///
-    /// A paused engine runs nothing and returns [`InterpreterResult::Pause`] again: the
-    /// host call's result has to be supplied with [`Engine::resume`] first.
+    /// Run up to `fuel` instructions, or until a trap or host pause. A paused
+    /// engine stays paused until [`Engine::resume`].
     fn run(
         &self,
         code: &[Box<TextPage>],

@@ -6,8 +6,9 @@ use core::alloc::Layout;
 use core::ptr::NonNull;
 
 use spacewasm::{
-    AllocError, Allocator, CodeBuilder, CompilerOptions, Engine, InnerVec, Module, ValidationError,
-    WasmMemoryAllocator, WasmStream, global_allocator,
+    AllocError, Allocator, CodeBuilder, CompilerOptions, ControlFrame, DecoderStack, Engine,
+    InnerVec, Module, OperandType, ValidationError, WasmMemoryAllocator, WasmStream,
+    global_allocator,
 };
 
 extern crate std;
@@ -134,11 +135,15 @@ fn compile(wasm: &[u8], options: CompilerOptions) -> Result<(), ValidationError>
     let mut code_builder = CodeBuilder::new(options).unwrap();
     let mut stream = ByteStream::new(wasm);
 
-    Module::new::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
+    let mut control_frames = [ControlFrame::EMPTY; MAX_CONTROL_FRAMES];
+    let mut operands = [OperandType::EMPTY; MAX_STACK_DEPTH];
+    let mut decoder_stack = DecoderStack::new(&mut control_frames, &mut operands);
+    Module::new(
         "",
         &mut stream,
         &mut engine.store,
         &mut code_builder,
+        &mut decoder_stack,
         spacewasm::Rc::new(GuestMemoryAllocator)
             .unwrap()
             .into_wasm_memory_allocator(),

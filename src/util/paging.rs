@@ -14,17 +14,8 @@ pub struct PageAllocatorStatistics {
     pub pages: u32,
 }
 
-/// A page is an allocator that utilizes a large contiguous blocks of memory
-/// to perform smaller allocations. It is strictly increasing in it's offset for
-/// simplicity. This means a bounded number of allocations should occur since it does
-/// no garbage collection within the page. If all allocations within a single page are
-/// freed it will also free the page.
-///
-/// Page allocators wrap another allocator who is responsible for actually allocating
-/// each page. The page allocator will only call to this allocator once it can no longer
-/// fit the next allocation in any of it's currently allocated pages.
-///
-/// This allocator supports a static number of pages and therefore can run out of memory
+/// A bump allocator over up to `MAX_PAGES` pages taken from `A`. A page is
+/// freed once every allocation in it is.
 pub struct PageAllocator<A: Allocator, const MAX_PAGES: usize> {
     inner: UnsafeCell<PageAllocatorInner<A, MAX_PAGES>>,
 }

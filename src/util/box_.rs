@@ -22,11 +22,7 @@ impl<A: Allocator, T: ?Sized + core::fmt::Debug> core::fmt::Debug for Box<T, A> 
 }
 
 impl<T: Clone, A: Allocator + Clone> Box<T, A> {
-    /// Attempt to clone the box, returning [`AllocError`] if allocating the new
-    /// backing storage fails.
-    ///
-    /// The inner value is cloned before the new allocation is populated, so a
-    /// panic in `T::clone` (or an allocation failure) leaks nothing.
+    /// Clone the box, failing instead of panicking if allocation fails.
     pub fn try_clone(&self) -> Result<Self, AllocError> {
         Box::new_in(self.alloc.clone(), (**self).clone())
     }
@@ -34,11 +30,7 @@ impl<T: Clone, A: Allocator + Clone> Box<T, A> {
 
 impl<T: Clone, A: Allocator + Clone> Clone for Box<T, A> {
     /// # Panics
-    /// Panics if allocating the new backing storage fails. Use
-    /// [`Box::try_clone`] to handle allocation failure without panicking.
-    ///
-    /// (Mirrors the fallible-allocation decision documented on
-    /// [`crate::Vec::clone`].)
+    /// If allocation fails; see [`Box::try_clone`].
     fn clone(&self) -> Self {
         self.try_clone()
             .expect_nofmt("Box::clone: allocation failed")
@@ -116,13 +108,11 @@ impl<T: Sized, A: Allocator> Box<T, A> {
 }
 
 impl<T: ?Sized, A: Allocator> Box<T, A> {
-    /// Reconstruct a box from a raw pointer and allocator previously obtained
-    /// from [`Box::leak`] / `into_raw_with_allocator`.
+    /// Rebuild a box from a pointer from [`Box::leak`].
     ///
     /// # Safety
-    /// `ptr` must have come from a `Box<T, A>` allocated with `alloc`, and must
-    /// not be used again after this call. Reconstructing a box twice from the
-    /// same pointer is undefined behavior (double free).
+    /// `ptr` must come from a `Box<T, A>` allocated with `alloc`, and not be used
+    /// again.
     pub unsafe fn from_raw(alloc: A, ptr: *mut T) -> Box<T, A> {
         Box { ptr, alloc }
     }

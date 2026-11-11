@@ -76,6 +76,7 @@ module: debug info is in custom sections, which the split removes.
 | `SPACEWASM_WASM_OPT_REQUIRED` | `1` fails the link if `wasm-opt` is missing, instead of warning                                                           |
 | `SPACEWASM_LINKER`            | The linker to run first. Default `rust-lld`                                                                               |
 | `SPACEWASM_VALIDATE`          | `0` skips validating the result                                                                                           |
+| `SPACEWASM_DECODER_LIMITS`    | The deployment's `DecoderStack` lengths to validate against, as `FRAMES/DEPTH`. Default `64/256`                          |
 
 The link-time validation fails the build on an instruction this release does not
 implement. It knows no deployment's limits or host, so anything else it finds is a
@@ -88,8 +89,9 @@ spacewasm validate seq.wasm other.wasm
 ```
 
 Decodes and instantiates each module through `spacewasm` itself, with the compiler
-options given (`--max-code-pages`, `--max-backpatch-iterations`, `--allow-memory-grow`,
-`--decoder-limits`). Host imports are stood in for from the module's own import
+options given (`--max-code-pages`, `--max-backpatch-iterations`, `--allow-memory-grow`)
+and decoder limits (`--decoder-limits FRAMES/DEPTH`: the `control_frames_len` and
+`operands_len` the embedder passes to `spacewasm_load_module`, default `64/256`). Host imports are stood in for from the module's own import
 section, so a missing host function is not caught here. An instruction from an
 unsupported proposal is named, with how to keep it out:
 
@@ -168,6 +170,7 @@ Options:
       --inherit-env                  Inherit this process's whole environment
       --raw-tty                      Put the terminal in raw mode for the run
       --entry <ENTRY>                The function to run [default: _start]
+      --decoder-limits <FRAMES/DEPTH>  The lengths of the decoder's `DecoderStack`, as `FRAMES/DEPTH` [default: 4096/1024]
 ```
 
 What the `spacewasi` binary was, with the same flags. The WASI 0.1 system calls are
@@ -221,7 +224,8 @@ seed_to_wasm crash-xxx --stdout | spacewasm trace
 What `spacewasm-trace` was. Runs every exported function, with zero for each argument,
 and prints the last `--limit` instructions each executed with `pc`/`sp`/`fp`; on a panic
 the trace is printed first. Reads the module from stdin when no file is given. Host
-imports are stood in for, and trap if called. `make trace` builds it with
+imports are stood in for, and trap if called. `--decoder-limits` (default `4096/1024`, as
+for `run`) sets the decoder's `DecoderStack` lengths, to reproduce an embedder's. `make trace` builds it with
 `--features strict-assertions`, so the interpreter's own bounds checks stop at the fault.
 
 ## The symbol file

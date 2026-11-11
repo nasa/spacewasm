@@ -16,11 +16,11 @@ use super::inspector::{Inspector, LimitedVec};
 use core::panic;
 use serde::{Deserialize, Serialize};
 use spacewasm::{
-    AllocError, Allocator, CodeBuilder, CompilerOptions, ConstantExprError, Engine, ExportDesc,
-    GlobalValue, GlobalValueError, HostFunction, HostGlobal, HostModule, InnerVec, Interpreter,
-    InterpreterResult, InterpreterRunner, InvokeError, Limit, Memory, MemoryError, Module,
-    ModuleRef, ParseError, Ref, TrapReason, ValType, ValidationError, Value, WasmMemoryAllocator,
-    WasmRef, WasmStream, global_allocator, vec,
+    AllocError, Allocator, CodeBuilder, CompilerOptions, ConstantExprError, ControlFrame,
+    DecoderStack, Engine, ExportDesc, GlobalValue, GlobalValueError, HostFunction, HostGlobal,
+    HostModule, InnerVec, Interpreter, InterpreterResult, InterpreterRunner, InvokeError, Limit,
+    Memory, MemoryError, Module, ModuleRef, OperandType, ParseError, Ref, TrapReason, ValType,
+    ValidationError, Value, WasmMemoryAllocator, WasmRef, WasmStream, global_allocator, vec,
 };
 use std::alloc::Layout;
 use std::cell::RefCell;
@@ -680,11 +680,15 @@ fn load_module(
     let module_ref = {
         let _loading = enter_loading();
 
-        let module = Module::new::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
+        let mut control_frames = [ControlFrame::EMPTY; MAX_CONTROL_FRAMES];
+        let mut operands = [OperandType::EMPTY; MAX_STACK_DEPTH];
+        let mut decoder_stack = DecoderStack::new(&mut control_frames, &mut operands);
+        let module = Module::new(
             module_name.as_ref().map(|f| f.as_ref()).unwrap_or(""),
             &mut stream,
             &mut ctx.engine.store,
             &mut ctx.code_builder,
+            &mut decoder_stack,
             spacewasm::Rc::new(RustSystemAllocator)
                 .unwrap()
                 .into_wasm_memory_allocator(),
