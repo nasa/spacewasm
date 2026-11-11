@@ -11,7 +11,8 @@
 </p>
 
 SpaceWasm is an implementation of the [WebAssembly](https://webassembly.org/)
-specification meant to interpret Wasm binary on-board spacecraft. It is developed at [NASA JPL](https://www.jpl.nasa.gov).
+specification meant to interpret Wasm binary on-board spacecraft. It is developed at
+[NASA JPL Robotics](https://robotics.jpl.nasa.gov/who-we-are/groups/358T/).
 
 SpaceWasm is the interpreter behind [F´](https://github.com/nasa/fprime)'s
 [`Svc::WasmSequencer`](https://fprime.jpl.nasa.gov/latest/Svc/WasmSequencer/docs/sdd/), released in
