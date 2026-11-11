@@ -25,7 +25,8 @@ The following are documented, intentional behaviors and will be closed without a
 - **Using an engine after a failed module load.** Any module-load error invalidates the engine, and the embedder must
   drop and reconstruct it. Leftover writes in imported memories or tables, stale table entries, heap poisoning
   (`SPACEWASM_ERR_HEAP_POISONED`), and code-page budget consumed by a rejected module all fall under this contract.
-  See [A Failed Module Load Invalidates the Engine](./README.md#a-failed-module-load-invalidates-the-engine).
+  See the API documentation for [`Module::new`](./src/module.rs) and
+  [`spacewasm_load_module`](./crates/spacewasm_c_api/include/spacewasm.h).
 
 If you are using AI tools to assist with your reporting, we require that you disclose this in your report.
 Please review the [AI policy](./AI_POLICY.md) for guidelines on disclosure and best practices.
