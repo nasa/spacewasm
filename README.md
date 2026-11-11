@@ -88,6 +88,10 @@ Embedding the interpreter refers to instantiating it and providing implementatio
 into the module. Typically, the set of functions imported by the module are fixed and should be specified at compile
 time both for the Wasm module and the embedder.
 
+For a reference embedding, see F´'s
+[`Svc::WasmSequencer`](https://github.com/nasa/fprime/tree/v4.4.0/Svc/WasmSequencer)
+([SDD](https://fprime.jpl.nasa.gov/latest/Svc/WasmSequencer/docs/sdd/)), which drives SpaceWasm through the C API.
+
 ## Dynamic Allocation
 
 SpaceWasm has a unique dynamic memory allocation model. All of its design choices stem from requirements levied by common
@@ -109,30 +113,11 @@ operand-stack, linear-memory, and IR access paths and the C FFI.
 
 Wasm linear memory pages are allocated outside of dynamic memory pages.
 
-### A Failed Module Load Invalidates the Engine
-
 > [!IMPORTANT]
-> Any error returned while loading a module (`Module::new`, `Engine::push_module`, or any non-OK status from
-> `spacewasm_load_module`, including `SPACEWASM_ERR_CAPACITY`) leaves the engine in an unusable state. The embedder
-> **must** drop the entire engine (store, `CodeBuilder`, and all loaded modules) and reconstruct it before loading or
-> invoking anything else. `Engine::reset` / `spacewasm_reset` only resets execution state and is _not_ a recovery path
-> for a failed load.
-
-This is an intentional divergence from the WebAssembly specification, which requires instantiation to be atomic:
-
-- **No rollback of imported state.** Data and element segments are applied directly to their target memory or table
-  as they are streamed in, rather than buffered until the whole module validates. Buffering would require a second
-  allocation holding every module's segment data, which is too costly on small platforms. When the target is an
-  _imported_ memory or table, a rejected module can therefore leave writes in another module's memory or table,
-  including table entries that reference the module index the rejected module would have received.
-- **No rollback of allocations.** Because deallocation cannot precede allocation (rule 2 above), freeing the partial
-  state of a rejected module _poisons_ the page allocator. Every later allocation fails with `HeapPoisoned`
-  (`SPACEWASM_ERR_HEAP_POISONED`) until all pages are released, so no further module can be loaded. Code pages
-  already consumed by the rejected module are not returned to the `max_code_pages` budget.
-
-Because the engine must be discarded, the leftover writes above are never observable by a correctly behaving
-embedder. Reports that rely on continuing to use an engine after a failed load are out of scope for
-[security reporting](./SECURITY.md).
+> A consequence of this model is that a partially loaded module cannot be rolled back. Unlike the WebAssembly
+> specification, module instantiation is not atomic: a failed module load leaves the engine unusable, and the embedder
+> must discard and reconstruct it. See the API documentation for [`Module::new`](./src/module.rs) and
+> [`spacewasm_load_module`](./crates/spacewasm_c_api/include/spacewasm.h) for details.
 
 ## Streaming
 

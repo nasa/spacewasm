@@ -68,12 +68,24 @@ impl Module {
     ///
     /// # Errors invalidate the engine
     ///
-    /// Unlike the Wasm specification, instantiation is not atomic. Data and
-    /// element segments are written into their target memory or table as they
-    /// are read, including memories and tables imported from other modules,
-    /// and partial allocations poison the page allocator when freed. After an
+    /// Unlike the Wasm specification, instantiation is not atomic. After an
     /// `Err` (or a failed [`Engine::push_module`]) the embedder must drop the
-    /// entire [`Engine`] and its [`CodeBuilder`] and reconstruct them.
+    /// entire [`Engine`] and its [`CodeBuilder`] and reconstruct them before
+    /// loading or invoking anything else. [`Engine::reset`] only resets
+    /// execution state and is not a recovery path for a failed load.
+    ///
+    /// - **No rollback of imported state.** Data and element segments are
+    ///   written into their target memory or table as they are read, rather
+    ///   than buffered until the whole module validates. When the target is an
+    ///   imported memory or table, a rejected module can leave writes in
+    ///   another module's memory or table, including table entries that
+    ///   reference the module index the rejected module would have received.
+    /// - **No rollback of allocations.** Since deallocation cannot precede
+    ///   allocation, freeing the partial state of a rejected module poisons the
+    ///   page allocator. Every later allocation fails with
+    ///   [`AllocError::HeapPoisoned`] until all pages are released. Code pages
+    ///   consumed by the rejected module are not returned to the
+    ///   `max_code_pages` budget.
     pub fn new<const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize>(
         name: &str,
         stream: &mut dyn WasmStream,
