@@ -51,7 +51,10 @@ pub enum spacewasm_hostcall_result_t {
     SPACEWASM_CONTINUE_SOME = 1,
     /// Trap the interpreter.
     SPACEWASM_TRAP = 2,
-    /// Pause the interpreter (cooperative yield).
+    /// Pause the interpreter (cooperative yield). `spacewasm_run` returns
+    /// `SPACEWASM_RUN_PAUSE`, and keeps returning it without running
+    /// anything, until the result is supplied with `spacewasm_resume` or
+    /// `spacewasm_resume_value`. Until then the PC is the calling instruction.
     SPACEWASM_PAUSE = 3,
 }
 

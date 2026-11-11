@@ -8,8 +8,8 @@ impl LocalVariable {
 }
 
 #[repr(C)]
-struct CallFrame {
-    frame_length: u16,
+pub(crate) struct CallFrame {
+    pub(crate) frame_length: u16,
     module_delta: i8,
     parameter_size: u8,
 }
@@ -176,12 +176,15 @@ impl Engine {
             .expect_nofmt("unexpected call_impl overflowed the stack");
         self.jumped = false;
         self.result = None;
+        self.trap_pc = None;
+        self.trap_fp = 0;
 
         Ok(())
     }
 
     /// Resume the interpreter after a host pause.
-    /// Optionally pushes a value to the operand stack as a host function return value.
+    /// Optionally pushes a value to the operand stack as a host function return value,
+    /// then moves [`Engine::pc`] past the call that paused.
     ///
     /// Returns [`ResumeError::NotPaused`] if the engine is not currently paused
     /// waiting for a host function result, and [`ResumeError::ResultTypeMismatch`]
@@ -192,11 +195,11 @@ impl Engine {
         // `resume` is only valid when a host function has paused the engine and
         // is awaiting a result. If nothing is pending, report it instead of
         // panicking.
-        let Some(pause_result) = self.host_pause_result.take() else {
+        let Some(pause) = self.host_pause else {
             return Err(ResumeError::NotPaused);
         };
 
-        match (pause_result, resume_value) {
+        match (pause.result, resume_value) {
             (ResultType(Some(ValType::F32)), Some(Value::F32(z))) => {
                 self.stack.write_f32(self.sp, z);
                 self.sp += 1;
@@ -214,13 +217,12 @@ impl Engine {
                 self.sp += 2;
             }
             (ResultType(None), None) => {}
-            _ => {
-                // Result the pause result ty
-                self.host_pause_result = Some(pause_result);
-                return Err(ResumeError::ResultTypeMismatch);
-            }
+            // The pause is left as it was, so the caller may retry.
+            _ => return Err(ResumeError::ResultTypeMismatch),
         }
 
+        self.host_pause = None;
+        self.pc = pause.resume_pc;
         Ok(())
     }
 }
@@ -269,7 +271,8 @@ pub enum InterpreterBreak {
     Finished,
     /// The program has been aborted
     Trap(TrapReason),
-    /// An instruction or host function has requested the interpreter to pause
+    /// A host function has requested the interpreter to pause; it recorded its declared
+    /// result type in [`Engine::host_pause`].
     Pause,
 }
 
@@ -350,6 +353,9 @@ pub trait InterpreterRunner {
     ///
     /// The `code` parameter contains the compiled IR pages. It's passed separately from
     /// the engine to allow the interpreter to borrow it immutably while mutating the engine state.
+    ///
+    /// A paused engine runs nothing and returns [`InterpreterResult::Pause`] again: the
+    /// host call's result has to be supplied with [`Engine::resume`] first.
     fn run(
         &self,
         code: &[Box<TextPage>],
@@ -365,9 +371,16 @@ impl<T: IrVisitor<State = Engine, Error = InterpreterBreak>> InterpreterRunner f
         state: &mut T::State,
         n_instructions: usize,
     ) -> InterpreterResult {
+        // The paused host call's result is not on the operand stack yet. Running on
+        // would execute the rest of the guest without it.
+        if state.is_paused() {
+            return InterpreterResult::Pause;
+        }
+
         // Run up to n instructions
         for _ in 0..n_instructions {
-            let mut pc = state.pc;
+            let instruction_pc = state.pc;
+            let mut pc = instruction_pc;
 
             // If PC is SENTINEL, we're not executing anything
             if pc == JumpTarget::SENTINEL {
@@ -386,15 +399,29 @@ impl<T: IrVisitor<State = Engine, Error = InterpreterBreak>> InterpreterRunner f
             match i_res {
                 Ok(_) => {}
                 Err(InterpreterBreak::Trap(trap_reason)) => {
-                    // TODO(tumbar) How do we expose a backtrace?
-                    // We trapped, we need to unwind and reset the state
+                    // Record the start of the faulting instruction before unwinding.
+                    // Without the reset the engine would report busy and could be
+                    // resumed past the trap with an inconsistent stack.
+                    state.trap_pc = Some(instruction_pc);
+                    // The reset below does not clear the stack memory, so the
+                    // frame pointer alone is enough to walk the frames afterwards.
+                    state.trap_fp = state.fp;
                     state.sp = 0;
                     state.pc = JumpTarget::SENTINEL;
                     state.fp = 0;
                     state.jumped = false;
                     return InterpreterResult::Trap(trap_reason);
                 }
-                Err(InterpreterBreak::Pause) => return InterpreterResult::Pause,
+                Err(InterpreterBreak::Pause) => {
+                    // Paused on the call itself: only `resume` moves past it, once the
+                    // host call's result is on the stack. Until then the PC, and a
+                    // backtrace from it, names the call that paused.
+                    if let Some(pause) = &mut state.host_pause {
+                        pause.resume_pc = state.pc;
+                    }
+                    state.pc = instruction_pc;
+                    return InterpreterResult::Pause;
+                }
                 Err(InterpreterBreak::Finished) => return InterpreterResult::Finished,
             }
         }
@@ -409,15 +436,6 @@ impl From<MemoryError> for InterpreterBreak {
             MemoryError::OutOfBounds => InterpreterBreak::Trap(TrapReason::MemoryOutOfBounds),
             MemoryError::OutOfMemory => InterpreterBreak::Trap(TrapReason::OutOfMemory),
             _ => unreachable!(),
-        }
-    }
-}
-
-impl From<HostFunctionBreak> for InterpreterBreak {
-    fn from(err: HostFunctionBreak) -> Self {
-        match err {
-            HostFunctionBreak::Trap => InterpreterBreak::Trap(TrapReason::Host),
-            HostFunctionBreak::Pause => InterpreterBreak::Pause,
         }
     }
 }
@@ -1583,12 +1601,12 @@ impl IrVisitor for Interpreter {
 
                 Ok(())
             }
+            // `run` fills in where to resume, and leaves the PC on this call.
             ControlFlow::Break(HostFunctionBreak::Pause) => {
-                let other = state.host_pause_result.replace(f.returns());
-                if other.is_some() {
-                    panic!("Unexpected paused engine state");
-                }
-
+                state.host_pause = Some(HostPause {
+                    result: f.returns(),
+                    resume_pc: JumpTarget::SENTINEL,
+                });
                 Err(InterpreterBreak::Pause)
             }
             ControlFlow::Break(HostFunctionBreak::Trap) => {

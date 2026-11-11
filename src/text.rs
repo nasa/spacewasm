@@ -261,6 +261,30 @@ pub struct CompilerOptions {
     /// It must be strictly less than `MAX_ADDRESSABLE_CODE_PAGES` (`2^24`) and must be sized to
     /// fit inside a single heap memory page.
     pub max_code_pages: usize,
+
+    /// An optional callback invoked before each Wasm instruction is compiled, with
+    /// the current IR program counter and the instruction's Wasm bytecode offset.
+    ///
+    /// Ground-only: used to map program counters back to a symbol file.
+    #[cfg(feature = "ir-map")]
+    pub pc_ir_callback: Option<fn(pc: JumpTarget, wasm_offset: usize)>,
+}
+
+impl CompilerOptions {
+    /// Create options with every optional hook disabled.
+    pub const fn new(
+        allow_memory_grow: bool,
+        max_backpatch_iterations: Option<u32>,
+        max_code_pages: usize,
+    ) -> Self {
+        CompilerOptions {
+            allow_memory_grow,
+            max_backpatch_iterations,
+            max_code_pages,
+            #[cfg(feature = "ir-map")]
+            pc_ir_callback: None,
+        }
+    }
 }
 
 /// Low-level builder for paged IR code.

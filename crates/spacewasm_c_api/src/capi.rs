@@ -49,12 +49,11 @@ pub struct spacewasm_compiler_options_t {
 
 impl From<spacewasm_compiler_options_t> for CompilerOptions {
     fn from(o: spacewasm_compiler_options_t) -> Self {
-        CompilerOptions {
-            allow_memory_grow: o.allow_memory_grow,
-            max_backpatch_iterations: (o.max_backpatch_iterations != 0)
-                .then_some(o.max_backpatch_iterations),
-            max_code_pages: o.max_code_pages,
-        }
+        CompilerOptions::new(
+            o.allow_memory_grow,
+            (o.max_backpatch_iterations != 0).then_some(o.max_backpatch_iterations),
+            o.max_code_pages,
+        )
     }
 }
 
@@ -811,7 +810,12 @@ pub unsafe extern "C" fn spacewasm_invoke(
 }
 
 /// Run the pending invocation for up to `fuel` units of work, writing any trap
-/// to `out_trap`. Returns whether the call finished, trapped, or ran out of fuel.
+/// to `out_trap`. Returns whether the call finished, trapped, paused, or ran out
+/// of fuel.
+///
+/// A paused engine runs nothing and returns
+/// [`spacewasm_run_status_t::SPACEWASM_RUN_PAUSE`] again until the host call's
+/// result is supplied with [`spacewasm_resume`] or [`spacewasm_resume_value`].
 ///
 /// # Safety
 /// `engine` must be live; `out_trap` null or valid.
@@ -953,6 +957,93 @@ pub unsafe extern "C" fn spacewasm_get_result(
             status::SPACEWASM_OK
         }
         None => status::SPACEWASM_ERR_NOT_FOUND,
+    }
+}
+
+/// Copy `backtrace` into the C output buffer as described for
+/// [`spacewasm_backtrace`]. `out_len` must already be checked non-null.
+///
+/// # Safety
+/// `out_pcs` must be valid for `capacity` writes (or null with `capacity == 0`);
+/// `out_len` must be valid.
+pub(crate) unsafe fn write_backtrace(
+    backtrace: spacewasm::Backtrace<'_>,
+    out_pcs: *mut u32,
+    capacity: usize,
+    out_len: *mut usize,
+) -> spacewasm_status_t {
+    let mut depth = 0usize;
+    for pc in backtrace {
+        if depth < capacity {
+            // SAFETY: `out_pcs` is valid for `capacity` writes per the contract.
+            unsafe { *out_pcs.add(depth) = pc.0 };
+        }
+        depth += 1;
+    }
+
+    unsafe { *out_len = depth };
+    if depth > capacity {
+        status::SPACEWASM_ERR_CAPACITY
+    } else {
+        status::SPACEWASM_OK
+    }
+}
+
+/// Write the engine's call stack, as it stands between [`spacewasm_run`] calls,
+/// to `out_pcs`, innermost first, and its depth to `out_len`.
+///
+/// Each entry is an IR program counter: an address into the IR of every module
+/// loaded onto this engine. Mapping it back to Wasm requires an IR map built
+/// from the same modules, loaded in the same order, with the same compiler
+/// options.
+///
+/// - Entry 0 is the instruction the engine is at:
+///   - out of fuel (or invoked and not yet run), the next instruction to
+///     execute;
+///   - paused, the `call` / `call_indirect` instruction that called the pausing
+///     host function, until [`spacewasm_resume`] moves past it;
+///   - trapped, the faulting instruction. The trap leaves the stack in place, so
+///     the backtrace remains until the next [`spacewasm_invoke`] or
+///     [`spacewasm_reset`].
+/// - Each later entry is the PC of the `call` / `call_indirect` instruction in
+///   the next-outer function. It is the address of the call instruction itself,
+///   not a return address, so a symbol lookup must not subtract one.
+///
+/// The last entry is in the function passed to [`spacewasm_invoke`].
+///
+/// A host function that wants its own call stack returns
+/// [`spacewasm_hostcall_result_t::SPACEWASM_PAUSE`]: entry 0 is then its
+/// `call`, and the embedder resumes once it has read the backtrace.
+///
+/// Writes at most `capacity` entries. `*out_len` is always the full depth; if it
+/// is larger than `capacity`, the innermost `capacity` entries are written and
+/// [`spacewasm_status_t::SPACEWASM_ERR_CAPACITY`] is returned. Pass
+/// `capacity == 0` (with a null `out_pcs`) to query the depth only.
+///
+/// Returns [`spacewasm_status_t::SPACEWASM_ERR_WRONG_STATE`] if there is no call
+/// stack: nothing has been invoked since the last reset, or the last call
+/// finished. Must not be called while [`spacewasm_run`] is executing.
+///
+/// # Safety
+/// `engine` must be live; `out_pcs` valid for `capacity` entries (or null if
+/// `capacity` is 0); `out_len` valid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn spacewasm_backtrace(
+    engine: *const CEngine,
+    out_pcs: *mut u32,
+    capacity: usize,
+    out_len: *mut usize,
+) -> spacewasm_status_t {
+    let Some(cengine) = (unsafe { engine.as_ref() }) else {
+        return status::SPACEWASM_ERR_NULL_ARG;
+    };
+    if out_len.is_null() || (out_pcs.is_null() && capacity != 0) {
+        return status::SPACEWASM_ERR_NULL_ARG;
+    }
+
+    match cengine.engine.backtrace() {
+        Some(bt) => unsafe { write_backtrace(bt, out_pcs, capacity, out_len) },
+        None => status::SPACEWASM_ERR_WRONG_STATE,
     }
 }
 

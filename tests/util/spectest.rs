@@ -358,6 +358,8 @@ impl TestContext {
                 allow_memory_grow: true,
                 max_backpatch_iterations: None,
                 max_code_pages: MAX_CODE_PAGES,
+                #[cfg(feature = "ir-map")]
+                pc_ir_callback: None,
             })
             .unwrap(),
             instance_names: std::collections::HashMap::new(),
@@ -722,7 +724,7 @@ fn invoke_function(
     test_log: Rc<RefCell<LimitedVec<String>>>,
 ) -> Result<Option<Value>, InterpreterResult> {
     // Check if the engine is paused from a previous invocation
-    if ctx.engine.host_pause_result.is_some() {
+    if ctx.engine.is_paused() {
         invoke_function_resume(ctx, args, test_log)
     } else {
         // Normal invocation path

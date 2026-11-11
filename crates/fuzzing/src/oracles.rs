@@ -188,12 +188,8 @@ fn validate_module(wasm: &[u8]) -> Result<(), ValidationError> {
     let mut store =
         Store::from_host_modules(256, Vec::zero()).expect("fuzz store creation must not fail");
 
-    let mut code_builder = CodeBuilder::new(CompilerOptions {
-        allow_memory_grow: true,
-        max_backpatch_iterations: None,
-        max_code_pages: MAX_CODE_PAGES,
-    })
-    .unwrap();
+    let mut code_builder =
+        CodeBuilder::new(CompilerOptions::new(true, None, MAX_CODE_PAGES)).unwrap();
     let mut stream = ByteStream::new(wasm);
 
     let allocator = spacewasm::Rc::new(FuzzAllocator)
@@ -344,12 +340,8 @@ pub fn no_traps(wasm: &[u8]) {
     };
 
     // Compile module with reduced code pages
-    let mut code_builder = CodeBuilder::new(CompilerOptions {
-        allow_memory_grow: true,
-        max_backpatch_iterations: None,
-        max_code_pages: MAX_CODE_PAGES,
-    })
-    .unwrap();
+    let mut code_builder =
+        CodeBuilder::new(CompilerOptions::new(true, None, MAX_CODE_PAGES)).unwrap();
     let mut stream = ByteStream::new(wasm);
 
     let allocator = Rc::new(FuzzAllocator).unwrap().into_wasm_memory_allocator();
