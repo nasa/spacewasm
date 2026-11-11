@@ -1,0 +1,270 @@
+//! Decoding a module again, the way the flight interpreter did, to record its IR layout.
+//!
+//! A PC only means something against the IR the flight decoder produced, and that
+//! depends on the compiler options and on how every import resolved: a host call and a
+//! guest call compile to different instructions. So the replay needs the same host
+//! modules the flight store was built with. Their bodies are never called; only the
+//! names and signatures matter.
+//!
+//! `spacewasm` allocates through a process-global allocator. A library must not install
+//! one, so this runs under whatever the binary installed
+//! (`spacewasm::global_allocator!`), and is no more re-entrant than that allocator is.
+
+use crate::ir::IrMap;
+use spacewasm::{
+    AllocError, CodeBuilder, CompilerOptions, Engine, HostModule, InnerVec, JumpTarget,
+    WasmMemoryAllocator, WasmStream,
+};
+use std::alloc::Layout;
+use std::cell::RefCell;
+use std::fmt;
+use std::ptr::NonNull;
+
+/// Words in one IR code page; a `JumpTarget` is page in the upper 24 bits, word below.
+const CODE_PAGE_WORDS: u32 = 256;
+
+/// Limits the flight decoder was built with. Must match, or a module that loaded on board
+/// may fail to replay here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DecoderLimits {
+    pub max_control_frames: usize,
+    pub max_stack_depth: usize,
+}
+
+impl Default for DecoderLimits {
+    /// `spacewasm_c_api`'s default `include/config.rs`.
+    fn default() -> Self {
+        DecoderLimits {
+            max_control_frames: 64,
+            max_stack_depth: 256,
+        }
+    }
+}
+
+/// Why a module would not replay.
+#[derive(Debug)]
+pub enum ReplayError {
+    /// The decoder refused it: the same module would not have loaded on board either,
+    /// with these host modules and options.
+    Rejected { offset: u32, reason: String },
+    /// The decoder refused it as invalid code. Kept apart from `Rejected` because the
+    /// cause is so often a proposal this release does not implement, which `validate`
+    /// can then name.
+    Decode(spacewasm::ParseError),
+    /// Something the replay itself needed could not be allocated.
+    Alloc(AllocError),
+    /// `DecoderLimits` names a combination this build was not compiled for.
+    UnsupportedLimits(DecoderLimits),
+}
+
+impl fmt::Display for ReplayError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ReplayError::Rejected { offset, reason } => write!(
+                f,
+                "the module does not load at byte {offset:#x}: {reason}. A module that \
+                 loaded on board replays with the same host modules and options"
+            ),
+            ReplayError::Decode(err) => write!(
+                f,
+                "the module does not load at byte {:#x}: {:?}",
+                err.offset, err.err.err
+            ),
+            ReplayError::Alloc(err) => write!(f, "out of memory replaying the load: {err:?}"),
+            ReplayError::UnsupportedLimits(limits) => write!(
+                f,
+                "decoder limits {} control frames / {} stack depth are not supported; \
+                 supported are 64/256 (the C API default) and 16/64",
+                limits.max_control_frames, limits.max_stack_depth
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ReplayError {}
+
+impl From<AllocError> for ReplayError {
+    fn from(err: AllocError) -> Self {
+        ReplayError::Alloc(err)
+    }
+}
+
+thread_local! {
+    /// Where `pc_ir_callback`, a bare `fn`, writes. One replay at a time per thread.
+    static ENTRIES: RefCell<Vec<(u32, u32)>> = const { RefCell::new(Vec::new()) };
+}
+
+fn record(pc: JumpTarget, wasm_offset: usize) {
+    ENTRIES.with_borrow_mut(|entries| entries.push((word(pc), wasm_offset as u32)));
+}
+
+/// A `JumpTarget` as a flat word index. Numerically the same as `JumpTarget.0`, which
+/// is what a flight PC is reported as.
+fn word(target: JumpTarget) -> u32 {
+    target.page() as u32 * CODE_PAGE_WORDS + target.offset() as u32
+}
+
+/// Decode `module` as the flight interpreter would and record, for every compiled
+/// instruction, its first IR word and the byte offset of its opcode.
+///
+/// PCs are relative to the module's first compiled word. On board that is word 0 only
+/// if the module was the first loaded into its store; otherwise subtract where its code
+/// started.
+pub fn ir_map(
+    module: &[u8],
+    options: CompilerOptions,
+    host_modules: spacewasm::Vec<HostModule>,
+    limits: DecoderLimits,
+) -> Result<IrMap, ReplayError> {
+    let mut options = options;
+    options.pc_ir_callback = Some(record);
+
+    ENTRIES.with_borrow_mut(Vec::clear);
+    let replayed = load(module, options, host_modules, limits);
+    // Taken even on failure, so the next replay starts empty.
+    let entries = ENTRIES.take();
+    replayed?;
+    Ok(IrMap::new(entries))
+}
+
+/// What a successful load cost.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Loaded {
+    /// 16-bit IR words the module compiled to.
+    pub ir_words: usize,
+    /// Code pages those words took, against `CompilerOptions::max_code_pages`.
+    pub code_pages: usize,
+}
+
+/// Decode and instantiate `module` as the flight interpreter would, and report what that
+/// cost. Nothing runs.
+pub fn load(
+    module: &[u8],
+    options: CompilerOptions,
+    host_modules: spacewasm::Vec<HostModule>,
+    limits: DecoderLimits,
+) -> Result<Loaded, ReplayError> {
+    let mut code = CodeBuilder::new(options)?;
+    // Nothing runs, so the stack only has to exist: one word, as a zero-sized allocation
+    // is refused.
+    let mut engine = Engine::new(1, 1, host_modules).map_err(|err| ReplayError::Rejected {
+        offset: 0,
+        reason: format!("could not create the store: {err:?}"),
+    })?;
+    let mut stream = Bytes::new(module);
+    let memory = spacewasm::Rc::new(SystemMemory)?.into_wasm_memory_allocator();
+
+    macro_rules! decode_with {
+        ($frames:literal, $depth:literal) => {
+            spacewasm::Module::new::<$frames, $depth>(
+                "replay",
+                &mut stream,
+                &mut engine.store,
+                &mut code,
+                memory,
+            )
+        };
+    }
+    // Const generics on the flight side; only the configurations that ship are here.
+    let decoded = match (limits.max_control_frames, limits.max_stack_depth) {
+        (64, 256) => decode_with!(64, 256),
+        (16, 64) => decode_with!(16, 64),
+        _ => return Err(ReplayError::UnsupportedLimits(limits)),
+    };
+    let module = decoded.map_err(ReplayError::Decode)?;
+    engine
+        .push_module(module)
+        .map_err(|err| ReplayError::Rejected {
+            offset: 0,
+            reason: format!("could not instantiate the module: {err:?}"),
+        })?;
+
+    let code_pages = code.pages().len();
+    Ok(Loaded {
+        ir_words: match code_pages {
+            0 => 0,
+            pages => (pages - 1) * CODE_PAGE_WORDS as usize + code.offset(),
+        },
+        code_pages,
+    })
+}
+
+/// A `WasmStream` over a module already in memory.
+struct Bytes<'a> {
+    data: &'a [u8],
+    pos: usize,
+    /// Chunks lent to the decoder, kept alive until it hands them back.
+    lent: Vec<Vec<u8>>,
+}
+
+impl<'a> Bytes<'a> {
+    fn new(data: &'a [u8]) -> Self {
+        Bytes {
+            data,
+            pos: 0,
+            lent: Vec::new(),
+        }
+    }
+}
+
+/// Bytes handed to the decoder per read. Only affects how often it reads.
+const CHUNK: usize = 1024;
+
+impl WasmStream for Bytes<'_> {
+    fn read(&mut self) -> Result<Option<InnerVec<u8>>, u8> {
+        if self.pos >= self.data.len() {
+            return Ok(None);
+        }
+        let end = (self.pos + CHUNK).min(self.data.len());
+        let mut chunk = self.data[self.pos..end].to_vec();
+        self.pos = end;
+        // SAFETY: `chunk` moves into `lent` below and is not touched until the decoder
+        // returns this view, so the borrow stays valid and unique while it holds it.
+        let view =
+            unsafe { InnerVec::from_raw_parts(chunk.as_mut_ptr(), chunk.capacity(), chunk.len()) };
+        self.lent.push(chunk);
+        Ok(Some(view))
+    }
+
+    fn return_(&mut self, chunk: InnerVec<u8>) {
+        // `InnerVec` is a borrow and frees nothing; dropping the `Vec` frees the chunk.
+        let ptr = chunk.ptr().cast_const();
+        self.lent.retain(|lent| lent.as_ptr() != ptr);
+    }
+}
+
+/// Guest linear memory for the replay: never touched, only allocated so the module
+/// instantiates as it did on board.
+struct SystemMemory;
+
+impl WasmMemoryAllocator for SystemMemory {
+    fn allocate(&self, layout: Layout) -> Result<NonNull<u8>, AllocError> {
+        if layout.size() == 0 {
+            return Ok(NonNull::dangling());
+        }
+        // SAFETY: non-zero size, checked above.
+        NonNull::new(unsafe { std::alloc::alloc_zeroed(layout) })
+            .ok_or(AllocError::AllocationFailed)
+    }
+
+    fn reallocate(
+        &self,
+        ptr: NonNull<u8>,
+        old_layout: Layout,
+        layout: Layout,
+    ) -> Result<NonNull<u8>, AllocError> {
+        if old_layout.size() == 0 {
+            return self.allocate(layout);
+        }
+        // SAFETY: `ptr` came from `allocate`/`reallocate` with `old_layout`.
+        NonNull::new(unsafe { std::alloc::realloc(ptr.as_ptr(), old_layout, layout.size()) })
+            .ok_or(AllocError::AllocationFailed)
+    }
+
+    fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
+        if layout.size() != 0 {
+            // SAFETY: `ptr` came from `allocate`/`reallocate` with `layout`.
+            unsafe { std::alloc::dealloc(ptr.as_ptr(), layout) }
+        }
+    }
+}

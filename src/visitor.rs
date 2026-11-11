@@ -234,6 +234,19 @@ pub trait BaseVisitor {
 /// An abstraction over Wasm Bytecode.
 /// Used to implement validation and compilation of Wasm bytecode.
 pub trait WasmVisitor: BaseVisitor {
+    /// Generic visitor instruction, useful for marking/collecting
+    /// information about the Wasm code as it's compiling into IR
+    #[cfg(feature = "ir-map")]
+    fn before_instruction(
+        &self,
+        state: &mut Self::State,
+        wasm_offset: usize,
+    ) -> Result<(), Self::Error> {
+        let _ = state;
+        let _ = wasm_offset;
+        Ok(())
+    }
+
     // Parametric instructions
     visit_fn!(drop);
     visit_fn!(select);

@@ -158,7 +158,8 @@ pub enum HostFunctionBreak {
     /// Halt execution due to an error
     Trap,
 
-    /// Halt execution to perform work asynchronously
+    /// Halt execution to perform work asynchronously.
+    /// Requires host to [`Engine::resume`] interpreter before it can be run again
     Pause,
 }
 

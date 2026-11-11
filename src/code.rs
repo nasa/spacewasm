@@ -211,6 +211,9 @@ impl<'wasm> Reader<'wasm> {
 
         use crate::opcode::*;
         loop {
+            #[cfg(feature = "ir-map")]
+            visitor.before_instruction(state, self.offset())?;
+
             match self.read_u8()? {
                 // Control instructions
                 UNREACHABLE => instruction!(unreachable),

@@ -102,7 +102,7 @@ The standard Rust [allocation](https://doc.rust-lang.org/alloc/) does not meet t
 allocators. To that end, SpaceWasm provides its own data structures that guarantee these properties. These
 data-structures contain the bulk of the `unsafe` Rust semantics; the remainder lives in the performance-critical
 operand-stack, linear-memory, and IR access paths (`src/stack.rs`, `src/memory.rs`, `src/ir_reader.rs`), the
-`ValType` conversion in `src/types.rs`, and the FFI layer (`crates/spacewasm_c_api`, `crates/spacewasi`). Bounds on
+`ValType` conversion in `src/types.rs`, and the FFI layer (`crates/spacewasm_c_api`, and the WASI host in `crates/spacewasm_cli`). Bounds on
 those raw accesses are established by the up-front verifier; the optional `strict-assertions` feature re-checks them
 at runtime.
 
@@ -153,21 +153,29 @@ binary may be provided to the interpreter as they are read/requested from the fi
 synchronously.
 
 
-## WASI 0.1 Support
-The [`spacewasi`](crates/spacewasi#readme) crate provides a binary which can run arbitrary WASM modules that adhere to the WASI 0.1 (`wasip1`) spec in a sandboxed environment. Command line flags are available to mount host directories and environment variables:
+## Ground Tooling
+The [`spacewasm`](crates/spacewasm_cli#readme) command, from `cargo install spacewasm_cli`, is the ground side of the
+interpreter: a Cargo linker that holds `wasm-opt` to exactly the proposals a release implements and splits debug info into
+a symbol file, a validator that loads a module as the flight interpreter would, and a resolver from the PCs a backtrace
+reports to source lines.
+
+It also runs arbitrary modules that adhere to the WASI 0.1 (`wasip1`) spec in a sandboxed environment, with flags to
+mount host directories and set environment variables:
 
 ```bash
-# compile example from crates/spacewasi/tests/wasm/
+# compile example from crates/spacewasm_cli/tests/wasi/
 $ clang --target=wasm32-wasip1 -mcpu=mvp hello_universe.c -o hello_universe.wasm
 
-# convert module to MVP compatible file
-$ crates/spacewasi/scripts/wasm2mvp.sh hello_universe.wasm
+# rewrite what this release does not implement
+$ spacewasm lower hello_universe.wasm
 
-$ spacewasi hello_universe.wasm
+$ spacewasm run hello_universe.wasm
 hello universe!
 ```
 
-For more information about this command and basic WASI compilation, see [`spacewasi/README.md`](crates/spacewasi/README.md).
+`spacewasm trace` runs a module's exports and prints the last instructions each executed, for debugging the interpreter
+itself; `make trace` feeds it a fuzzer seed. See the [`spacewasm_cli` README](crates/spacewasm_cli/README.md) for every
+command.
 
 ## Interpreter Limitations
 
@@ -187,24 +195,24 @@ far larger than any module expected on flight hardware; the binding constraint i
 configured for the [streaming](#streaming) decoder, which is measured per-module on the ground with `spacewasm-check`.
 
 > [!NOTE]
-> `spacewasm-check` has not been developed yet. A similar tool can be found in `spacewasm_std`.
+> `spacewasm-check` has not been developed yet. A similar tool can be found in [`example`](crates/example).
 
 Here are a couple of limitations that may be relevant to developers of Wasm modules.
 
-| Limit               | Value               | Notes                                                                                                                                                                                                                                                         |
-| ------------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Wasm page size      | 64 KiB / 1 B        | [Custom-Page-Sizes proposal](https://github.com/WebAssembly/custom-page-sizes) is supported                                                                                                                                                                   |
-| Linear memory pages | 4 GiB               | Per the Wasm 1.0 spec. A module declaring more (or a `max` above this) is rejected. Note that the embedding will definitely limit this but it is dependent on how the interpreter is deployed.                                                                |
-| IR Code             | 8 GiB               | Compiled IR, not raw bytecode. This limit is across all modules in the store. The IR / Bytecode ratio is printed in `spacewasm_std` as the "compilation ratio". It is difficult to estimate this upfront because it varies on the types of instructions used. |
-| Function parameters | 255 32-bit words    | Per function.                                                                                                                                                                                                                                                 |
-| Local variables     | 65,535 32-bit words | Per function.                                                                                                                                                                                                                                                 |
-| Import name length  | 32 bytes            | Applies to each import's module name and field name; a longer name is rejected at decode time.                                                                                                                                                                |
-| Custom section name | 32 bytes            | The name of each custom section (e.g. the `name` section); a longer name is rejected at decode time.                                                                                                                                                          |
+| Limit               | Value               | Notes                                                                                                                                                                                                                                                                     |
+| ------------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Wasm page size      | 64 KiB / 1 B        | [Custom-Page-Sizes proposal](https://github.com/WebAssembly/custom-page-sizes) is supported                                                                                                                                                                               |
+| Linear memory pages | 4 GiB               | Per the Wasm 1.0 spec. A module declaring more (or a `max` above this) is rejected. Note that the embedding will definitely limit this but it is dependent on how the interpreter is deployed.                                                                            |
+| IR Code             | 8 GiB               | Compiled IR, not raw bytecode. This limit is across all modules in the store. The IR / Bytecode ratio is printed by [`example`](crates/example) as the "compilation ratio". It is difficult to estimate this upfront because it varies on the types of instructions used. |
+| Function parameters | 255 32-bit words    | Per function.                                                                                                                                                                                                                                                             |
+| Local variables     | 65,535 32-bit words | Per function.                                                                                                                                                                                                                                                             |
+| Import name length  | 32 bytes            | Applies to each import's module name and field name; a longer name is rejected at decode time.                                                                                                                                                                            |
+| Custom section name | 32 bytes            | The name of each custom section (e.g. the `name` section); a longer name is rejected at decode time.                                                                                                                                                                      |
 
 ## Benchmarking
 
 SpaceWasm is tested against the Coremark benchmark to trace performance regression.
-See [coremark](crates/spacewasm_std/benches)
+See [coremark](crates/example/benches)
 for more information.
 
 ## Testing

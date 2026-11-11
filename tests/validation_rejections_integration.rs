@@ -42,6 +42,8 @@ fn code_builder_rejects_oversized_max_code_pages() {
         allow_memory_grow: false,
         max_backpatch_iterations: None,
         max_code_pages: 1 << 24,
+        #[cfg(feature = "ir-map")]
+        pc_ir_callback: None,
     };
     assert!(matches!(
         CodeBuilder::new(opts),
@@ -53,6 +55,8 @@ fn code_builder_rejects_oversized_max_code_pages() {
         allow_memory_grow: false,
         max_backpatch_iterations: None,
         max_code_pages: (1 << 24) - 1,
+        #[cfg(feature = "ir-map")]
+        pc_ir_callback: None,
     };
     assert!(CodeBuilder::new(opts_ok).is_ok());
 }
@@ -169,6 +173,8 @@ fn memory_grow_rejected_when_option_disabled() {
         allow_memory_grow: false,
         max_backpatch_iterations: None,
         max_code_pages: 256,
+        #[cfg(feature = "ir-map")]
+        pc_ir_callback: None,
     };
     assert_eq!(
         compile(WASM, disabled),
@@ -213,6 +219,8 @@ fn backpatch_chain_exceeding_limit_is_rejected() {
         allow_memory_grow: false,
         max_backpatch_iterations: Some(1),
         max_code_pages: 256,
+        #[cfg(feature = "ir-map")]
+        pc_ir_callback: None,
     };
     assert_eq!(
         compile(WASM, limited),
@@ -286,6 +294,8 @@ fn function_count_exceeding_u16_is_rejected() {
         allow_memory_grow: false,
         max_backpatch_iterations: None,
         max_code_pages: 1024,
+        #[cfg(feature = "ir-map")]
+        pc_ir_callback: None,
     };
 
     assert_eq!(
@@ -306,6 +316,8 @@ fn global_count_exceeding_u16_is_rejected() {
         allow_memory_grow: false,
         max_backpatch_iterations: None,
         max_code_pages: 256,
+        #[cfg(feature = "ir-map")]
+        pc_ir_callback: None,
     };
 
     assert_eq!(
