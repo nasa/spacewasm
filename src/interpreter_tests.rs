@@ -1136,6 +1136,902 @@ mod tests {
         });
     }
 
+    // ===== i64 Comparison Operations (missing coverage) =====
+    #[test]
+    fn test_i64_ge_s_false() {
+        with_test_context(|state| {
+            state.stack.write_u64(0, (-5i64) as u64);
+            state.stack.write_u64(2, 5);
+            state.sp = 4;
+
+            Interpreter.i64_ge_s(state).unwrap();
+
+            assert_eq!(state.sp, 1);
+            assert_eq!(state.stack.read_u32(0), 0);
+        });
+    }
+
+    #[test]
+    fn test_i64_ge_s_true() {
+        with_test_context(|state| {
+            state.stack.write_u64(0, 5);
+            state.stack.write_u64(2, (-5i64) as u64);
+            state.sp = 4;
+
+            Interpreter.i64_ge_s(state).unwrap();
+
+            assert_eq!(state.sp, 1);
+            assert_eq!(state.stack.read_u32(0), 1);
+        });
+    }
+
+    #[test]
+    fn test_i64_gt_s_false() {
+        with_test_context(|state| {
+            state.stack.write_u64(0, (-5i64) as u64);
+            state.stack.write_u64(2, 5);
+            state.sp = 4;
+
+            Interpreter.i64_gt_s(state).unwrap();
+
+            assert_eq!(state.sp, 1);
+            assert_eq!(state.stack.read_u32(0), 0);
+        });
+    }
+
+    #[test]
+    fn test_i64_gt_s_true() {
+        with_test_context(|state| {
+            state.stack.write_u64(0, 5);
+            state.stack.write_u64(2, (-5i64) as u64);
+            state.sp = 4;
+
+            Interpreter.i64_gt_s(state).unwrap();
+
+            assert_eq!(state.sp, 1);
+            assert_eq!(state.stack.read_u32(0), 1);
+        });
+    }
+
+    #[test]
+    fn test_i64_le_s_true() {
+        with_test_context(|state| {
+            state.stack.write_u64(0, (-5i64) as u64);
+            state.stack.write_u64(2, 5);
+            state.sp = 4;
+
+            Interpreter.i64_le_s(state).unwrap();
+
+            assert_eq!(state.sp, 1);
+            assert_eq!(state.stack.read_u32(0), 1);
+        });
+    }
+
+    #[test]
+    fn test_i64_le_s_false() {
+        with_test_context(|state| {
+            state.stack.write_u64(0, 5);
+            state.stack.write_u64(2, (-5i64) as u64);
+            state.sp = 4;
+
+            Interpreter.i64_le_s(state).unwrap();
+
+            assert_eq!(state.sp, 1);
+            assert_eq!(state.stack.read_u32(0), 0);
+        });
+    }
+
+    #[test]
+    fn test_i64_lt_u_true() {
+        with_test_context(|state| {
+            state.stack.write_u64(0, 5);
+            state.stack.write_u64(2, 10);
+            state.sp = 4;
+
+            Interpreter.i64_lt_u(state).unwrap();
+
+            assert_eq!(state.sp, 1);
+            assert_eq!(state.stack.read_u32(0), 1);
+        });
+    }
+
+    #[test]
+    fn test_i64_lt_u_false_negative_compares_unsigned() {
+        with_test_context(|state| {
+            // (-5i64) as u64 = 0xFFFF_FFFF_FFFF_FFFB, which is larger than 5
+            // when interpreted as unsigned.
+            state.stack.write_u64(0, (-5i64) as u64);
+            state.stack.write_u64(2, 5);
+            state.sp = 4;
+
+            Interpreter.i64_lt_u(state).unwrap();
+
+            assert_eq!(state.sp, 1);
+            assert_eq!(state.stack.read_u32(0), 0);
+        });
+    }
+
+    #[test]
+    fn test_i64_ge_u_true_negative_compares_unsigned() {
+        with_test_context(|state| {
+            state.stack.write_u64(0, (-5i64) as u64);
+            state.stack.write_u64(2, 5);
+            state.sp = 4;
+
+            Interpreter.i64_ge_u(state).unwrap();
+
+            assert_eq!(state.sp, 1);
+            assert_eq!(state.stack.read_u32(0), 1);
+        });
+    }
+
+    #[test]
+    fn test_i64_ge_u_false() {
+        with_test_context(|state| {
+            state.stack.write_u64(0, 5);
+            state.stack.write_u64(2, 10);
+            state.sp = 4;
+
+            Interpreter.i64_ge_u(state).unwrap();
+
+            assert_eq!(state.sp, 1);
+            assert_eq!(state.stack.read_u32(0), 0);
+        });
+    }
+
+    #[test]
+    fn test_i64_gt_u_true_negative_compares_unsigned() {
+        with_test_context(|state| {
+            state.stack.write_u64(0, (-5i64) as u64);
+            state.stack.write_u64(2, 5);
+            state.sp = 4;
+
+            Interpreter.i64_gt_u(state).unwrap();
+
+            assert_eq!(state.sp, 1);
+            assert_eq!(state.stack.read_u32(0), 1);
+        });
+    }
+
+    #[test]
+    fn test_i64_gt_u_false() {
+        with_test_context(|state| {
+            state.stack.write_u64(0, 3);
+            state.stack.write_u64(2, 5);
+            state.sp = 4;
+
+            Interpreter.i64_gt_u(state).unwrap();
+
+            assert_eq!(state.sp, 1);
+            assert_eq!(state.stack.read_u32(0), 0);
+        });
+    }
+
+    #[test]
+    fn test_i64_le_u_true() {
+        with_test_context(|state| {
+            state.stack.write_u64(0, 5);
+            state.stack.write_u64(2, 10);
+            state.sp = 4;
+
+            Interpreter.i64_le_u(state).unwrap();
+
+            assert_eq!(state.sp, 1);
+            assert_eq!(state.stack.read_u32(0), 1);
+        });
+    }
+
+    #[test]
+    fn test_i64_le_u_true_equal() {
+        with_test_context(|state| {
+            state.stack.write_u64(0, 5);
+            state.stack.write_u64(2, 5);
+            state.sp = 4;
+
+            Interpreter.i64_le_u(state).unwrap();
+
+            assert_eq!(state.sp, 1);
+            assert_eq!(state.stack.read_u32(0), 1);
+        });
+    }
+
+    #[test]
+    fn test_i64_le_u_false_negative_compares_unsigned() {
+        with_test_context(|state| {
+            // (-5i64) as u64 = 0xFFFF_FFFF_FFFF_FFFB, which is larger than 5
+            // when interpreted as unsigned, so it is NOT less-or-equal.
+            state.stack.write_u64(0, (-5i64) as u64);
+            state.stack.write_u64(2, 5);
+            state.sp = 4;
+
+            Interpreter.i64_le_u(state).unwrap();
+
+            assert_eq!(state.sp, 1);
+            assert_eq!(state.stack.read_u32(0), 0);
+        });
+    }
+
+    // ===== i64 Arithmetic and Bitwise Operations (missing coverage) =====
+    #[test]
+    fn test_i64_div_u() {
+        with_test_context(|state| {
+            state.stack.write_u64(0, 10);
+            state.stack.write_u64(2, 3);
+            state.sp = 4;
+
+            Interpreter.i64_div_u(state).unwrap();
+
+            assert_eq!(state.sp, 2);
+            assert_eq!(state.stack.read_u64(0), 3);
+        });
+    }
+
+    #[test]
+    fn test_i64_div_u_large_operands() {
+        with_test_context(|state| {
+            // (-1i64) as u64 is the largest unsigned value; dividing by 2
+            // still yields a large unsigned quotient, not a negative i64.
+            state.stack.write_u64(0, (-1i64) as u64);
+            state.stack.write_u64(2, 2);
+            state.sp = 4;
+
+            Interpreter.i64_div_u(state).unwrap();
+
+            assert_eq!(state.sp, 2);
+            assert_eq!(state.stack.read_u64(0), 0x7FFF_FFFF_FFFF_FFFF);
+        });
+    }
+
+    #[test]
+    fn test_i64_rem_u() {
+        with_test_context(|state| {
+            state.stack.write_u64(0, 10);
+            state.stack.write_u64(2, 3);
+            state.sp = 4;
+
+            Interpreter.i64_rem_u(state).unwrap();
+
+            assert_eq!(state.sp, 2);
+            assert_eq!(state.stack.read_u64(0), 1);
+        });
+    }
+
+    #[test]
+    fn test_i64_shr_s_negative() {
+        with_test_context(|state| {
+            state.stack.write_u64(0, (-8i64) as u64);
+            state.stack.write_u64(2, 1);
+            state.sp = 4;
+
+            Interpreter.i64_shr_s(state).unwrap();
+
+            assert_eq!(state.sp, 2);
+            assert_eq!(state.stack.read_u64(0), (-4i64) as u64);
+        });
+    }
+
+    #[test]
+    fn test_i64_shr_u_unsigned() {
+        with_test_context(|state| {
+            state.stack.write_u64(0, (-1i64) as u64);
+            state.stack.write_u64(2, 1);
+            state.sp = 4;
+
+            Interpreter.i64_shr_u(state).unwrap();
+
+            assert_eq!(state.sp, 2);
+            assert_eq!(state.stack.read_u64(0), 0x7FFF_FFFF_FFFF_FFFF);
+        });
+    }
+
+    #[test]
+    fn test_i64_rotl() {
+        with_test_context(|state| {
+            state.stack.write_u64(0, 1);
+            state.stack.write_u64(2, 1);
+            state.sp = 4;
+
+            Interpreter.i64_rotl(state).unwrap();
+
+            assert_eq!(state.sp, 2);
+            assert_eq!(state.stack.read_u64(0), 2);
+        });
+    }
+
+    #[test]
+    fn test_i64_rotl_wraps() {
+        with_test_context(|state| {
+            // Rotating 1 left by 63 leaves only the sign bit; rotating by one
+            // more wraps around to 1.
+            state.stack.write_u64(0, 1);
+            state.stack.write_u64(2, 64);
+            state.sp = 4;
+
+            Interpreter.i64_rotl(state).unwrap();
+
+            assert_eq!(state.sp, 2);
+            assert_eq!(state.stack.read_u64(0), 1);
+        });
+    }
+
+    #[test]
+    fn test_i64_rotr() {
+        with_test_context(|state| {
+            state.stack.write_u64(0, 2);
+            state.stack.write_u64(2, 1);
+            state.sp = 4;
+
+            Interpreter.i64_rotr(state).unwrap();
+
+            assert_eq!(state.sp, 2);
+            assert_eq!(state.stack.read_u64(0), 1);
+        });
+    }
+
+    // ===== f32 Comparison Operations (missing coverage) =====
+    #[test]
+    fn test_f32_gt_true() {
+        with_test_context(|state| {
+            state.stack.write_f32(0, 5.0);
+            state.stack.write_f32(1, 3.0);
+            state.sp = 2;
+
+            Interpreter.f32_gt(state).unwrap();
+
+            assert_eq!(state.sp, 1);
+            assert_eq!(state.stack.read_u32(0), 1);
+        });
+    }
+
+    #[test]
+    fn test_f32_gt_false() {
+        with_test_context(|state| {
+            state.stack.write_f32(0, 3.0);
+            state.stack.write_f32(1, 5.0);
+            state.sp = 2;
+
+            Interpreter.f32_gt(state).unwrap();
+
+            assert_eq!(state.sp, 1);
+            assert_eq!(state.stack.read_u32(0), 0);
+        });
+    }
+
+    #[test]
+    fn test_f32_gt_nan_is_false() {
+        with_test_context(|state| {
+            state.stack.write_f32(0, f32::NAN);
+            state.stack.write_f32(1, 3.0);
+            state.sp = 2;
+
+            Interpreter.f32_gt(state).unwrap();
+
+            assert_eq!(state.sp, 1);
+            assert_eq!(state.stack.read_u32(0), 0);
+        });
+    }
+
+    #[test]
+    fn test_f32_ge_true() {
+        with_test_context(|state| {
+            state.stack.write_f32(0, 3.0);
+            state.stack.write_f32(1, 3.0);
+            state.sp = 2;
+
+            Interpreter.f32_ge(state).unwrap();
+
+            assert_eq!(state.sp, 1);
+            assert_eq!(state.stack.read_u32(0), 1);
+        });
+    }
+
+    #[test]
+    fn test_f32_ge_false() {
+        with_test_context(|state| {
+            state.stack.write_f32(0, 3.0);
+            state.stack.write_f32(1, 5.0);
+            state.sp = 2;
+
+            Interpreter.f32_ge(state).unwrap();
+
+            assert_eq!(state.sp, 1);
+            assert_eq!(state.stack.read_u32(0), 0);
+        });
+    }
+
+    #[test]
+    fn test_f32_le_true() {
+        with_test_context(|state| {
+            state.stack.write_f32(0, 3.0);
+            state.stack.write_f32(1, 5.0);
+            state.sp = 2;
+
+            Interpreter.f32_le(state).unwrap();
+
+            assert_eq!(state.sp, 1);
+            assert_eq!(state.stack.read_u32(0), 1);
+        });
+    }
+
+    #[test]
+    fn test_f32_le_false() {
+        with_test_context(|state| {
+            state.stack.write_f32(0, 5.0);
+            state.stack.write_f32(1, 3.0);
+            state.sp = 2;
+
+            Interpreter.f32_le(state).unwrap();
+
+            assert_eq!(state.sp, 1);
+            assert_eq!(state.stack.read_u32(0), 0);
+        });
+    }
+
+    // ===== f32 Arithmetic Operations (missing coverage) =====
+    #[test]
+    fn test_f32_min() {
+        with_test_context(|state| {
+            state.stack.write_f32(0, 3.0);
+            state.stack.write_f32(1, 5.0);
+            state.sp = 2;
+
+            Interpreter.f32_min(state).unwrap();
+
+            assert_eq!(state.sp, 1);
+            assert!((state.stack.read_f32(0) - 3.0).abs() < 0.0001);
+        });
+    }
+
+    #[test]
+    fn test_f32_min_signed_zero_wins() {
+        with_test_context(|state| {
+            state.stack.write_f32(0, 0.0);
+            state.stack.write_f32(1, -0.0);
+            state.sp = 2;
+
+            Interpreter.f32_min(state).unwrap();
+
+            assert_eq!(state.sp, 1);
+            // Wasm requires min(+0, -0) to return -0.
+            assert_eq!(state.stack.read_u32(0), (-0.0f32).to_bits());
+        });
+    }
+
+    #[test]
+    fn test_f32_min_nan_propagates() {
+        with_test_context(|state| {
+            state.stack.write_f32(0, f32::NAN);
+            state.stack.write_f32(1, 5.0);
+            state.sp = 2;
+
+            Interpreter.f32_min(state).unwrap();
+
+            assert_eq!(state.sp, 1);
+            assert!(state.stack.read_f32(0).is_nan());
+        });
+    }
+
+    #[test]
+    fn test_f32_max() {
+        with_test_context(|state| {
+            state.stack.write_f32(0, 3.0);
+            state.stack.write_f32(1, 5.0);
+            state.sp = 2;
+
+            Interpreter.f32_max(state).unwrap();
+
+            assert_eq!(state.sp, 1);
+            assert!((state.stack.read_f32(0) - 5.0).abs() < 0.0001);
+        });
+    }
+
+    #[test]
+    fn test_f32_max_signed_zero() {
+        with_test_context(|state| {
+            state.stack.write_f32(0, 0.0);
+            state.stack.write_f32(1, -0.0);
+            state.sp = 2;
+
+            Interpreter.f32_max(state).unwrap();
+
+            assert_eq!(state.sp, 1);
+            // Wasm requires max(+0, -0) to return +0.
+            assert_eq!(state.stack.read_u32(0), 0.0f32.to_bits());
+        });
+    }
+
+    #[test]
+    fn test_f32_max_nan_propagates() {
+        with_test_context(|state| {
+            state.stack.write_f32(0, f32::NAN);
+            state.stack.write_f32(1, 5.0);
+            state.sp = 2;
+
+            Interpreter.f32_max(state).unwrap();
+
+            assert_eq!(state.sp, 1);
+            assert!(state.stack.read_f32(0).is_nan());
+        });
+    }
+
+    #[test]
+    fn test_f32_sqrt_positive() {
+        with_test_context(|state| {
+            state.stack.write_f32(0, 9.0);
+            state.sp = 1;
+
+            Interpreter.f32_sqrt(state).unwrap();
+
+            assert_eq!(state.sp, 1);
+            assert!((state.stack.read_f32(0) - 3.0).abs() < 0.0001);
+        });
+    }
+
+    #[test]
+    fn test_f32_sqrt_negative_is_nan() {
+        with_test_context(|state| {
+            state.stack.write_f32(0, -1.0);
+            state.sp = 1;
+
+            Interpreter.f32_sqrt(state).unwrap();
+
+            assert_eq!(state.sp, 1);
+            assert!(state.stack.read_f32(0).is_nan());
+        });
+    }
+
+    #[test]
+    fn test_f32_nearest_round_half_to_even() {
+        with_test_context(|state| {
+            state.stack.write_f32(0, 4.5);
+            state.sp = 1;
+
+            Interpreter.f32_nearest(state).unwrap();
+
+            assert_eq!(state.sp, 1);
+            // Round half to even: 4.5 rounds down to 4.0.
+            assert!((state.stack.read_f32(0) - 4.0).abs() < 0.0001);
+        });
+    }
+
+    #[test]
+    fn test_f32_nearest_round_half_to_even_up() {
+        with_test_context(|state| {
+            state.stack.write_f32(0, 5.5);
+            state.sp = 1;
+
+            Interpreter.f32_nearest(state).unwrap();
+
+            assert_eq!(state.sp, 1);
+            // Round half to even: 5.5 rounds up to 6.0.
+            assert!((state.stack.read_f32(0) - 6.0).abs() < 0.0001);
+        });
+    }
+
+    #[test]
+    fn test_f32_nearest_negative_half() {
+        with_test_context(|state| {
+            state.stack.write_f32(0, -4.5);
+            state.sp = 1;
+
+            Interpreter.f32_nearest(state).unwrap();
+
+            assert_eq!(state.sp, 1);
+            // Round half to even: -4.5 rounds toward zero to -4.0.
+            assert!((state.stack.read_f32(0) - (-4.0)).abs() < 0.0001);
+        });
+    }
+
+    #[test]
+    fn test_f32_copysign() {
+        with_test_context(|state| {
+            state.stack.write_f32(0, 5.0);
+            state.stack.write_f32(1, -3.0);
+            state.sp = 2;
+
+            Interpreter.f32_copysign(state).unwrap();
+
+            assert_eq!(state.sp, 1);
+            assert!((state.stack.read_f32(0) - (-5.0)).abs() < 0.0001);
+        });
+    }
+
+    #[test]
+    fn test_f32_copysign_positive() {
+        with_test_context(|state| {
+            state.stack.write_f32(0, -5.0);
+            state.stack.write_f32(1, 3.0);
+            state.sp = 2;
+
+            Interpreter.f32_copysign(state).unwrap();
+
+            assert_eq!(state.sp, 1);
+            assert!((state.stack.read_f32(0) - 5.0).abs() < 0.0001);
+        });
+    }
+
+    // ===== f64 Comparison Operations (missing coverage) =====
+    #[test]
+    fn test_f64_ne_true() {
+        with_test_context(|state| {
+            state.stack.write_f64(0, 3.14159);
+            state.stack.write_f64(2, 2.71828);
+            state.sp = 4;
+
+            Interpreter.f64_ne(state).unwrap();
+
+            assert_eq!(state.sp, 1);
+            assert_eq!(state.stack.read_u32(0), 1);
+        });
+    }
+
+    #[test]
+    fn test_f64_lt_true() {
+        with_test_context(|state| {
+            state.stack.write_f64(0, 2.0);
+            state.stack.write_f64(2, 3.0);
+            state.sp = 4;
+
+            Interpreter.f64_lt(state).unwrap();
+
+            assert_eq!(state.sp, 1);
+            assert_eq!(state.stack.read_u32(0), 1);
+        });
+    }
+
+    #[test]
+    fn test_f64_gt_true() {
+        with_test_context(|state| {
+            state.stack.write_f64(0, 3.0);
+            state.stack.write_f64(2, 2.0);
+            state.sp = 4;
+
+            Interpreter.f64_gt(state).unwrap();
+
+            assert_eq!(state.sp, 1);
+            assert_eq!(state.stack.read_u32(0), 1);
+        });
+    }
+
+    #[test]
+    fn test_f64_gt_nan_is_false() {
+        with_test_context(|state| {
+            state.stack.write_f64(0, f64::NAN);
+            state.stack.write_f64(2, 3.0);
+            state.sp = 4;
+
+            Interpreter.f64_gt(state).unwrap();
+
+            assert_eq!(state.sp, 1);
+            assert_eq!(state.stack.read_u32(0), 0);
+        });
+    }
+
+    #[test]
+    fn test_f64_le_true() {
+        with_test_context(|state| {
+            state.stack.write_f64(0, 3.0);
+            state.stack.write_f64(2, 3.0);
+            state.sp = 4;
+
+            Interpreter.f64_le(state).unwrap();
+
+            assert_eq!(state.sp, 1);
+            assert_eq!(state.stack.read_u32(0), 1);
+        });
+    }
+
+    #[test]
+    fn test_f64_le_false() {
+        with_test_context(|state| {
+            state.stack.write_f64(0, 5.0);
+            state.stack.write_f64(2, 3.0);
+            state.sp = 4;
+
+            Interpreter.f64_le(state).unwrap();
+
+            assert_eq!(state.sp, 1);
+            assert_eq!(state.stack.read_u32(0), 0);
+        });
+    }
+
+    #[test]
+    fn test_f64_ge_true() {
+        with_test_context(|state| {
+            state.stack.write_f64(0, 3.0);
+            state.stack.write_f64(2, 3.0);
+            state.sp = 4;
+
+            Interpreter.f64_ge(state).unwrap();
+
+            assert_eq!(state.sp, 1);
+            assert_eq!(state.stack.read_u32(0), 1);
+        });
+    }
+
+    #[test]
+    fn test_f64_ge_false() {
+        with_test_context(|state| {
+            state.stack.write_f64(0, 3.0);
+            state.stack.write_f64(2, 5.0);
+            state.sp = 4;
+
+            Interpreter.f64_ge(state).unwrap();
+
+            assert_eq!(state.sp, 1);
+            assert_eq!(state.stack.read_u32(0), 0);
+        });
+    }
+
+    // ===== f64 Arithmetic Operations (missing coverage) =====
+    #[test]
+    fn test_f64_min() {
+        with_test_context(|state| {
+            state.stack.write_f64(0, 3.0);
+            state.stack.write_f64(2, 5.0);
+            state.sp = 4;
+
+            Interpreter.f64_min(state).unwrap();
+
+            assert_eq!(state.sp, 2);
+            assert!((state.stack.read_f64(0) - 3.0).abs() < 0.0001);
+        });
+    }
+
+    #[test]
+    fn test_f64_min_signed_zero_wins() {
+        with_test_context(|state| {
+            state.stack.write_f64(0, 0.0);
+            state.stack.write_f64(2, -0.0);
+            state.sp = 4;
+
+            Interpreter.f64_min(state).unwrap();
+
+            assert_eq!(state.sp, 2);
+            // Wasm requires min(+0, -0) to return -0.
+            assert_eq!(state.stack.read_u64(0), (-0.0f64).to_bits());
+        });
+    }
+
+    #[test]
+    fn test_f64_min_nan_propagates() {
+        with_test_context(|state| {
+            state.stack.write_f64(0, f64::NAN);
+            state.stack.write_f64(2, 5.0);
+            state.sp = 4;
+
+            Interpreter.f64_min(state).unwrap();
+
+            assert_eq!(state.sp, 2);
+            assert!(state.stack.read_f64(0).is_nan());
+        });
+    }
+
+    #[test]
+    fn test_f64_max() {
+        with_test_context(|state| {
+            state.stack.write_f64(0, 3.0);
+            state.stack.write_f64(2, 5.0);
+            state.sp = 4;
+
+            Interpreter.f64_max(state).unwrap();
+
+            assert_eq!(state.sp, 2);
+            assert!((state.stack.read_f64(0) - 5.0).abs() < 0.0001);
+        });
+    }
+
+    #[test]
+    fn test_f64_max_signed_zero() {
+        with_test_context(|state| {
+            state.stack.write_f64(0, 0.0);
+            state.stack.write_f64(2, -0.0);
+            state.sp = 4;
+
+            Interpreter.f64_max(state).unwrap();
+
+            assert_eq!(state.sp, 2);
+            // Wasm requires max(+0, -0) to return +0.
+            assert_eq!(state.stack.read_u64(0), 0.0f64.to_bits());
+        });
+    }
+
+    #[test]
+    fn test_f64_max_nan_propagates() {
+        with_test_context(|state| {
+            state.stack.write_f64(0, f64::NAN);
+            state.stack.write_f64(2, 5.0);
+            state.sp = 4;
+
+            Interpreter.f64_max(state).unwrap();
+
+            assert_eq!(state.sp, 2);
+            assert!(state.stack.read_f64(0).is_nan());
+        });
+    }
+
+    #[test]
+    fn test_f64_sqrt_positive() {
+        with_test_context(|state| {
+            state.stack.write_f64(0, 4.0);
+            state.sp = 2;
+
+            Interpreter.f64_sqrt(state).unwrap();
+
+            assert_eq!(state.sp, 2);
+            assert!((state.stack.read_f64(0) - 2.0).abs() < 0.0001);
+        });
+    }
+
+    #[test]
+    fn test_f64_sqrt_negative_is_nan() {
+        with_test_context(|state| {
+            state.stack.write_f64(0, -1.0);
+            state.sp = 2;
+
+            Interpreter.f64_sqrt(state).unwrap();
+
+            assert_eq!(state.sp, 2);
+            assert!(state.stack.read_f64(0).is_nan());
+        });
+    }
+
+    #[test]
+    fn test_f64_nearest_round_half_to_even() {
+        with_test_context(|state| {
+            state.stack.write_f64(0, 2.5);
+            state.sp = 2;
+
+            Interpreter.f64_nearest(state).unwrap();
+
+            assert_eq!(state.sp, 2);
+            // Round half to even: 2.5 rounds down to 2.0.
+            assert!((state.stack.read_f64(0) - 2.0).abs() < 0.0001);
+        });
+    }
+
+    #[test]
+    fn test_f64_nearest_round_half_to_even_up() {
+        with_test_context(|state| {
+            state.stack.write_f64(0, 3.5);
+            state.sp = 2;
+
+            Interpreter.f64_nearest(state).unwrap();
+
+            assert_eq!(state.sp, 2);
+            // Round half to even: 3.5 rounds up to 4.0.
+            assert!((state.stack.read_f64(0) - 4.0).abs() < 0.0001);
+        });
+    }
+
+    #[test]
+    fn test_f64_copysign() {
+        with_test_context(|state| {
+            state.stack.write_f64(0, 5.0);
+            state.stack.write_f64(2, -3.0);
+            state.sp = 4;
+
+            Interpreter.f64_copysign(state).unwrap();
+
+            assert_eq!(state.sp, 2);
+            assert!((state.stack.read_f64(0) - (-5.0)).abs() < 0.0001);
+        });
+    }
+
+    #[test]
+    fn test_f64_copysign_positive() {
+        with_test_context(|state| {
+            state.stack.write_f64(0, -5.0);
+            state.stack.write_f64(2, 3.0);
+            state.sp = 4;
+
+            Interpreter.f64_copysign(state).unwrap();
+
+            assert_eq!(state.sp, 2);
+            assert!((state.stack.read_f64(0) - 5.0).abs() < 0.0001);
+        });
+    }
+
     // ===== Additional Edge Cases =====
     #[test]
     fn test_i32_add_wrapping() {
