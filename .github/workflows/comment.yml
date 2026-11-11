@@ -100,7 +100,7 @@ jobs:
 
             // Returns the "base" and "Delta" cells comparing `value` against
             // `old`. A missing baseline is reported as a new entry.
-            function compare(value, old, lower_better, digits = 0, unit = "") {
+            function compare(value, old, digits = 0, unit = "") {
                 if (old === undefined || old === null) {
                     return ["—", "new"];
                 }
@@ -109,26 +109,28 @@ jobs:
                 if (diff.toFixed(digits) == 0) {
                     return [base, "no change"];
                 }
-                const better = lower_better ? diff < 0 : diff > 0;
                 const sign = diff > 0 ? "+" : "−";
-                let delta = (better ? "🟢 " : "🔴 ") + sign + fmt(Math.abs(diff), digits, unit);
+                let delta = sign + fmt(Math.abs(diff), digits, unit);
                 if (old != 0) {
                     delta += " (" + sign + Math.abs(100 * diff / old).toFixed(1) + "%)";
                 }
                 return [base, delta];
             }
 
-            // A single summary cell: the value followed by a short percentage
-            // change against `old`, if there is one.
-            function summarize(value, old, lower_better) {
+            // A single summary cell: the value followed by its absolute and
+            // percentage change against `old`, if there is one.
+            function summarize(value, old) {
                 let cell = fmt(value, 0, " B");
                 if (old === null || old == value) {
                     return cell;
                 }
-                const better = lower_better ? value < old : value > old;
-                const sign = value > old ? "+" : "−";
-                const pct = old == 0 ? "" : Math.abs(100 * (value - old) / old).toFixed(1) + "%";
-                return cell + " " + (better ? "🟢 " : "🔴 ") + sign + pct;
+                const diff = value - old;
+                const sign = diff > 0 ? "+" : "−";
+                cell += " " + sign + fmt(Math.abs(diff), 0, " B");
+                if (old != 0) {
+                    cell += " (" + sign + Math.abs(100 * diff / old).toFixed(1) + "%)";
+                }
+                return cell;
             }
 
             // Sums the named sections, or null if any of them is missing.
@@ -167,9 +169,9 @@ jobs:
                     const old = old_data[triple];
                     const heap = finiteOrNull(data[triple]["heap"]);
                     comment += "| **`"+triple+"`** | "
-                        + summarize(total(data[triple], flash_sections), total(old, flash_sections), true) + " | "
-                        + summarize(total(data[triple], ram_sections), total(old, ram_sections), true) + " | "
-                        + (heap === null ? "-" : summarize(heap, finiteOrNull((old ?? {})["heap"]), true)) + " |\n";
+                        + summarize(total(data[triple], flash_sections), total(old, flash_sections)) + " | "
+                        + summarize(total(data[triple], ram_sections), total(old, ram_sections)) + " | "
+                        + (heap === null ? "-" : summarize(heap, finiteOrNull((old ?? {})["heap"]))) + " |\n";
                 }
                 comment += "\n_Flash: `.text` + `.rodata` + `.data`. RAM: `.data` + `.bss`. Heap: bytes allocated from the SpaceWasm global allocator after running coremark. The embedded wasm module and its linear memory are excluded._\n";
 
@@ -181,7 +183,7 @@ jobs:
                         let size = data[triple][section_name];
                         let old_size = (old_data[triple] ?? {})[section_name];
                         let target = i == 0 ? "**`"+triple+"`**" : "";
-                        let [base, delta] = compare(size, old_size, true, 0, " B");
+                        let [base, delta] = compare(size, old_size, 0, " B");
                         comment += "| "+target+" | `"+section_name+"` | "+fmt(size, 0, " B")+" | "+base+" | "+delta+" |\n";
                     });
 
@@ -190,7 +192,7 @@ jobs:
                     let heap = finiteOrNull(data[triple]["heap"]);
                     if (heap !== null) {
                         let old_heap = finiteOrNull((old_data[triple] ?? {})["heap"]);
-                        let [base, delta] = compare(heap, old_heap, true, 0, " B");
+                        let [base, delta] = compare(heap, old_heap, 0, " B");
                         comment += "| | heap | "+fmt(heap, 0, " B")+" | "+base+" | "+delta+" |\n";
                     }
                 }
@@ -223,7 +225,7 @@ jobs:
                         continue;
                     }
                     let old_score = finiteOrNull((old_data[triple] ?? {})["coremark"]);
-                    let [base, delta] = compare(score, old_score, false, 2);
+                    let [base, delta] = compare(score, old_score, 2);
                     comment += "| **`"+triple+"`** | "+data[triple]["qemu_info"]+" | "+fmt(score, 2)+" | "+base+" | "+delta+" | "+t.toFixed(2)+" s |\n";
                 }
 
