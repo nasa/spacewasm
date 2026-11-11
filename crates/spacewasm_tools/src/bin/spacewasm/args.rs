@@ -2,7 +2,7 @@
 
 use clap::{Args, Parser, Subcommand};
 use spacewasm::CompilerOptions;
-use spacewasm_cli::DecoderLimits;
+use spacewasm_tools::DecoderLimits;
 use std::ffi::OsString;
 use std::path::PathBuf;
 
@@ -153,6 +153,18 @@ pub struct ValidateArgs {
 
     #[command(flatten)]
     pub compiler: CompilerArgs,
+
+    /// The flight global heap's page size: `GLOBAL_ALLOCATOR_PAGE_SIZE`.
+    #[arg(long, value_parser = number::<usize>, default_value = "8192")]
+    pub heap_page_size: usize,
+
+    /// Pages the flight global heap has: `GLOBAL_ALLOCATOR_MAX_PAGES`.
+    #[arg(long, default_value = "16")]
+    pub heap_pages: usize,
+
+    /// Also print what each section allocated.
+    #[arg(long, short)]
+    pub verbose: bool,
 }
 
 #[derive(Args)]

@@ -10,7 +10,7 @@ use crate::Outcome;
 use crate::args::TraceArgs;
 use crate::load::load;
 use spacewasm::{Interpreter, InterpreterResult};
-use spacewasm_cli::host_modules_for;
+use spacewasm_tools::host_modules_for;
 use std::io::Read;
 use tracer::StateTracer;
 

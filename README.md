@@ -57,8 +57,9 @@ This software comes with two major components:
 1. Decoder/Validator:
 
    Reads the Wasm binary in [chunks](#streaming) and decodes it to an executable form. The decoder will use a fixed
-   amount of memory and is intended to be measured per-Wasm binary using the `spacewasm-check` executable on the
-   ground (not yet developed — see the note under [Limits for Wasm Module Producers](#limits-for-wasm-module-producers)).
+   amount of memory and is intended to be measured per-Wasm binary on the ground using
+   [`spacewasm validate`](crates/spacewasm_tools#validate), which reports the heap a module's load takes, section by
+   section with `--verbose`.
 
    WebAssembly is validated during the decoding process and does not require another pass of the bytecode.
 
@@ -101,10 +102,7 @@ flight-software standards. Dynamic allocation follows the following rules:
 The standard Rust [allocation](https://doc.rust-lang.org/alloc/) does not meet these constraints even with custom
 allocators. To that end, SpaceWasm provides its own data structures that guarantee these properties. These
 data-structures contain the bulk of the `unsafe` Rust semantics; the remainder lives in the performance-critical
-operand-stack, linear-memory, and IR access paths (`src/stack.rs`, `src/memory.rs`, `src/ir_reader.rs`), the
-`ValType` conversion in `src/types.rs`, and the FFI layer (`crates/spacewasm_c_api`, and the WASI host in `crates/spacewasm_cli`). Bounds on
-those raw accesses are established by the up-front verifier; the optional `strict-assertions` feature re-checks them
-at runtime.
+operand-stack, linear-memory, and IR access paths and the C FFI.
 
 > [!NOTE]
 > These limitations are only enforced on the implementation of the interpreter and _not_ on the Wasm bytecode it is made to interpret.
@@ -154,7 +152,7 @@ synchronously.
 
 
 ## Ground Tooling
-The [`spacewasm`](crates/spacewasm_cli#readme) command, from `cargo install spacewasm_cli`, is the ground side of the
+The [`spacewasm`](crates/spacewasm_tools#readme) command, from `cargo install spacewasm_tools` (or `cargo binstall spacewasm_tools` for a prebuilt binary), is the ground side of the
 interpreter: a Cargo linker that holds `wasm-opt` to exactly the proposals a release implements and splits debug info into
 a symbol file, a validator that loads a module as the flight interpreter would, and a resolver from the PCs a backtrace
 reports to source lines.
@@ -163,7 +161,7 @@ It also runs arbitrary modules that adhere to the WASI 0.1 (`wasip1`) spec in a 
 mount host directories and set environment variables:
 
 ```bash
-# compile example from crates/spacewasm_cli/tests/wasi/
+# compile example from crates/spacewasm_tools/tests/wasi/
 $ clang --target=wasm32-wasip1 -mcpu=mvp hello_universe.c -o hello_universe.wasm
 
 # rewrite what this release does not implement
@@ -174,7 +172,7 @@ hello universe!
 ```
 
 `spacewasm trace` runs a module's exports and prints the last instructions each executed, for debugging the interpreter
-itself; `make trace` feeds it a fuzzer seed. See the [`spacewasm_cli` README](crates/spacewasm_cli/README.md) for every
+itself; `make trace` feeds it a fuzzer seed. See the [`spacewasm_tools` README](crates/spacewasm_tools/README.md) for every
 command.
 
 ## Interpreter Limitations
@@ -192,10 +190,10 @@ maintaining compatibility with most standard WebAssembly modules.
 Because SpaceWasm compiles bytecode into a fixed-width IR that is typically larger than the original bytecode, the
 practical ceiling on raw module size is bounded by the IR code-page limit in the table below (~8 GiB of IR). This is
 far larger than any module expected on flight hardware; the binding constraint in practice is the peak memory
-configured for the [streaming](#streaming) decoder, which is measured per-module on the ground with `spacewasm-check`.
-
-> [!NOTE]
-> `spacewasm-check` has not been developed yet. A similar tool can be found in [`example`](crates/example).
+configured for the [streaming](#streaming) decoder, which is measured per-module on the ground with
+[`spacewasm validate`](crates/spacewasm_tools#validate): it loads the module against the flight configuration
+(`--max-code-pages`, `--decoder-limits`, `--heap-page-size`, `--heap-pages`) and reports the IR it compiles to and the
+global heap pages its load takes.
 
 Here are a couple of limitations that may be relevant to developers of Wasm modules.
 

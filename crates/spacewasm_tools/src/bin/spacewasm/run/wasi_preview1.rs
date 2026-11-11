@@ -11,14 +11,24 @@
 // ---
 // Portions of this file are derived from <https://github.com/bytecodealliance/wasmtime>
 // and the wasi-common crate developed by the wasmtime community.
-use futures::executor::block_on;
 use spacewasm::{HostFunction, HostFunctionBreak, HostFunctionResult, HostModule, Value, vec};
 use std::cell::{Cell, RefCell};
+use std::future::Future;
 use std::ops::ControlFlow;
 use std::rc::Rc;
 use wasi_common::I32Exit;
 use wasi_common::snapshots::preview_1::wasi_snapshot_preview1;
 use wiggle::GuestMemory;
+
+/// Run a wiggle-generated call to completion.
+///
+/// The calls are `async` only because wiggle's interface is: with the `sync` context
+/// every one finishes, blocking included, in a single poll. wiggle's own dummy executor
+/// polls once and reports a call that is somehow still pending as an error, which
+/// [`finish`] turns into a trap like any other.
+fn block_on<F: Future<Output = wiggle::anyhow::Result<T>>, T>(future: F) -> F::Output {
+    wiggle::run_in_dummy_executor(future).and_then(|result| result)
+}
 
 /// Pop the next argument, asserting it is an `i32`.
 ///

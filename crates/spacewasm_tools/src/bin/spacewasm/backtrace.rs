@@ -2,7 +2,7 @@
 
 use crate::Outcome;
 use crate::args::BacktraceArgs;
-use spacewasm_cli::{Resolved, Symbols, host_modules_for, ir_map, resolve_offsets, resolve_pcs};
+use spacewasm_tools::{Resolved, Symbols, host_modules_for, ir_map, resolve_offsets, resolve_pcs};
 
 pub fn run(args: &BacktraceArgs) -> Outcome {
     let symbols =

@@ -58,7 +58,7 @@ pub fn load(
     )
     .map_err(|err| {
         // Name the proposal when that is why, as `validate` would.
-        match spacewasm_cli::find_unsupported(bytes) {
+        match spacewasm_tools::find_unsupported(bytes) {
             Some(unsupported) => LoadError(unsupported.to_string()),
             None => LoadError(format!(
                 "the module does not load at byte {:#x}: {:?}",

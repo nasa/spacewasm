@@ -19,33 +19,9 @@ jobs:
         uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
 
       - name: Inject version from tag
-        run: |
-          tag_version="${GITHUB_REF_NAME#v}"
-          echo "Releasing version: $tag_version"
-          # Replace the 0.0.0 placeholder under [workspace.package] with the tag version.
-          sed -i 's/^version = "0\.0\.0"$/version = "'"$tag_version"'"/' Cargo.toml
-          # Pin spacewasm_c_api's and spacewasm_cli's dependency on spacewasm to the
-          # exact tag version. Their manifests carry a `version = "=0.0.0"`
-          # placeholder for this.
-          sed -i 's/version = "=0\.0\.0"/version = "='"$tag_version"'"/' \
-            crates/spacewasm_c_api/Cargo.toml crates/spacewasm_cli/Cargo.toml
-          # Fail if any placeholder was not found / not replaced.
-          for pkg in spacewasm spacewasm_c_api spacewasm_cli; do
-            crate_version=$(cargo metadata --no-deps --format-version 1 \
-              | jq -r '.packages[] | select(.name == "'"$pkg"'") | .version')
-            if [ "$crate_version" != "$tag_version" ]; then
-              echo "::error::Failed to inject version for $pkg. Expected $tag_version but Cargo.toml resolves to $crate_version. Is the 0.0.0 placeholder still present?"
-              exit 1
-            fi
-          done
-          for pkg in spacewasm_c_api spacewasm_cli; do
-            dep_version=$(cargo metadata --no-deps --format-version 1 \
-              | jq -r '.packages[] | select(.name == "'"$pkg"'") | .dependencies[] | select(.name == "spacewasm") | .req')
-            if [ "$dep_version" != "=$tag_version" ]; then
-              echo "::error::$pkg's spacewasm dependency resolves to '$dep_version', expected '=$tag_version'. Is the =0.0.0 placeholder still present?"
-              exit 1
-            fi
-          done
+        uses: ./.github/actions/inject-version
+        with:
+          version: ${{ github.ref_name }}
 
       - name: Install WABT (WebAssembly Binary Toolkit)
         uses: ./.github/actions/install-wabt
@@ -75,13 +51,13 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
-      - name: Publish spacewasm_cli to crates.io
+      - name: Publish spacewasm_tools to crates.io
         # Published after spacewasm since it depends on the exact matching
         # release, with the `ir-map` feature. Unlike spacewasm_c_api it is an
         # ordinary `std` crate, so cargo's verify build runs: it builds the
         # packaged crate against the spacewasm just published.
         # --allow-dirty: the injected version is an uncommitted working-tree change.
-        run: cargo publish -p spacewasm_cli --allow-dirty
+        run: cargo publish -p spacewasm_tools --allow-dirty
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
@@ -101,4 +77,183 @@ jobs:
             echo "Release $tag already exists; leaving its notes untouched."
           else
             gh release create "$tag" --generate-notes --verify-tag
+          fi
+
+  binaries:
+    name: Binary (${{ matrix.target }})
+    # The release has to exist before anything can be uploaded to it, and there
+    # is no point shipping a binary for a version that failed to publish.
+    needs: publish
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      # One unavailable runner or one target-specific build problem should not
+      # cost the other binaries: the crates are already published either way.
+      fail-fast: false
+      matrix:
+        include:
+          # Linux binaries are `musl`, so static: a glibc build from ubuntu-latest
+          # would need that runner's glibc and fail to start on older
+          # distributions. `cargo binstall` on a glibc host falls back to the
+          # musl target. Each is built natively, so no cross linker or emulation
+          # is involved.
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-latest
+            packages: musl-tools
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+            packages: musl-tools
+          - target: aarch64-apple-darwin
+            runner: macos-15
+          # Cross-compiled: GitHub is retiring its Intel macOS runners, and Apple's
+          # toolchain links either architecture from an arm64 host with nothing
+          # extra installed.
+          - target: x86_64-apple-darwin
+            runner: macos-15
+          - target: x86_64-pc-windows-msvc
+            runner: windows-latest
+    env:
+      # The workspace release profile is the flight one: `panic = "abort"`, which
+      # `spacewasm trace` cannot report a panic under, and full debug info. A
+      # `cargo install` from crates.io ignores the workspace profile, so these
+      # make the released binary the one `cargo install spacewasm_tools` builds.
+      CARGO_PROFILE_RELEASE_PANIC: unwind
+      CARGO_PROFILE_RELEASE_DEBUG: "false"
+      CARGO_PROFILE_RELEASE_STRIP: debuginfo
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install build packages
+        if: matrix.packages != ''
+        run: sudo apt-get update && sudo apt-get install -y ${{ matrix.packages }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Inject version from tag
+        # The binary reports its version through CARGO_PKG_VERSION, and its
+        # feature set is that of the `spacewasm` it was built against: both have
+        # to be the release's, not the 0.0.0 placeholder.
+        uses: ./.github/actions/inject-version
+        with:
+          version: ${{ github.ref_name }}
+
+      - name: Build
+        # No --locked: `inject-version` changed the workspace version, so the
+        # checked-in Cargo.lock is stale by construction and cargo has to refresh it.
+        run: cargo build --release --target ${{ matrix.target }} -p spacewasm_tools --bin spacewasm
+
+      - name: Verify the binary reports the release version
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary="target/${{ matrix.target }}/release/spacewasm"
+          [ -f "$binary" ] || binary="$binary.exe"
+
+          # Every target but x86_64-apple-darwin is built on a runner of its own
+          # architecture. That one runs under Rosetta where the runner image has
+          # it; otherwise only its architecture can be checked.
+          if [ "${{ matrix.target }}" = "x86_64-apple-darwin" ]; then
+            if ! lipo "$binary" -verify_arch x86_64; then
+              echo "::error::$binary is not an x86_64 executable."
+              exit 1
+            fi
+            if ! arch -x86_64 /usr/bin/true 2>/dev/null; then
+              echo "::warning::Rosetta is not available on this runner; skipping the version check for $binary."
+              exit 0
+            fi
+            binary="arch -x86_64 $binary"
+          fi
+
+          reported=$($binary --version | awk '{print $2}')
+          expected="${GITHUB_REF_NAME#v}"
+          if [ "$reported" != "$expected" ]; then
+            echo "::error::the built binary reports version $reported, expected $expected."
+            exit 1
+          fi
+          $binary features
+
+      - name: Package
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          # This name and the staging directory match a `cargo binstall` default
+          # pattern (`{ name }-v{ version }-{ target }`, with `name` the crate,
+          # not the binary), which is why no [package.metadata.binstall] is
+          # needed. Renaming either breaks `cargo binstall` silently: it falls
+          # back to building from source. The `binstall` job below catches that.
+          name="spacewasm_tools-${GITHUB_REF_NAME}-${{ matrix.target }}"
+          staging="$name"
+          mkdir -p "$staging"
+          cp LICENSE NOTICE "$staging/"
+          cp crates/spacewasm_tools/README.md "$staging/"
+
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cp "target/${{ matrix.target }}/release/spacewasm.exe" "$staging/"
+            7z a "$name.zip" "$staging" >/dev/null
+            archive="$name.zip"
+          else
+            cp "target/${{ matrix.target }}/release/spacewasm" "$staging/"
+            tar czf "$name.tar.gz" "$staging"
+            archive="$name.tar.gz"
+          fi
+
+          # Checksums travel with the archive so a download can be verified
+          # without trusting the transport.
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "$archive" > "$archive.sha256"
+          else
+            shasum -a 256 "$archive" > "$archive.sha256"
+          fi
+
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+          cat "$archive.sha256"
+
+      - name: Upload to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # --clobber so re-running the workflow for a tag replaces the assets
+          # rather than failing on the ones already there.
+          gh release upload "${GITHUB_REF_NAME}" \
+            "${{ steps.package.outputs.archive }}" \
+            "${{ steps.package.outputs.archive }}.sha256" \
+            --clobber
+
+  binstall:
+    name: Verify cargo binstall (${{ matrix.runner }})
+    # A misnamed archive does not fail `cargo binstall`, it quietly compiles from
+    # source instead. Install the release exactly as a user would, with every
+    # fallback disabled, so a packaging mistake fails the release instead.
+    needs: binaries
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # glibc hosts, so these also exercise the fallback to the musl binaries.
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    steps:
+      - name: Install cargo-binstall
+        uses: taiki-e/install-action@37f7c5781271959fb65b6b35224e28652ff2b63d # v2.87.0
+        with:
+          tool: cargo-binstall
+
+      - name: Install spacewasm_tools from the release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          # `crate-meta-data` alone: the release assets, never cargo-quickinstall
+          # or a source build.
+          cargo binstall "spacewasm_tools@$version" --no-confirm --strategies crate-meta-data
+          reported=$(spacewasm --version | awk '{print $2}')
+          if [ "$reported" != "$version" ]; then
+            echo "::error::cargo binstall installed spacewasm $reported, expected $version."
+            exit 1
           fi

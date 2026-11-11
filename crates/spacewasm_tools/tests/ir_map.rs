@@ -1,7 +1,7 @@
 //! The IR map against `wasmparser`'s own reading of the same module.
 
 use spacewasm::{CompilerOptions, PageAllocator};
-use spacewasm_cli::{DecoderLimits, host_modules_for, ir_map};
+use spacewasm_tools::{DecoderLimits, host_modules_for, ir_map};
 
 spacewasm::global_allocator!(
     PageAllocator<System, 64>,

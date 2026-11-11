@@ -24,17 +24,19 @@ mod validate;
 
 use clap::Parser;
 use spacewasm::PageAllocator;
+use spacewasm_tools::HeapRecorder;
 use std::ffi::OsString;
 use std::process::ExitCode;
 
 // The decoder's process-global allocator, backed by the system allocator: this runs on the
-// ground, where nothing is being measured. Sized for `run`: a page bounds the largest
+// ground, where nothing is constrained. Sized for `run`: a page bounds the largest
 // single allocation, and a WASI program as large as CPython needs `spacewasi`'s 128 MiB.
 // A page is only taken from the system when first needed, so the commands that decode
-// small modules pay for one.
+// small modules pay for one. `validate` measures a load against the flight heap by
+// recording what it allocates here.
 spacewasm::global_allocator!(
-    PageAllocator<System, 0x200>,
-    PageAllocator::new(System, 0x8_000_000)
+    HeapRecorder<PageAllocator<System, 0x200>>,
+    HeapRecorder::new(PageAllocator::new(System, 0x8_000_000))
 );
 
 struct System;
@@ -62,7 +64,7 @@ type Outcome = Result<bool, Box<dyn std::error::Error>>;
 fn main() -> ExitCode {
     // As Cargo's `linker` there is no subcommand to name.
     let argv: Vec<OsString> = std::env::args_os().collect();
-    if spacewasm_cli::is_link(&argv[1..]) {
+    if spacewasm_tools::is_link(&argv[1..]) {
         return exit(link(&argv[1..]));
     }
 
@@ -83,9 +85,9 @@ fn main() -> ExitCode {
 }
 
 /// `spacewasm link`: the pipeline and its `SPACEWASM_*` settings are
-/// [`spacewasm_cli::link`]'s.
+/// [`spacewasm_tools::link`]'s.
 fn link(args: &[OsString]) -> Outcome {
-    Ok(spacewasm_cli::link(args)?)
+    Ok(spacewasm_tools::link(args)?)
 }
 
 fn exit(result: Outcome) -> ExitCode {

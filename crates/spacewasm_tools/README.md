@@ -1,10 +1,19 @@
-# spacewasm_cli
+# spacewasm_tools
 
 Ground tooling for the `spacewasm` interpreter: build modules a given release will
 load, check and run them, and turn the PCs it reports back into source lines.
 
 ```shell
-cargo install spacewasm_cli
+cargo install spacewasm_tools
+```
+
+Or download a prebuilt binary, for Linux (x86_64, arm64), macOS (Apple silicon, Intel)
+and Windows (x86_64), from the [releases](https://github.com/nasa/spacewasm/releases)
+page, which [`cargo binstall`](https://github.com/cargo-bins/cargo-binstall) does for
+you:
+
+```shell
+cargo binstall spacewasm_tools
 ```
 
 |                       |                                                                                                                                                    |
@@ -87,6 +96,32 @@ unsupported proposal is named, with how to keep it out:
 ```
 bulk.wasm: `memory.fill` at byte 0x2c is from the bulk-memory-operations proposal, which this release of spacewasm does not implement. ...
 ```
+
+A module that loads is then checked against the flight global heap. Everything the
+load allocates there is laid out on pages the way the flight `PageAllocator` would
+lay it out, given `--heap-page-size` (`GLOBAL_ALLOCATOR_PAGE_SIZE`, default 8192)
+and `--heap-pages` (`GLOBAL_ALLOCATOR_MAX_PAGES`, default 16). The module fails if
+it needs more pages than that, or if one allocation is bigger than a page. The
+engine's own allocations, such as its stack and the store, are not counted.
+Neither is guest linear memory, which lives outside the heap.
+
+```console
+$ spacewasm validate --verbose hello_universe.wasm
+hello_universe.wasm: ok, 25502 bytes, 18860 IR words in 74 code pages, 40656 heap bytes in 5 of 16 8192-byte pages
+  section                         size        heap   padding  allocations
+  header                             8           6         0            1
+  type                              84         668         2           21
+  import                           253          28         0            1
+  function                          58        1762         2            1
+  ...
+  code                           22236       38020         0          103
+  data                            2665           0         0            0
+  total                          25502       40656         4          133
+```
+
+`--verbose` charges each allocation to the section being decoded when it was made.
+`heap` includes alignment `padding`, but not the space left unused at the end of a
+page when the next allocation did not fit.
 
 ## `split`
 
@@ -215,7 +250,7 @@ A tool wrapping this crate can be the Cargo linker itself, so its users need no
 
 ```rust
 let args: Vec<OsString> = std::env::args_os().skip(1).collect();
-if spacewasm_cli::is_link(&args) {
-    return match spacewasm_cli::link(&args) { /* ... */ };
+if spacewasm_tools::is_link(&args) {
+    return match spacewasm_tools::link(&args) { /* ... */ };
 }
 ```

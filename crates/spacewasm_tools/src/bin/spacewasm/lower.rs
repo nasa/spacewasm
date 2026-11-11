@@ -6,7 +6,7 @@
 
 use crate::Outcome;
 use crate::args::LowerArgs;
-use spacewasm_cli::{find_unsupported, lowering_flags};
+use spacewasm_tools::{find_unsupported, lowering_flags};
 use std::process::Command;
 
 pub fn run(args: &LowerArgs) -> Outcome {
