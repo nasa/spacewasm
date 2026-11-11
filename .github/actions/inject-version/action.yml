@@ -1,0 +1,61 @@
+name: Inject release version
+description: >-
+  Rewrite the workspace's 0.0.0 version placeholders to a release version, and
+  verify the substitution actually happened.
+
+inputs:
+  version:
+    description: >-
+      Version to inject. A leading "v" is stripped, so a tag name can be passed
+      straight through.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Inject version
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        # Tags are `vX.Y.Z` but a Cargo version is not, so accept either.
+        tag_version="${VERSION#v}"
+        echo "Releasing version: $tag_version"
+
+        # Portable in-place edit: `sed -i` takes different arguments on the
+        # macOS runners than on Linux.
+        rewrite() {
+          local file="$1" script="$2" tmp
+          tmp="$(mktemp)"
+          sed "$script" "$file" > "$tmp"
+          cat "$tmp" > "$file"
+          rm -f "$tmp"
+        }
+
+        # Replace the 0.0.0 placeholder under [workspace.package] with the tag version.
+        rewrite Cargo.toml 's/^version = "0\.0\.0"$/version = "'"$tag_version"'"/'
+        # Pin spacewasm_c_api's and spacewasm_tools's dependency on spacewasm to the
+        # exact tag version. Their manifests carry a `version = "=0.0.0"`
+        # placeholder for this.
+        for manifest in crates/spacewasm_c_api/Cargo.toml crates/spacewasm_tools/Cargo.toml; do
+          rewrite "$manifest" 's/version = "=0\.0\.0"/version = "='"$tag_version"'"/'
+        done
+
+        # Fail if any placeholder was not found / not replaced.
+        for pkg in spacewasm spacewasm_c_api spacewasm_tools; do
+          crate_version=$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "'"$pkg"'") | .version')
+          if [ "$crate_version" != "$tag_version" ]; then
+            echo "::error::Failed to inject version for $pkg. Expected $tag_version but Cargo.toml resolves to $crate_version. Is the 0.0.0 placeholder still present?"
+            exit 1
+          fi
+        done
+        for pkg in spacewasm_c_api spacewasm_tools; do
+          dep_version=$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "'"$pkg"'") | .dependencies[] | select(.name == "spacewasm") | .req')
+          if [ "$dep_version" != "=$tag_version" ]; then
+            echo "::error::$pkg's spacewasm dependency resolves to '$dep_version', expected '=$tag_version'. Is the =0.0.0 placeholder still present?"
+            exit 1
+          fi
+        done

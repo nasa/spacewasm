@@ -2,7 +2,7 @@
 
 use crate::Outcome;
 use crate::args::SplitArgs;
-use spacewasm_cli::{Optimizer, split_file};
+use spacewasm_tools::{Optimizer, split_file};
 
 pub fn run(args: &SplitArgs) -> Outcome {
     let output = args.output.clone().unwrap_or_else(|| args.input.clone());

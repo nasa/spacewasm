@@ -3,7 +3,7 @@
 //! not marked here, or the reverse, fails this rather than shipping the wrong flags.
 
 use spacewasm::{CompilerOptions, PageAllocator};
-use spacewasm_cli::{DecoderLimits, Invalid, PROPOSALS, host_modules_for, validate};
+use spacewasm_tools::{DecoderLimits, Invalid, PROPOSALS, host_modules_for, validate};
 
 spacewasm::global_allocator!(
     PageAllocator<System, 64>,

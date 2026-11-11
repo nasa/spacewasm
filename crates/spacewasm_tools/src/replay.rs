@@ -10,6 +10,7 @@
 //! one, so this runs under whatever the binary installed
 //! (`spacewasm::global_allocator!`), and is no more re-entrant than that allocator is.
 
+use crate::heap::{self, Heap, SectionHeap};
 use crate::ir::IrMap;
 use spacewasm::{
     AllocError, CodeBuilder, CompilerOptions, Engine, HostModule, InnerVec, JumpTarget,
@@ -128,12 +129,15 @@ pub fn ir_map(
 }
 
 /// What a successful load cost.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Loaded {
     /// 16-bit IR words the module compiled to.
     pub ir_words: usize,
     /// Code pages those words took, against `CompilerOptions::max_code_pages`.
     pub code_pages: usize,
+    /// What the load allocated on the global heap. `None` unless the binary's global
+    /// allocator is a [`HeapRecorder`](crate::HeapRecorder).
+    pub heap: Option<Heap>,
 }
 
 /// Decode and instantiate `module` as the flight interpreter would, and report what that
@@ -154,13 +158,38 @@ pub fn load(
     let mut stream = Bytes::new(module);
     let memory = spacewasm::Rc::new(SystemMemory)?.into_wasm_memory_allocator();
 
+    // Everything above is the embedder's, made once per engine; from here it is the
+    // module's.
+    heap::start();
+    let loaded = decode(&mut stream, &mut engine, &mut code, memory, limits);
+    let log = heap::stop();
+    loaded?;
+
+    let code_pages = code.pages().len();
+    Ok(Loaded {
+        ir_words: match code_pages {
+            0 => 0,
+            pages => (pages - 1) * CODE_PAGE_WORDS as usize + code.offset(),
+        },
+        code_pages,
+        heap: log.map(|log| stream.heap(log)),
+    })
+}
+
+fn decode(
+    stream: &mut Bytes,
+    engine: &mut Engine,
+    code: &mut CodeBuilder,
+    memory: spacewasm::Rc<dyn WasmMemoryAllocator>,
+    limits: DecoderLimits,
+) -> Result<(), ReplayError> {
     macro_rules! decode_with {
         ($frames:literal, $depth:literal) => {
             spacewasm::Module::new::<$frames, $depth>(
                 "replay",
-                &mut stream,
+                stream,
                 &mut engine.store,
-                &mut code,
+                code,
                 memory,
             )
         };
@@ -172,29 +201,37 @@ pub fn load(
         _ => return Err(ReplayError::UnsupportedLimits(limits)),
     };
     let module = decoded.map_err(ReplayError::Decode)?;
+    stream.mark(INSTANTIATE, 0);
     engine
         .push_module(module)
         .map_err(|err| ReplayError::Rejected {
             offset: 0,
             reason: format!("could not instantiate the module: {err:?}"),
         })?;
-
-    let code_pages = code.pages().len();
-    Ok(Loaded {
-        ir_words: match code_pages {
-            0 => 0,
-            pages => (pages - 1) * CODE_PAGE_WORDS as usize + code.offset(),
-        },
-        code_pages,
-    })
+    Ok(())
 }
 
+/// The name [`Heap`] gives what is allocated after the module's last section.
+const INSTANTIATE: &str = "instantiate";
+
 /// A `WasmStream` over a module already in memory.
+///
+/// Every chunk ends at a section boundary. The decoder only asks for a chunk once it has
+/// used every byte of the one before, so when it asks for the one that starts a section
+/// it has finished the section before, and what it allocates from then on is the new
+/// section's. That is where [`mark`](Self::mark) is.
 struct Bytes<'a> {
     data: &'a [u8],
     pos: usize,
     /// Chunks lent to the decoder, kept alive until it hands them back.
     lent: Vec<Vec<u8>>,
+    /// Where each section starts, and its name.
+    sections: Vec<(usize, String)>,
+    /// The next of `sections` to reach.
+    next: usize,
+    /// Each section reached, its size, and how many allocations had been logged when it
+    /// was.
+    marks: Vec<(String, usize, usize)>,
 }
 
 impl<'a> Bytes<'a> {
@@ -203,7 +240,42 @@ impl<'a> Bytes<'a> {
             data,
             pos: 0,
             lent: Vec::new(),
+            sections: heap::sections(data),
+            next: 0,
+            marks: Vec::new(),
         }
+    }
+
+    /// Where the `index`th section starts; the end of the module past the last.
+    fn section_start(&self, index: usize) -> usize {
+        self.sections.get(index).map_or(self.data.len(), |s| s.0)
+    }
+
+    fn mark(&mut self, name: &str, size: usize) {
+        self.marks.push((name.to_string(), size, heap::logged()));
+    }
+
+    /// `log` split at the marks.
+    fn heap(&self, log: Vec<std::alloc::Layout>) -> Heap {
+        let ends = self
+            .marks
+            .iter()
+            .skip(1)
+            .map(|mark| mark.2)
+            .chain([log.len()]);
+        let sections = self
+            .marks
+            .iter()
+            .zip(ends)
+            .map(|((name, size, start), end)| SectionHeap {
+                name: name.clone(),
+                size: *size,
+                allocations: log[*start..end].to_vec(),
+            })
+            // Nothing is allocated after the last section unless instantiating does.
+            .filter(|section| section.name != INSTANTIATE || !section.allocations.is_empty())
+            .collect();
+        Heap { sections }
     }
 }
 
@@ -215,7 +287,15 @@ impl WasmStream for Bytes<'_> {
         if self.pos >= self.data.len() {
             return Ok(None);
         }
-        let end = (self.pos + CHUNK).min(self.data.len());
+        while let Some((start, name)) = self.sections.get(self.next)
+            && *start <= self.pos
+        {
+            let (name, size) = (name.clone(), self.section_start(self.next + 1) - start);
+            self.mark(&name, size);
+            self.next += 1;
+        }
+        let boundary = self.section_start(self.next);
+        let end = (self.pos + CHUNK).min(self.data.len()).min(boundary);
         let mut chunk = self.data[self.pos..end].to_vec();
         self.pos = end;
         // SAFETY: `chunk` moves into `lent` below and is not touched until the decoder

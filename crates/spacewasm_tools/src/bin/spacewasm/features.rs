@@ -2,7 +2,7 @@
 
 use crate::Outcome;
 use crate::args::FeaturesArgs;
-use spacewasm_cli::{PROPOSALS, rustc_target_features, wasm_opt_flags};
+use spacewasm_tools::{PROPOSALS, rustc_target_features, wasm_opt_flags};
 
 pub fn run(args: &FeaturesArgs) -> Outcome {
     if args.wasm_opt {

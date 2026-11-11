@@ -56,7 +56,7 @@ trace:
 	fi
 	@echo "Converting seed to Wasm and tracing execution (release mode)..."
 	@cargo run --release -p spacewasm-fuzzing --bin seed_to_wasm --target $(SPACEWASM_TARGET) -- $(if $(TARGET),--target $(TARGET)) $(CRASH) --stdout 2>/dev/null | \
-		cargo run --release -p spacewasm_cli --features strict-assertions --bin spacewasm --target $(SPACEWASM_TARGET) -- trace --limit $(or $(LIMIT),50)
+		cargo run --release -p spacewasm_tools --features strict-assertions --bin spacewasm --target $(SPACEWASM_TARGET) -- trace --limit $(or $(LIMIT),50)
 
 # Convert seed to Wasm and trace execution (debug mode with ASAN)
 trace-debug:
@@ -67,7 +67,7 @@ trace-debug:
 	fi
 	@echo "Converting seed to Wasm and tracing execution (debug mode with ASAN)..."
 	@cargo run -p spacewasm-fuzzing --bin seed_to_wasm --target $(SPACEWASM_TARGET) -- $(if $(TARGET),--target $(TARGET)) $(CRASH) --stdout 2>/dev/null | \
-		RUSTFLAGS="-Zsanitizer=address" cargo +nightly run --target $(SPACEWASM_TARGET) -p spacewasm_cli --features strict-assertions --bin spacewasm -- trace --limit $(or $(LIMIT),50)
+		RUSTFLAGS="-Zsanitizer=address" cargo +nightly run --target $(SPACEWASM_TARGET) -p spacewasm_tools --features strict-assertions --bin spacewasm -- trace --limit $(or $(LIMIT),50)
 
 # Convert fuzzer seed to Wasm
 seed-to-wasm:
@@ -89,7 +89,7 @@ trace-wasm:
 		echo "Usage: make trace-wasm WASM=file.wasm [LIMIT=50]"; \
 		exit 1; \
 	fi
-	cargo run --release -p spacewasm_cli --features strict-assertions --bin spacewasm --target $(SPACEWASM_TARGET) -- trace $(WASM) --limit $(or $(LIMIT),200)
+	cargo run --release -p spacewasm_tools --features strict-assertions --bin spacewasm --target $(SPACEWASM_TARGET) -- trace $(WASM) --limit $(or $(LIMIT),200)
 
 # Trace Wasm file execution (debug mode with ASAN)
 trace-wasm-debug:
@@ -98,7 +98,7 @@ trace-wasm-debug:
 		echo "Usage: make trace-wasm-debug WASM=file.wasm [LIMIT=50]"; \
 		exit 1; \
 	fi
-	RUSTFLAGS="-Zsanitizer=address" cargo run --target $(SPACEWASM_TARGET) -p spacewasm_cli --features strict-assertions --bin spacewasm -- trace $(WASM) --limit $(or $(LIMIT),200)
+	RUSTFLAGS="-Zsanitizer=address" cargo run --target $(SPACEWASM_TARGET) -p spacewasm_tools --features strict-assertions --bin spacewasm -- trace $(WASM) --limit $(or $(LIMIT),200)
 
 # Regenerate the C API header from the Rust source with cbindgen. The header is
 # written as a side effect of building spacewasm_c_api with the `codegen` feature.

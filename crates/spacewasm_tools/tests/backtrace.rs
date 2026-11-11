@@ -8,7 +8,7 @@ use spacewasm::{
     CodeBuilder, CompilerOptions, Engine, ExportDesc, HostFunction, HostFunctionBreak, HostModule,
     Interpreter, InterpreterResult, InterpreterRunner, PageAllocator, Ref, WasmRef,
 };
-use spacewasm_cli::{DecoderLimits, Symbols, host_modules_for, ir_map, resolve_pcs, split};
+use spacewasm_tools::{DecoderLimits, Symbols, host_modules_for, ir_map, resolve_pcs, split};
 use std::ops::ControlFlow;
 use std::path::Path;
 
@@ -184,7 +184,7 @@ fn an_optimised_module_resolves_the_same_lines() {
         return;
     }
     let scratch = tempdir();
-    let optimizer = spacewasm_cli::Optimizer {
+    let optimizer = spacewasm_tools::Optimizer {
         program: "wasm-opt".into(),
         // `-O1`, not `-Os`: the latter inlines `f` and `g` into `main`, which is correct
         // but leaves one frame and nothing to check the walk against.
@@ -206,7 +206,7 @@ fn an_optimised_module_resolves_the_same_lines() {
 }
 
 fn tempdir() -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!("spacewasm-cli-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("spacewasm-tools-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }

@@ -5,6 +5,9 @@
 //!   [`wasm_opt_flags`] / [`rustc_target_features`] holding those tools to exactly them
 //! * [`validate`] — load a module as the flight interpreter would, and name the proposal
 //!   when it uses one that is missing
+//! * [`Heap`] — what that load allocated on the global heap, section by section, and
+//!   [`Heap::on_pages`] whether it fits a flight heap's pages. Recorded when the binary's
+//!   global allocator is a [`HeapRecorder`]
 //!
 //! A module flies without debug info, and usually after `wasm-opt`, whose optimiser
 //! leaves the DWARF unusable anyway. So the linked module is split in two:
@@ -32,6 +35,7 @@ pub use spacewasm;
 mod error;
 mod features;
 mod format;
+mod heap;
 mod hosts;
 mod ir;
 mod link;
@@ -45,6 +49,7 @@ mod validate;
 pub use error::{Error, Result};
 pub use features::{PROPOSALS, Proposal, lowering_flags, rustc_target_features, wasm_opt_flags};
 pub use format::{MODULE_SECTION, OFFSETS_SECTION, Symbols};
+pub use heap::{Heap, HeapError, HeapPages, HeapRecorder, PageUse, SectionHeap};
 pub use hosts::host_modules_for;
 pub use ir::IrMap;
 pub use link::{LinkError, is_link, link, split_file};
