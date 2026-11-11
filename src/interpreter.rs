@@ -271,9 +271,12 @@ pub enum InterpreterBreak {
     Finished,
     /// The program has been aborted
     Trap(TrapReason),
-    /// A host function has requested the interpreter to pause; it declared this result
-    /// type, which [`Engine::resume`] must supply
-    Pause(ResultType),
+    /// A host function has requested the interpreter to pause; it recorded its declared
+    /// result type in [`Engine::host_pause`].
+    ///
+    /// Kept data-free: the interpreter returns `Result<(), InterpreterBreak>` from every
+    /// instruction handler, and widening this enum slows down the whole dispatch loop.
+    Pause,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -412,14 +415,13 @@ impl<T: IrVisitor<State = Engine, Error = InterpreterBreak>> InterpreterRunner f
                     state.jumped = false;
                     return InterpreterResult::Trap(trap_reason);
                 }
-                Err(InterpreterBreak::Pause(result)) => {
+                Err(InterpreterBreak::Pause) => {
                     // Paused on the call itself: only `resume` moves past it, once the
                     // host call's result is on the stack. Until then the PC, and a
                     // backtrace from it, names the call that paused.
-                    state.host_pause = Some(HostPause {
-                        result,
-                        resume_pc: state.pc,
-                    });
+                    if let Some(pause) = &mut state.host_pause {
+                        pause.resume_pc = state.pc;
+                    }
                     state.pc = instruction_pc;
                     return InterpreterResult::Pause;
                 }
@@ -1602,9 +1604,13 @@ impl IrVisitor for Interpreter {
 
                 Ok(())
             }
-            // `run` records the pause, and leaves the PC on this call.
+            // `run` fills in where to resume, and leaves the PC on this call.
             ControlFlow::Break(HostFunctionBreak::Pause) => {
-                Err(InterpreterBreak::Pause(f.returns()))
+                state.host_pause = Some(HostPause {
+                    result: f.returns(),
+                    resume_pc: JumpTarget::SENTINEL,
+                });
+                Err(InterpreterBreak::Pause)
             }
             ControlFlow::Break(HostFunctionBreak::Trap) => {
                 Err(InterpreterBreak::Trap(TrapReason::Host))
