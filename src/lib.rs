@@ -61,6 +61,9 @@ pub(crate) use ir_reader::*;
 mod engine;
 pub use engine::*;
 
+mod backtrace;
+pub use backtrace::*;
+
 #[cfg(any(test, kani))]
 pub mod test_support {
     use crate::alloc::{AllocError, Allocator};

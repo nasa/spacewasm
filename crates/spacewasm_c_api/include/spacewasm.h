@@ -175,7 +175,10 @@ enum spacewasm_hostcall_result_t
      */
     SPACEWASM_TRAP = 2,
     /*
-     Pause the interpreter (cooperative yield).
+     Pause the interpreter (cooperative yield). `spacewasm_run` returns
+     `SPACEWASM_RUN_PAUSE`, and keeps returning it without running
+     anything, until the result is supplied with `spacewasm_resume` or
+     `spacewasm_resume_value`. Until then the PC is the calling instruction.
      */
     SPACEWASM_PAUSE = 3,
 };
@@ -748,7 +751,12 @@ spacewasm_status_t spacewasm_invoke(struct spacewasm_t *engine,
 
 /*
  Run the pending invocation for up to `fuel` units of work, writing any trap
- to `out_trap`. Returns whether the call finished, trapped, or ran out of fuel.
+ to `out_trap`. Returns whether the call finished, trapped, paused, or ran out
+ of fuel.
+
+ A paused engine runs nothing and returns
+ [`spacewasm_run_status_t::SPACEWASM_RUN_PAUSE`] again until the host call's
+ result is supplied with [`spacewasm_resume`] or [`spacewasm_resume_value`].
 
  # Safety
  `engine` must be live; `out_trap` null or valid.
@@ -819,34 +827,49 @@ spacewasm_status_t spacewasm_get_result(struct spacewasm_t *engine,
                                         struct spacewasm_value_t *out);
 
 /*
- Write the engine's current IR program counter to `out_pc`.
+ Write the engine's call stack, as it stands between [`spacewasm_run`] calls,
+ to `out_pcs`, innermost first, and its depth to `out_len`.
 
- While a call is in progress (paused or out of fuel) this is the address of
- the next instruction to execute. The value is an address into the IR of
- every module loaded onto this engine, so mapping it back to Wasm requires an
- IR map built from the same modules, loaded in the same order, with the same
- compiler options.
+ Each entry is an IR program counter: an address into the IR of every module
+ loaded onto this engine. Mapping it back to Wasm requires an IR map built
+ from the same modules, loaded in the same order, with the same compiler
+ options.
 
- Returns [`spacewasm_status_t::SPACEWASM_ERR_WRONG_STATE`] if the engine is
- idle. Must not be called while [`spacewasm_run`] is executing; from inside a
- host function use [`spacewasm_caller_pc`] instead.
+ - Entry 0 is the instruction the engine is at:
+   - out of fuel (or invoked and not yet run), the next instruction to
+     execute;
+   - paused, the `call` / `call_indirect` instruction that called the pausing
+     host function, until [`spacewasm_resume`] moves past it;
+   - trapped, the faulting instruction. The trap leaves the stack in place, so
+     the backtrace remains until the next [`spacewasm_invoke`] or
+     [`spacewasm_reset`].
+ - Each later entry is the PC of the `call` / `call_indirect` instruction in
+   the next-outer function. It is the address of the call instruction itself,
+   not a return address, so a symbol lookup must not subtract one.
+
+ The last entry is in the function passed to [`spacewasm_invoke`].
+
+ A host function that wants its own call stack returns
+ [`spacewasm_hostcall_result_t::SPACEWASM_PAUSE`]: entry 0 is then its
+ `call`, and the embedder resumes once it has read the backtrace.
+
+ Writes at most `capacity` entries. `*out_len` is always the full depth; if it
+ is larger than `capacity`, the innermost `capacity` entries are written and
+ [`spacewasm_status_t::SPACEWASM_ERR_CAPACITY`] is returned. Pass
+ `capacity == 0` (with a null `out_pcs`) to query the depth only.
+
+ Returns [`spacewasm_status_t::SPACEWASM_ERR_WRONG_STATE`] if there is no call
+ stack: nothing has been invoked since the last reset, or the last call
+ finished. Must not be called while [`spacewasm_run`] is executing.
 
  # Safety
- `engine` must be live; `out_pc` valid.
+ `engine` must be live; `out_pcs` valid for `capacity` entries (or null if
+ `capacity` is 0); `out_len` valid.
  */
-spacewasm_status_t spacewasm_pc(const struct spacewasm_t *engine, uint32_t *out_pc);
-
-/*
- Write the IR program counter of the instruction that caused the last trap
- to `out_pc`. See [`spacewasm_pc`] for how to interpret the value.
-
- Returns [`spacewasm_status_t::SPACEWASM_ERR_NOT_FOUND`] if no trap has
- occurred since the last [`spacewasm_invoke`] or [`spacewasm_reset`].
-
- # Safety
- `engine` must be live; `out_pc` valid.
- */
-spacewasm_status_t spacewasm_trap_pc(const struct spacewasm_t *engine, uint32_t *out_pc);
+spacewasm_status_t spacewasm_backtrace(const struct spacewasm_t *engine,
+                                       uint32_t *out_pcs,
+                                       size_t capacity,
+                                       size_t *out_len);
 
 /*
  Destroy an engine and free its resources. No-op on null.
@@ -888,16 +911,6 @@ spacewasm_status_t spacewasm_mem_write(struct spacewasm_caller_t *caller,
  `caller` must be a live caller handle; `out_pages` must be a valid pointer.
  */
 spacewasm_status_t spacewasm_mem_size(struct spacewasm_caller_t *caller, uint32_t *out_pages);
-
-/*
- Write the IR program counter of the `call` instruction that invoked the
- current host function to `out_pc`. Intended for use from within a host
- function. See [`spacewasm_pc`] for how to interpret the value.
-
- # Safety
- `caller` must be a live caller handle; `out_pc` must be a valid pointer.
- */
-spacewasm_status_t spacewasm_caller_pc(struct spacewasm_caller_t *caller, uint32_t *out_pc);
 
 /*
  Handle a spacewasm Rust panic. This function should not return

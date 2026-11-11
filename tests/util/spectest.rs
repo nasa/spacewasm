@@ -724,7 +724,7 @@ fn invoke_function(
     test_log: Rc<RefCell<LimitedVec<String>>>,
 ) -> Result<Option<Value>, InterpreterResult> {
     // Check if the engine is paused from a previous invocation
-    if ctx.engine.host_pause_result.is_some() {
+    if ctx.engine.is_paused() {
         invoke_function_resume(ctx, args, test_log)
     } else {
         // Normal invocation path

@@ -24,11 +24,13 @@ jobs:
           echo "Releasing version: $tag_version"
           # Replace the 0.0.0 placeholder under [workspace.package] with the tag version.
           sed -i 's/^version = "0\.0\.0"$/version = "'"$tag_version"'"/' Cargo.toml
-          # Pin spacewasm_c_api's dependency on spacewasm to the exact tag version.
-          # Its manifest carries a `version = "=0.0.0"` placeholder for this.
-          sed -i 's/version = "=0\.0\.0"/version = "='"$tag_version"'"/' crates/spacewasm_c_api/Cargo.toml
+          # Pin spacewasm_c_api's and spacewasm_cli's dependency on spacewasm to the
+          # exact tag version. Their manifests carry a `version = "=0.0.0"`
+          # placeholder for this.
+          sed -i 's/version = "=0\.0\.0"/version = "='"$tag_version"'"/' \
+            crates/spacewasm_c_api/Cargo.toml crates/spacewasm_cli/Cargo.toml
           # Fail if any placeholder was not found / not replaced.
-          for pkg in spacewasm spacewasm_c_api; do
+          for pkg in spacewasm spacewasm_c_api spacewasm_cli; do
             crate_version=$(cargo metadata --no-deps --format-version 1 \
               | jq -r '.packages[] | select(.name == "'"$pkg"'") | .version')
             if [ "$crate_version" != "$tag_version" ]; then
@@ -36,12 +38,14 @@ jobs:
               exit 1
             fi
           done
-          dep_version=$(cargo metadata --no-deps --format-version 1 \
-            | jq -r '.packages[] | select(.name == "spacewasm_c_api") | .dependencies[] | select(.name == "spacewasm") | .req')
-          if [ "$dep_version" != "=$tag_version" ]; then
-            echo "::error::spacewasm_c_api's spacewasm dependency resolves to '$dep_version', expected '=$tag_version'. Is the =0.0.0 placeholder still present?"
-            exit 1
-          fi
+          for pkg in spacewasm_c_api spacewasm_cli; do
+            dep_version=$(cargo metadata --no-deps --format-version 1 \
+              | jq -r '.packages[] | select(.name == "'"$pkg"'") | .dependencies[] | select(.name == "spacewasm") | .req')
+            if [ "$dep_version" != "=$tag_version" ]; then
+              echo "::error::$pkg's spacewasm dependency resolves to '$dep_version', expected '=$tag_version'. Is the =0.0.0 placeholder still present?"
+              exit 1
+            fi
+          done
 
       - name: Install WABT (WebAssembly Binary Toolkit)
         uses: ./.github/actions/install-wabt
@@ -68,6 +72,16 @@ jobs:
         # panics are not supported without std" for this no_std `panic = "abort"`
         # staticlib/cdylib.
         run: cargo publish -p spacewasm_c_api --allow-dirty --no-verify
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      - name: Publish spacewasm_cli to crates.io
+        # Published after spacewasm since it depends on the exact matching
+        # release, with the `ir-map` feature. Unlike spacewasm_c_api it is an
+        # ordinary `std` crate, so cargo's verify build runs: it builds the
+        # packaged crate against the spacewasm just published.
+        # --allow-dirty: the injected version is an uncommitted working-tree change.
+        run: cargo publish -p spacewasm_cli --allow-dirty
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 

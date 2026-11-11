@@ -78,7 +78,7 @@ strip = false
 codegen-units = 1
 panic = "abort"
 
-[profile.release.package.spacewasm_bench]
+[profile.release.package.bench]
 opt-level = "s"
 codegen-units = 1
 

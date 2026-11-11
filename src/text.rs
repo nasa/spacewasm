@@ -270,6 +270,23 @@ pub struct CompilerOptions {
     pub pc_ir_callback: Option<fn(pc: JumpTarget, wasm_offset: usize)>,
 }
 
+impl CompilerOptions {
+    /// Create options with every optional hook disabled.
+    pub const fn new(
+        allow_memory_grow: bool,
+        max_backpatch_iterations: Option<u32>,
+        max_code_pages: usize,
+    ) -> Self {
+        CompilerOptions {
+            allow_memory_grow,
+            max_backpatch_iterations,
+            max_code_pages,
+            #[cfg(feature = "ir-map")]
+            pc_ir_callback: None,
+        }
+    }
+}
+
 /// Low-level builder for paged IR code.
 ///
 /// Manages allocation of pages and writing 16-bit words to the current position.

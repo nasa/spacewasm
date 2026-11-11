@@ -225,6 +225,35 @@ static TRAP_WASM: &[u8] = &[
     0x00, 0x0a, 0x05, 0x01, 0x03, 0x00, 0x00, 0x0b,
 ];
 
+/// `main(x)` calls `f`, which reaches `g` through `call_indirect`. With a
+/// non-zero `x`, `g` calls the host function `env.probe`; with zero it
+/// executes `unreachable`. Exercises the backtrace API through three frames.
+///
+/// ```wat
+/// (module
+///   (type $t_i (func (param i32)))
+///   (import "env" "probe" (func $probe))
+///   (table 1 funcref)
+///   (elem (i32.const 0) $g)
+///   (func $main (export "main") (param i32) local.get 0 call $f)
+///   (func $f (param i32) (local i32 i64)
+///     local.get 0 i32.const 0 call_indirect (type $t_i))
+///   (func $g (param i32)
+///     local.get 0 if call $probe else unreachable end))
+/// ```
+#[rustfmt::skip]
+static CHAIN_WASM: &[u8] = &[
+    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x60,
+    0x01, 0x7f, 0x00, 0x60, 0x00, 0x00, 0x02, 0x0d, 0x01, 0x03, 0x65, 0x6e,
+    0x76, 0x05, 0x70, 0x72, 0x6f, 0x62, 0x65, 0x00, 0x01, 0x03, 0x04, 0x03,
+    0x00, 0x00, 0x00, 0x04, 0x04, 0x01, 0x70, 0x00, 0x01, 0x07, 0x08, 0x01,
+    0x04, 0x6d, 0x61, 0x69, 0x6e, 0x00, 0x01, 0x09, 0x07, 0x01, 0x00, 0x41,
+    0x00, 0x0b, 0x01, 0x03, 0x0a, 0x22, 0x03, 0x06, 0x00, 0x20, 0x00, 0x10,
+    0x02, 0x0b, 0x0d, 0x02, 0x01, 0x7f, 0x01, 0x7e, 0x20, 0x00, 0x41, 0x00,
+    0x11, 0x00, 0x00, 0x0b, 0x0b, 0x00, 0x20, 0x00, 0x04, 0x40, 0x10, 0x00,
+    0x05, 0x00, 0x0b, 0x0b,
+];
+
 /// A module with a `start` function that writes `42` to linear memory at offset
 /// 0, exporting `memory` and a `get` function that reads it back.
 #[rustfmt::skip]
@@ -2072,11 +2101,10 @@ fn trap_records_pc_and_returns_to_idle() {
         status::SPACEWASM_OK
     );
 
-    let mut pc = 0u32;
     assert_eq!(
-        unsafe { spacewasm_trap_pc(store, &mut pc) },
-        status::SPACEWASM_ERR_NOT_FOUND,
-        "no trap yet"
+        backtrace_of(store).0,
+        status::SPACEWASM_ERR_WRONG_STATE,
+        "nothing invoked yet"
     );
 
     // Before running, the PC is the function entry: the `unreachable` itself.
@@ -2084,11 +2112,8 @@ fn trap_records_pc_and_returns_to_idle() {
         unsafe { spacewasm_invoke(store, idx, func, core::ptr::null(), 0) },
         status::SPACEWASM_OK
     );
-    let mut entry_pc = 0u32;
-    assert_eq!(
-        unsafe { spacewasm_pc(store, &mut entry_pc) },
-        status::SPACEWASM_OK
-    );
+    let (st, entry) = backtrace_of(store);
+    assert_eq!((st, entry.len()), (status::SPACEWASM_OK, 1));
 
     let mut trap = spacewasm_trap_t::SPACEWASM_TRAP_NONE;
     assert_eq!(
@@ -2097,41 +2122,21 @@ fn trap_records_pc_and_returns_to_idle() {
     );
 
     // The trap PC points at the faulting instruction, not the one after it.
-    assert_eq!(
-        unsafe { spacewasm_trap_pc(store, &mut pc) },
-        status::SPACEWASM_OK
-    );
-    assert_eq!(pc, entry_pc);
+    assert_eq!(backtrace_of(store), (status::SPACEWASM_OK, entry.clone()));
 
-    // The engine is idle again: no live PC, and it can't be run past the trap.
-    assert_eq!(
-        unsafe { spacewasm_pc(store, &mut pc) },
-        status::SPACEWASM_ERR_WRONG_STATE
-    );
+    // The engine is idle again, and can't be run past the trap.
     assert_eq!(
         unsafe { spacewasm_run(store, 64, &mut trap) },
         spacewasm_run_status_t::SPACEWASM_RUN_TRAP
     );
     assert_eq!(trap, spacewasm_trap_t::SPACEWASM_TRAP_NONE);
 
-    // A new call can be invoked without a reset, and clears the trap PC.
+    // A new call can be invoked without a reset, and its backtrace replaces the trap's.
     assert_eq!(
         unsafe { spacewasm_invoke(store, idx, func, core::ptr::null(), 0) },
         status::SPACEWASM_OK
     );
-    assert_eq!(
-        unsafe { spacewasm_trap_pc(store, &mut pc) },
-        status::SPACEWASM_ERR_NOT_FOUND
-    );
-
-    assert_eq!(
-        unsafe { spacewasm_pc(core::ptr::null(), &mut pc) },
-        status::SPACEWASM_ERR_NULL_ARG
-    );
-    assert_eq!(
-        unsafe { spacewasm_trap_pc(store, core::ptr::null_mut()) },
-        status::SPACEWASM_ERR_NULL_ARG
-    );
+    assert_eq!(backtrace_of(store), (status::SPACEWASM_OK, entry));
 
     unsafe {
         spacewasm_destroy(store);
@@ -2273,11 +2278,13 @@ fn run_slices_out_of_fuel_then_resumes() {
             spacewasm_run_status_t::SPACEWASM_RUN_OUT_OF_FUEL => {
                 saw_out_of_fuel = true;
                 let mut pc = 0u32;
+                let mut len = 0usize;
                 assert_eq!(
-                    unsafe { spacewasm_pc(store, &mut pc) },
+                    unsafe { spacewasm_backtrace(store, &mut pc, 1, &mut len) },
                     status::SPACEWASM_OK,
-                    "pc is readable between run slices"
+                    "backtrace is readable between run slices"
                 );
+                assert_eq!(len, 1);
             }
             other => break other,
         }
@@ -2587,25 +2594,165 @@ unsafe extern "C" fn mem_probe(
         status::SPACEWASM_ERR_NULL_ARG
     );
 
-    // The caller PC is a live IR address (not the idle sentinel).
-    let mut pc = u32::MAX;
-    assert_eq!(
-        unsafe { spacewasm_caller_pc(caller, &mut pc) },
-        status::SPACEWASM_OK
-    );
-    assert_ne!(pc, u32::MAX, "caller pc is set during a host call");
-    assert_eq!(
-        unsafe { spacewasm_caller_pc(core::ptr::null_mut(), &mut pc) },
-        status::SPACEWASM_ERR_NULL_ARG
-    );
-    assert_eq!(
-        unsafe { spacewasm_caller_pc(caller, core::ptr::null_mut()) },
-        status::SPACEWASM_ERR_NULL_ARG
-    );
-
     let arg = unsafe { (*params).u.i32_ };
     unsafe { *out = i32_val(arg + 1) };
     spacewasm_hostcall_result_t::SPACEWASM_CONTINUE_SOME
+}
+
+/// Host implementation of `env.probe`: pauses, so the embedder can read the
+/// backtrace of the call that reached it.
+unsafe extern "C" fn backtrace_probe(
+    _caller: *mut SpacewasmCaller,
+    _userdata: *mut c_void,
+    _params: *const spacewasm_value_t,
+    _n: usize,
+    _out: *mut spacewasm_value_t,
+) -> spacewasm_hostcall_result_t {
+    spacewasm_hostcall_result_t::SPACEWASM_PAUSE
+}
+
+/// `spacewasm_backtrace` into a buffer of 8, as `(status, entries)`.
+fn backtrace_of(store: *const CEngine) -> (spacewasm_status_t, std::vec::Vec<u32>) {
+    let mut pcs = [u32::MAX; 8];
+    let mut len = 0usize;
+    let st = unsafe { spacewasm_backtrace(store, pcs.as_mut_ptr(), pcs.len(), &mut len) };
+    (st, pcs[..len.min(pcs.len())].to_vec())
+}
+
+#[test]
+fn backtrace_through_host_call_and_trap() {
+    let _guard = ALLOC_LOCK.lock().unwrap();
+    ensure_global_allocator();
+
+    let mut host = core::mem::MaybeUninit::<spacewasm_host_t>::uninit();
+    assert_eq!(
+        unsafe { spacewasm_host_new(1, host.as_mut_ptr()) },
+        status::SPACEWASM_OK
+    );
+    let mut hmod = 0u32;
+    unsafe {
+        assert_eq!(
+            spacewasm_add_host_module(host.as_mut_ptr(), c"env".as_ptr(), 1, 0, &mut hmod),
+            status::SPACEWASM_OK
+        );
+        assert_eq!(
+            spacewasm_add_host_function(
+                host.as_mut_ptr(),
+                hmod,
+                c"probe".as_ptr(),
+                c"".as_ptr(),
+                c"".as_ptr(),
+                Some(backtrace_probe),
+                core::ptr::null_mut(),
+            ),
+            status::SPACEWASM_OK
+        );
+    }
+    let mut store: *mut CEngine = core::ptr::null_mut();
+    assert_eq!(
+        unsafe { spacewasm_new(host.as_mut_ptr(), 1024, 1, opts(256), &mut store) },
+        status::SPACEWASM_OK
+    );
+    let alloc = new_guest_allocator();
+    let idx = load_module_onto(alloc, store, c"main", CHAIN_WASM, 0).expect("load");
+    let mut func = 0u32;
+    assert_eq!(
+        unsafe { spacewasm_find_export_func(store, idx, c"main".as_ptr(), &mut func) },
+        status::SPACEWASM_OK
+    );
+
+    // Idle: no call stack.
+    assert_eq!(backtrace_of(store).0, status::SPACEWASM_ERR_WRONG_STATE);
+
+    // Before running, the backtrace is just the entry PC.
+    let params = [i32_val(1)];
+    assert_eq!(
+        unsafe { spacewasm_invoke(store, idx, func, params.as_ptr(), params.len()) },
+        status::SPACEWASM_OK
+    );
+    let (st, entry) = backtrace_of(store);
+    assert_eq!((st, entry.len()), (status::SPACEWASM_OK, 1));
+
+    // Paused in the host call: g <- f <- main, innermost the `call` to the host.
+    let mut trap = spacewasm_trap_t::SPACEWASM_TRAP_NONE;
+    assert_eq!(
+        run_to_completion(store, &mut trap),
+        spacewasm_run_status_t::SPACEWASM_RUN_PAUSE
+    );
+    let (st, paused) = backtrace_of(store);
+    assert_eq!((st, paused.len()), (status::SPACEWASM_OK, 3), "{paused:x?}");
+    assert!(!paused.contains(&entry[0]));
+
+    // Truncated: only the innermost entry is written, but the full depth is reported.
+    let mut one = [u32::MAX; 2];
+    let mut len = 0usize;
+    assert_eq!(
+        unsafe { spacewasm_backtrace(store, one.as_mut_ptr(), 1, &mut len) },
+        status::SPACEWASM_ERR_CAPACITY
+    );
+    assert_eq!((len, one), (3, [paused[0], u32::MAX]));
+    // Depth only.
+    assert_eq!(
+        unsafe { spacewasm_backtrace(store, core::ptr::null_mut(), 0, &mut len) },
+        status::SPACEWASM_ERR_CAPACITY
+    );
+    assert_eq!(len, 3);
+
+    // Finished: no call stack.
+    assert_eq!(unsafe { spacewasm_resume(store) }, status::SPACEWASM_OK);
+    assert_eq!(
+        run_to_completion(store, &mut trap),
+        spacewasm_run_status_t::SPACEWASM_RUN_FINISHED
+    );
+    assert_eq!(backtrace_of(store).0, status::SPACEWASM_ERR_WRONG_STATE);
+
+    // Trap in g: same callers, innermost the faulting instruction. It survives
+    // the trap's reset to idle.
+    let params = [i32_val(0)];
+    assert_eq!(
+        unsafe { spacewasm_invoke(store, idx, func, params.as_ptr(), params.len()) },
+        status::SPACEWASM_OK
+    );
+    assert_eq!(
+        run_to_completion(store, &mut trap),
+        spacewasm_run_status_t::SPACEWASM_RUN_TRAP
+    );
+    assert_eq!(trap, spacewasm_trap_t::SPACEWASM_TRAP_UNREACHABLE);
+    let (st, trapped) = backtrace_of(store);
+    assert_eq!(
+        (st, trapped.len()),
+        (status::SPACEWASM_OK, 3),
+        "{trapped:x?}"
+    );
+    assert_ne!(
+        trapped[0], paused[0],
+        "faulting instruction, not the host call"
+    );
+    assert_eq!(trapped[1..], paused[1..], "same call sites in f and main");
+
+    // Null arguments.
+    let mut pcs = [0u32; 8];
+    assert_eq!(
+        unsafe { spacewasm_backtrace(core::ptr::null(), pcs.as_mut_ptr(), 8, &mut len) },
+        status::SPACEWASM_ERR_NULL_ARG
+    );
+    assert_eq!(
+        unsafe { spacewasm_backtrace(store, pcs.as_mut_ptr(), 8, core::ptr::null_mut()) },
+        status::SPACEWASM_ERR_NULL_ARG
+    );
+    assert_eq!(
+        unsafe { spacewasm_backtrace(store, core::ptr::null_mut(), 8, &mut len) },
+        status::SPACEWASM_ERR_NULL_ARG
+    );
+
+    // Reset clears it.
+    assert_eq!(unsafe { spacewasm_reset(store) }, status::SPACEWASM_OK);
+    assert_eq!(backtrace_of(store).0, status::SPACEWASM_ERR_WRONG_STATE);
+
+    unsafe {
+        spacewasm_destroy(store);
+        spacewasm_allocator_destroy(alloc);
+    }
 }
 
 #[test]
@@ -3215,6 +3362,28 @@ fn pause_and_resume_with_value() {
         spacewasm_run_status_t::SPACEWASM_RUN_PAUSE,
         "should pause"
     );
+
+    // GHSA-hm35-gr3g-4jxx: running again without resuming must not finish the
+    // guest without the host result. It stays paused, on the call.
+    let mut paused_at = [0u32; 1];
+    let mut depth = 0usize;
+    assert_eq!(
+        unsafe { spacewasm_backtrace(store, paused_at.as_mut_ptr(), 1, &mut depth) },
+        status::SPACEWASM_OK
+    );
+    for _ in 0..2 {
+        assert_eq!(
+            unsafe { spacewasm_run(store, 10000, &mut trap) },
+            spacewasm_run_status_t::SPACEWASM_RUN_PAUSE,
+            "run while paused"
+        );
+        let mut pc = [0u32; 1];
+        assert_eq!(
+            unsafe { spacewasm_backtrace(store, pc.as_mut_ptr(), 1, &mut depth) },
+            status::SPACEWASM_OK
+        );
+        assert_eq!(pc, paused_at, "run while paused moved the PC");
+    }
 
     // Resume with value 99
     assert_eq!(

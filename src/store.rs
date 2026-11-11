@@ -165,8 +165,9 @@ impl Engine {
             module: ModuleRef(0),
             store,
             result: None,
-            host_pause_result: None,
+            host_pause: None,
             trap_pc: None,
+            trap_fp: 0,
         })
     }
 
@@ -176,8 +177,9 @@ impl Engine {
         self.fp = 0;
         self.jumped = false;
         self.result = None;
-        self.host_pause_result = None;
+        self.host_pause = None;
         self.trap_pc = None;
+        self.trap_fp = 0;
         self.clear_memory();
         self.clear_table();
     }
@@ -201,6 +203,13 @@ impl Engine {
     #[inline(always)]
     pub fn is_idle(&self) -> bool {
         self.pc == JumpTarget::SENTINEL
+    }
+
+    /// Returns `true` if a host function has paused the engine and it is waiting on
+    /// [`Engine::resume`]. Running a paused engine executes nothing.
+    #[inline(always)]
+    pub fn is_paused(&self) -> bool {
+        self.host_pause.is_some()
     }
 
     /// Returns `true` if the module at `module_ref` declares a start function

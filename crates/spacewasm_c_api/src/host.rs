@@ -51,7 +51,10 @@ pub enum spacewasm_hostcall_result_t {
     SPACEWASM_CONTINUE_SOME = 1,
     /// Trap the interpreter.
     SPACEWASM_TRAP = 2,
-    /// Pause the interpreter (cooperative yield).
+    /// Pause the interpreter (cooperative yield). `spacewasm_run` returns
+    /// `SPACEWASM_RUN_PAUSE`, and keeps returning it without running
+    /// anything, until the result is supplied with `spacewasm_resume` or
+    /// `spacewasm_resume_value`. Until then the PC is the calling instruction.
     SPACEWASM_PAUSE = 3,
 }
 
@@ -205,25 +208,5 @@ pub unsafe fn mem_size(
     }
     // SAFETY: out_pages is non-null and valid per the contract.
     unsafe { *out_pages = state.memory.size() };
-    crate::status::SPACEWASM_OK
-}
-
-/// Report the IR program counter of the `call` instruction that invoked the
-/// current host function, from within a host callback.
-///
-/// # Safety
-/// `caller` must be a live caller handle; `out_pc` must be a valid pointer.
-pub unsafe fn caller_pc(
-    caller: *const SpacewasmCaller,
-    out_pc: *mut u32,
-) -> crate::status::spacewasm_status_t {
-    let Some(state) = (unsafe { SpacewasmCaller::state(caller) }) else {
-        return crate::status::SPACEWASM_ERR_NULL_ARG;
-    };
-    if out_pc.is_null() {
-        return crate::status::SPACEWASM_ERR_NULL_ARG;
-    }
-    // SAFETY: out_pc is non-null and valid per the contract.
-    unsafe { *out_pc = state.pc.0 };
     crate::status::SPACEWASM_OK
 }

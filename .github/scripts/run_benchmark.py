@@ -74,7 +74,7 @@ def get_coremark(triple, q, shift):
 
     command = [
         *qemu_commands[triple].format(shift=shift, flags=qemu_flags).split(" "),
-        f"{target_dir_of(triple)}/{triple_of(triple)}/release/spacewasm_bench"
+        f"{target_dir_of(triple)}/{triple_of(triple)}/release/bench"
     ]
 
     sys.stderr.write(" ".join(command) + "\n")
@@ -99,7 +99,7 @@ def get_sizes(triple):
 
     out = {}
 
-    command = ["cargo", "readobj", "-q", "--release", "-p", "spacewasm_bench", "--target", triple_of(triple), "--", "--sections"]
+    command = ["cargo", "readobj", "-q", "--release", "-p", "bench", "--target", triple_of(triple), "--", "--sections"]
     proc = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env_of(triple))
 
     sys.stderr.write(" ".join(command) + "\n")
@@ -133,7 +133,7 @@ def get_sizes(triple):
 def get_nm(triple):
     """build target triple and runs cargo nm over it"""
 
-    command = ["cargo", "nm", "-q", "--release", "-p", "spacewasm_bench", "--target", triple_of(triple), "--"]
+    command = ["cargo", "nm", "-q", "--release", "-p", "bench", "--target", triple_of(triple), "--"]
     command += ["--demangle", "-r", "--size-sort"]
     proc = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env_of(triple))
 
