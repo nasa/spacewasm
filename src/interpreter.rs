@@ -273,9 +273,6 @@ pub enum InterpreterBreak {
     Trap(TrapReason),
     /// A host function has requested the interpreter to pause; it recorded its declared
     /// result type in [`Engine::host_pause`].
-    ///
-    /// Kept data-free: the interpreter returns `Result<(), InterpreterBreak>` from every
-    /// instruction handler, and widening this enum slows down the whole dispatch loop.
     Pause,
 }
 
