@@ -881,6 +881,7 @@ impl<'a> TextBuilder<'a> {
         size
     }
 
+    #[inline(never)]
     pub(crate) fn push_stack(&mut self, ty: impl Into<OperandType>) -> Result<(), ValidationError> {
         self.value_stack.push(ty.into())?;
         let l = self.stack_height();
@@ -926,6 +927,7 @@ impl<'a> TextBuilder<'a> {
         }
     }
 
+    #[inline(never)]
     pub(crate) fn pop_stack(
         &mut self,
         expect: impl Into<OperandType>,
