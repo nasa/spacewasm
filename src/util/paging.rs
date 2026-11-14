@@ -246,7 +246,7 @@ impl Page {
             self.allocated = final_offset;
             self.n_allocations += 1;
 
-            Some(aligned_start as *mut u8)
+            Some(self.ptr.with_addr(aligned_start))
         } else {
             None
         }
