@@ -82,56 +82,54 @@ impl<T> Rc<[T]> {
 }
 
 impl<T, A: Allocator + Clone> Rc<[T], A> {
-    /// Creates a new `Rc<[T]>` with uninitialized memory for `len` elements.
-    /// Returns a pointer to the start of the slice data and the Rc.
-    ///
-    /// # Safety
-    /// Caller must initialize all `len` elements before using the Rc.
-    unsafe fn new_uninit_slice_in(
-        alloc: A,
-        len: usize,
-    ) -> Result<(*mut T, Rc<[T], A>), AllocError> {
-        unsafe {
-            let count_layout = core::alloc::Layout::new::<Cell<u32>>();
-            let slice_layout =
-                core::alloc::Layout::array::<T>(len).map_err(|_| AllocError::OutOfMemory)?;
-            let (full_layout, slice_offset) = count_layout
-                .extend(slice_layout)
-                .map_err(|_| AllocError::OutOfMemory)?;
-            let full_layout = full_layout.pad_to_align();
+    /// Creates a new `Rc<[T]>` by calling `init` for each element.
+    pub fn new_slice_in<F>(alloc: A, len: usize, mut init: F) -> Result<Rc<[T], A>, AllocError>
+    where
+        F: FnMut(usize) -> T,
+    {
+        let count_layout = core::alloc::Layout::new::<Cell<u32>>();
+        let slice_layout =
+            core::alloc::Layout::array::<T>(len).map_err(|_| AllocError::OutOfMemory)?;
+        let (full_layout, slice_offset) = count_layout
+            .extend(slice_layout)
+            .map_err(|_| AllocError::OutOfMemory)?;
+        let full_layout = full_layout.pad_to_align();
 
+        unsafe {
             // Allocate new memory for RcInner<[T]>
             let ptr = alloc.alloc(full_layout)?;
 
             // Write the count field (note: count is u32, not usize)
             core::ptr::write(ptr as *mut Cell<u32>, Cell::new(1));
 
-            // Get pointer to the slice data (uninitialized)
-            let slice_ptr = ptr.add(slice_offset) as *mut T;
-
-            // Create the fat pointer for RcInner<[T]>
-            let rc_inner_ptr =
-                core::ptr::slice_from_raw_parts_mut(ptr as *mut (), len) as *mut RcInner<[T]>;
-
-            let rc = Self::from_inner_in(NonNull::new_unchecked(rc_inner_ptr), alloc);
-            Ok((slice_ptr, rc))
-        }
-    }
-
-    /// Creates a new `Rc<[T]>` by calling `init` for each element.
-    pub fn new_slice_in<F>(alloc: A, len: usize, mut init: F) -> Result<Rc<[T], A>, AllocError>
-    where
-        F: FnMut(usize) -> T,
-    {
-        unsafe {
-            let (slice_ptr, rc) = Self::new_uninit_slice_in(alloc, len)?;
+            // Until every element is written the allocation is not a valid
+            // `RcInner<[T]>`, so it is owned by a guard rather than an `Rc`.
+            let mut guard = UninitSliceGuard {
+                ptr,
+                layout: full_layout,
+                slice: ptr.add(slice_offset) as *mut T,
+                init: 0,
+                alloc,
+            };
 
             // Initialize each element
             for i in 0..len {
-                core::ptr::write(slice_ptr.add(i), init(i));
+                core::ptr::write(guard.slice.add(i), init(i));
+                guard.init = i + 1;
             }
 
-            Ok(rc)
+            // Every element is written: hand the allocation over to an `Rc`.
+            let guard = core::mem::ManuallyDrop::new(guard);
+            let alloc = core::ptr::read(&guard.alloc);
+
+            // Create the fat pointer for RcInner<[T]>
+            let rc_inner_ptr =
+                core::ptr::slice_from_raw_parts_mut(guard.ptr as *mut (), len) as *mut RcInner<[T]>;
+
+            Ok(Self::from_inner_in(
+                NonNull::new_unchecked(rc_inner_ptr),
+                alloc,
+            ))
         }
     }
 
@@ -141,6 +139,27 @@ impl<T, A: Allocator + Clone> Rc<[T], A> {
         T: Default,
     {
         Self::new_slice_in(alloc, len, |_| T::default())
+    }
+}
+
+/// Owns a partially initialized slice allocation while [`Rc::new_slice_in`]
+/// fills it. If initialization unwinds, drops the first `init` elements and
+/// frees the allocation.
+struct UninitSliceGuard<T, A: Allocator> {
+    ptr: *mut u8,
+    layout: core::alloc::Layout,
+    slice: *mut T,
+    init: usize,
+    alloc: A,
+}
+
+impl<T, A: Allocator> Drop for UninitSliceGuard<T, A> {
+    fn drop(&mut self) {
+        unsafe {
+            // SAFETY: exactly the first `init` elements have been written.
+            core::ptr::drop_in_place(core::ptr::slice_from_raw_parts_mut(self.slice, self.init));
+            self.alloc.dealloc(self.ptr, self.layout);
+        }
     }
 }
 
@@ -577,6 +596,37 @@ mod tests {
 
         // All 5 elements should have been dropped
         assert_eq!(DROP_COUNT.load(Ordering::SeqCst), 5);
+    }
+
+    #[test]
+    fn test_rc_slice_init_panic_drops_only_written() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        static DROPPED: AtomicUsize = AtomicUsize::new(0);
+
+        // Dropping an element that was never written would read a garbage
+        // `Box` and fail under Miri, or count more than the written prefix.
+        struct Tracked(std::boxed::Box<usize>);
+        impl Drop for Tracked {
+            fn drop(&mut self) {
+                assert!(*self.0 < 3, "dropped an unwritten element");
+                DROPPED.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+
+        DROPPED.store(0, Ordering::SeqCst);
+
+        let result = std::panic::catch_unwind(|| {
+            Rc::new_slice_in(RustSystemAllocator, 8, |i| {
+                if i == 3 {
+                    panic!("init failed");
+                }
+                Tracked(std::boxed::Box::new(i))
+            })
+        });
+
+        assert!(result.is_err());
+        assert_eq!(DROPPED.load(Ordering::SeqCst), 3);
     }
 
     #[test]
