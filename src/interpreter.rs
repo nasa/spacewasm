@@ -395,6 +395,10 @@ impl<T: IrVisitor<State = Engine, Error = InterpreterBreak>> InterpreterRunner f
                     state.pc = JumpTarget::SENTINEL;
                     state.fp = 0;
                     state.jumped = false;
+                    // Drop the call's memory and table aliases so a later module
+                    // can still take unique ownership to import them.
+                    state.clear_memory();
+                    state.clear_table();
                     return InterpreterResult::Trap(trap_reason);
                 }
                 Err(InterpreterBreak::Pause) => {
@@ -407,7 +411,11 @@ impl<T: IrVisitor<State = Engine, Error = InterpreterBreak>> InterpreterRunner f
                     state.pc = instruction_pc;
                     return InterpreterResult::Pause;
                 }
-                Err(InterpreterBreak::Finished) => return InterpreterResult::Finished,
+                Err(InterpreterBreak::Finished) => {
+                    state.clear_memory();
+                    state.clear_table();
+                    return InterpreterResult::Finished;
+                }
             }
         }
 
