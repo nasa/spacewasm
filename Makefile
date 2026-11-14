@@ -3,12 +3,27 @@
 # Target Configuration (auto-detect if not set)
 SPACEWASM_TARGET ?= $(shell rustc -vV | grep 'host:' | cut -d' ' -f2)
 
+# Number of parallel fuzzer workers (libFuzzer -jobs/-workers)
+JOBS ?= 1
+
+# Run a fuzz target. With JOBS > 1, each worker logs to fuzz/logs/<target>/fuzz-<N>.log
+define run_fuzz
+	@if [ "$(JOBS)" -gt 1 ]; then \
+		mkdir -p fuzz/logs/$(1) && cd fuzz/logs/$(1) && \
+		echo "Running $(JOBS) workers, logs in fuzz/logs/$(1)/fuzz-<N>.log" && \
+		cargo +nightly fuzz run --fuzz-dir $(CURDIR)/fuzz $(1) --target $(SPACEWASM_TARGET) -- -jobs=$(JOBS) -workers=$(JOBS); \
+	else \
+		cargo +nightly fuzz run $(1) --target $(SPACEWASM_TARGET); \
+	fi
+endef
+
 # Default target
 help:
 	@echo "SpaceWasm Fuzzing Targets"
 	@echo ""
 	@echo "Configuration:"
 	@echo "  SPACEWASM_TARGET=<triple>   Target architecture (default: $(SPACEWASM_TARGET))"
+	@echo "  JOBS=<n>                    Parallel fuzzer workers (default: 1)"
 	@echo ""
 	@echo "Fuzzing:"
 	@echo "  make fuzz                          Run the no_traps fuzzer"
@@ -24,6 +39,7 @@ help:
 	@echo "  make trace-wasm-debug WASM=<file>  Trace Wasm file (debug with ASAN)"
 	@echo ""
 	@echo "Examples:"
+	@echo "  make fuzz JOBS=18"
 	@echo "  make trace CRASH=fuzz/artifacts/no_traps/crash-abc123"
 	@echo "  make trace-debug CRASH=crash-abc123 LIMIT=100"
 	@echo "  make trace-wasm WASM=output.wasm LIMIT=50"
@@ -36,16 +52,16 @@ help:
 
 # Run fuzzer
 fuzz:
-	cargo +nightly fuzz run no_traps --target $(SPACEWASM_TARGET)
+	$(call run_fuzz,no_traps)
 
 fuzz-validate:
-	cargo +nightly fuzz run validate --target $(SPACEWASM_TARGET)
+	$(call run_fuzz,validate)
 
 fuzz-validate-differential:
-	cargo +nightly fuzz run validate_differential --target $(SPACEWASM_TARGET)
+	$(call run_fuzz,validate_differential)
 
 fuzz-malformed:
-	cargo +nightly fuzz run malformed --target $(SPACEWASM_TARGET)
+	$(call run_fuzz,malformed)
 
 # Convert seed to Wasm and trace execution (release mode)
 trace:
@@ -108,5 +124,5 @@ gen-header:
 
 # Clean fuzzer artifacts
 clean-artifacts:
-	rm -rf fuzz/artifacts/*
+	rm -rf fuzz/artifacts/* fuzz/logs
 	@echo "Cleaned fuzzer artifacts"
