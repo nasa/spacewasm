@@ -227,7 +227,7 @@ make fuzz
 make fuzz-validate-differential
 
 # Analyze crashes with execution traces
-make trace CRASH=fuzz/artifacts/no_traps/crash-xxx
+make trace CRASH=fuzz/artifacts/no-traps/crash-xxx
 ```
 
 ## Feature Support Matrix

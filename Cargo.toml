@@ -26,7 +26,6 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 description = "A no_std WebAssembly 1.0 decoder, validator, and interpreter for on-board spacecraft use"
-readme = "README.md"
 keywords = ["wasm", "webassembly", "interpreter", "no_std", "embedded"]
 categories = ["wasm", "no-std", "embedded"]
 

@@ -31,7 +31,7 @@ fn usage(program: &str) -> ! {
     );
     eprintln!();
     eprintln!("Examples:");
-    eprintln!("  {program} fuzz/artifacts/no_traps/crash-xxx output.wasm");
+    eprintln!("  {program} fuzz/artifacts/no-traps/crash-xxx output.wasm");
     eprintln!(
         "  {program} --target validate fuzz/artifacts/validate/crash-xxx --stdout | wasm2wat"
     );

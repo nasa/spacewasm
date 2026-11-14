@@ -26,7 +26,7 @@ help:
 	@echo "  JOBS=<n>                    Parallel fuzzer workers (default: 1)"
 	@echo ""
 	@echo "Fuzzing:"
-	@echo "  make fuzz                          Run the no_traps fuzzer"
+	@echo "  make fuzz                          Run the no-traps fuzzer"
 	@echo "  make fuzz-validate                 Run the validate fuzzer"
 	@echo "  make fuzz-validate-differential    Run the validate differential fuzzer (SpaceWasm vs wasmi)"
 	@echo "  make fuzz-malformed                Run the malformed-input decoder fuzzer"
@@ -40,7 +40,7 @@ help:
 	@echo ""
 	@echo "Examples:"
 	@echo "  make fuzz JOBS=18"
-	@echo "  make trace CRASH=fuzz/artifacts/no_traps/crash-abc123"
+	@echo "  make trace CRASH=fuzz/artifacts/no-traps/crash-abc123"
 	@echo "  make trace-debug CRASH=crash-abc123 LIMIT=100"
 	@echo "  make trace-wasm WASM=output.wasm LIMIT=50"
 	@echo ""
@@ -52,13 +52,13 @@ help:
 
 # Run fuzzer
 fuzz:
-	$(call run_fuzz,no_traps)
+	$(call run_fuzz,no-traps)
 
 fuzz-validate:
 	$(call run_fuzz,validate)
 
 fuzz-validate-differential:
-	$(call run_fuzz,validate_differential)
+	$(call run_fuzz,validate-differential)
 
 fuzz-malformed:
 	$(call run_fuzz,malformed)
@@ -67,7 +67,7 @@ fuzz-malformed:
 trace:
 	@if [ -z "$(CRASH)" ]; then \
 		echo "Error: CRASH variable required"; \
-		echo "Usage: make trace CRASH=fuzz/artifacts/no_traps/crash-xxx"; \
+		echo "Usage: make trace CRASH=fuzz/artifacts/no-traps/crash-xxx"; \
 		exit 1; \
 	fi
 	@echo "Converting seed to Wasm and tracing execution (release mode)..."
@@ -78,7 +78,7 @@ trace:
 trace-debug:
 	@if [ -z "$(CRASH)" ]; then \
 		echo "Error: CRASH variable required"; \
-		echo "Usage: make trace-debug CRASH=fuzz/artifacts/no_traps/crash-xxx"; \
+		echo "Usage: make trace-debug CRASH=fuzz/artifacts/no-traps/crash-xxx"; \
 		exit 1; \
 	fi
 	@echo "Converting seed to Wasm and tracing execution (debug mode with ASAN)..."
@@ -89,7 +89,7 @@ trace-debug:
 seed-to-wasm:
 	@if [ -z "$(CRASH)" ]; then \
 		echo "Error: CRASH variable required"; \
-		echo "Usage: make seed-to-wasm CRASH=fuzz/artifacts/no_traps/crash-xxx [OUT=output.wasm]"; \
+		echo "Usage: make seed-to-wasm CRASH=fuzz/artifacts/no-traps/crash-xxx [OUT=output.wasm]"; \
 		exit 1; \
 	fi
 	@if [ -n "$(OUT)" ]; then \
