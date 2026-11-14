@@ -42,7 +42,12 @@ fn execute(args: &RunArgs) -> Result<Ran, Box<dyn std::error::Error>> {
         .map_err(|err| format!("could not read {}: {err}", args.file.display()))?;
 
     let (wasi, exit_code) = wasi_preview1::make_wasi_preview1_module(context(args)?.build());
-    let mut loaded = load(&bytes, spacewasm::vec![wasi], STACK_WORDS)?;
+    let mut loaded = load(
+        &bytes,
+        spacewasm::vec![wasi],
+        args.decoder_limits,
+        STACK_WORDS,
+    )?;
 
     let _tty = match args.raw_tty {
         true => {

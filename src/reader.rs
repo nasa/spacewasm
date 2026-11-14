@@ -28,12 +28,8 @@ const CONTINUATION_BIT: u8 = 0b10000000;
 
 const INTEGER_BIT_FLAG: u8 = !CONTINUATION_BIT;
 
-/// A struct for managing and reading Wasm bytecode
-/// Its purpose is to abstract parsing basic Wasm values from the bytecode
-/// and managing the chunks from a stream as they are read.
-///
-/// This reader cannot backtrack. The code that calls into the reader must
-/// allocate and copy data that should be retained as it is read.
+/// Reads Wasm values from a [`WasmStream`], one chunk at a time. It cannot
+/// backtrack, so callers copy anything they keep.
 pub struct Reader<'wasm> {
     stream: &'wasm mut dyn WasmStream,
     /// Number of bytes we've already extracted from the next chunk and

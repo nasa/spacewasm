@@ -83,6 +83,22 @@ static void mem_dealloc(void* userdata, uint8_t* ptr, size_t size, size_t align)
     free(ptr);
 }
 
+/* Validator scratch storage, statically sized here as a flight build would. It
+ * is only borrowed during `spacewasm_load_module` and need not be initialized.
+ * The lengths bound block nesting and operand depth per guest function. */
+static spacewasm_control_frame_t g_control_frames[64];
+static spacewasm_operand_t g_operands[256];
+
+static spacewasm_decoder_stack_t decoder_stack(void) {
+    spacewasm_decoder_stack_t stack = {
+        .control_frames = g_control_frames,
+        .control_frames_len = sizeof(g_control_frames) / sizeof(g_control_frames[0]),
+        .operands = g_operands,
+        .operands_len = sizeof(g_operands) / sizeof(g_operands[0]),
+    };
+    return stack;
+}
+
 /* A simple cursor over ADD_WASM used as the streaming read source. The callback
  * owns the buffer: it hands back a pointer into ADD_WASM and its length. Here
  * `step` bytes are handed out per call to exercise multi-chunk streaming. */
@@ -148,7 +164,8 @@ int main(void) {
     /* Load a guest module onto the store, streamed in 16-byte chunks. */
     cursor_t cursor = {ADD_WASM, sizeof(ADD_WASM), 0, 16};
     uint32_t mod_idx = 0;
-    st = spacewasm_load_module(store, "main", cursor_read, &cursor, alloc, &mod_idx);
+    st = spacewasm_load_module(store, "main", cursor_read, &cursor, alloc, decoder_stack(),
+                               &mod_idx);
     /* The loaded module holds its own reference; the handle can go now. */
     spacewasm_allocator_destroy(alloc);
     if (st != SPACEWASM_OK) {

@@ -19,24 +19,20 @@ impl Expr {
         Ok(value.unwrap())
     }
 
-    pub fn read<const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize>(
+    pub fn read(
         wasm: &mut Reader,
         builder: &mut CodeBuilder,
         store: &Store,
         module: &Module,
         ctx: &Func,
+        stack: &mut DecoderStack,
     ) -> Result<(Self, u16), ValidationError> {
         // Each operand may occupy up to 2 words, so the high-water mark is
-        // bounded by `2 * MAX_STACK_DEPTH`. Guarantee that bound fits the u16
-        // field below so the runtime check is provably dead for sane configs.
-        const { assert!(MAX_STACK_DEPTH.saturating_mul(2) <= u16::MAX as usize) };
-
+        // bounded by `2 * DecoderStack::MAX_OPERANDS`, which fits the u16 field
+        // below, so the runtime check is dead.
         let e = Expr(builder.pc());
-        let tb = &mut TextBuilder::new(builder, store, module, ctx);
-        wasm.read_code(
-            &Compiler::<'_, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>::default(),
-            tb,
-        )?;
+        let tb = &mut TextBuilder::new(builder, store, module, ctx, stack)?;
+        wasm.read_code(&Compiler::default(), tb)?;
 
         // Reject a function whose shallow stack high-water exceeds the u16
         // `Func::stack_usage` field rather than silently truncating it (which
@@ -92,11 +88,12 @@ impl Func {
 }
 
 impl Module {
-    pub fn read_function_code<const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize>(
+    pub fn read_function_code(
         &mut self,
         wasm: &mut Reader,
         store: &Store,
         builder: &mut CodeBuilder,
+        stack: &mut DecoderStack,
         i: usize,
     ) -> Result<(), ValidationError> {
         let size = wasm.read_u32()?;
@@ -146,8 +143,7 @@ impl Module {
             }
 
             f.local_size = size_in_words as u16;
-            (f.expr, f.stack_usage) =
-                Expr::read::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(wasm, builder, store, self, &f)?;
+            (f.expr, f.stack_usage) = Expr::read(wasm, builder, store, self, &f, stack)?;
 
             Ok(())
         })?;

@@ -185,6 +185,22 @@ static spacewasm_compiler_options_t opts(uint32_t max_code_pages) {
     return o;
 }
 
+/* Validator scratch storage, statically sized here as a flight build would. It
+ * is only borrowed during `spacewasm_load_module` and need not be initialized.
+ * The lengths bound block nesting and operand depth per guest function. */
+static spacewasm_control_frame_t g_control_frames[64];
+static spacewasm_operand_t g_operands[256];
+
+static spacewasm_decoder_stack_t decoder_stack(void) {
+    spacewasm_decoder_stack_t stack = {
+        .control_frames = g_control_frames,
+        .control_frames_len = sizeof(g_control_frames) / sizeof(g_control_frames[0]),
+        .operands = g_operands,
+        .operands_len = sizeof(g_operands) / sizeof(g_operands[0]),
+    };
+    return stack;
+}
+
 /* A cursor over a byte slice, handing out `step` bytes per read call. The
  * callback owns the buffer, so it points `out_buf` into the slice directly. */
 typedef struct {
@@ -224,7 +240,7 @@ static spacewasm_status_t load_module_onto(spacewasm_allocator_t* alloc, spacewa
                                            size_t step, uint32_t* out_idx) {
     cursor_t cursor = {data, len, 0, step};
     spacewasm_status_t st =
-        spacewasm_load_module(store, name, cursor_read, &cursor, alloc, out_idx);
+        spacewasm_load_module(store, name, cursor_read, &cursor, alloc, decoder_stack(), out_idx);
     if (st != SPACEWASM_OK) {
         return st;
     }
@@ -383,7 +399,7 @@ static int test_streaming_read_error(void) {
     CHECK(alloc, "allocator_new");
     uint32_t mod_idx = 0;
     spacewasm_status_t st =
-        spacewasm_load_module(store, "main", failing_read, NULL, alloc, &mod_idx);
+        spacewasm_load_module(store, "main", failing_read, NULL, alloc, decoder_stack(), &mod_idx);
     spacewasm_allocator_destroy(alloc);
     CHECK(st == SPACEWASM_ERR_READER_ERROR, "expected ERR_READER_ERROR, got %d", (int)st);
 
@@ -706,7 +722,8 @@ static int test_error_paths(void) {
     CHECK(alloc, "allocator_new");
     cursor_t cursor = {junk, sizeof(junk), 0, 0};
     spacewasm_status_t st =
-        spacewasm_load_module(store, "main", cursor_read, &cursor, alloc, &mod_idx);
+        spacewasm_load_module(store, "main", cursor_read, &cursor, alloc, decoder_stack(),
+                              &mod_idx);
     spacewasm_allocator_destroy(alloc);
     CHECK(st == SPACEWASM_ERR_MALFORMED_MAGIC, "expected ERR_MALFORMED_MAGIC, got %d", (int)st);
     spacewasm_destroy(store);
@@ -725,7 +742,7 @@ static int test_null_arg_handling(void) {
     cursor_t cursor = {ADD_WASM, sizeof(ADD_WASM), 0, 0};
     uint32_t mod_idx = 0;
     spacewasm_status_t st =
-        spacewasm_load_module(store, NULL, cursor_read, &cursor, alloc, &mod_idx);
+        spacewasm_load_module(store, NULL, cursor_read, &cursor, alloc, decoder_stack(), &mod_idx);
     spacewasm_allocator_destroy(alloc);
     CHECK(st == SPACEWASM_ERR_NULL_ARG, "expected NULL_ARG, got %d", (int)st);
 
@@ -811,7 +828,8 @@ static int test_pause_and_resume_no_value(void) {
         spacewasm_allocator_new(mem_alloc, mem_realloc, mem_dealloc, NULL);
     CHECK(alloc != NULL, "allocator_new");
     uint32_t idx;
-    CHECK(spacewasm_load_module(store, "main", cursor_read, &cursor, alloc, &idx) == SPACEWASM_OK,
+    CHECK(spacewasm_load_module(store, "main", cursor_read, &cursor, alloc, decoder_stack(),
+                                &idx) == SPACEWASM_OK,
           "load_module");
 
     /* No start function */
@@ -867,7 +885,8 @@ static int test_pause_and_resume_with_value(void) {
         spacewasm_allocator_new(mem_alloc, mem_realloc, mem_dealloc, NULL);
     CHECK(alloc != NULL, "allocator_new");
     uint32_t idx;
-    CHECK(spacewasm_load_module(store, "main", cursor_read, &cursor, alloc, &idx) == SPACEWASM_OK,
+    CHECK(spacewasm_load_module(store, "main", cursor_read, &cursor, alloc, decoder_stack(),
+                                &idx) == SPACEWASM_OK,
           "load_module");
 
     /* No start function */

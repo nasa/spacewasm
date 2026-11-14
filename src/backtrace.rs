@@ -1,22 +1,11 @@
 use crate::{CallFrame, Engine, JumpTarget, Stack};
 
-/// Walks the call frames on the interpreter stack, yielding IR program counters
-/// innermost first. Created by [`Engine::backtrace`].
+/// IR program counters of the call frames on the stack, innermost first. Created
+/// by [`Engine::backtrace`].
 ///
-/// - Element 0 is the PC of the innermost function: the instruction the engine
-///   is at, which [`Engine::backtrace`] describes.
-/// - Every later element is the PC of the `call` / `call_indirect` instruction
-///   in the next-outer function that made the call. It is the address of the
-///   call instruction itself, not its return address.
-///
-/// Every element is the start of an instruction, so a symbol lookup needs no
-/// "return address minus one" adjustment.
-///
-/// The walk ends at the outermost frame, the one started by
-/// [`Engine::invoke`]. It does not allocate, and it reads nothing outside the
-/// stack: if a frame record is out of bounds or does not point to a strictly
-/// lower frame, the walk stops there instead of panicking. That bounds it at
-/// one step per stack word.
+/// Element 0 is the current instruction; each later element is the `call` /
+/// `call_indirect` instruction in the caller, not a return address. The walk
+/// never allocates and stops at a malformed frame instead of panicking.
 pub struct Backtrace<'a> {
     stack: &'a Stack,
     /// The element to yield next.
@@ -69,24 +58,12 @@ impl Iterator for Backtrace<'_> {
 impl core::iter::FusedIterator for Backtrace<'_> {}
 
 impl Engine {
-    /// The call stack as the engine stands between
-    /// [`run`](crate::InterpreterRunner::run) calls, innermost first. See
-    /// [`Backtrace`] for what each element means.
+    /// The call stack between [`run`](crate::InterpreterRunner::run) calls.
+    /// Element 0 is the next instruction to run, the host `call` while paused, or
+    /// the faulting instruction after a trap (kept until the next
+    /// [`Engine::invoke`] or [`Engine::reset`]).
     ///
-    /// Element 0 is the instruction the engine is at:
-    /// - out of fuel, or invoked and not yet run, the next instruction to
-    ///   execute;
-    /// - paused, the `call` / `call_indirect` instruction that called the
-    ///   pausing host function. Only [`Engine::resume`] moves past it;
-    /// - after a trap, the faulting instruction. The trap resets the engine to
-    ///   idle but leaves the stack memory as it was, so the frames are still
-    ///   there until the next [`Engine::invoke`] or [`Engine::reset`].
-    ///
-    /// A host function that wants its call stack pauses, and the embedder reads
-    /// it before resuming.
-    ///
-    /// Returns `None` when there is nothing to report: no call has been
-    /// invoked, or the last one finished.
+    /// `None` if nothing has been invoked or the last call finished.
     pub fn backtrace(&self) -> Option<Backtrace<'_>> {
         if !self.is_idle() {
             return Some(Backtrace::new(&self.stack, self.pc, self.fp));

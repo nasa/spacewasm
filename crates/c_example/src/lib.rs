@@ -20,41 +20,27 @@ pub fn find_cc() -> Option<&'static str> {
     None
 }
 
-/// The directory holding the freshly built `libspacewasm_c_api.a`. Cargo places
-/// the test binary under `target/<profile>/deps/`; the staticlib is one level up
-/// in `target/<profile>/`.
-pub fn staticlib_dir() -> PathBuf {
-    let mut dir = std::env::current_exe().unwrap();
-    dir.pop(); // test binary name
-    if dir.ends_with("deps") {
-        dir.pop();
-    }
-    dir
-}
-
 /// Path to the `spacewasm_c_api` crate's committed header directory.
 pub fn include_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../spacewasm_c_api/include")
 }
 
-/// Ensure `libspacewasm_c_api.a` is built (default features → allocator + panic
-/// handler + staticlib). Panics on build failure.
+/// handler + staticlib) under `target_dir`, and return the directory holding
+/// it. Panics on build failure.
 ///
-/// The build must land in the same `target/<profile>/` directory that
-/// [`staticlib_dir`] hands to the linker. A test binary compiled with
-/// `--release` runs from `target/release/deps/`, so a plain (debug) `cargo
-/// build` would drop the staticlib in `target/debug/` and the `-L` search would
-/// miss it. Mirror the profile by inspecting the directory name.
-pub fn build_staticlib() {
+pub fn build_staticlib(target_dir: &Path) -> PathBuf {
+    let target = env!("C_EXAMPLE_TARGET");
+    let profile = if cfg!(debug_assertions) {
+        "debug"
+    } else {
+        "release"
+    };
     let mut cmd = Command::new(env!("CARGO"));
-    cmd.args(["build", "-p", "spacewasm_c_api"]);
-    if staticlib_dir().file_name().is_some_and(|n| n == "release") {
+    cmd.args(["build", "-p", "spacewasm_c_api", "--target", target]);
+    if profile == "release" {
         cmd.arg("--release");
     }
-
-    if let Some(target_dir) = staticlib_dir().parent() {
-        cmd.arg("--target-dir").arg(target_dir);
-    }
+    cmd.arg("--target-dir").arg(target_dir);
 
     for var in ["RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS"] {
         let Ok(flags) = std::env::var(var) else {
@@ -87,15 +73,16 @@ pub fn build_staticlib() {
         status.success(),
         "failed to build spacewasm_c_api staticlib"
     );
+    target_dir.join(target).join(profile)
 }
 
-/// Compile a C source file against the staticlib + header, producing `out`.
-/// Returns whether compilation/linking succeeded.
-pub fn compile_c(cc: &str, src: &Path, out: &Path) -> bool {
+/// Compile a C source file against the staticlib in `lib_dir` + header,
+/// producing `out`. Returns whether compilation/linking succeeded.
+pub fn compile_c(cc: &str, lib_dir: &Path, src: &Path, out: &Path) -> bool {
     let mut cmd = Command::new(cc);
     cmd.arg(src)
         .arg(format!("-I{}", include_dir().display()))
-        .arg(format!("-L{}", staticlib_dir().display()))
+        .arg(format!("-L{}", lib_dir.display()))
         .arg("-lspacewasm_c_api")
         .arg("-g")
         .arg("-o")

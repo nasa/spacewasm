@@ -4,14 +4,14 @@ use core::ffi::c_char;
 use core::ffi::c_void;
 
 use spacewasm::{
-    CodeBuilder, CompilerOptions, Engine, ExportDesc, HostFunction, HostModule, Interpreter,
-    InterpreterRunner, Module, ModuleRef, RawValue, Ref, ValType, Value, Vec, WasmRef,
+    CodeBuilder, CompilerOptions, ControlFrame, DecoderStack, Engine, ExportDesc, HostFunction,
+    HostModule, Interpreter, InterpreterRunner, Module, ModuleRef, OperandType, RawValue, Ref,
+    ValType, Value, Vec, WasmRef,
 };
 
 use crate::SpacewasmCaller;
 use crate::alloc::CAllocator;
 use crate::alloc::{self, spacewasm_alloc_fn_t, spacewasm_dealloc_fn_t, spacewasm_realloc_fn_t};
-use crate::config::{MAX_CONTROL_FRAMES, MAX_STACK_DEPTH};
 use crate::host;
 use crate::host::CHostFunction;
 use crate::host::spacewasm_host_fn_t;
@@ -28,22 +28,17 @@ macro_rules! check {
     };
 }
 
-/// FFI-safe mirror of [`CompilerOptions`], controlling how guest
-/// modules loaded onto a store are compiled. Passed to [`spacewasm_new`].
+/// Compiler options for guest modules. Passed to [`spacewasm_new`].
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct spacewasm_compiler_options_t {
-    /// Allow compiling `memory.grow` instructions. When `false`, a module using
-    /// `memory.grow` is rejected at load time.
+    /// Allow `memory.grow`; when `false`, modules using it are rejected.
     pub allow_memory_grow: bool,
 
-    /// Maximum number of iterations to resolve during a control-flow backpatch.
-    /// Bounds compile time on pathological modules at the cost of rejecting some
-    /// valid programs. Set to 0 for unlimited iterations.
+    /// Bound on control-flow backpatch iterations; 0 for unlimited.
     pub max_backpatch_iterations: u32,
 
-    /// Maximum number of compiled code pages allowed across all modules loaded
-    /// onto the store.
+    /// Maximum compiled code pages across all modules on the engine.
     pub max_code_pages: usize,
 }
 
@@ -57,8 +52,70 @@ impl From<spacewasm_compiler_options_t> for CompilerOptions {
     }
 }
 
-/// Handle holding the SpaceWasm engine and compiled IR code.
-/// This handle is used for holding and executing the SpaceWasm interpreter.
+/// Opaque storage for one validator control frame.
+#[repr(C)]
+pub struct spacewasm_control_frame_t {
+    _opaque: [u32; 3],
+}
+
+/// Opaque storage for one validator operand.
+#[repr(C)]
+pub struct spacewasm_operand_t {
+    _opaque: [u8; 2],
+}
+
+// The opaque types stand in for the core crate's, so they must agree in layout.
+const _: () = {
+    use core::mem::{align_of, size_of};
+    assert!(size_of::<spacewasm_control_frame_t>() == size_of::<ControlFrame>());
+    assert!(align_of::<spacewasm_control_frame_t>() >= align_of::<ControlFrame>());
+    assert!(size_of::<spacewasm_operand_t>() == size_of::<OperandType>());
+    assert!(align_of::<spacewasm_operand_t>() >= align_of::<OperandType>());
+};
+
+/// Validator scratch storage, borrowed by [`spacewasm_load_module`] for the
+/// call. Need not be initialized.
+///
+/// `control_frames_len` bounds block nesting and `operands_len` the operand
+/// stack, per function; exceeding either fails with
+/// [`spacewasm_status_t::SPACEWASM_ERR_OUT_OF_MEMORY`]. A pointer may be null
+/// only if its length is 0.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct spacewasm_decoder_stack_t {
+    pub control_frames: *mut spacewasm_control_frame_t,
+    pub control_frames_len: usize,
+    pub operands: *mut spacewasm_operand_t,
+    pub operands_len: usize,
+}
+
+/// Initialize `len` slots at `ptr` to `value` and borrow them as a slice.
+///
+/// # Safety
+/// `ptr` is null with `len == 0`, or valid for writes of `len` `T`s and
+/// unaliased for `'a`.
+unsafe fn init_slice<'a, T: Copy>(
+    ptr: *mut T,
+    len: usize,
+    value: T,
+) -> Result<&'a mut [T], spacewasm_status_t> {
+    if len == 0 {
+        return Ok(&mut []);
+    }
+    if ptr.is_null() {
+        return Err(status::SPACEWASM_ERR_NULL_ARG);
+    }
+    // SAFETY: per the contract. Every slot is written before the slice is
+    // formed, so C may hand over uninitialized memory.
+    unsafe {
+        for i in 0..len {
+            ptr.add(i).write(value);
+        }
+        Ok(core::slice::from_raw_parts_mut(ptr, len))
+    }
+}
+
+/// An interpreter engine and its compiled code.
 pub struct CEngine {
     engine: Engine,
     code_builder: CodeBuilder,
@@ -77,10 +134,8 @@ pub(crate) unsafe fn cstr<'a>(ptr: *const c_char) -> Result<&'a str, spacewasm_s
     c.to_str().map_err(|_| status::SPACEWASM_ERR_BAD_UTF8)
 }
 
-/// Create a guest linear-memory allocator from three C callbacks, returning an
-/// opaque handle (or null if any callback is null or allocation fails). The
-/// handle is passed to [`spacewasm_load_module`] and must be released with
-/// [`spacewasm_allocator_destroy`]. `userdata` is passed to every callback.
+/// Create a guest linear-memory allocator from C callbacks, each passed
+/// `userdata`. Returns null if a callback is null or allocation fails.
 #[unsafe(no_mangle)]
 pub extern "C" fn spacewasm_allocator_new(
     alloc: spacewasm_alloc_fn_t,
@@ -91,13 +146,11 @@ pub extern "C" fn spacewasm_allocator_new(
     alloc::allocator_new(alloc, realloc, dealloc, userdata)
 }
 
-/// Destroy an allocator handle. No-op on null. Any loaded module keeps its own
-/// reference to the underlying allocator, so destroying the handle after loading
-/// is safe.
+/// Destroy an allocator handle. No-op on null. Modules already loaded keep
+/// their own reference.
 ///
 /// # Safety
-/// `allocator` must be a live handle from [`spacewasm_allocator_new`], not
-/// already destroyed.
+/// `allocator` must be null or a live handle.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn spacewasm_allocator_destroy(allocator: *mut CAllocator) {
     unsafe { alloc::allocator_destroy(allocator) }
@@ -139,10 +192,10 @@ const _: () = {
     );
 };
 
-/// Create a new host module vector of `len` size
+/// Create a host module vector with room for `len` modules.
 ///
 /// # Safety
-/// `dest` must be null or a valid, live pointer to write the new host vector into.
+/// `dest` must be null or valid for writes.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn spacewasm_host_new(
     len: usize,
@@ -157,11 +210,11 @@ pub unsafe extern "C" fn spacewasm_host_new(
     status::SPACEWASM_OK
 }
 
-/// Add a host module named `name` sized for `max_functions` functions and
-/// `max_globals` globals, writing its index to `out_idx` (if non-null).
+/// Add a host module named `name` with room for `max_functions` functions and
+/// `max_globals` globals. Writes its index to `out_idx` if non-null.
 ///
 /// # Safety
-/// `host` must be live; all C strings valid and NUL-terminated.
+/// `host` must be live; strings valid and NUL-terminated.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn spacewasm_add_host_module(
     host: *mut spacewasm_host_t,
@@ -198,12 +251,12 @@ pub unsafe extern "C" fn spacewasm_add_host_module(
     status::SPACEWASM_OK
 }
 
-/// Register a host function `name` in host module `module_idx`, with parameter
-/// and return signatures given by `params_sig`/`returns_sig` and implemented by
-/// callback `f` (passed `userdata` on each call).
+/// Add host function `name` to host module `module_idx`, implemented by `f`
+/// (passed `userdata`). Signatures use `i` (i32), `I` (i64), `f` (f32),
+/// `d` (f64).
 ///
 /// # Safety
-/// `host` must be live; all C strings valid and NUL-terminated.
+/// `host` must be live; strings valid and NUL-terminated.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn spacewasm_add_host_function(
     host: *mut spacewasm_host_t,
@@ -246,27 +299,16 @@ pub unsafe extern "C" fn spacewasm_add_host_function(
     }
 }
 
-/// Load a guest module named `name` onto an existing engine by streaming its
-/// bytes through the `read` callback. The callback owns the buffer backing each
-/// chunk (see [`spacewasm_read_fn_t`]). This does not run the module's start
-/// function; resolve it with [`spacewasm_module_start`] and invoke it with
-/// [`spacewasm_invoke`] for that. `allocator` supplies the
-/// guest linear memory (see [`spacewasm_allocator_new`]). Writes the new module's
-/// index to `out_module_idx` (if non-null). May be called repeatedly to load
-/// several modules onto the same engine, as long as every prior load succeeded.
+/// Load a guest module named `name`, streamed through `read`. `allocator`
+/// backs its linear memory and `decoder_stack` is the validator's scratch
+/// storage. Writes the module index to `out_module_idx` if non-null. Does not
+/// run the start function (see [`spacewasm_module_start`]).
 ///
-/// # Failure invalidates the engine
-///
-/// Any status other than [`spacewasm_status_t::SPACEWASM_OK`] (including
-/// [`spacewasm_status_t::SPACEWASM_ERR_CAPACITY`]) leaves the engine unusable:
-/// segments may already have been written into imported memories and tables,
-/// and the page allocator is poisoned. The caller must destroy the engine with
-/// [`spacewasm_destroy`] and create a new one; [`spacewasm_reset`] does not
-/// recover from a failed load.
+/// Any failure leaves the engine unusable: destroy it and create a new one.
 ///
 /// # Safety
-/// `engine` and `allocator` must be live handles; `read` a valid callback;
-/// `out_module_idx` null or valid.
+/// `engine` and `allocator` must be live; `decoder_stack` must describe
+/// writable, unaliased arrays; `out_module_idx` null or valid.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn spacewasm_load_module(
     engine: *mut CEngine,
@@ -274,6 +316,7 @@ pub unsafe extern "C" fn spacewasm_load_module(
     read: spacewasm_read_fn_t,
     read_userdata: *mut c_void,
     allocator: *mut CAllocator,
+    decoder_stack: spacewasm_decoder_stack_t,
     out_module_idx: *mut u32,
 ) -> spacewasm_status_t {
     // SAFETY: `allocator` is null or a live handle per the contract.
@@ -293,11 +336,29 @@ pub unsafe extern "C" fn spacewasm_load_module(
 
     let mut stream = check!(CallbackStream::new(read, read_userdata));
 
-    let module = match Module::new::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
+    // SAFETY: the opaque element types match the core ones in size and
+    // alignment (checked above), and the arrays are valid per the contract.
+    let control_frames = check!(unsafe {
+        init_slice(
+            decoder_stack.control_frames.cast::<ControlFrame>(),
+            decoder_stack.control_frames_len,
+            ControlFrame::EMPTY,
+        )
+    });
+    let operands = check!(unsafe {
+        init_slice(
+            decoder_stack.operands.cast::<OperandType>(),
+            decoder_stack.operands_len,
+            OperandType::EMPTY,
+        )
+    });
+    let mut decoder_stack = DecoderStack::new(control_frames, operands);
+    let module = match Module::new(
         name,
         &mut stream,
         &mut cengine.engine.store,
         &mut cengine.code_builder,
+        &mut decoder_stack,
         alloc,
     ) {
         Ok(m) => m,
@@ -323,31 +384,15 @@ pub unsafe extern "C" fn spacewasm_load_module(
     status::SPACEWASM_OK
 }
 
-/// Consume the host module vector `host` and finish it into an engine handle,
-/// written to `out_engine`. The engine is sized with a `stack_size`-word guest
-/// stack (each word is 4 bytes), room for `max_modules` guest modules (<= 256), and compiles guest
-/// modules according to `options` (code-page budget, `memory.grow` support,
-/// backpatch bound). No guest module is loaded yet; use
-/// [`spacewasm_load_module`] to load one or more.
+/// Create an engine from `host` (may be null), with a `stack_size`-word stack
+/// and room for `max_modules` (<= 256) guest modules.
 ///
-/// `host` may be null to create an engine with no host modules.
-///
-/// # Ownership of `host`
-///
-/// The host vector is consumed on every path *except* the two argument-validation
-/// failures that are rejected before `host` is read:
-///
-/// * [`spacewasm_status_t::SPACEWASM_ERR_NULL_ARG`] — `out_engine` is null.
-/// * [`spacewasm_status_t::SPACEWASM_ERR_VEC_TOO_LONG`] — `max_modules` exceeds 256.
-///
-/// On those two the caller still owns `host` and must
-/// [`spacewasm_host_destroy`] it. Every other outcome, success or failure,
-/// consumes it. Concretely: check for these two codes before deciding whether to
-/// destroy the vector.
+/// `host` is consumed, except on [`spacewasm_status_t::SPACEWASM_ERR_NULL_ARG`]
+/// and [`spacewasm_status_t::SPACEWASM_ERR_VEC_TOO_LONG`], when the caller still
+/// owns it.
 ///
 /// # Safety
-/// `host` must be null or a live handle from [`spacewasm_host_new`], not already
-/// consumed/destroyed; `out_engine` must be a valid pointer.
+/// `host` null or a live, unconsumed handle; `out_engine` valid.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn spacewasm_new(
     host: *mut spacewasm_host_t,
@@ -387,10 +432,11 @@ pub unsafe extern "C" fn spacewasm_new(
     status::SPACEWASM_OK
 }
 
-/// Destroy a host vector that was never consumed into an engine. No-op on null.
+/// Destroy a host vector that was not consumed by [`spacewasm_new`]. No-op on
+/// null.
 ///
 /// # Safety
-/// `host` must be null or a live unconsumed handle from [`spacewasm_host_new`].
+/// `host` must be null or a live, unconsumed handle.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn spacewasm_host_destroy(host: *mut spacewasm_host_t) {
     if host.is_null() {
@@ -402,7 +448,7 @@ pub unsafe extern "C" fn spacewasm_host_destroy(host: *mut spacewasm_host_t) {
     drop(modules);
 }
 
-/// Find a module with a given name in the engine.
+/// Find the module named `name`.
 ///
 /// # Safety
 /// `engine` must be live; `name` valid; `out_index` valid.
@@ -438,8 +484,7 @@ pub unsafe extern "C" fn spacewasm_find_module(
     }
 }
 
-/// Look up the exported function named `name` in module `module_idx` and write
-/// its index to `out_index`.
+/// Find the function exported as `name` from module `module_idx`.
 ///
 /// # Safety
 /// `engine` must be live; `name` valid; `out_index` valid.
@@ -479,24 +524,13 @@ pub unsafe extern "C" fn spacewasm_find_export_func(
     status::SPACEWASM_ERR_NOT_FOUND
 }
 
-/// Look up the start function of module `module_idx` and write its location to
-/// `out_module_idx` and `out_func_index`.
-///
-/// Start functions are never host functions (that is rejected at load time), so
-/// the result is always a directly-invokable Wasm function. The written indices
-/// can be passed straight to [`spacewasm_invoke`] followed by [`spacewasm_run`],
-/// exactly as you would an exported function. Note that `out_module_idx` may
-/// differ from `module_idx` when the start is an imported (cross-module)
-/// function.
-///
-/// Returns [`spacewasm_status_t::SPACEWASM_OK`] and populates the outputs when
-/// the module declares a start function. Returns
-/// [`spacewasm_status_t::SPACEWASM_ERR_NOT_FOUND`] when `module_idx` is out of
-/// range or the module has no start function, in which case there is nothing to
-/// invoke.
+/// Find the start function of module `module_idx`, ready for
+/// [`spacewasm_invoke`]. `out_module_idx` may differ from `module_idx` if the
+/// start function is imported. Returns
+/// [`spacewasm_status_t::SPACEWASM_ERR_NOT_FOUND`] if there is none.
 ///
 /// # Safety
-/// `engine` must be live; `out_module_idx` and `out_func_index` valid.
+/// `engine` must be live; outputs valid.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn spacewasm_module_start(
     engine: *mut CEngine,
@@ -528,25 +562,11 @@ pub unsafe extern "C" fn spacewasm_module_start(
 }
 
 /// Check that function `func_index` of module `module_idx` has the signature
-/// described by `params_sig` and `returns_sig`.
-///
-/// Signatures use the same alphabet as [`spacewasm_add_host_function`]:
-/// `i` (i32), `I` (i64), `f` (f32), `d` (f64). For example, a function
-/// `(i32, i32) -> i32` matches `params_sig = "ii"`, `returns_sig = "i"`.
-///
-/// Returns [`spacewasm_status_t::SPACEWASM_OK`] when the signature matches.
-/// Returns [`spacewasm_status_t::SPACEWASM_ERR_PARAM_LEN_MISMATCH`] when the
-/// parameter or return count differs, and
-/// [`spacewasm_status_t::SPACEWASM_ERR_PARAM_TYPE_MISMATCH`] when a type at some
-/// position differs. Returns [`spacewasm_status_t::SPACEWASM_ERR_NOT_FOUND`]
-/// when `module_idx` or `func_index` is out of range. When a signature string
-/// contains a character other than `iIfd` it returns
-/// [`spacewasm_status_t::SPACEWASM_ERR_BAD_ARG`], and when it declares more than
-/// `MAX_HOST_FUNCTION_PARAMS` entries it returns
-/// [`spacewasm_status_t::SPACEWASM_ERR_FUNCTION_PARAMETERS_TOO_LARGE`].
+/// `params_sig` -> `returns_sig` (same alphabet as
+/// [`spacewasm_add_host_function`]).
 ///
 /// # Safety
-/// `engine` must be live; all C strings valid and NUL-terminated.
+/// `engine` must be live; strings valid and NUL-terminated.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn spacewasm_check_func_signature(
     engine: *mut CEngine,
@@ -593,19 +613,8 @@ pub unsafe extern "C" fn spacewasm_check_func_signature(
     status::SPACEWASM_OK
 }
 
-/// Look up the global exported as `name` in module `module_idx` and write its
-/// index to `out_index`. The written index addresses the module's own globals
-/// and can be passed straight to [`spacewasm_get_global`] and
-/// [`spacewasm_set_global`].
-///
-/// Only globals defined by module `module_idx` itself are resolvable this way:
-/// if the export re-exports a global imported from another (guest or host)
-/// module, this returns [`spacewasm_status_t::SPACEWASM_ERR_NOT_FOUND`], exactly
-/// as [`spacewasm_find_export_func`] does for imported functions. Reach such a
-/// global through the module that defines it.
-///
-/// Returns [`spacewasm_status_t::SPACEWASM_ERR_NOT_FOUND`] when `module_idx` is
-/// out of range or the module exports no matching, locally-defined global.
+/// Find the global exported as `name` from module `module_idx`. Only globals
+/// the module defines itself are found, not re-exported imports.
 ///
 /// # Safety
 /// `engine` must be live; `name` valid; `out_index` valid.
@@ -645,12 +654,7 @@ pub unsafe extern "C" fn spacewasm_find_global(
     status::SPACEWASM_ERR_NOT_FOUND
 }
 
-/// Read global `global_index` of module `module_idx` into `out`, tagged with the
-/// global's declared value type. `global_index` addresses the module's own
-/// globals, as returned by [`spacewasm_find_global`].
-///
-/// Returns [`spacewasm_status_t::SPACEWASM_ERR_NOT_FOUND`] when `module_idx` or
-/// `global_index` is out of range.
+/// Read global `global_index` of module `module_idx` into `out`.
 ///
 /// # Safety
 /// `engine` must be live; `out` valid.
@@ -682,22 +686,11 @@ pub unsafe extern "C" fn spacewasm_get_global(
     status::SPACEWASM_OK
 }
 
-/// Write `value` into global `global_index` of module `module_idx`.
-/// `global_index` addresses the module's own globals, as returned by
-/// [`spacewasm_find_global`].
-///
-/// The tag of `value` must match the global's declared value type, and the
-/// global must be mutable.
-///
-/// Returns [`spacewasm_status_t::SPACEWASM_ERR_NOT_FOUND`] when `module_idx` or
-/// `global_index` is out of range,
-/// [`spacewasm_status_t::SPACEWASM_ERR_GLOBAL_TYPE_MISMATCH`] when the value type
-/// does not match the global, and
-/// [`spacewasm_status_t::SPACEWASM_ERR_GLOBAL_NOT_MUTABLE`] when the global is
-/// declared `const`.
+/// Write `value` to mutable global `global_index` of module `module_idx`. The
+/// value's type must match the global's.
 ///
 /// # Safety
-/// `engine` must be a live handle.
+/// `engine` must be live.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn spacewasm_set_global(
     engine: *mut CEngine,
@@ -747,9 +740,8 @@ pub unsafe extern "C" fn spacewasm_set_global(
     status::SPACEWASM_OK
 }
 
-/// Set up a call to exported function `func_index` of module `module_idx` with
-/// the `n` arguments in `params`. Does not run the function; drive execution
-/// with [`spacewasm_run`].
+/// Prepare a call to function `func_index` of module `module_idx` with the `n`
+/// arguments in `params`. Run it with [`spacewasm_run`].
 ///
 /// # Safety
 /// `engine` must be live; `params` valid for `n` entries.
@@ -809,13 +801,8 @@ pub unsafe extern "C" fn spacewasm_invoke(
     }
 }
 
-/// Run the pending invocation for up to `fuel` units of work, writing any trap
-/// to `out_trap`. Returns whether the call finished, trapped, paused, or ran out
-/// of fuel.
-///
-/// A paused engine runs nothing and returns
-/// [`spacewasm_run_status_t::SPACEWASM_RUN_PAUSE`] again until the host call's
-/// result is supplied with [`spacewasm_resume`] or [`spacewasm_resume_value`].
+/// Run the pending call for up to `fuel` instructions, writing any trap to
+/// `out_trap`. A paused engine stays paused until resumed.
 ///
 /// # Safety
 /// `engine` must be live; `out_trap` null or valid.
@@ -849,12 +836,7 @@ pub unsafe extern "C" fn spacewasm_run(
     rs
 }
 
-/// Resume the interpreter from a paused state (no return value).
-///
-/// Returns [`spacewasm_status_t::SPACEWASM_ERR_WRONG_STATE`] if the engine is not
-/// paused, and [`spacewasm_status_t::SPACEWASM_ERR_PARAM_TYPE_MISMATCH`] if the
-/// paused host function declared a result — use [`spacewasm_resume_value`]
-/// instead. On the latter the pause is preserved, so the call can be retried.
+/// Resume after a pause from a host function with no result.
 ///
 /// # Safety
 /// `engine` must be live.
@@ -870,17 +852,8 @@ pub unsafe extern "C" fn spacewasm_resume(engine: *mut CEngine) -> spacewasm_sta
     }
 }
 
-/// Resume the interpreter from a paused state.
-/// This function will also push a value to the interpreter stack
-/// as the return value of the host function that requested a pause.
-///
-/// Returns [`spacewasm_status_t::SPACEWASM_ERR_BAD_ARG`] if `resume_value.tag` is
-/// not a valid [`spacewasm_valtype_t`],
-/// [`spacewasm_status_t::SPACEWASM_ERR_WRONG_STATE`] if the engine is not paused,
-/// and [`spacewasm_status_t::SPACEWASM_ERR_PARAM_TYPE_MISMATCH`] if the value's
-/// type does not match the paused host function's declared result. In the
-/// mismatch case the pause is preserved and no stack state changes, so the call
-/// can be retried with a correctly typed value.
+/// Resume after a pause, supplying the host function's result. On a type
+/// mismatch the pause is kept, so the call can be retried.
 ///
 /// # Safety
 /// `engine` must be live.
@@ -903,14 +876,11 @@ pub unsafe extern "C" fn spacewasm_resume_value(
     }
 }
 
-/// Reset the engine back to an idle state, discarding any in-progress or
-/// completed call: the program counter, stack pointers, and pending result are
-/// cleared, and guest linear memory and the table are reset to their zero
-/// state. Loaded modules remain loaded. Use this to abandon a paused or
-/// out-of-fuel call, or to run a fresh invocation from a clean slate.
+/// Abandon any call and reset execution state, linear memory and the table.
+/// Loaded modules stay loaded.
 ///
 /// # Safety
-/// `engine` must be a live handle.
+/// `engine` must be live.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn spacewasm_reset(engine: *mut CEngine) -> spacewasm_status_t {
     let Some(cengine) = (unsafe { engine.as_mut() }) else {
@@ -921,14 +891,8 @@ pub unsafe extern "C" fn spacewasm_reset(engine: *mut CEngine) -> spacewasm_stat
     status::SPACEWASM_OK
 }
 
-/// Fetch the result of the last completed call, coerced to `expected`, into
-/// `out`.
-///
-/// # Silent type coercion
-///
-/// The core engine stores a completed call's result as an untagged
-/// [`RawValue`]. The function signature must be checked before invoking and the return
-/// value must be extracted (in this function) using the proper `expected` type.
+/// Read the last completed call's result as type `expected`. The result is
+/// untagged, so `expected` must match the function's return type.
 ///
 /// # Safety
 /// `engine` must be live; `out` valid.
@@ -989,44 +953,18 @@ pub(crate) unsafe fn write_backtrace(
     }
 }
 
-/// Write the engine's call stack, as it stands between [`spacewasm_run`] calls,
-/// to `out_pcs`, innermost first, and its depth to `out_len`.
+/// Write the call stack's IR PCs to `out_pcs`, innermost first, and its depth to
+/// `out_len`. Entry 0 is the current instruction (the faulting one after a trap,
+/// the host `call` while paused); each later entry is a `call` instruction, not
+/// a return address.
 ///
-/// Each entry is an IR program counter: an address into the IR of every module
-/// loaded onto this engine. Mapping it back to Wasm requires an IR map built
-/// from the same modules, loaded in the same order, with the same compiler
-/// options.
-///
-/// - Entry 0 is the instruction the engine is at:
-///   - out of fuel (or invoked and not yet run), the next instruction to
-///     execute;
-///   - paused, the `call` / `call_indirect` instruction that called the pausing
-///     host function, until [`spacewasm_resume`] moves past it;
-///   - trapped, the faulting instruction. The trap leaves the stack in place, so
-///     the backtrace remains until the next [`spacewasm_invoke`] or
-///     [`spacewasm_reset`].
-/// - Each later entry is the PC of the `call` / `call_indirect` instruction in
-///   the next-outer function. It is the address of the call instruction itself,
-///   not a return address, so a symbol lookup must not subtract one.
-///
-/// The last entry is in the function passed to [`spacewasm_invoke`].
-///
-/// A host function that wants its own call stack returns
-/// [`spacewasm_hostcall_result_t::SPACEWASM_PAUSE`]: entry 0 is then its
-/// `call`, and the embedder resumes once it has read the backtrace.
-///
-/// Writes at most `capacity` entries. `*out_len` is always the full depth; if it
-/// is larger than `capacity`, the innermost `capacity` entries are written and
-/// [`spacewasm_status_t::SPACEWASM_ERR_CAPACITY`] is returned. Pass
-/// `capacity == 0` (with a null `out_pcs`) to query the depth only.
-///
-/// Returns [`spacewasm_status_t::SPACEWASM_ERR_WRONG_STATE`] if there is no call
-/// stack: nothing has been invoked since the last reset, or the last call
-/// finished. Must not be called while [`spacewasm_run`] is executing.
+/// Writes at most `capacity` entries, returning
+/// [`spacewasm_status_t::SPACEWASM_ERR_CAPACITY`] if truncated. Returns
+/// [`spacewasm_status_t::SPACEWASM_ERR_WRONG_STATE`] if there is no call stack.
 ///
 /// # Safety
 /// `engine` must be live; `out_pcs` valid for `capacity` entries (or null if
-/// `capacity` is 0); `out_len` valid.
+/// 0); `out_len` valid.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn spacewasm_backtrace(
     engine: *const CEngine,
@@ -1047,10 +985,10 @@ pub unsafe extern "C" fn spacewasm_backtrace(
     }
 }
 
-/// Destroy an engine and free its resources. No-op on null.
+/// Destroy an engine. No-op on null.
 ///
 /// # Safety
-/// `engine` must be a live handle, not already destroyed.
+/// `engine` must be null or a live handle.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn spacewasm_destroy(engine: *mut CEngine) {
     if engine.is_null() {
@@ -1059,11 +997,10 @@ pub unsafe extern "C" fn spacewasm_destroy(engine: *mut CEngine) {
     let _ = unsafe { spacewasm::Box::from_raw(spacewasm::GlobalAllocator, engine) };
 }
 
-/// Read `len` bytes of guest linear memory starting at `addr` into `dst`.
-/// Intended for use from within a host function.
+/// Read `len` bytes of guest memory at `addr` into `dst`, from a host function.
 ///
 /// # Safety
-/// `caller` must be a live caller handle; `dst` valid for `len`.
+/// `caller` must be live; `dst` valid for `len` bytes.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn spacewasm_mem_read(
     caller: *mut SpacewasmCaller,
@@ -1074,11 +1011,10 @@ pub unsafe extern "C" fn spacewasm_mem_read(
     unsafe { host::mem_read(caller, addr, dst, len) }
 }
 
-/// Write `len` bytes from `src` to guest linear memory starting at `addr`.
-/// Intended for use from within a host function.
+/// Write `len` bytes from `src` to guest memory at `addr`, from a host function.
 ///
 /// # Safety
-/// `caller` must be a live caller handle; `src` valid for `len`.
+/// `caller` must be live; `src` valid for `len` bytes.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn spacewasm_mem_write(
     caller: *mut SpacewasmCaller,
@@ -1089,11 +1025,10 @@ pub unsafe extern "C" fn spacewasm_mem_write(
     unsafe { host::mem_write(caller, addr, src, len) }
 }
 
-/// Report the size of guest linear memory in pages. Intended for use from
-/// within a host function.
+/// Write the guest memory size in pages to `out_pages`, from a host function.
 ///
 /// # Safety
-/// `caller` must be a live caller handle; `out_pages` must be a valid pointer.
+/// `caller` must be live; `out_pages` valid.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn spacewasm_mem_size(
     caller: *mut SpacewasmCaller,

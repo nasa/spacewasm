@@ -2,7 +2,7 @@ use crate::*;
 use ::core::marker::PhantomData;
 
 #[derive(Default)]
-pub struct Compiler<'a, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize> {
+pub struct Compiler<'a> {
     _marker: PhantomData<&'a ()>,
 }
 
@@ -67,9 +67,7 @@ macro_rules! instruction {
     };
 }
 
-impl<'a, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize> WasmVisitor
-    for Compiler<'a, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>
-{
+impl<'a> WasmVisitor for Compiler<'a> {
     #[cfg(feature = "ir-map")]
     fn before_instruction(
         &self,
@@ -405,11 +403,9 @@ impl<'a, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize> WasmVisi
     }
 }
 
-impl<'a, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize> BaseVisitor
-    for Compiler<'a, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>
-{
+impl<'a> BaseVisitor for Compiler<'a> {
     type Error = ValidationError;
-    type State = TextBuilder<'a, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>;
+    type State = TextBuilder<'a>;
 
     fn unreachable(&self, state: &mut Self::State) -> Result<(), Self::Error> {
         state.instr_imm_8(UNREACHABLE, 0)?;

@@ -94,6 +94,10 @@ pub struct RunArgs {
     #[arg(long, default_value = "_start")]
     pub entry: String,
 
+    /// The lengths of the decoder's `DecoderStack`, as `FRAMES/DEPTH`.
+    #[arg(long, value_name = "FRAMES/DEPTH", default_value_t = DecoderLimits::GROUND)]
+    pub decoder_limits: DecoderLimits,
+
     /// The module.
     pub file: PathBuf,
 
@@ -114,6 +118,10 @@ pub struct TraceArgs {
     /// Instructions each function may run before it is stopped.
     #[arg(long, default_value = "10000")]
     pub fuel: usize,
+
+    /// The lengths of the decoder's `DecoderStack`, as `FRAMES/DEPTH`.
+    #[arg(long, value_name = "FRAMES/DEPTH", default_value_t = DecoderLimits::GROUND)]
+    pub decoder_limits: DecoderLimits,
 }
 
 #[derive(Args)]
@@ -222,8 +230,9 @@ pub struct CompilerArgs {
     #[arg(long, default_value = "true", action = clap::ArgAction::Set)]
     pub allow_memory_grow: bool,
 
-    /// The decoder's `MAX_CONTROL_FRAMES` / `MAX_STACK_DEPTH`, as `FRAMES/DEPTH`.
-    #[arg(long, default_value = "64/256", value_parser = limits)]
+    /// The lengths of the flight decoder's `DecoderStack`, as `FRAMES/DEPTH`: the
+    /// `control_frames_len`/`operands_len` the embedder passes to `spacewasm_load_module`.
+    #[arg(long, value_name = "FRAMES/DEPTH", default_value_t = DecoderLimits::default())]
     pub decoder_limits: DecoderLimits,
 }
 
@@ -244,16 +253,6 @@ fn number<T: TryFrom<u64>>(text: &str) -> Result<T, String> {
     }
     .map_err(|err| format!("`{text}` is not a number: {err}"))?;
     T::try_from(parsed).map_err(|_| format!("`{text}` is out of range"))
-}
-
-fn limits(text: &str) -> Result<DecoderLimits, String> {
-    let (frames, depth) = text
-        .split_once('/')
-        .ok_or_else(|| format!("`{text}` is not FRAMES/DEPTH"))?;
-    Ok(DecoderLimits {
-        max_control_frames: number(frames)?,
-        max_stack_depth: number(depth)?,
-    })
 }
 
 #[cfg(test)]
@@ -311,6 +310,45 @@ mod tests {
         };
         assert_eq!(trace.file, None);
         assert_eq!(trace.limit, 50);
+    }
+
+    #[test]
+    fn decoder_limits_reach_every_decoding_command() {
+        let limits = |args: &[&str]| match Cli::try_parse_from(args).unwrap().command {
+            Command::Validate(validate) => validate.compiler.decoder_limits,
+            Command::Backtrace(backtrace) => backtrace.compiler.decoder_limits,
+            Command::Run(run) => run.decoder_limits,
+            Command::Trace(trace) => trace.decoder_limits,
+            _ => unreachable!(),
+        };
+        let given = DecoderLimits {
+            max_control_frames: 0x20,
+            max_stack_depth: 1000,
+        };
+        let flag = ["--decoder-limits", "0x20/1000"];
+        assert_eq!(
+            limits(&[&["s", "validate", "a.wasm"], &flag[..]].concat()),
+            given
+        );
+        assert_eq!(
+            limits(&[&["s", "backtrace", "a.sym", "--pc", "1"], &flag[..]].concat()),
+            given
+        );
+        assert_eq!(
+            limits(&[&["s", "run"], &flag[..], &["a.wasm"]].concat()),
+            given
+        );
+        assert_eq!(
+            limits(&[&["s", "trace", "a.wasm"], &flag[..]].concat()),
+            given
+        );
+
+        assert_eq!(
+            limits(&["s", "validate", "a.wasm"]),
+            DecoderLimits::default()
+        );
+        assert_eq!(limits(&["s", "trace", "a.wasm"]), DecoderLimits::GROUND);
+        assert!(Cli::try_parse_from(["s", "trace", "--decoder-limits", "64"]).is_err());
     }
 
     #[test]

@@ -198,11 +198,15 @@ fn validate_module(wasm: &[u8]) -> Result<(), ValidationError> {
 
     // Attempt to decode and validate the module. `ParseError` wraps a
     // `SectionDecodeError`, which in turn carries the innermost `ValidationError`.
-    Module::new::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
+    let mut control_frames = [ControlFrame::EMPTY; MAX_CONTROL_FRAMES];
+    let mut operands = [OperandType::EMPTY; MAX_STACK_DEPTH];
+    let mut decoder_stack = DecoderStack::new(&mut control_frames, &mut operands);
+    Module::new(
         "",
         &mut stream,
         &mut store,
         &mut code_builder,
+        &mut decoder_stack,
         allocator.clone(),
     )
     .map(|_| ())
@@ -346,11 +350,15 @@ pub fn no_traps(wasm: &[u8]) {
 
     let allocator = Rc::new(FuzzAllocator).unwrap().into_wasm_memory_allocator();
 
-    let module = match Module::new::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
+    let mut control_frames = [ControlFrame::EMPTY; MAX_CONTROL_FRAMES];
+    let mut operands = [OperandType::EMPTY; MAX_STACK_DEPTH];
+    let mut decoder_stack = DecoderStack::new(&mut control_frames, &mut operands);
+    let module = match Module::new(
         "",
         &mut stream,
         &mut state.store,
         &mut code_builder,
+        &mut decoder_stack,
         allocator.clone(),
     ) {
         Ok(m) => m,

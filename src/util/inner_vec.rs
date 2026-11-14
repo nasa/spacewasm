@@ -2,16 +2,8 @@ use core::ops::{Deref, DerefMut};
 
 use crate::{AllocError, UnwrapNoFmt};
 
-/// The raw backing store shared by [`crate::Vec`] and the streaming API.
-///
-/// # Invariants
-/// - `len <= capacity`.
-/// - If `capacity == 0`, `ptr` may be null; otherwise `ptr` points to a single
-///   allocation valid for `capacity` values of `T`, and the first `len`
-///   elements are initialized.
-/// - `InnerVec` does **not** own its allocation: it never frees the buffer and
-///   never drops its elements. The owner (typically [`crate::Vec`]) is
-///   responsible for both.
+/// The raw buffer behind [`crate::Vec`] and the streaming API. Does not own its
+/// allocation: it never frees the buffer or drops elements.
 pub struct InnerVec<T: Sized> {
     pub(crate) ptr: *mut T,
     pub(crate) capacity: usize,
@@ -25,11 +17,7 @@ impl<T: core::fmt::Debug> core::fmt::Debug for InnerVec<T> {
 }
 
 impl<T: Sized> InnerVec<T> {
-    /// Create an empty `InnerVec` with no backing allocation.
-    ///
-    /// This is the only *safe* constructor: it upholds every invariant
-    /// trivially with `len == capacity == 0` and a null `ptr`. Populated
-    /// instances must be built with [`InnerVec::from_raw_parts`].
+    /// An empty `InnerVec` with no allocation.
     pub fn zero() -> InnerVec<T> {
         InnerVec {
             ptr: core::ptr::null_mut(),
@@ -38,17 +26,12 @@ impl<T: Sized> InnerVec<T> {
         }
     }
 
-    /// Build an `InnerVec` directly from its raw parts.
+    /// Build an `InnerVec` from raw parts.
     ///
     /// # Safety
-    /// The caller must uphold all of the [`InnerVec`] invariants:
-    /// - `len <= capacity`.
-    /// - If `capacity == 0`, `ptr` may be null; otherwise `ptr` must point to a
-    ///   single allocation valid for `capacity` values of `T` (correctly sized
-    ///   and aligned), with the first `len` elements initialized.
-    /// - `InnerVec` neither frees the allocation nor drops its elements, so the
-    ///   caller (typically [`crate::Vec`]) retains ownership and must keep the
-    ///   allocation valid for as long as the returned value is used.
+    /// `len <= capacity`; unless `capacity == 0`, `ptr` must be valid for
+    /// `capacity` `T`s with the first `len` initialized, for as long as the result
+    /// is used.
     pub unsafe fn from_raw_parts(ptr: *mut T, capacity: usize, len: usize) -> InnerVec<T> {
         InnerVec { ptr, capacity, len }
     }

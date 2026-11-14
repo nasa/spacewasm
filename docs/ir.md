@@ -110,8 +110,8 @@ from the encoding of program counters and the design choices of the IR.
 
 ### Control Flow
 
-- **Nesting depth**: Configurable via generic parameter `MAX_CONTROL_FRAMES` (blocks/loops/if-else)
-- **Value stack**: Configurable via generic parameter `MAX_STACK_DEPTH`, values per function
+- **Nesting depth**: The length of the `DecoderStack` control-frame storage passed to `Module::new` (blocks/loops/if-else, plus the implicit function frame)
+- **Value stack**: The length of the `DecoderStack` operand storage passed to `Module::new`, values per function (at most `DecoderStack::MAX_OPERANDS`)
 - **Label jumps**: 22-bit signed offset (±2,097,151 instructions)
 - **Stack truncation depth**: Maximum 255 32-bit words per label jump
 

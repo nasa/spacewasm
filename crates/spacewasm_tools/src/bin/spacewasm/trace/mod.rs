@@ -31,7 +31,12 @@ pub fn run(args: &TraceArgs) -> Outcome {
     };
     eprintln!("Loaded {} bytes", bytes.len());
 
-    let mut loaded = load(&bytes, host_modules_for(&bytes)?, STACK_WORDS)?;
+    let mut loaded = load(
+        &bytes,
+        host_modules_for(&bytes)?,
+        args.decoder_limits,
+        STACK_WORDS,
+    )?;
 
     // A panic here is usually the interpreter's own assertion (`strict-assertions`)
     // tripping on the start function, which is worth naming before it unwinds.

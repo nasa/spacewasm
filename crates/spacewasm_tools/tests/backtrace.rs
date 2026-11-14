@@ -86,11 +86,14 @@ fn flight_backtrace(uplinked: &[u8]) -> Vec<u32> {
 
     let mut engine = Engine::new(1024, 1, spacewasm::vec![host]).unwrap();
     let mut code = CodeBuilder::new(options()).unwrap();
-    let module = spacewasm::Module::new::<64, 256>(
+    let mut control_frames = [spacewasm::ControlFrame::EMPTY; 64];
+    let mut operands = [spacewasm::OperandType::EMPTY; 256];
+    let module = spacewasm::Module::new(
         "chain",
         &mut Slice(uplinked, false),
         &mut engine.store,
         &mut code,
+        &mut spacewasm::DecoderStack::new(&mut control_frames, &mut operands),
         spacewasm::Rc::new(NoMemory)
             .unwrap()
             .into_wasm_memory_allocator(),

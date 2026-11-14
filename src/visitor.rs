@@ -16,14 +16,8 @@ macro_rules! visit_fn {
     };
 }
 
-/// An abstraction over Wasm IR and internal IR.
-/// This trait can be used to index, compile and execute either form of IR
-/// with the same common implementation. The decoding and traversal code will
-/// call into this visitor and is IR specific. This trait is purely for operating
-/// on decoded WebAssembly instructions.
-///
-/// Note: This visitor does not handle the control-flow instructions since those are
-///       IR-specific. See [WasmVisitor] and [IrVisitor]
+/// Visits the non-control-flow instructions shared by Wasm and the IR. Control
+/// flow is in [`WasmVisitor`] and [`IrVisitor`].
 pub trait BaseVisitor {
     type Error;
     type State;

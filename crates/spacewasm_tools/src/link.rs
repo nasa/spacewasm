@@ -15,6 +15,8 @@
 //! * `SPACEWASM_WASM_OPT_REQUIRED=1` — fail when `wasm-opt` is missing, instead of warning.
 //! * `SPACEWASM_LINKER` — the linker to run first. Default `rust-lld`.
 //! * `SPACEWASM_VALIDATE=0` — skip validating the result.
+//! * `SPACEWASM_DECODER_LIMITS` — the deployment's `DecoderStack` lengths to validate
+//!   against, as `FRAMES/DEPTH`. Default `64/256`.
 //!
 //! Validating decodes through `spacewasm`, so the binary must have installed its
 //! allocator (`spacewasm::global_allocator!`).
@@ -36,6 +38,7 @@ const ENV_WASM_OPT: &str = "SPACEWASM_WASM_OPT";
 const ENV_WASM_OPT_REQUIRED: &str = "SPACEWASM_WASM_OPT_REQUIRED";
 const ENV_LINKER: &str = "SPACEWASM_LINKER";
 const ENV_VALIDATE: &str = "SPACEWASM_VALIDATE";
+const ENV_DECODER_LIMITS: &str = "SPACEWASM_DECODER_LIMITS";
 
 /// Code pages a link-time check allows: generous, since the deployment's real budget is
 /// not known here, but small enough that the page table itself allocates. The table is a
@@ -121,11 +124,17 @@ pub fn link(args: &[OsString]) -> Result<bool, LinkError> {
     if std::env::var(ENV_VALIDATE).is_ok_and(|validate| validate == "0") {
         return Ok(true);
     }
-    // Against the C API's default decoder limits and stand-in hosts: what can be known at
-    // link time. A deployment's own limits are `spacewasm validate`'s to check.
+    // Against stand-in hosts and the decoder limits given, if any: what can be known at
+    // link time. The rest of a deployment's settings are `spacewasm validate`'s to check.
+    let limits = match std::env::var(ENV_DECODER_LIMITS) {
+        Ok(text) => text
+            .parse::<DecoderLimits>()
+            .map_err(|why| LinkError::Setup(format!("{ENV_DECODER_LIMITS}: {why}")))?,
+        Err(_) => DecoderLimits::default(),
+    };
     let hosts = host_modules_for(&module).map_err(|err| LinkError::Hosts(output.clone(), err))?;
     let options = CompilerOptions::new(true, None, LINK_CODE_PAGES);
-    match validate(&module, options, hosts, DecoderLimits::default()) {
+    match validate(&module, options, hosts, limits) {
         Ok(_) => Ok(true),
         Err(err @ Invalid::Unsupported { .. }) => Err(LinkError::Unsupported(output, err)),
         // A limit or a host a link cannot know about: worth seeing, not worth failing on.

@@ -1,6 +1,7 @@
 use spacewasm::{
-    CodeBuilder, CompilerOptions, Engine, ExportDesc, HostFunction, HostModule, InterpreterResult,
-    InterpreterRunner, ModuleRef, PageAllocator, RawValue, Ref, Value, Vec as WasmVec, WasmRef,
+    CodeBuilder, CompilerOptions, ControlFrame, DecoderStack, Engine, ExportDesc, HostFunction,
+    HostModule, InterpreterResult, InterpreterRunner, ModuleRef, OperandType, PageAllocator,
+    RawValue, Ref, Value, Vec as WasmVec, WasmRef,
 };
 use std::ops::ControlFlow;
 use std::time::Instant;
@@ -64,11 +65,15 @@ fn main() {
         .find_map(|path| std::fs::File::open(path).ok())
         .expect("failed to open coremark-minimal.wasm in any expected location");
 
-    let module = spacewasm::Module::new::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
+    let mut control_frames = [ControlFrame::EMPTY; MAX_CONTROL_FRAMES];
+    let mut operands = [OperandType::EMPTY; MAX_STACK_DEPTH];
+    let mut decoder_stack = DecoderStack::new(&mut control_frames, &mut operands);
+    let module = spacewasm::Module::new(
         "coremark",
         &mut FileStream::new(file),
         &mut state.store,
         &mut code_builder,
+        &mut decoder_stack,
         spacewasm::Rc::new(RustSystemAllocator)
             .unwrap()
             .into_wasm_memory_allocator(),

@@ -410,6 +410,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "spacewasm-fuzz"
+version = "0.0.0"
+dependencies = [
+ "libfuzzer-sys",
+ "spacewasm",
+ "spacewasm-fuzzing",
+]
+
+[[package]]
 name = "spacewasm-fuzzing"
 version = "0.0.0"
 dependencies = [
@@ -420,15 +429,6 @@ dependencies = [
  "wasm-smith",
  "wasmi",
  "wasmprinter",
-]
-
-[[package]]
-name = "spacewasm-fuzz"
-version = "0.0.0"
-dependencies = [
- "libfuzzer-sys",
- "spacewasm",
- "spacewasm-fuzzing",
 ]
 
 [[package]]

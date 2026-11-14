@@ -35,9 +35,9 @@ mod alloc;
 use {alloc::BareMetalAllocator as Allocator, bench::entry, semihosting::io::Write};
 
 use spacewasm::{
-    CodeBuilder, CompilerOptions, Engine, ExportDesc, HostFunction, HostModule, Interpreter,
-    InterpreterResult, InterpreterRunner, InvokeError, ModuleRef, PageAllocator, RawValue, Ref,
-    TrapReason, UnwrapNoFmt, Value, WasmRef,
+    CodeBuilder, CompilerOptions, ControlFrame, DecoderStack, Engine, ExportDesc, HostFunction,
+    HostModule, Interpreter, InterpreterResult, InterpreterRunner, InvokeError, ModuleRef,
+    OperandType, PageAllocator, RawValue, Ref, TrapReason, UnwrapNoFmt, Value, WasmRef,
 };
 
 const STACK_SIZE: usize = 1024;
@@ -83,11 +83,15 @@ fn coremark() -> (f32, u32) {
 
     let mut file_stream = bytes::ByteStream::new(&COREMARK_WASM);
 
-    let module = spacewasm::Module::new::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
+    let mut control_frames = [ControlFrame::EMPTY; MAX_CONTROL_FRAMES];
+    let mut operands = [OperandType::EMPTY; MAX_STACK_DEPTH];
+    let mut decoder_stack = DecoderStack::new(&mut control_frames, &mut operands);
+    let module = spacewasm::Module::new(
         "main",
         &mut file_stream,
         &mut engine.store,
         &mut code_builder,
+        &mut decoder_stack,
         spacewasm::Rc::new(Allocator)
             .unwrap_nofmt()
             .into_wasm_memory_allocator(),

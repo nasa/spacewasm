@@ -10,16 +10,8 @@ pub trait WasmMemoryAllocator {
     /// Allocate a new memory region for linear memory
     fn allocate(&self, layout: Layout) -> Result<NonNull<u8>, AllocError>;
 
-    /// Reallocate a memory region, moving data if needed.
-    ///
-    /// On success, returns a pointer to a block of `layout` whose leading
-    /// `old_layout.size()` bytes hold the previous contents; the old allocation
-    /// (`ptr`/`old_layout`) has been consumed and must not be used again.
-    ///
-    /// # Failure ownership contract
-    ///
-    /// On `Err`, the implementation MUST leave the original allocation
-    /// (`ptr` with `old_layout`) valid, unmoved, and still owned by the caller.
+    /// Reallocate, keeping the leading `old_layout.size()` bytes. On `Err` the
+    /// original allocation must be left valid and owned by the caller.
     fn reallocate(
         &self,
         ptr: NonNull<u8>,
@@ -40,22 +32,11 @@ impl<T: WasmMemoryAllocator> Rc<T> {
     }
 }
 
-/// A WebAssembly linear memory
+/// A WebAssembly linear memory, shared between modules through `Rc`.
 ///
-/// Linear memory implements inner mutability so it is not thread-safe.
-/// `Memory` holds a raw pointer, so it is automatically `!Send + !Sync`.
-///
-/// Needs to have inner mutability because multiple modules can point
-/// to it (via imports) and we use `Rc<Memory>` for reference counting these ownerships.
-///
-/// # Aliasing model
-///
-/// The `store_*` mutators take `&self`, so the borrow checker will not stop you
-/// from writing these bytes while a shared reference into them is alive. Drop
-/// any [`Memory::load`] / [`Memory::get_slice`] slice before any write —
-/// `store_*`, [`Memory::grow`] (which may reallocate), a host callback, or guest
-/// re-entry. Holding one across a write is UB under Stacked Borrows.
-/// [`Memory::as_shared_cells`] is the one aliasing-tolerant accessor.
+/// Writes take `&self`, so drop any slice from [`Memory::load`] or
+/// [`Memory::get_slice`] before writing or growing. [`Memory::as_shared_cells`]
+/// is the only view that survives writes.
 pub struct Memory {
     ptr: *mut u8,
     size: usize,
@@ -153,14 +134,8 @@ impl Memory {
         }
     }
 
-    /// Resolve a guest memory access `base + offset` to a byte address.
-    ///
-    /// The sum is evaluated in `u64` and narrowed back to `usize`, so it can
-    /// never wrap on 32-bit targets, where `usize` is 32-bit and `base + offset`
-    /// may exceed `u32::MAX`. An address that does not fit `usize` is rejected as
-    /// out of bounds rather than aliasing a valid cell. The resulting address is
-    /// still bounds-checked against the memory size by the individual load/store
-    /// operations.
+    /// `base + offset` as a byte address, without wrapping on 32-bit targets. Not
+    /// bounds-checked against the memory size.
     #[inline]
     pub fn effective_address(base: u32, offset: u32) -> Result<usize, MemoryError> {
         usize::try_from(base as u64 + offset as u64).map_err(|_| MemoryError::OutOfBounds)
@@ -316,13 +291,8 @@ impl Memory {
         }
     }
 
-    /// Expose linear memory as `&[UnsafeCell<u8>]`.
-    ///
-    /// Unlike [`get_slice`], this view stays valid across writes, which is what
-    /// makes it usable as a `wiggle` `GuestMemory::Shared` backing store. Still
-    /// invalidated by [`Memory::grow`]. Empty for the [`Memory::zero`] sentinel.
-    ///
-    /// [`get_slice`]: Memory::get_slice
+    /// Linear memory as cells, valid across writes but not across
+    /// [`Memory::grow`].
     pub fn as_shared_cells(&self) -> &[core::cell::UnsafeCell<u8>] {
         if self.ptr.is_null() {
             &[]

@@ -69,3 +69,26 @@ fn an_allocation_larger_than_a_page_fails() {
             "more than a 64-byte heap page holds",
         ));
 }
+
+/// The embedder's `DecoderStack` lengths decide whether a module loads: four nested
+/// blocks plus the function's own frame need five control frames.
+#[test]
+fn decoder_limits_are_the_embedders() {
+    let module =
+        wat::parse_str(r#"(module (func (export "f") (block (block (block (block nop))))))"#)
+            .unwrap();
+    let path = std::env::temp_dir().join(format!("spacewasm-limits-{}.wasm", std::process::id()));
+    std::fs::write(&path, module).unwrap();
+    let validate = |limits: &str| {
+        cargo_bin_cmd!("spacewasm")
+            .args(["validate", "--decoder-limits", limits])
+            .arg(&path)
+            .assert()
+    };
+
+    validate("5/1").success();
+    validate("4/1")
+        .failure()
+        .stderr(predicate::str::contains("does not load"));
+    std::fs::remove_file(&path).ok();
+}

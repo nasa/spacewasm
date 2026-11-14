@@ -13,8 +13,8 @@
 use crate::heap::{self, Heap, SectionHeap};
 use crate::ir::IrMap;
 use spacewasm::{
-    AllocError, CodeBuilder, CompilerOptions, Engine, HostModule, InnerVec, JumpTarget,
-    WasmMemoryAllocator, WasmStream,
+    AllocError, CodeBuilder, CompilerOptions, ControlFrame, DecoderStack, Engine, HostModule,
+    InnerVec, JumpTarget, OperandType, WasmMemoryAllocator, WasmStream,
 };
 use std::alloc::Layout;
 use std::cell::RefCell;
@@ -33,12 +33,56 @@ pub struct DecoderLimits {
 }
 
 impl Default for DecoderLimits {
-    /// `spacewasm_c_api`'s default `include/config.rs`.
+    /// What the C API examples pass to `spacewasm_load_module`.
     fn default() -> Self {
         DecoderLimits {
             max_control_frames: 64,
             max_stack_depth: 256,
         }
+    }
+}
+
+impl DecoderLimits {
+    /// Room for what a WASI toolchain emits, for a ground run.
+    pub const GROUND: DecoderLimits = DecoderLimits {
+        max_control_frames: 0x1_000,
+        max_stack_depth: 0x400,
+    };
+
+    /// Run `f` with a `DecoderStack` of these lengths.
+    pub fn with_stack<R>(&self, f: impl FnOnce(&mut DecoderStack) -> R) -> R {
+        let mut control_frames = vec![ControlFrame::EMPTY; self.max_control_frames];
+        let mut operands = vec![OperandType::EMPTY; self.max_stack_depth];
+        f(&mut DecoderStack::new(&mut control_frames, &mut operands))
+    }
+}
+
+impl fmt::Display for DecoderLimits {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}/{}", self.max_control_frames, self.max_stack_depth)
+    }
+}
+
+impl std::str::FromStr for DecoderLimits {
+    type Err = String;
+
+    /// `FRAMES/DEPTH`: the lengths of an embedder's `DecoderStack`, each decimal or `0x`
+    /// hex.
+    fn from_str(text: &str) -> Result<Self, String> {
+        let number = |part: &str| {
+            match part.strip_prefix("0x").or_else(|| part.strip_prefix("0X")) {
+                Some(hex) => usize::from_str_radix(hex, 16),
+                None => part.parse(),
+            }
+            .map_err(|err| format!("`{part}` is not a number: {err}"))
+        };
+        let (frames, depth) = text
+            .split_once('/')
+            .ok_or_else(|| format!("`{text}` is not FRAMES/DEPTH"))?;
+        Ok(DecoderLimits {
+            max_control_frames: number(frames)?,
+            max_stack_depth: number(depth)?,
+        })
     }
 }
 
@@ -54,8 +98,6 @@ pub enum ReplayError {
     Decode(spacewasm::ParseError),
     /// Something the replay itself needed could not be allocated.
     Alloc(AllocError),
-    /// `DecoderLimits` names a combination this build was not compiled for.
-    UnsupportedLimits(DecoderLimits),
 }
 
 impl fmt::Display for ReplayError {
@@ -72,12 +114,6 @@ impl fmt::Display for ReplayError {
                 err.offset, err.err.err
             ),
             ReplayError::Alloc(err) => write!(f, "out of memory replaying the load: {err:?}"),
-            ReplayError::UnsupportedLimits(limits) => write!(
-                f,
-                "decoder limits {} control frames / {} stack depth are not supported; \
-                 supported are 64/256 (the C API default) and 16/64",
-                limits.max_control_frames, limits.max_stack_depth
-            ),
         }
     }
 }
@@ -183,24 +219,12 @@ fn decode(
     memory: spacewasm::Rc<dyn WasmMemoryAllocator>,
     limits: DecoderLimits,
 ) -> Result<(), ReplayError> {
-    macro_rules! decode_with {
-        ($frames:literal, $depth:literal) => {
-            spacewasm::Module::new::<$frames, $depth>(
-                "replay",
-                stream,
-                &mut engine.store,
-                code,
-                memory,
-            )
-        };
-    }
-    // Const generics on the flight side; only the configurations that ship are here.
-    let decoded = match (limits.max_control_frames, limits.max_stack_depth) {
-        (64, 256) => decode_with!(64, 256),
-        (16, 64) => decode_with!(16, 64),
-        _ => return Err(ReplayError::UnsupportedLimits(limits)),
-    };
-    let module = decoded.map_err(ReplayError::Decode)?;
+    // Fixed arrays on the flight side; sized to match here.
+    let module = limits
+        .with_stack(|stack| {
+            spacewasm::Module::new("replay", stream, &mut engine.store, code, stack, memory)
+        })
+        .map_err(ReplayError::Decode)?;
     stream.mark(INSTANTIATE, 0);
     engine
         .push_module(module)

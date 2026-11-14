@@ -19,10 +19,6 @@ pub struct Vec<T: Sized, A: Allocator = GlobalAllocator> {
 
 impl<T> Vec<T, GlobalAllocator> {
     /// Build a `Vec` from an exact-size iterator.
-    ///
-    /// The capacity is taken from `iter.len()`. Returns [`AllocError`] if that
-    /// length does not fit in a `u32` (instead of silently truncating the cast)
-    /// or if allocating the backing buffer fails.
     pub fn from_exact_iter(iter: impl ExactSizeIterator<Item = T>) -> Result<Self, AllocError> {
         let mut o = Self::new(iter.len())?;
         for i in iter {
@@ -104,18 +100,11 @@ impl<T: Sized> Vec<T, GlobalAllocator> {
         Vec::new_in(GlobalAllocator, capacity)
     }
 
-    /// Build a `Vec` that adopts a raw allocation, using [`GlobalAllocator`].
-    ///
-    /// The returned `Vec` starts empty (`len == 0`) and treats all `capacity`
-    /// slots as uninitialized. Its [`Drop`] frees `ptr` with [`GlobalAllocator`].
+    /// Adopt an empty allocation of `capacity` `T`s from [`GlobalAllocator`].
     ///
     /// # Safety
-    /// - `ptr` must point to a single allocation of at least `capacity` values
-    ///   of `T`, produced by [`GlobalAllocator`] with the layout
-    ///   `Layout::array::<T>(capacity)` (correctly sized and aligned).
-    /// - Ownership of that allocation is transferred to the returned `Vec`: it
-    ///   must not be freed, aliased, or otherwise used elsewhere, since the
-    ///   `Vec`'s `Drop` will free it with the same allocator and layout.
+    /// `ptr` must come from [`GlobalAllocator`] with `Layout::array::<T>(capacity)`
+    /// and is owned (and freed) by the returned `Vec`.
     pub unsafe fn new_from(ptr: *mut T, capacity: usize) -> Vec<T> {
         Vec {
             // SAFETY: guaranteed by this function's contract; `len == 0` so no
@@ -127,18 +116,11 @@ impl<T: Sized> Vec<T, GlobalAllocator> {
 }
 
 impl<T: Sized, A: Allocator> Vec<T, A> {
-    /// Build a `Vec` that adopts a raw allocation, using a custom allocator.
-    ///
-    /// The returned `Vec` starts empty (`len == 0`) and treats all `capacity`
-    /// slots as uninitialized. Its [`Drop`] frees `ptr` with `alloc`.
+    /// Adopt an empty allocation of `capacity` `T`s from `alloc`.
     ///
     /// # Safety
-    /// - `ptr` must point to a single allocation of at least `capacity` values
-    ///   of `T`, produced by `alloc` with the layout
-    ///   `Layout::array::<T>(capacity)` (correctly sized and aligned).
-    /// - Ownership of that allocation is transferred to the returned `Vec`: it
-    ///   must not be freed, aliased, or otherwise used elsewhere, since the
-    ///   `Vec`'s `Drop` will free it with `alloc` and the same layout.
+    /// `ptr` must come from `alloc` with `Layout::array::<T>(capacity)` and is
+    /// owned (and freed) by the returned `Vec`.
     pub unsafe fn new_from_with_alloc(ptr: *mut T, capacity: usize, alloc: A) -> Vec<T, A> {
         Vec {
             // SAFETY: guaranteed by this function's contract; `len == 0` so no
@@ -193,42 +175,10 @@ impl<T: Sized, A: Allocator> Vec<T, A> {
         self.inner.capacity()
     }
 
-    /// Appends an element to the back of the vector.
-    ///
-    /// Unlike `alloc::vec::Vec`, this vector has a fixed capacity fixed at
-    /// construction and never reallocates. Use [`Vec::try_push`] to handle a
-    /// full vector without panicking.
+    /// Append an element. The capacity is fixed; see [`Vec::try_push`].
     ///
     /// # Panics
-    ///
-    /// Panics if the new length exceeds the capacity.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # // `spacewasm` is `no_std`: its `GlobalAllocator` forwards to the
-    /// # // `__spacewasm_*` symbols an embedder installs via `global_allocator!`.
-    /// # // A doctest is its own binary, so provide a std-backed implementation.
-    /// # struct DocAlloc;
-    /// # unsafe impl spacewasm::Allocator for DocAlloc {
-    /// #     unsafe fn alloc(&self, l: core::alloc::Layout) -> Result<*mut u8, spacewasm::AllocError> {
-    /// #         Ok(unsafe { std::alloc::alloc(l) })
-    /// #     }
-    /// #     unsafe fn dealloc(&self, p: *mut u8, l: core::alloc::Layout) { unsafe { std::alloc::dealloc(p, l) } }
-    /// # }
-    /// # spacewasm::global_allocator!(DocAlloc, DocAlloc);
-    /// use spacewasm::Vec;
-    ///
-    /// let mut vec = Vec::new(3).unwrap();
-    /// vec.push(1);
-    /// vec.push(2);
-    /// vec.push(3);
-    /// assert_eq!(&vec[..], &[1, 2, 3]);
-    /// ```
-    ///
-    /// # Time complexity
-    ///
-    /// Takes *O*(1) time.
+    /// If the vector is full.
     pub fn push(&mut self, value: T) {
         self.inner.push(value)
     }
@@ -237,33 +187,7 @@ impl<T: Sized, A: Allocator> Vec<T, A> {
         self.inner.try_push(value)
     }
 
-    /// Removes the last element from the vector and returns it, or [`None`] if
-    /// it is empty. The capacity is unchanged.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # // `spacewasm` is `no_std`: its `GlobalAllocator` forwards to the
-    /// # // `__spacewasm_*` symbols an embedder installs via `global_allocator!`.
-    /// # // A doctest is its own binary, so provide a std-backed implementation.
-    /// # struct DocAlloc;
-    /// # unsafe impl spacewasm::Allocator for DocAlloc {
-    /// #     unsafe fn alloc(&self, l: core::alloc::Layout) -> Result<*mut u8, spacewasm::AllocError> {
-    /// #         Ok(unsafe { std::alloc::alloc(l) })
-    /// #     }
-    /// #     unsafe fn dealloc(&self, p: *mut u8, l: core::alloc::Layout) { unsafe { std::alloc::dealloc(p, l) } }
-    /// # }
-    /// # spacewasm::global_allocator!(DocAlloc, DocAlloc);
-    /// use spacewasm::Vec;
-    ///
-    /// let mut vec = Vec::from_array([1, 2, 3]).unwrap();
-    /// assert_eq!(vec.pop(), Some(3));
-    /// assert_eq!(&vec[..], &[1, 2]);
-    /// ```
-    ///
-    /// # Time complexity
-    ///
-    /// Takes *O*(1) time.
+    /// Remove and return the last element, or `None` if empty.
     pub fn pop(&mut self) -> Option<T> {
         self.inner.pop()
     }

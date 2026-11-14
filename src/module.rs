@@ -63,43 +63,31 @@ impl CustomSectionHandler for DefaultCustomSectionHandler {
 }
 
 impl Module {
-    /// Decode, validate, compile, and instantiate a module from `stream` in a
-    /// single pass.
+    /// Decode, validate, compile and instantiate a module from `stream`.
+    /// `decoder_stack` is the validator's scratch storage and bounds block nesting
+    /// and operand depth per function.
     ///
     /// # Errors invalidate the engine
-    ///
-    /// Unlike the Wasm specification, instantiation is not atomic. After an
-    /// `Err` (or a failed [`Engine::push_module`]) the embedder must drop the
-    /// entire [`Engine`] and its [`CodeBuilder`] and reconstruct them before
-    /// loading or invoking anything else. [`Engine::reset`] only resets
-    /// execution state and is not a recovery path for a failed load.
-    ///
-    /// - **No rollback of imported state.** Data and element segments are
-    ///   written into their target memory or table as they are read, rather
-    ///   than buffered until the whole module validates. When the target is an
-    ///   imported memory or table, a rejected module can leave writes in
-    ///   another module's memory or table, including table entries that
-    ///   reference the module index the rejected module would have received.
-    /// - **No rollback of allocations.** Since deallocation cannot precede
-    ///   allocation, freeing the partial state of a rejected module poisons the
-    ///   page allocator. Every later allocation fails with
-    ///   [`AllocError::HeapPoisoned`] until all pages are released. Code pages
-    ///   consumed by the rejected module are not returned to the
-    ///   `max_code_pages` budget.
-    pub fn new<const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize>(
+    /// Instantiation is not atomic: data and element segments may already be
+    /// written to imported memories and tables, and the page allocator is
+    /// poisoned. After an `Err`, drop the [`Engine`] and [`CodeBuilder`] and build
+    /// new ones; [`Engine::reset`] does not recover.
+    pub fn new(
         name: &str,
         stream: &mut dyn WasmStream,
         store: &mut Store,
         code_builder: &mut CodeBuilder,
+        decoder_stack: &mut DecoderStack,
         allocator: Rc<dyn WasmMemoryAllocator>,
     ) -> Result<Module, ParseError> {
         let mut wasm = Reader::new(stream);
 
-        Module::read::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
+        Module::read(
             name,
             &mut wasm,
             store,
             code_builder,
+            decoder_stack,
             &mut DefaultCustomSectionHandler,
             allocator,
         )
@@ -110,11 +98,12 @@ impl Module {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn read<const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize>(
+    fn read(
         name: &str,
         wasm: &mut Reader,
         store: &mut Store,
         code_builder: &mut CodeBuilder,
+        decoder_stack: &mut DecoderStack,
         custom_handler: &mut dyn CustomSectionHandler,
         allocator: Rc<dyn WasmMemoryAllocator>,
     ) -> Result<Module, SectionDecodeError> {
@@ -186,13 +175,14 @@ impl Module {
 
             wasm.with_limit(section_size, |wasm| {
                 module
-                    .read_section::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
+                    .read_section(
                         wasm,
                         store,
                         section_size,
                         section_ty,
                         custom_handler,
                         code_builder,
+                        decoder_stack,
                         allocator.clone(),
                     )
                     .map_err(|e| e.with_section(section_ty))
@@ -215,7 +205,7 @@ impl Module {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn read_section<const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize>(
+    fn read_section(
         &mut self,
         wasm: &mut Reader,
         store: &mut Store,
@@ -223,6 +213,7 @@ impl Module {
         section_ty: SectionKind,
         custom_handler: &mut dyn CustomSectionHandler,
         code_builder: &mut CodeBuilder,
+        decoder_stack: &mut DecoderStack,
         allocator: Rc<dyn WasmMemoryAllocator>,
     ) -> Result<(), ValidationError> {
         use SectionKind::*;
@@ -355,12 +346,7 @@ impl Module {
                 ElementSection::read(wasm, store, self)?;
             }
             Code => {
-                CodeSection::read::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
-                    wasm,
-                    code_builder,
-                    store,
-                    self,
-                )?;
+                CodeSection::read(wasm, code_builder, decoder_stack, store, self)?;
             }
             Data => {
                 DataSection::read(wasm, store, self)?;
@@ -956,9 +942,10 @@ impl ElementSection {
 pub struct CodeSection;
 
 impl CodeSection {
-    pub fn read<const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize>(
+    pub fn read(
         wasm: &mut Reader,
         builder: &mut CodeBuilder,
+        stack: &mut DecoderStack,
         store: &Store,
         module: &mut Module,
     ) -> Result<(), ValidationError> {
@@ -968,9 +955,7 @@ impl CodeSection {
         }
 
         for i in 0..n as usize {
-            module.read_function_code::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
-                wasm, store, builder, i,
-            )?;
+            module.read_function_code(wasm, store, builder, stack, i)?;
         }
 
         Ok(())

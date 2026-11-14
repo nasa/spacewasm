@@ -8,8 +8,8 @@ mod tests {
         ResumeError, ValType, Value, WasmRef,
     };
     use crate::{
-        CodeBuilder, CompilerOptions, HostFunction, HostFunctionBreak, HostFunctionResult,
-        HostModule, HostPause, JumpTarget,
+        CodeBuilder, CompilerOptions, ControlFrame, DecoderStack, HostFunction, HostFunctionBreak,
+        HostFunctionResult, HostModule, HostPause, JumpTarget, OperandType,
     };
     use core::ops::ControlFlow;
 
@@ -1313,11 +1313,14 @@ mod tests {
             pc_ir_callback: None,
         })
         .unwrap();
-        let module = Module::new::<16, 64>(
+        let mut control_frames = [ControlFrame::EMPTY; 16];
+        let mut operands = [OperandType::EMPTY; 64];
+        let module = Module::new(
             "chain",
             &mut SliceStream(CHAIN_WASM, false),
             &mut engine.store,
             &mut code,
+            &mut DecoderStack::new(&mut control_frames, &mut operands),
             crate::Rc::new(TestAllocator)
                 .unwrap()
                 .into_wasm_memory_allocator(),

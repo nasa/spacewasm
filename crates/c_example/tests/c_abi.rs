@@ -17,7 +17,7 @@ fn compile_and_run(name: &str, expect: Option<&str>) {
         return;
     };
 
-    build_staticlib();
+    let lib_dir = build_staticlib(&PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("c_api"));
 
     let src = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("examples")
@@ -25,9 +25,9 @@ fn compile_and_run(name: &str, expect: Option<&str>) {
     let out = std::env::temp_dir().join(format!("spacewasm_{}", name.replace('.', "_")));
 
     assert!(
-        compile_c(cc, &src, &out),
-        "C compile/link failed for {name}; is libspacewasm_c_api.a built? \
-         (run `cargo build -p spacewasm_c_api`)"
+        compile_c(cc, &lib_dir, &src, &out),
+        "C compile/link failed for {name} against {}",
+        lib_dir.display()
     );
 
     let program = out.to_string_lossy().to_string();

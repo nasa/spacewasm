@@ -98,6 +98,30 @@ fn new_guest_allocator() -> *mut CAllocator {
     )
 }
 
+/// Decoder scratch storage at the C API default limits, owned by the test.
+struct DecoderStorage {
+    control_frames: [core::mem::MaybeUninit<spacewasm_control_frame_t>; 64],
+    operands: [core::mem::MaybeUninit<spacewasm_operand_t>; 256],
+}
+
+impl DecoderStorage {
+    fn new() -> Self {
+        Self {
+            control_frames: [const { core::mem::MaybeUninit::uninit() }; 64],
+            operands: [const { core::mem::MaybeUninit::uninit() }; 256],
+        }
+    }
+
+    fn as_c(&mut self) -> spacewasm_decoder_stack_t {
+        spacewasm_decoder_stack_t {
+            control_frames: self.control_frames.as_mut_ptr().cast(),
+            control_frames_len: self.control_frames.len(),
+            operands: self.operands.as_mut_ptr().cast(),
+            operands_len: self.operands.len(),
+        }
+    }
+}
+
 // ---- value helpers ----------------------------------------------------------
 
 fn i32_val(x: i32) -> spacewasm_value_t {
@@ -408,6 +432,7 @@ fn load_module_onto(
 ) -> Result<u32, spacewasm_status_t> {
     let mut cursor = Cursor { data, pos: 0, step };
     let mut idx = 0u32;
+    let mut decoder = DecoderStorage::new();
     let st = unsafe {
         spacewasm_load_module(
             store,
@@ -415,6 +440,7 @@ fn load_module_onto(
             Some(cursor_read),
             &mut cursor as *mut Cursor as *mut c_void,
             alloc,
+            decoder.as_c(),
             &mut idx,
         )
     };
@@ -1182,6 +1208,7 @@ fn streaming_read_error() {
     assert!(!alloc.is_null(), "allocator_new");
 
     let mut idx = 0u32;
+    let mut decoder = DecoderStorage::new();
     let st = unsafe {
         spacewasm_load_module(
             store,
@@ -1189,6 +1216,7 @@ fn streaming_read_error() {
             Some(failing_read),
             core::ptr::null_mut(),
             alloc,
+            decoder.as_c(),
             &mut idx,
         )
     };
@@ -1454,6 +1482,7 @@ fn null_arg_handling() {
         step: 0,
     };
     let mut idx = 0u32;
+    let mut decoder = DecoderStorage::new();
     let st = unsafe {
         spacewasm_load_module(
             store,
@@ -1461,6 +1490,7 @@ fn null_arg_handling() {
             Some(cursor_read),
             &mut cursor as *mut Cursor as *mut c_void,
             alloc,
+            decoder.as_c(),
             &mut idx,
         )
     };
@@ -2159,6 +2189,7 @@ fn module_with_start_runs() {
         pos: 0,
         step: 0,
     };
+    let mut decoder = DecoderStorage::new();
     let mut idx = 0u32;
     assert_eq!(
         unsafe {
@@ -2168,6 +2199,7 @@ fn module_with_start_runs() {
                 Some(cursor_read),
                 &mut cursor as *mut Cursor as *mut c_void,
                 alloc,
+                decoder.as_c(),
                 &mut idx,
             )
         },
@@ -3122,6 +3154,7 @@ fn start_function_traps() {
         pos: 0,
         step: 0,
     };
+    let mut decoder = DecoderStorage::new();
     let mut idx = 0u32;
     assert_eq!(
         unsafe {
@@ -3131,6 +3164,7 @@ fn start_function_traps() {
                 Some(cursor_read),
                 &mut cursor as *mut Cursor as *mut c_void,
                 alloc,
+                decoder.as_c(),
                 &mut idx,
             )
         },
@@ -3513,4 +3547,82 @@ fn resume_with_wrong_type_is_retryable() {
         spacewasm_destroy(store);
         spacewasm_allocator_destroy(alloc);
     }
+}
+
+/// Load `ADD_WASM` with `decoder` as the validator scratch storage.
+fn load_with_decoder(decoder: spacewasm_decoder_stack_t) -> spacewasm_status_t {
+    let store = new_store(1024, 1, 256);
+    let alloc = new_guest_allocator();
+    assert!(!alloc.is_null(), "allocator_new");
+
+    let mut cursor = Cursor {
+        data: ADD_WASM,
+        pos: 0,
+        step: 0,
+    };
+    let mut idx = 0u32;
+    let st = unsafe {
+        spacewasm_load_module(
+            store,
+            c"main".as_ptr(),
+            Some(cursor_read),
+            &mut cursor as *mut Cursor as *mut c_void,
+            alloc,
+            decoder,
+            &mut idx,
+        )
+    };
+    unsafe {
+        spacewasm_allocator_destroy(alloc);
+        spacewasm_destroy(store);
+    }
+    st
+}
+
+#[test]
+fn decoder_stack_bounds_are_caller_supplied() {
+    let _guard = ALLOC_LOCK.lock().unwrap();
+    ensure_global_allocator();
+
+    let mut frames = [const { core::mem::MaybeUninit::<spacewasm_control_frame_t>::uninit() }; 1];
+    let mut operands = [const { core::mem::MaybeUninit::<spacewasm_operand_t>::uninit() }; 2];
+    let fits = spacewasm_decoder_stack_t {
+        control_frames: frames.as_mut_ptr().cast(),
+        control_frames_len: 1,
+        operands: operands.as_mut_ptr().cast(),
+        operands_len: 2,
+    };
+    // `add` needs the function frame and two operands: exactly this much.
+    assert_eq!(load_with_decoder(fits), status::SPACEWASM_OK);
+
+    // One operand short is a capacity rejection, not a crash.
+    let short = spacewasm_decoder_stack_t {
+        operands_len: 1,
+        ..fits
+    };
+    assert_eq!(
+        load_with_decoder(short),
+        status::SPACEWASM_ERR_OUT_OF_MEMORY
+    );
+
+    // No room for the implicit function frame.
+    let no_frames = spacewasm_decoder_stack_t {
+        control_frames: core::ptr::null_mut(),
+        control_frames_len: 0,
+        ..fits
+    };
+    assert_eq!(
+        load_with_decoder(no_frames),
+        status::SPACEWASM_ERR_OUT_OF_MEMORY
+    );
+
+    // A null array with a length is a null argument.
+    let null_operands = spacewasm_decoder_stack_t {
+        operands: core::ptr::null_mut(),
+        ..fits
+    };
+    assert_eq!(
+        load_with_decoder(null_operands),
+        status::SPACEWASM_ERR_NULL_ARG
+    );
 }
