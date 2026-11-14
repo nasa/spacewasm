@@ -20,14 +20,14 @@ doc = false
 bench = false
 
 [[bin]]
-name = "validate_differential"
+name = "validate-differential"
 path = "fuzz_targets/validate_differential.rs"
 test = false
 doc = false
 bench = false
 
 [[bin]]
-name = "no_traps"
+name = "no-traps"
 path = "fuzz_targets/no_traps.rs"
 test = false
 doc = false
