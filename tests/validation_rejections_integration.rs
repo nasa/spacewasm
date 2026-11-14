@@ -333,3 +333,79 @@ fn global_count_exceeding_u16_is_rejected() {
     // Boundary: exactly `u16::MAX` globals still fit the index and compile.
     assert!(compile(&module_with_globals(u16::MAX as u32), options).is_ok());
 }
+
+/// A module with one function of `params` `i32` parameters and `locals` `i32`
+/// locals in a single bucket, whose body is `local.get <get>` `drop`.
+fn module_with_locals(params: u32, locals: u32, get: u32) -> Vec<u8> {
+    let mut wasm = WASM_HEADER.to_vec();
+
+    // type: (i32 x params) -> ()
+    let mut ty = vec![0x60];
+    write_leb_u32(&mut ty, params);
+    ty.extend(std::iter::repeat_n(0x7F, params as usize));
+    ty.push(0x00);
+    write_vec_section(&mut wasm, 1, 1, &ty);
+
+    write_vec_section(&mut wasm, 3, 1, &[0x00]); // function: type 0
+
+    // body: 1 local bucket of `locals` i32, `local.get get`, `drop`, `end`
+    let mut body = vec![0x01];
+    write_leb_u32(&mut body, locals);
+    body.push(0x7F);
+    body.push(0x20);
+    write_leb_u32(&mut body, get);
+    body.extend_from_slice(&[0x1A, 0x0B]);
+    let mut entry = Vec::new();
+    write_leb_u32(&mut entry, body.len() as u32);
+    entry.extend_from_slice(&body);
+    write_vec_section(&mut wasm, 10, 1, &entry);
+
+    wasm
+}
+
+/// The local index space (parameters plus locals) can exceed `u16::MAX`. Looking
+/// up a local in such a function must not overflow the index accumulator, which
+/// panicked with overflow checks on and rejected valid modules without them.
+#[test]
+fn local_index_space_exceeding_u16_compiles() {
+    let options = CompilerOptions {
+        allow_memory_grow: false,
+        max_backpatch_iterations: None,
+        max_code_pages: 256,
+        #[cfg(feature = "ir-map")]
+        pc_ir_callback: None,
+    };
+
+    // 255 + 65,281 = 65,536 indices, while the frame (65,281 words + 2 header
+    // + 1 operand) still fits the 16-bit frame limit.
+    const PARAMS: u32 = 255;
+    const LOCALS: u32 = 65_281;
+
+    // A parameter, and the first local: finding it already sums the whole
+    // bucket past `u16::MAX`.
+    for get in [0, PARAMS] {
+        assert_eq!(
+            compile(&module_with_locals(PARAMS, LOCALS, get), options),
+            Ok(()),
+            "local.get {get}"
+        );
+    }
+
+    // Locals beyond the 16-bit signed frame offset cannot be addressed.
+    assert_eq!(
+        compile(
+            &module_with_locals(PARAMS, LOCALS, PARAMS + LOCALS - 1),
+            options
+        ),
+        Err(ValidationError::LocalIdxOutOfRange),
+    );
+
+    // One past the last local is out of range.
+    assert_eq!(
+        compile(
+            &module_with_locals(PARAMS, LOCALS, PARAMS + LOCALS),
+            options
+        ),
+        Err(ValidationError::LocalIdxOutOfRange),
+    );
+}

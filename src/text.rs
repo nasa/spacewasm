@@ -628,7 +628,7 @@ impl<'a> TextBuilder<'a> {
             return Err(ValidationError::LocalIdxOutOfRange);
         }
 
-        let x = x.0 as u16;
+        let x = x.0 as usize;
 
         let signature = self
             .module
@@ -638,11 +638,11 @@ impl<'a> TextBuilder<'a> {
 
         // Search for the variable and compute it's offset
         let mut current_offset = 0usize;
-        let mut current_index = 0;
+        let mut current_index = 0usize;
 
         // Check the parameters first
         for (i, p_ty) in signature.params.iter().enumerate() {
-            if x == i as u16 {
+            if x == i {
                 // This offset is the offset from the start of the parameters list
                 // We need to convert this offset to be relative to the frame pointer
                 // which is immediately after the final parameter
@@ -663,10 +663,11 @@ impl<'a> TextBuilder<'a> {
 
         // Now check the local variables
         for (n, ty) in &self.func.locals {
+            let n = *n as usize;
             if current_index + n > x {
                 // This bucket has the local variable
                 // Compute it's offset as a word index from the frame
-                let offset = current_offset + ty.size() * (x - current_index) as usize;
+                let offset = current_offset + ty.size() * (x - current_index);
 
                 let word_offset = offset / 4;
                 if word_offset > (i16::MAX as usize) - 2 {
@@ -680,7 +681,7 @@ impl<'a> TextBuilder<'a> {
                 });
             }
 
-            let section_size = *n as usize * ty.size();
+            let section_size = n * ty.size();
             current_offset += section_size;
             current_index += n;
         }
