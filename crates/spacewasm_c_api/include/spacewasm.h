@@ -722,8 +722,12 @@ spacewasm_status_t spacewasm_resume_value(struct spacewasm_t *engine,
                                           struct spacewasm_value_t resume_value);
 
 /*
- Abandon any call and reset execution state, linear memory and the table.
- Loaded modules stay loaded.
+ Abandon any call and reset execution state (program counter, stack, pending
+ result, host pause and trap). Loaded modules stay loaded.
+
+ This does not clear guest state: module memories, tables and globals keep
+ their contents, and the next call observes whatever earlier calls wrote.
+ To start from a clean guest, destroy the engine and load the modules again.
 
  # Safety
  `engine` must be live.

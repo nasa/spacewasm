@@ -156,6 +156,12 @@ impl Engine {
         })
     }
 
+    /// Abandons any call and resets execution state: program counter, stack,
+    /// pending result, host pause and trap. Loaded modules stay loaded.
+    ///
+    /// Module memories, tables and globals are not cleared, so the next call
+    /// observes whatever earlier calls wrote. This is also not a recovery path
+    /// after a failed module load (see [`Module::new`]).
     pub fn reset(&mut self) {
         self.pc = JumpTarget::SENTINEL;
         self.sp = 0;

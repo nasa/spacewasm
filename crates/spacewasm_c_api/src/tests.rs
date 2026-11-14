@@ -390,6 +390,44 @@ static GLOBAL_IMPORTER_WASM: &[u8] = &[
     0x72, 0x65, 0x65, 0x78, 0x70, 0x6f, 0x72, 0x74, 0x03, 0x00,
 ];
 
+/// Owns and exports a table whose slot 0 returns 11.
+/// ```wat
+/// (module
+///   (table (export "t") 2 funcref)
+///   (type $ret_i32 (func (result i32)))
+///   (func $f (result i32) (i32.const 11))
+///   (elem (i32.const 0) $f)
+///   (func (export "call0") (result i32)
+///     (call_indirect (type $ret_i32) (i32.const 0)))
+///   (func (export "trap") (unreachable)))
+/// ```
+#[rustfmt::skip]
+static TABLE_OWNER_WASM: &[u8] = &[
+    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x60,
+    0x00, 0x01, 0x7f, 0x60, 0x00, 0x00, 0x03, 0x04, 0x03, 0x00, 0x00, 0x01,
+    0x04, 0x04, 0x01, 0x70, 0x00, 0x02, 0x07, 0x14, 0x03, 0x01, 0x74, 0x01,
+    0x00, 0x05, 0x63, 0x61, 0x6c, 0x6c, 0x30, 0x00, 0x01, 0x04, 0x74, 0x72,
+    0x61, 0x70, 0x00, 0x02, 0x09, 0x07, 0x01, 0x00, 0x41, 0x00, 0x0b, 0x01,
+    0x00, 0x0a, 0x12, 0x03, 0x04, 0x00, 0x41, 0x0b, 0x0b, 0x07, 0x00, 0x41,
+    0x00, 0x11, 0x00, 0x00, 0x0b, 0x03, 0x00, 0x00, 0x0b,
+];
+
+/// Imports `a.t` and writes slot 1 through an element segment, which needs
+/// unique ownership of the table.
+/// ```wat
+/// (module
+///   (import "a" "t" (table 2 funcref))
+///   (func $g (result i32) (i32.const 22))
+///   (elem (i32.const 1) $g))
+/// ```
+#[rustfmt::skip]
+static TABLE_IMPORTER_WASM: &[u8] = &[
+    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x05, 0x01, 0x60,
+    0x00, 0x01, 0x7f, 0x02, 0x09, 0x01, 0x01, 0x61, 0x01, 0x74, 0x01, 0x70,
+    0x00, 0x02, 0x03, 0x02, 0x01, 0x00, 0x09, 0x07, 0x01, 0x00, 0x41, 0x01,
+    0x0b, 0x01, 0x00, 0x0a, 0x06, 0x01, 0x04, 0x00, 0x41, 0x16, 0x0b,
+];
+
 // ---- shared driving helpers -------------------------------------------------
 
 /// Default compiler options bounding a test store to `max_code_pages` pages.
@@ -2400,6 +2438,77 @@ fn reset_abandons_in_progress_call() {
         status::SPACEWASM_ERR_NULL_ARG,
         "null engine"
     );
+
+    unsafe {
+        spacewasm_destroy(store);
+        spacewasm_allocator_destroy(alloc);
+    }
+}
+
+/// A finished or trapped call must not keep the engine's alias of the caller's
+/// table alive: a module loaded afterwards that writes that table through an
+/// element segment needs unique ownership of it, and was rejected with
+/// `TABLE_REF_NOT_UNIQUE` until `spacewasm_reset`.
+#[test]
+fn table_import_after_call() {
+    let _guard = ALLOC_LOCK.lock().unwrap();
+    ensure_global_allocator();
+
+    let store = new_store(1024, 3, 256);
+    let alloc = new_guest_allocator();
+    let a = load_module_onto(alloc, store, c"a", TABLE_OWNER_WASM, 0).expect("load a");
+
+    let mut call0 = 0u32;
+    let mut trap_fn = 0u32;
+    unsafe {
+        assert_eq!(
+            spacewasm_find_export_func(store, a, c"call0".as_ptr(), &mut call0),
+            status::SPACEWASM_OK
+        );
+        assert_eq!(
+            spacewasm_find_export_func(store, a, c"trap".as_ptr(), &mut trap_fn),
+            status::SPACEWASM_OK
+        );
+    }
+
+    // After a finished call.
+    assert_eq!(
+        unsafe { spacewasm_invoke(store, a, call0, core::ptr::null(), 0) },
+        status::SPACEWASM_OK
+    );
+    let mut trap = spacewasm_trap_t::SPACEWASM_TRAP_NONE;
+    assert_eq!(
+        run_to_completion(store, &mut trap),
+        spacewasm_run_status_t::SPACEWASM_RUN_FINISHED
+    );
+    load_module_onto(alloc, store, c"b", TABLE_IMPORTER_WASM, 0).expect("load b after finish");
+
+    // After a trapped call.
+    assert_eq!(
+        unsafe { spacewasm_invoke(store, a, trap_fn, core::ptr::null(), 0) },
+        status::SPACEWASM_OK
+    );
+    assert_eq!(
+        run_to_completion(store, &mut trap),
+        spacewasm_run_status_t::SPACEWASM_RUN_TRAP
+    );
+    load_module_onto(alloc, store, c"c", TABLE_IMPORTER_WASM, 0).expect("load c after trap");
+
+    // The table is still usable from its owner.
+    assert_eq!(
+        unsafe { spacewasm_invoke(store, a, call0, core::ptr::null(), 0) },
+        status::SPACEWASM_OK
+    );
+    assert_eq!(
+        run_to_completion(store, &mut trap),
+        spacewasm_run_status_t::SPACEWASM_RUN_FINISHED
+    );
+    let mut out = i32_val(0);
+    assert_eq!(
+        unsafe { spacewasm_get_result(store, spacewasm_valtype_t::SPACEWASM_I32, &mut out) },
+        status::SPACEWASM_OK
+    );
+    assert_eq!(unsafe { out.u.i32_ }, 11);
 
     unsafe {
         spacewasm_destroy(store);
