@@ -124,21 +124,62 @@ unsafe impl Allocator for SystemAllocator {
     }
 }
 
-/// A model of the production `PageAllocator` for fuzzing, backing guest memory.
-///
-/// Like the `RustSystemAllocator` used by the integration tests, this is a thin
-/// passthrough to the system allocator with no running-total bookkeeping. Its
-/// only policy is the same per-allocation size cap ([`MAX_ALLOCATION_BYTES`])
-/// applied by [`SystemAllocator`], so a single unreasonable request from a
-/// corrupted module is rejected rather than aborting the fuzzer.
-pub(crate) struct FuzzAllocator;
+/// Size of each worker's guest linear-memory pool (see [`FuzzAllocator`]).
+const GUEST_POOL_BYTES: usize = MAX_ALLOCATION_BYTES;
+
+/// Alignment of the guest pool base; covers every `MemPageSize::alignment`.
+const GUEST_POOL_ALIGN: usize = 16;
+
+thread_local! {
+    /// The guest pool, allocated once and reused by every run on this thread.
+    /// libFuzzer workers are separate processes, so this is one fixed pool per
+    /// worker.
+    static GUEST_POOL: NonNull<u8> = {
+        let layout = Layout::from_size_align(GUEST_POOL_BYTES, GUEST_POOL_ALIGN).unwrap();
+        NonNull::new(unsafe { std::alloc::alloc(layout) }).expect("guest pool allocation failed")
+    };
+
+    /// Whether a [`FuzzAllocator`] currently owns [`GUEST_POOL`].
+    static GUEST_POOL_IN_USE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// A bump allocator over a fixed per-worker pool ([`GUEST_POOL`]).
+pub(crate) struct FuzzAllocator {
+    base: NonNull<u8>,
+    offset: std::cell::Cell<usize>,
+}
+
+impl FuzzAllocator {
+    /// Take ownership of this thread's guest pool, rewinding it.
+    pub(crate) fn new() -> Self {
+        assert!(
+            !GUEST_POOL_IN_USE.replace(true),
+            "guest pool already owned by another FuzzAllocator"
+        );
+        Self {
+            base: GUEST_POOL.with(|p| *p),
+            offset: std::cell::Cell::new(0),
+        }
+    }
+}
+
+impl Drop for FuzzAllocator {
+    fn drop(&mut self) {
+        GUEST_POOL_IN_USE.set(false);
+    }
+}
 
 impl WasmMemoryAllocator for FuzzAllocator {
     fn allocate(&self, layout: Layout) -> Result<NonNull<u8>, AllocError> {
-        if layout.size() > MAX_ALLOCATION_BYTES {
+        if layout.align() > GUEST_POOL_ALIGN {
+            return Err(AllocError::AllocationFailed);
+        }
+        let start = self.offset.get().next_multiple_of(layout.align());
+        if start > GUEST_POOL_BYTES || layout.size() > GUEST_POOL_BYTES - start {
             return Err(AllocError::OutOfMemory);
         }
-        unsafe { NonNull::new(std::alloc::alloc(layout)).ok_or(AllocError::AllocationFailed) }
+        self.offset.set(start + layout.size());
+        Ok(unsafe { self.base.add(start) })
     }
 
     fn reallocate(
@@ -147,18 +188,19 @@ impl WasmMemoryAllocator for FuzzAllocator {
         old_layout: Layout,
         layout: Layout,
     ) -> Result<NonNull<u8>, AllocError> {
-        if layout.size() > MAX_ALLOCATION_BYTES {
+        let start = unsafe { ptr.offset_from(self.base) } as usize;
+        // Only the last allocation can grow, and only in place.
+        if start + old_layout.size() != self.offset.get() {
             return Err(AllocError::OutOfMemory);
         }
-        unsafe {
-            NonNull::new(std::alloc::realloc(ptr.as_ptr(), old_layout, layout.size()))
-                .ok_or(AllocError::AllocationFailed)
+        if layout.size() > GUEST_POOL_BYTES - start {
+            return Err(AllocError::OutOfMemory);
         }
+        self.offset.set(start + layout.size());
+        Ok(ptr)
     }
 
-    fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
-        unsafe { std::alloc::dealloc(ptr.as_ptr(), layout) }
-    }
+    fn deallocate(&self, _ptr: NonNull<u8>, _layout: Layout) {}
 }
 
 // Set up the global allocator for fuzzing
@@ -192,7 +234,7 @@ fn validate_module(wasm: &[u8]) -> Result<(), ValidationError> {
         CodeBuilder::new(CompilerOptions::new(true, None, MAX_CODE_PAGES)).unwrap();
     let mut stream = ByteStream::new(wasm);
 
-    let allocator = spacewasm::Rc::new(FuzzAllocator)
+    let allocator = spacewasm::Rc::new(FuzzAllocator::new())
         .unwrap()
         .into_wasm_memory_allocator();
 
@@ -348,7 +390,9 @@ pub fn no_traps(wasm: &[u8]) {
         CodeBuilder::new(CompilerOptions::new(true, None, MAX_CODE_PAGES)).unwrap();
     let mut stream = ByteStream::new(wasm);
 
-    let allocator = Rc::new(FuzzAllocator).unwrap().into_wasm_memory_allocator();
+    let allocator = Rc::new(FuzzAllocator::new())
+        .unwrap()
+        .into_wasm_memory_allocator();
 
     let mut control_frames = [ControlFrame::EMPTY; MAX_CONTROL_FRAMES];
     let mut operands = [OperandType::EMPTY; MAX_STACK_DEPTH];
