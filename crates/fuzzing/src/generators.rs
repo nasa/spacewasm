@@ -161,6 +161,65 @@ impl<'a> Arbitrary<'a> for NoTrapsModule {
     }
 }
 
+/// A generated WebAssembly module for differential *execution* testing.
+///
+/// Unlike [`NoTrapsModule`], traps are allowed, so wasm-smith emits
+/// `call_indirect`, `unreachable`, trapping arithmetic and conversions, and
+/// out-of-bounds element/data segments that `disallow_traps` suppresses. The
+/// oracle runs the module in two engines and compares outcomes, so a trap is a
+/// result to check rather than a failure.
+///
+/// The config is further adjusted so the two engines' observable behavior is
+/// comparable:
+/// * every item is exported, so globals and memory can be compared after each
+///   call;
+/// * every memory declares a maximum, so `memory.grow` is bounded by the module
+///   rather than by each engine's allocator;
+/// * NaNs are canonicalized wherever they become observable (stores,
+///   reinterprets), since the spec leaves NaN payloads nondeterministic;
+/// * every module has a table, without which `call_indirect` is never emitted.
+#[derive(Debug)]
+pub struct ExecModule {
+    /// The Wasm bytes.
+    pub wasm: Vec<u8>,
+    /// Leftover fuzz input, used to derive the arguments for each exported call.
+    pub args: Vec<u8>,
+}
+
+impl ExecModule {
+    /// Generate a new execution-differential module from unstructured input.
+    pub fn new(u: &mut Unstructured<'_>) -> Result<Self> {
+        // wasm-smith needs at least a few bytes to generate a minimal module
+        // Reject inputs that are too small to avoid panics in wasm-smith
+        if u.len() < 4 {
+            return Err(arbitrary::Error::NotEnoughData);
+        }
+        let mut config = ModuleConfig::arbitrary(u)?;
+        config.config.export_everything = true;
+        config.config.memory_max_size_required = true;
+        config.config.canonicalize_nans = true;
+        // wasm-smith only emits `call_indirect` when a funcref table exists.
+        config.config.min_tables = 1;
+        let module = config.generate(u)?;
+        let wasm = module.to_bytes();
+        // `bytes` borrows the tail of the input, so copy it out.
+        let len = u.len();
+        let args = u.bytes(len)?.to_vec();
+        Ok(Self { wasm, args })
+    }
+
+    /// Get the Wasm bytes.
+    pub fn wasm(&self) -> &[u8] {
+        &self.wasm
+    }
+}
+
+impl<'a> Arbitrary<'a> for ExecModule {
+    fn arbitrary(u: &mut Unstructured<'a>) -> Result<Self> {
+        Self::new(u)
+    }
+}
+
 /// A generated WebAssembly module that has been intentionally corrupted.
 ///
 /// Unlike [`FuzzModule`] and [`NoTrapsModule`], which only ever produce
@@ -298,6 +357,8 @@ pub enum Target {
     Validate,
     /// The `malformed` target, which uses [`MalformedModule`].
     Malformed,
+    /// The `exec_differential` target, which uses [`ExecModule`].
+    ExecDifferential,
 }
 
 /// Generate the Wasm module a fuzz `target` would produce from `seed`.
@@ -310,6 +371,7 @@ pub fn wasm_from_seed(seed: &[u8], target: Target) -> Result<Vec<u8>> {
         Target::NoTraps => NoTrapsModule::new(&mut u).map(|m| m.wasm),
         Target::Validate => FuzzModule::new(&mut u).map(|m| m.wasm),
         Target::Malformed => MalformedModule::new(&mut u).map(|m| m.wasm),
+        Target::ExecDifferential => ExecModule::new(&mut u).map(|m| m.wasm),
     }
 }
 

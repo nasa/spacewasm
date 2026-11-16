@@ -1,4 +1,4 @@
-.PHONY: help fuzz fuzz-validate fuzz-validate-differential fuzz-malformed seed-to-wasm trace-wasm trace-wasm-debug trace trace-debug clean-artifacts gen-header
+.PHONY: help fuzz fuzz-validate fuzz-validate-differential fuzz-malformed fuzz-exec-differential seed-to-wasm trace-wasm trace-wasm-debug trace trace-debug clean-artifacts gen-header
 
 # Target Configuration (auto-detect if not set)
 SPACEWASM_TARGET ?= $(shell rustc -vV | grep 'host:' | cut -d' ' -f2)
@@ -30,6 +30,7 @@ help:
 	@echo "  make fuzz-validate                 Run the validate fuzzer"
 	@echo "  make fuzz-validate-differential    Run the validate differential fuzzer (SpaceWasm vs wasmi)"
 	@echo "  make fuzz-malformed                Run the malformed-input decoder fuzzer"
+	@echo "  make fuzz-exec-differential       Run the execution differential fuzzer (SpaceWasm vs wasmi)"
 	@echo ""
 	@echo "Crash Analysis:"
 	@echo "  make trace CRASH=<file>            Convert seed + trace (release)"
@@ -62,6 +63,9 @@ fuzz-validate-differential:
 
 fuzz-malformed:
 	$(call run_fuzz,malformed)
+
+fuzz-exec-differential:
+	$(call run_fuzz,exec-differential)
 
 # Convert seed to Wasm and trace execution (release mode)
 trace:

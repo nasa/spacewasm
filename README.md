@@ -226,6 +226,9 @@ make fuzz
 # Differentially test the validator against wasmi (SpaceWasm vs a reference)
 make fuzz-validate-differential
 
+# Differentially test execution (results, traps, memory, globals) against wasmi
+make fuzz-exec-differential
+
 # Analyze crashes with execution traces
 make trace CRASH=fuzz/artifacts/no-traps/crash-xxx
 ```

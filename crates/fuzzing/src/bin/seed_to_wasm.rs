@@ -4,14 +4,14 @@
 //! wasm-smith to generate valid Wasm. This tool converts seeds to Wasm
 //! for analysis with other tools (disassemblers, trace utilities, etc.).
 //!
-//! The `no_traps`, `validate`, and `malformed` fuzz targets configure
+//! The `no_traps`, `validate`, `malformed`, and `exec_differential` fuzz targets configure
 //! wasm-smith differently (and `malformed` corrupts the output), so a seed
 //! must be decoded with the same generator that produced it. Select it with
 //! `--target` (default: `no_traps`).
 //!
 //! Usage:
-//!   seed_to_wasm [--target no_traps|validate|malformed] <seed-file> [output.wasm]
-//!   seed_to_wasm [--target no_traps|validate|malformed] <seed-file> --stdout
+//!   seed_to_wasm [--target no_traps|validate|malformed|exec_differential] <seed-file> [output.wasm]
+//!   seed_to_wasm [--target no_traps|validate|malformed|exec_differential] <seed-file> --stdout
 
 use spacewasm_fuzzing::generators::{wasm_from_seed, Target};
 use std::env;
@@ -20,14 +20,14 @@ use std::io::{self, Write};
 use std::process;
 
 fn usage(program: &str) -> ! {
-    eprintln!("Usage: {program} [--target no_traps|validate|malformed] <seed-file> [output.wasm]");
-    eprintln!("       {program} [--target no_traps|validate|malformed] <seed-file> --stdout");
+    eprintln!("Usage: {program} [--target no_traps|validate|malformed|exec_differential] <seed-file> [output.wasm]");
+    eprintln!("       {program} [--target no_traps|validate|malformed|exec_differential] <seed-file> --stdout");
     eprintln!();
     eprintln!("Convert fuzzer seed artifacts to Wasm binaries.");
     eprintln!();
     eprintln!("Options:");
     eprintln!(
-        "  --target <no_traps|validate|malformed>  Generator to decode the seed with (default: no_traps)"
+        "  --target <no_traps|validate|malformed|exec_differential>  Generator to decode the seed with (default: no_traps)"
     );
     eprintln!();
     eprintln!("Examples:");
@@ -56,9 +56,10 @@ fn main() {
                 Some("no_traps") => Target::NoTraps,
                 Some("validate") => Target::Validate,
                 Some("malformed") => Target::Malformed,
+                Some("exec_differential") => Target::ExecDifferential,
                 other => {
                     eprintln!(
-                        "Invalid --target '{}' (expected no_traps, validate, or malformed)",
+                        "Invalid --target '{}' (expected no_traps, validate, malformed, or exec_differential)",
                         other.unwrap_or("")
                     );
                     usage(&program);
