@@ -226,6 +226,9 @@ make fuzz
 # Differentially test the validator against wasmi (SpaceWasm vs a reference)
 make fuzz-validate-differential
 
+# Differentially test execution (results, traps, memory, globals) against wasmi
+make fuzz-exec-differential
+
 # Analyze crashes with execution traces
 make trace CRASH=fuzz/artifacts/no-traps/crash-xxx
 ```
@@ -253,6 +256,7 @@ Currently, all other proposals are not implemented, planned or considered.
 Portions of this project are adapted from the open-source projects:
 
 - [rust-lang/rust](https://github.com/rust-lang/rust), which is dual-licensed under MIT OR Apache License 2.0.
+- [wasmi-labs/wasmi](https://github.com/wasmi-labs/wasmi), which is dual-licensed under MIT OR Apache License 2.0.
 - [DLR-FT/wasm-interpreter](https://github.com/DLR-FT/wasm-interpreter), which is licensed under the Apache License 2.0.
 - [Wasmtime](https://github.com/bytecodealliance/wasmtime), which is licensed under the Apache License 2.0 with LLVM-exception.
 - [WABT](https://github.com/webassembly/wabt), which is licensed under the Apache License 2.0.

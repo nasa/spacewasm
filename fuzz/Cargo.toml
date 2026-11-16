@@ -42,3 +42,10 @@ bench = false
 
 [profile.release]
 debug = 1
+
+[[bin]]
+name = "exec-differential"
+path = "fuzz_targets/exec_differential.rs"
+test = false
+doc = false
+bench = false

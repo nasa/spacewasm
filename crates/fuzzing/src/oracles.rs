@@ -566,6 +566,13 @@ pub fn no_traps(wasm: &[u8]) {
 /// disagree for reasons that are not bugs. Fuel is irrelevant to validation.
 #[cfg(feature = "differential")]
 fn build_wasmi_validate_engine() -> wasmi::Engine {
+    wasmi::Engine::new(&wasmi_config())
+}
+
+/// The wasmi `Config` matched to SpaceWasm's accepted language, shared by the
+/// validation and execution differential engines.
+#[cfg(feature = "differential")]
+fn wasmi_config() -> wasmi::Config {
     let mut config = wasmi::Config::default();
     config
         .wasm_mutable_global(true)
@@ -584,7 +591,7 @@ fn build_wasmi_validate_engine() -> wasmi::Engine {
         .wasm_extended_const(false)
         .wasm_memory64(false)
         .wasm_wide_arithmetic(false);
-    wasmi::Engine::new(&config)
+    config
 }
 
 #[cfg(feature = "differential")]
@@ -884,5 +891,688 @@ mod validate_differential_tests {
         .is_ok()));
 
         validate_differential(&wasm);
+    }
+}
+
+/// Instructions (SpaceWasm) or fuel units (wasmi) each exported call may run.
+///
+/// The two engines count differently -- SpaceWasm counts IR instructions and
+/// wasmi charges fuel per instruction group -- so a call that exhausts its budget
+/// in either engine is inconclusive and its results are not compared. The budget
+/// only needs to be large enough that most generated calls finish in both.
+#[cfg(feature = "differential")]
+const EXEC_FUEL: u64 = 100_000;
+
+/// Operand stack size (in 32-bit words) of the SpaceWasm engine.
+#[cfg(feature = "differential")]
+const EXEC_STACK_WORDS: usize = 16 * 1024;
+
+/// The observable outcome of running a module's start function or one exported
+/// call in one engine.
+#[cfg(feature = "differential")]
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum ExecOutcome {
+    /// Returned normally, with the function's result (if any).
+    Returned(Option<Value>),
+    /// Trapped, classified into a [`Trap`] both engines share.
+    Trap(Trap),
+    /// Ran out of fuel or stack. Engine limits differ, so this is not compared.
+    Exhausted,
+}
+
+/// A trap kind both engines report, at the granularity the spec defines.
+///
+/// SpaceWasm distinguishes some traps more finely than wasmi does (or vice
+/// versa); this collapses both into the spec's trap categories so equal traps
+/// compare equal.
+#[cfg(feature = "differential")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Trap {
+    Unreachable,
+    MemoryOutOfBounds,
+    /// `call_indirect` index past the end of the table.
+    TableOutOfBounds,
+    /// `call_indirect` to a table slot that holds no function.
+    UninitializedElement,
+    /// `call_indirect` whose callee's type does not match the expected type.
+    IndirectCallTypeMismatch,
+    DivideByZero,
+    IntegerOverflow,
+    BadConversionToInteger,
+}
+
+#[cfg(feature = "differential")]
+impl Trap {
+    /// Classify a SpaceWasm trap. Returns `None` for traps with no wasmi
+    /// counterpart, which the generated modules (no imports) must never hit.
+    fn from_spacewasm(reason: TrapReason) -> Option<Self> {
+        Some(match reason {
+            TrapReason::Unreachable => Self::Unreachable,
+            TrapReason::MemoryOutOfBounds => Self::MemoryOutOfBounds,
+            TrapReason::InvalidTableIndex => Self::TableOutOfBounds,
+            TrapReason::UninitializedTableElement => Self::UninitializedElement,
+            TrapReason::InvalidTableFunctionType => Self::IndirectCallTypeMismatch,
+            TrapReason::DivideByZero => Self::DivideByZero,
+            // Signed division overflow and an out-of-range float-to-int
+            // truncation are both "integer overflow" in the spec.
+            TrapReason::IntegerOverflow | TrapReason::UnrepresentableResult => {
+                Self::IntegerOverflow
+            }
+            TrapReason::BadConversionToInteger => Self::BadConversionToInteger,
+            _ => return None,
+        })
+    }
+
+    /// Classify a wasmi trap. Returns `None` for codes with no SpaceWasm
+    /// counterpart in this setup.
+    fn from_wasmi(code: wasmi::TrapCode) -> Option<Self> {
+        use wasmi::TrapCode;
+        Some(match code {
+            TrapCode::UnreachableCodeReached => Self::Unreachable,
+            TrapCode::MemoryOutOfBounds => Self::MemoryOutOfBounds,
+            TrapCode::TableOutOfBounds => Self::TableOutOfBounds,
+            TrapCode::IndirectCallToNull => Self::UninitializedElement,
+            TrapCode::BadSignature => Self::IndirectCallTypeMismatch,
+            TrapCode::IntegerDivisionByZero => Self::DivideByZero,
+            TrapCode::IntegerOverflow => Self::IntegerOverflow,
+            TrapCode::BadConversionToInteger => Self::BadConversionToInteger,
+            _ => return None,
+        })
+    }
+}
+
+/// Module state visible after a call: every exported global's value and the
+/// contents of the exported memory. Compared after each call, so a divergence
+/// in a store or `global.set` is caught even when the return value agrees.
+#[cfg(feature = "differential")]
+#[derive(Debug, PartialEq)]
+struct ExecState {
+    globals: std::vec::Vec<(std::string::String, Value)>,
+    memory: Option<std::vec::Vec<u8>>,
+}
+
+/// An exported function's signature. Results are at most one value, since
+/// multi-value is disabled.
+#[cfg(feature = "differential")]
+struct ExecSig {
+    params: std::vec::Vec<ValType>,
+    ret: Option<ValType>,
+}
+
+/// One exported function to call, with its arguments.
+#[cfg(feature = "differential")]
+struct ExecCall {
+    name: std::string::String,
+    params: std::vec::Vec<Value>,
+}
+
+/// Derive a deterministic argument list for `params` from the fuzz input.
+///
+/// Mixes in boundary values (0, -1, `MIN`, `MAX`, NaN, infinities) because those
+/// are where trapping arithmetic and conversions diverge.
+#[cfg(feature = "differential")]
+fn exec_args(u: &mut arbitrary::Unstructured<'_>, params: &[ValType]) -> std::vec::Vec<Value> {
+    params
+        .iter()
+        .map(|ty| {
+            // On exhausted input `arbitrary` yields zeros, which is a fine default.
+            let pick = u.int_in_range(0..=7u8).unwrap_or(0);
+            match ty {
+                ValType::I32 => Value::I32(match pick {
+                    0 => 0,
+                    1 => -1,
+                    2 => i32::MIN,
+                    3 => i32::MAX,
+                    _ => u.arbitrary().unwrap_or(0),
+                }),
+                ValType::I64 => Value::I64(match pick {
+                    0 => 0,
+                    1 => -1,
+                    2 => i64::MIN,
+                    3 => i64::MAX,
+                    _ => u.arbitrary().unwrap_or(0),
+                }),
+                ValType::F32 => Value::F32(match pick {
+                    0 => 0.0,
+                    1 => f32::NAN,
+                    2 => f32::INFINITY,
+                    3 => f32::NEG_INFINITY,
+                    _ => f32::from_bits(u.arbitrary().unwrap_or(0)),
+                }),
+                ValType::F64 => Value::F64(match pick {
+                    0 => 0.0,
+                    1 => f64::NAN,
+                    2 => f64::INFINITY,
+                    3 => f64::NEG_INFINITY,
+                    _ => f64::from_bits(u.arbitrary().unwrap_or(0)),
+                }),
+            }
+        })
+        .collect()
+}
+
+/// Whether two outcomes agree. Float results compare by bit pattern, except
+/// that any NaN matches any NaN: the spec leaves NaN payloads nondeterministic,
+/// and `canonicalize_nans` only canonicalizes NaNs that reach memory or an
+/// integer, not those returned directly.
+#[cfg(feature = "differential")]
+fn outcomes_agree(a: &ExecOutcome, b: &ExecOutcome) -> bool {
+    match (a, b) {
+        (ExecOutcome::Returned(Some(x)), ExecOutcome::Returned(Some(y))) => values_agree(x, y),
+        _ => a == b,
+    }
+}
+
+#[cfg(feature = "differential")]
+fn values_agree(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::F32(x), Value::F32(y)) => (x.is_nan() && y.is_nan()) || x.to_bits() == y.to_bits(),
+        (Value::F64(x), Value::F64(y)) => (x.is_nan() && y.is_nan()) || x.to_bits() == y.to_bits(),
+        _ => a == b,
+    }
+}
+
+#[cfg(feature = "differential")]
+fn states_agree(a: &ExecState, b: &ExecState) -> bool {
+    a.memory == b.memory
+        && a.globals.len() == b.globals.len()
+        && a.globals
+            .iter()
+            .zip(&b.globals)
+            .all(|((na, va), (nb, vb))| na == nb && values_agree(va, vb))
+}
+
+/// The module running in SpaceWasm.
+#[cfg(feature = "differential")]
+struct SpaceExec {
+    engine: Engine,
+    code_builder: CodeBuilder,
+    module_ref: ModuleRef,
+    // Owns the guest memory, so it must outlive `engine`.
+    _allocator: spacewasm::Rc<dyn WasmMemoryAllocator>,
+}
+
+#[cfg(feature = "differential")]
+impl SpaceExec {
+    /// Load the module and run its start function. `Err` means SpaceWasm refused
+    /// the module at load time, carrying the rejection reason.
+    fn instantiate(wasm: &[u8]) -> Result<(Self, ExecOutcome), ValidationError> {
+        let mut engine = Engine::new(EXEC_STACK_WORDS, 16, Vec::zero())
+            .expect("fuzz engine creation must not fail");
+        let mut code_builder =
+            CodeBuilder::new(CompilerOptions::new(true, None, MAX_CODE_PAGES)).unwrap();
+        let mut stream = ByteStream::new(wasm);
+        let allocator = spacewasm::Rc::new(FuzzAllocator::new())
+            .unwrap()
+            .into_wasm_memory_allocator();
+
+        let mut control_frames = [ControlFrame::EMPTY; MAX_CONTROL_FRAMES];
+        let mut operands = [OperandType::EMPTY; MAX_STACK_DEPTH];
+        let mut decoder_stack = DecoderStack::new(&mut control_frames, &mut operands);
+        let module = Module::new(
+            "",
+            &mut stream,
+            &mut engine.store,
+            &mut code_builder,
+            &mut decoder_stack,
+            allocator.clone(),
+        )
+        .map_err(|e: ParseError| e.err.err)?;
+        let module_ref = engine
+            .push_module(module)
+            .expect("fuzz store has room for one module");
+
+        let mut this = Self {
+            engine,
+            code_builder,
+            module_ref,
+            _allocator: allocator,
+        };
+        let start = match this.engine.module_start(module_ref) {
+            None => ExecOutcome::Returned(None),
+            Some(start) => this.run(start, &[], None),
+        };
+        Ok((this, start))
+    }
+
+    fn module(&self) -> &Module {
+        &self.engine.store.modules()[self.module_ref.0 as usize]
+    }
+
+    /// The exported functions, with their parameter and result types.
+    fn exported_funcs(&self) -> std::vec::Vec<(std::string::String, WasmRef, ExecSig)> {
+        let module = self.module();
+        module
+            .exports
+            .iter()
+            .filter_map(|export| {
+                let ExportDesc::Func(idx) = export.desc else {
+                    return None;
+                };
+                // Generated modules have no imports, so every export is local.
+                let Some(Ref::Module(index)) = module.get_func_ref(idx) else {
+                    return None;
+                };
+                let func = &module.functions[index as usize];
+                let ty = &module.types[func.ty.0 as usize];
+                Some((
+                    std::string::String::from(&*export.name),
+                    WasmRef {
+                        module: self.module_ref,
+                        index,
+                    },
+                    ExecSig {
+                        params: ty.params.iter().copied().collect(),
+                        ret: ty.returns.first().copied(),
+                    },
+                ))
+            })
+            .collect()
+    }
+
+    fn run(&mut self, f: WasmRef, params: &[Value], ret: Option<ValType>) -> ExecOutcome {
+        self.engine.reset();
+        match self.engine.invoke(f, params) {
+            Ok(()) => {}
+            Err(InvokeError::StackOverflow) => return ExecOutcome::Exhausted,
+            Err(e) => panic!("invoke of a generated export failed: {e:?}"),
+        }
+        match Interpreter.run(
+            self.code_builder.pages(),
+            &mut self.engine,
+            EXEC_FUEL as usize,
+        ) {
+            InterpreterResult::Finished => ExecOutcome::Returned(ret.map(|ty| {
+                self.engine
+                    .result
+                    .expect("a function with a result returned one")
+                    .to_value(ty)
+            })),
+            InterpreterResult::OutOfFuel | InterpreterResult::Trap(TrapReason::StackOverflow) => {
+                ExecOutcome::Exhausted
+            }
+            InterpreterResult::Trap(reason) => match Trap::from_spacewasm(reason) {
+                Some(trap) => ExecOutcome::Trap(trap),
+                None => panic!("SpaceWasm trap with no spec counterpart: {reason:?}"),
+            },
+            InterpreterResult::Pause => panic!("a module without imports paused"),
+        }
+    }
+
+    fn state(&self) -> ExecState {
+        let module = self.module();
+        let mut globals = std::vec::Vec::new();
+        let mut memory = None;
+        for export in module.exports.iter() {
+            match export.desc {
+                ExportDesc::Global(idx) => globals.push((
+                    std::string::String::from(&*export.name),
+                    module.globals[idx.0 as usize].value(),
+                )),
+                ExportDesc::Mem(_) => {
+                    memory = Some(
+                        self.engine
+                            .store
+                            .get_memory(self.module_ref)
+                            .get_slice()
+                            .to_vec(),
+                    );
+                }
+                _ => {}
+            }
+        }
+        globals.sort_by(|a, b| a.0.cmp(&b.0));
+        ExecState { globals, memory }
+    }
+}
+
+/// Why wasmi could not produce a running instance.
+#[cfg(feature = "differential")]
+#[derive(Debug)]
+enum WasmiInitError {
+    /// The module failed to compile (validation disagreement, not an execution
+    /// bug; `validate_differential` covers it).
+    Compile,
+    /// Instantiation failed before the start function: an element segment does
+    /// not fit its table. SpaceWasm checks this at load.
+    Instantiate,
+    /// A data segment did not fit its memory, or the start function trapped or
+    /// ran out of fuel.
+    Start(ExecOutcome),
+}
+
+/// The module running in wasmi.
+#[cfg(feature = "differential")]
+struct WasmiExec {
+    store: wasmi::Store<wasmi::StoreLimits>,
+    instance: wasmi::Instance,
+}
+
+#[cfg(feature = "differential")]
+impl WasmiExec {
+    /// Instantiate and run the start function.
+    fn instantiate(wasm: &[u8]) -> Result<(Self, ExecOutcome), WasmiInitError> {
+        thread_local! {
+            static ENGINE: wasmi::Engine = {
+                let mut config = wasmi_config();
+                config.consume_fuel(true);
+                wasmi::Engine::new(&config)
+            };
+        }
+        let engine = ENGINE.with(|e| e.clone());
+        let module = wasmi::Module::new(&engine, wasm).map_err(|_| WasmiInitError::Compile)?;
+        // Match SpaceWasm's guest-memory pool so `memory.grow` fails at the same
+        // size in both engines.
+        let limits = wasmi::StoreLimitsBuilder::new()
+            .memory_size(GUEST_POOL_BYTES)
+            .build();
+        let mut store = wasmi::Store::new(&engine, limits);
+        store.limiter(|limits| limits);
+        store.set_fuel(EXEC_FUEL).unwrap();
+        let linker = wasmi::Linker::<wasmi::StoreLimits>::new(&engine);
+        match linker.instantiate_and_start(&mut store, &module) {
+            Ok(instance) => Ok((Self { store, instance }, ExecOutcome::Returned(None))),
+            // Out-of-bounds data segments surface as a memory trap code, like a
+            // start-function trap; out-of-bounds element segments have none.
+            Err(e) if e.as_trap_code().is_none() => Err(WasmiInitError::Instantiate),
+            Err(e) => Err(WasmiInitError::Start(wasmi_error_outcome(&e))),
+        }
+    }
+
+    fn run(&mut self, name: &str, params: &[Value], ret: Option<ValType>) -> ExecOutcome {
+        let func = self
+            .instance
+            .get_func(&self.store, name)
+            .expect("export present in both engines");
+        self.store.set_fuel(EXEC_FUEL).unwrap();
+        let inputs: std::vec::Vec<wasmi::Val> = params.iter().map(to_wasmi).collect();
+        let mut outputs: std::vec::Vec<wasmi::Val> = ret
+            .iter()
+            .map(|ty| wasmi::Val::default_for_ty(wasmi_ty(*ty)))
+            .collect();
+        match func.call(&mut self.store, &inputs, &mut outputs) {
+            Ok(()) => ExecOutcome::Returned(outputs.first().map(from_wasmi)),
+            Err(e) => wasmi_error_outcome(&e),
+        }
+    }
+
+    fn state(&self) -> ExecState {
+        let mut globals = std::vec::Vec::new();
+        let mut memory = None;
+        for export in self.instance.exports(&self.store) {
+            let name = std::string::String::from(export.name());
+            match export.into_extern() {
+                wasmi::Extern::Global(g) => globals.push((name, from_wasmi(&g.get(&self.store)))),
+                wasmi::Extern::Memory(m) => memory = Some(m.data(&self.store).to_vec()),
+                _ => {}
+            }
+        }
+        globals.sort_by(|a, b| a.0.cmp(&b.0));
+        ExecState { globals, memory }
+    }
+}
+
+#[cfg(feature = "differential")]
+fn wasmi_error_outcome(e: &wasmi::Error) -> ExecOutcome {
+    use wasmi::TrapCode;
+    match e.as_trap_code() {
+        Some(TrapCode::OutOfFuel | TrapCode::StackOverflow) => ExecOutcome::Exhausted,
+        Some(code) => match Trap::from_wasmi(code) {
+            Some(trap) => ExecOutcome::Trap(trap),
+            None => panic!("wasmi trap with no SpaceWasm counterpart: {code:?}"),
+        },
+        None => panic!("wasmi failed without a trap: {e}"),
+    }
+}
+
+#[cfg(feature = "differential")]
+fn wasmi_ty(ty: ValType) -> wasmi::ValType {
+    match ty {
+        ValType::I32 => wasmi::ValType::I32,
+        ValType::I64 => wasmi::ValType::I64,
+        ValType::F32 => wasmi::ValType::F32,
+        ValType::F64 => wasmi::ValType::F64,
+    }
+}
+
+#[cfg(feature = "differential")]
+fn to_wasmi(v: &Value) -> wasmi::Val {
+    match *v {
+        Value::I32(x) => wasmi::Val::I32(x),
+        Value::I64(x) => wasmi::Val::I64(x),
+        Value::F32(x) => wasmi::Val::F32(x.into()),
+        Value::F64(x) => wasmi::Val::F64(x.into()),
+    }
+}
+
+#[cfg(feature = "differential")]
+fn from_wasmi(v: &wasmi::Val) -> Value {
+    match v {
+        wasmi::Val::I32(x) => Value::I32(*x),
+        wasmi::Val::I64(x) => Value::I64(*x),
+        wasmi::Val::F32(x) => Value::F32(f32::from_bits(x.to_bits())),
+        wasmi::Val::F64(x) => Value::F64(f64::from_bits(x.to_bits())),
+        other => panic!("value of a type SpaceWasm does not support: {other:?}"),
+    }
+}
+
+/// Oracle: differentially test *execution* against wasmi.
+///
+/// Instantiates the module in both engines, runs the start function, then calls
+/// every exported function with arguments derived from `args`, comparing after
+/// each step:
+///
+/// * the outcome -- the returned value, or which kind of trap was raised;
+/// * the module state -- every exported global and the exported memory.
+///
+/// Calls run in export order against the same instance, so state carries over
+/// from one call to the next in both engines. Once any step diverges, or either
+/// engine exhausts its fuel or stack (whose limits differ between the engines),
+/// the remaining calls are skipped: their starting state is no longer the same.
+///
+/// The module is skipped entirely when SpaceWasm rejects it at load for a reason
+/// [`is_benign_rejection`] allows, which includes the instantiation-time
+/// element/data bounds checks the spec defers past validation.
+///
+/// Best driven with the [`crate::generators::ExecModule`] generator, which allows
+/// traps, so `call_indirect` and other trapping instructions are generated.
+#[cfg(feature = "differential")]
+pub fn exec_differential(wasm: &[u8], args: &[u8]) {
+    crate::init_fuzzing();
+    log_wasm(wasm);
+
+    let space = SpaceExec::instantiate(wasm);
+    let wasmi = WasmiExec::instantiate(wasm);
+    let (mut space, mut wasmi) = match (space, wasmi) {
+        (Ok((space, space_start)), Ok((wasmi, wasmi_start))) => {
+            if !outcomes_agree(&space_start, &wasmi_start) {
+                panic!(
+                    "start function divergence: SpaceWasm {space_start:?}, wasmi {wasmi_start:?}"
+                );
+            }
+            if space_start == ExecOutcome::Exhausted {
+                return;
+            }
+            (space, wasmi)
+        }
+        // SpaceWasm traps in the start function report as `Ok` with a trap
+        // outcome, wasmi's as an instantiation `Err`.
+        (Ok((_, space_start)), Err(WasmiInitError::Start(wasmi_start))) => {
+            if !outcomes_agree(&space_start, &wasmi_start)
+                && space_start != ExecOutcome::Exhausted
+                && wasmi_start != ExecOutcome::Exhausted
+            {
+                panic!(
+                    "start function divergence: SpaceWasm {space_start:?}, wasmi {wasmi_start:?}"
+                );
+            }
+            return;
+        }
+        // SpaceWasm refused the module at load.
+        (Err(err), wasmi) => {
+            if is_benign_rejection(&err) {
+                return;
+            }
+            panic!(
+                "SpaceWasm rejected ({err:?}) a generated module; wasmi: {:?}",
+                wasmi.err()
+            );
+        }
+        // wasmi refused to compile a module SpaceWasm accepted. Validation
+        // disagreement is `validate_differential`'s job; not an execution bug.
+        (Ok(_), Err(WasmiInitError::Compile)) => return,
+        // An element segment wasmi found out of bounds, which SpaceWasm's load-time
+        // check should also have rejected.
+        (Ok(_), Err(WasmiInitError::Instantiate)) => {
+            panic!("SpaceWasm instantiated a module whose element segments wasmi rejected as out of bounds");
+        }
+    };
+
+    let state_space = space.state();
+    let state_wasmi = wasmi.state();
+    if !states_agree(&state_space, &state_wasmi) {
+        panic!("state divergence after instantiation:\n  SpaceWasm {state_space:?}\n  wasmi     {state_wasmi:?}");
+    }
+
+    let mut u = arbitrary::Unstructured::new(args);
+    let calls: std::vec::Vec<(ExecCall, WasmRef, Option<ValType>)> = space
+        .exported_funcs()
+        .into_iter()
+        .map(|(name, f, ty)| {
+            let params = exec_args(&mut u, &ty.params);
+            (ExecCall { name, params }, f, ty.ret)
+        })
+        .collect();
+
+    for (call, f, ret) in calls {
+        let out_space = space.run(f, &call.params, ret);
+        let out_wasmi = wasmi.run(&call.name, &call.params, ret);
+        log::debug!(
+            "call {:?}({:?}): SpaceWasm {out_space:?}, wasmi {out_wasmi:?}",
+            call.name,
+            call.params
+        );
+        if out_space == ExecOutcome::Exhausted || out_wasmi == ExecOutcome::Exhausted {
+            return;
+        }
+        if !outcomes_agree(&out_space, &out_wasmi) {
+            panic!(
+                "execution divergence calling {:?}({:?}): SpaceWasm {out_space:?}, wasmi {out_wasmi:?}",
+                call.name, call.params
+            );
+        }
+        let state_space = space.state();
+        let state_wasmi = wasmi.state();
+        if !states_agree(&state_space, &state_wasmi) {
+            panic!(
+                "state divergence after calling {:?}({:?}):\n  SpaceWasm {state_space:?}\n  wasmi     {state_wasmi:?}",
+                call.name, call.params
+            );
+        }
+    }
+}
+
+#[cfg(all(test, feature = "differential"))]
+mod exec_differential_tests {
+    use super::*;
+
+    fn outcomes(wat: &str, args: &[Value]) -> (ExecOutcome, ExecOutcome) {
+        let wasm = wat::parse_str(wat).unwrap();
+        let (mut space, _) = SpaceExec::instantiate(&wasm).unwrap();
+        let (mut wasmi, _) = WasmiExec::instantiate(&wasm).unwrap();
+        let (name, f, sig) = space.exported_funcs().remove(0);
+        (space.run(f, args, sig.ret), wasmi.run(&name, args, sig.ret))
+    }
+
+    /// Both engines agree on a plain computation and on module state.
+    #[test]
+    fn exec_agrees_on_returns_and_state() {
+        let wat = r#"(module
+            (memory (export "m") 1 1)
+            (global (export "g") (mut i32) (i32.const 7))
+            (func (export "f") (param i32) (result i32)
+                (i32.store (i32.const 8) (local.get 0))
+                (global.set 0 (i32.add (global.get 0) (local.get 0)))
+                (global.get 0)))"#;
+        let (s, w) = outcomes(wat, &[Value::I32(5)]);
+        assert_eq!(s, ExecOutcome::Returned(Some(Value::I32(12))));
+        assert_eq!(s, w);
+        exec_differential(&wat::parse_str(wat).unwrap(), &[]);
+    }
+
+    /// The three `call_indirect` traps map to the same kind in both engines.
+    #[test]
+    fn exec_classifies_call_indirect_traps() {
+        let wat = r#"(module
+            (type $v (func))
+            (type $i (func (result i32)))
+            (table 3 funcref)
+            (elem (i32.const 0) $void $int)
+            (func $void)
+            (func $int (result i32) (i32.const 1))
+            (func (export "call") (param i32) (call_indirect (type $v) (local.get 0))))"#;
+        let cases = [
+            (0, ExecOutcome::Returned(None)),
+            (1, ExecOutcome::Trap(Trap::IndirectCallTypeMismatch)),
+            (2, ExecOutcome::Trap(Trap::UninitializedElement)),
+            (3, ExecOutcome::Trap(Trap::TableOutOfBounds)),
+        ];
+        for (idx, expected) in cases {
+            let (s, w) = outcomes(wat, &[Value::I32(idx)]);
+            assert_eq!(s, expected, "SpaceWasm, index {idx}");
+            assert_eq!(w, expected, "wasmi, index {idx}");
+        }
+    }
+
+    /// Arithmetic and conversion traps map to the same kind in both engines.
+    #[test]
+    fn exec_classifies_arithmetic_traps() {
+        let cases = [
+            ("i32.div_s (i32.const 1) (i32.const 0)", Trap::DivideByZero),
+            (
+                "i32.div_s (i32.const -2147483648) (i32.const -1)",
+                Trap::IntegerOverflow,
+            ),
+            ("i32.trunc_f32_s (f32.const 1e10)", Trap::IntegerOverflow),
+            (
+                "i32.trunc_f32_s (f32.const nan)",
+                Trap::BadConversionToInteger,
+            ),
+            ("i32.load (i32.const 65536)", Trap::MemoryOutOfBounds),
+        ];
+        for (expr, trap) in cases {
+            let wat = format!(r#"(module (memory 1 1) (func (export "f") (result i32) ({expr})))"#);
+            let (s, w) = outcomes(&wat, &[]);
+            assert_eq!(s, ExecOutcome::Trap(trap), "SpaceWasm: {expr}");
+            assert_eq!(w, ExecOutcome::Trap(trap), "wasmi: {expr}");
+        }
+    }
+
+    /// An infinite loop exhausts fuel in both engines and is not compared.
+    #[test]
+    fn exec_skips_exhausted_calls() {
+        let wat = r#"(module (func (export "f") (loop (br 0))))"#;
+        let (s, w) = outcomes(wat, &[]);
+        assert_eq!(s, ExecOutcome::Exhausted);
+        assert_eq!(w, ExecOutcome::Exhausted);
+        exec_differential(&wat::parse_str(wat).unwrap(), &[]);
+    }
+
+    /// A trapping start function agrees, and the oracle stays quiet.
+    #[test]
+    fn exec_agrees_on_start_trap() {
+        let wasm = wat::parse_str(r#"(module (func $s unreachable) (start $s))"#).unwrap();
+        exec_differential(&wasm, &[]);
+    }
+
+    /// Returned NaNs match regardless of payload; other floats compare by bits.
+    #[test]
+    fn exec_nan_results_agree_by_class() {
+        let nan_a = ExecOutcome::Returned(Some(Value::F32(f32::from_bits(0x7fc0_0000))));
+        let nan_b = ExecOutcome::Returned(Some(Value::F32(f32::from_bits(0xffc0_0001))));
+        assert!(outcomes_agree(&nan_a, &nan_b));
+        let pos = ExecOutcome::Returned(Some(Value::F64(0.0)));
+        let neg = ExecOutcome::Returned(Some(Value::F64(-0.0)));
+        assert!(!outcomes_agree(&pos, &neg));
     }
 }
