@@ -1288,7 +1288,7 @@ impl WasmiExec {
         let inputs: std::vec::Vec<wasmi::Val> = params.iter().map(to_wasmi).collect();
         let mut outputs: std::vec::Vec<wasmi::Val> = ret
             .iter()
-            .map(|ty| wasmi::Val::default(wasmi_ty(*ty)))
+            .map(|ty| wasmi::Val::default_for_ty(wasmi_ty(*ty)))
             .collect();
         match func.call(&mut self.store, &inputs, &mut outputs) {
             Ok(()) => ExecOutcome::Returned(outputs.first().map(from_wasmi)),

@@ -36,6 +36,13 @@ https://github.com/bytecodealliance/wasmtime/blob/main/LICENSE
 
 ---
 
+This product includes software developed by [Wasmi](https://github.com/wasmi-labs/wasmi).
+Wasmi is used as a reference implementation for differential fuzzing.
+The Wasmi project is dual-licensed under MIT OR Apache-2.0; the code is used
+under the Apache License, Version 2.0.
+
+---
+
 This product includes software developed by [WABT](https://github.com/webassembly/wabt).
 Licensed under the Apache License, Version 2.0.
 
