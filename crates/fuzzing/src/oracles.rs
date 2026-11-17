@@ -1252,14 +1252,10 @@ struct WasmiExec {
 impl WasmiExec {
     /// Instantiate and run the start function.
     fn instantiate(wasm: &[u8]) -> Result<(Self, ExecOutcome), WasmiInitError> {
-        thread_local! {
-            static ENGINE: wasmi::Engine = {
-                let mut config = wasmi_config();
-                config.consume_fuel(true);
-                wasmi::Engine::new(&config)
-            };
-        }
-        let engine = ENGINE.with(|e| e.clone());
+        // Not shared across inputs: wasmi's engine-wide code map never frees.
+        let mut config = wasmi_config();
+        config.consume_fuel(true);
+        let engine = wasmi::Engine::new(&config);
         let module = wasmi::Module::new(&engine, wasm).map_err(|_| WasmiInitError::Compile)?;
         // Match SpaceWasm's guest-memory pool so `memory.grow` fails at the same
         // size in both engines.
@@ -1288,7 +1284,7 @@ impl WasmiExec {
         let inputs: std::vec::Vec<wasmi::Val> = params.iter().map(to_wasmi).collect();
         let mut outputs: std::vec::Vec<wasmi::Val> = ret
             .iter()
-            .map(|ty| wasmi::Val::default_for_ty(wasmi_ty(*ty)))
+            .map(|ty| wasmi::Val::default(wasmi_ty(*ty)))
             .collect();
         match func.call(&mut self.store, &inputs, &mut outputs) {
             Ok(()) => ExecOutcome::Returned(outputs.first().map(from_wasmi)),
