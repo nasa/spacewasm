@@ -251,6 +251,8 @@ Below is a table of the implemented and planned WebAssembly proposals with links
 
 Currently, all other proposals are not implemented, planned or considered.
 
+`spacewasm features --matrix` prints this table, and `spacewasm features --release VERSION` the proposals a given release implements. The two are kept in step by hand: update `PROPOSALS` in [`crates/spacewasm_tools/src/features.rs`](crates/spacewasm_tools/src/features.rs) along with this table.
+
 ## Credits & Acknowledgments
 
 Portions of this project are adapted from the open-source projects:

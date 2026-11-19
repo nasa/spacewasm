@@ -2,7 +2,9 @@
 //! back to the line of source it ran.
 //!
 //! * [`PROPOSALS`] — the WebAssembly proposals this release implements, and
-//!   [`wasm_opt_flags`] / [`rustc_target_features`] holding those tools to exactly them
+//!   [`wasm_opt_flags`] / [`rustc_target_features`] holding those tools to exactly them.
+//!   Each proposal's [`Status`] says which [`Version`] it arrived in, or what is planned
+//!   for it: the README's feature matrix
 //! * [`validate`] — load a module as the flight interpreter would, and name the proposal
 //!   when it uses one that is missing
 //! * [`Heap`] — what that load allocated on the global heap, section by section, and
@@ -47,7 +49,9 @@ mod trace;
 mod validate;
 
 pub use error::{Error, Result};
-pub use features::{PROPOSALS, Proposal, lowering_flags, rustc_target_features, wasm_opt_flags};
+pub use features::{
+    PROPOSALS, Proposal, Status, Version, lowering_flags, rustc_target_features, wasm_opt_flags,
+};
 pub use format::{MODULE_SECTION, OFFSETS_SECTION, Symbols};
 pub use heap::{Heap, HeapError, HeapPages, HeapRecorder, PageUse, SectionHeap};
 pub use hosts::host_modules_for;
