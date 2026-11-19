@@ -9,7 +9,7 @@ on:
 permissions:
   contents: read
 
-# Superseded PR runs are cancelled to free capacity-constrained macOS runners.
+# Superseded PR runs are cancelled to free runner capacity.
 # Runs on main are queued instead, so every commit on main gets a result.
 concurrency:
   group: ci-${{ github.ref }}
@@ -27,13 +27,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # macOS ARM64
-          - os: macos-arm64
-            runner: macos-15
-            profile: debug
-          - os: macos-arm64
-            runner: macos-15
-            profile: release
+          # macOS ARM64 is disabled: GitHub's macOS runners are too flaky.
+          # - os: macos-arm64
+          #   runner: macos-15
+          #   profile: debug
+          # - os: macos-arm64
+          #   runner: macos-15
+          #   profile: release
 
           # Linux x86_64
           - os: linux-x86
@@ -164,8 +164,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # macOS is omitted: the macOS Test jobs already build the workspace
-          # in debug and release, and macOS runners are capacity-constrained.
+          # macOS is omitted: GitHub's macOS runners are too flaky.
           - os: linux-x86
             runner: ubuntu-latest
           - os: linux-arm64
