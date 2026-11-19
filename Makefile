@@ -1,4 +1,4 @@
-.PHONY: help fuzz fuzz-validate fuzz-validate-differential fuzz-malformed fuzz-exec-differential seed-to-wasm trace-wasm trace-wasm-debug trace trace-debug clean-artifacts gen-header
+.PHONY: help fuzz fuzz-validate fuzz-validate-differential fuzz-malformed fuzz-exec-differential fuzz-cmin seed-to-wasm trace-wasm trace-wasm-debug trace trace-debug clean-artifacts gen-header
 
 # Target Configuration (auto-detect if not set)
 SPACEWASM_TARGET ?= $(shell rustc -vV | grep 'host:' | cut -d' ' -f2)
@@ -31,6 +31,7 @@ help:
 	@echo "  make fuzz-validate-differential    Run the validate differential fuzzer (SpaceWasm vs wasmi)"
 	@echo "  make fuzz-malformed                Run the malformed-input decoder fuzzer"
 	@echo "  make fuzz-exec-differential       Run the execution differential fuzzer (SpaceWasm vs wasmi)"
+	@echo "  make fuzz-cmin FUZZER=<name>       Minimize a fuzzer's corpus in place (e.g. FUZZER=exec-differential)"
 	@echo ""
 	@echo "Crash Analysis:"
 	@echo "  make trace CRASH=<file>            Convert seed + trace (release)"
@@ -66,6 +67,15 @@ fuzz-malformed:
 
 fuzz-exec-differential:
 	$(call run_fuzz,exec-differential)
+
+# Minimize a fuzzer's corpus in place (fuzz/corpus/<FUZZER>)
+fuzz-cmin:
+	@if [ -z "$(FUZZER)" ]; then \
+		echo "Error: FUZZER variable required"; \
+		echo "Usage: make fuzz-cmin FUZZER=exec-differential"; \
+		exit 1; \
+	fi
+	cargo +nightly fuzz cmin $(FUZZER) --target $(SPACEWASM_TARGET)
 
 # Convert seed to Wasm and trace execution (release mode)
 trace:
