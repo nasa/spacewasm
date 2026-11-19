@@ -2,7 +2,7 @@
 
 use clap::{Args, Parser, Subcommand};
 use spacewasm::CompilerOptions;
-use spacewasm_tools::DecoderLimits;
+use spacewasm_tools::{DecoderLimits, Version};
 use std::ffi::OsString;
 use std::path::PathBuf;
 
@@ -39,7 +39,8 @@ pub enum Command {
     Validate(ValidateArgs),
     /// Resolve a backtrace, or module offsets, against a symbol file.
     Backtrace(BacktraceArgs),
-    /// The proposals this release implements, as `wasm-opt` and `rustc` flags.
+    /// The proposals this release implements, as `wasm-opt` and `rustc` flags; or the
+    /// feature matrix, every proposal and the release that implemented it.
     Features(FeaturesArgs),
     /// Run a WASI 0.1 (`wasip1`) module.
     Run(RunArgs),
@@ -206,12 +207,21 @@ pub struct BacktraceArgs {
 #[derive(Args)]
 pub struct FeaturesArgs {
     /// Print only the `wasm-opt` flags, one line.
-    #[arg(long, conflicts_with = "rustc")]
+    #[arg(long, conflicts_with_all = ["rustc", "matrix", "release"])]
     pub wasm_opt: bool,
 
     /// Print only the `-Ctarget-feature` value for `rustc`.
-    #[arg(long)]
+    #[arg(long, conflicts_with_all = ["matrix", "release"])]
     pub rustc: bool,
+
+    /// Print the feature matrix: every proposal, and since which release it is
+    /// implemented or what is planned for it.
+    #[arg(long, conflicts_with = "release")]
+    pub matrix: bool,
+
+    /// List the proposals another release implements, e.g. `0.7.1` or `v0.7.1`.
+    #[arg(long, value_name = "VERSION")]
+    pub release: Option<Version>,
 }
 
 /// The flight `CompilerOptions`: what decides whether a module loads, and the IR layout a

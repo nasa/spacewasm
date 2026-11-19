@@ -100,7 +100,7 @@ pub fn find_unsupported(module: &[u8]) -> Option<Invalid> {
             let at = module.get(usize::try_from(offset).ok()?..)?;
             let (opcode, sub) = (*at.first()?, fc_sub_opcode(at));
             if let Some(proposal) = features::proposal_of(opcode, sub)
-                && !proposal.supported
+                && !proposal.supported()
             {
                 return Some(Invalid::Unsupported {
                     offset,

@@ -3,112 +3,252 @@
 //!
 //! The one place that list lives: `link` hands it to `wasm-opt`, `features` prints it
 //! for `rustc`, and `validate` names a proposal when a module uses one that is missing.
+//! It also records the release each proposal arrived in, and what is planned for the
+//! rest, so `features --matrix` and `features --release` can answer for any release.
 //! The decoder is the ground truth; the test below holds this table to it by
 //! decoding one instruction from every proposal listed.
+
+use std::fmt;
 
 /// A post-MVP proposal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Proposal {
     /// Its name in the WebAssembly proposals repository.
     pub name: &'static str,
+    /// Its row in the README's feature matrix.
+    pub title: &'static str,
     /// `wasm-opt`'s `--enable-…` / `--disable-…` suffix.
     pub wasm_opt: &'static str,
     /// `rustc`'s `-Ctarget-feature` name, if it gates instructions there.
     pub rustc: Option<&'static str>,
-    /// Whether this release of `spacewasm` implements it.
-    pub supported: bool,
+    /// Since which release `spacewasm` implements it, or what is planned for it.
+    pub status: Status,
+    /// The `spacewasm` issue or pull request tracking it.
+    pub tracking: Option<&'static str>,
     /// The `wasm-opt` pass that rewrites this proposal's instructions into MVP ones, for
     /// a module built without regard to `spacewasm` (`spacewasm lower`).
     pub lowering: Option<&'static str>,
 }
 
+impl Proposal {
+    /// Whether this release of `spacewasm` implements it.
+    pub fn supported(&self) -> bool {
+        matches!(self.status, Status::Since(_))
+    }
+
+    /// Whether `release` of `spacewasm` implements it.
+    pub fn supported_in(&self, release: Version) -> bool {
+        matches!(self.status, Status::Since(since) if since <= release)
+    }
+}
+
+/// Where `spacewasm` stands on a proposal: the feature matrix in the README.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Status {
+    /// Implemented, from this release on.
+    Since(Version),
+    /// Not implemented yet, but intended to be.
+    Planned,
+    /// Not implemented; whether it will be is open.
+    UnderConsideration,
+    /// Not implemented, and not intended to be.
+    NotPlanned,
+}
+
+impl fmt::Display for Status {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Status::Since(Version::FIRST) => f.write_str("all versions"),
+            Status::Since(version) => write!(f, ">={version}"),
+            Status::Planned => f.write_str("planned"),
+            Status::UnderConsideration => f.write_str("under consideration"),
+            Status::NotPlanned => f.write_str("not planned"),
+        }
+    }
+}
+
+/// A release of `spacewasm`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Version {
+    pub major: u32,
+    pub minor: u32,
+    pub patch: u32,
+}
+
+impl Version {
+    /// The first release.
+    pub const FIRST: Version = Version::new(0, 1, 0);
+
+    pub const fn new(major: u32, minor: u32, patch: u32) -> Version {
+        Version {
+            major,
+            minor,
+            patch,
+        }
+    }
+
+    /// This release, or `None` for a build from an untagged tree, whose version is the
+    /// `0.0.0` placeholder the release workflow replaces.
+    pub fn this_release() -> Option<Version> {
+        let version: Version = env!("CARGO_PKG_VERSION")
+            .parse()
+            .expect("Cargo's version is MAJOR.MINOR.PATCH");
+        (version != Version::new(0, 0, 0)).then_some(version)
+    }
+}
+
+impl fmt::Display for Version {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}.{}.{}", self.major, self.minor, self.patch)
+    }
+}
+
+impl std::str::FromStr for Version {
+    type Err = String;
+
+    /// `MAJOR.MINOR.PATCH`, as a tag spells it (`v0.8.0`) or Cargo does (`0.8.0`). A
+    /// pre-release or build suffix is ignored: `0.8.0-rc1` has 0.8.0's features.
+    fn from_str(text: &str) -> Result<Self, String> {
+        let core = text.strip_prefix('v').unwrap_or(text);
+        let core = core.split(['-', '+']).next().unwrap_or(core);
+        let parts = core
+            .split('.')
+            .map(|part| {
+                part.parse::<u32>()
+                    .map_err(|_| format!("`{text}` is not MAJOR.MINOR.PATCH"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        match parts[..] {
+            [major, minor, patch] => Ok(Version::new(major, minor, patch)),
+            _ => Err(format!("`{text}` is not MAJOR.MINOR.PATCH")),
+        }
+    }
+}
+
 /// Every proposal a Wasm toolchain might emit for a `wasm32` target, supported or not.
 /// The unsupported rows are what `validate` explains and `link` keeps out.
+///
+/// The `status` column is the README's feature matrix. A proposal implemented for the
+/// next, untagged release is `Since` that release: the release build's tests fail if
+/// its version is older than any listed here.
 pub const PROPOSALS: &[Proposal] = &[
     Proposal {
         name: "mutable-globals",
+        title: "Mutable globals",
         wasm_opt: "mutable-globals",
         rustc: Some("mutable-globals"),
-        supported: true,
+        status: Status::Since(Version::FIRST),
+        tracking: None,
         lowering: None,
     },
     Proposal {
         name: "custom-page-sizes",
+        title: "Custom page sizes",
         wasm_opt: "custom-page-sizes",
         // Chosen by the linker's `--page-size`, not an instruction set.
         rustc: None,
-        supported: true,
+        status: Status::Since(Version::new(0, 2, 0)),
+        tracking: Some("https://github.com/nasa/spacewasm/pull/84"),
         lowering: None,
     },
     Proposal {
         name: "sign-extension-ops",
+        title: "Sign-extension operators",
         wasm_opt: "sign-ext",
         rustc: Some("sign-ext"),
-        supported: true,
+        status: Status::Since(Version::new(0, 8, 0)),
+        tracking: Some("https://github.com/nasa/spacewasm/pull/216"),
         lowering: Some("--signext-lowering"),
     },
     Proposal {
         name: "nontrapping-float-to-int-conversions",
+        title: "Non-trapping float-to-int conversions",
         wasm_opt: "nontrapping-float-to-int",
         rustc: Some("nontrapping-fptoint"),
-        supported: true,
+        status: Status::Since(Version::new(0, 8, 0)),
+        tracking: Some("https://github.com/nasa/spacewasm/pull/212"),
         lowering: Some("--llvm-nontrapping-fptoint-lowering"),
     },
     Proposal {
         name: "bulk-memory-operations",
+        title: "Bulk memory operations",
         wasm_opt: "bulk-memory",
         rustc: Some("bulk-memory"),
-        supported: false,
+        status: Status::Planned,
+        tracking: Some("https://github.com/nasa/spacewasm/issues/54"),
         lowering: Some("--llvm-memory-copy-fill-lowering"),
     },
     Proposal {
-        name: "reference-types",
-        wasm_opt: "reference-types",
-        rustc: Some("reference-types"),
-        supported: false,
+        name: "simd",
+        title: "SIMD",
+        wasm_opt: "simd",
+        rustc: Some("simd128"),
+        status: Status::UnderConsideration,
+        tracking: Some("https://github.com/nasa/spacewasm/issues/187"),
         lowering: None,
     },
     Proposal {
         name: "multi-value",
+        title: "Multi-value",
         wasm_opt: "multivalue",
         rustc: Some("multivalue"),
-        supported: false,
+        status: Status::UnderConsideration,
+        tracking: None,
+        lowering: None,
+    },
+    Proposal {
+        name: "multi-memory",
+        title: "Multiple memories",
+        wasm_opt: "multimemory",
+        // `multimemory` is unstable, so naming it warns on every build; LLVM never
+        // emits a second memory unasked.
+        rustc: None,
+        status: Status::UnderConsideration,
+        tracking: None,
+        lowering: None,
+    },
+    Proposal {
+        name: "reference-types",
+        title: "Reference types",
+        wasm_opt: "reference-types",
+        rustc: Some("reference-types"),
+        status: Status::NotPlanned,
+        tracking: None,
         lowering: None,
     },
     Proposal {
         name: "extended-const",
+        title: "Extended constant expressions",
         wasm_opt: "extended-const",
         rustc: Some("extended-const"),
-        supported: false,
-        lowering: None,
-    },
-    Proposal {
-        name: "simd",
-        wasm_opt: "simd",
-        rustc: Some("simd128"),
-        supported: false,
+        status: Status::NotPlanned,
+        tracking: None,
         lowering: None,
     },
     Proposal {
         name: "threads",
+        title: "Threads",
         wasm_opt: "threads",
         // `atomics` is unstable, so naming it warns on every build; `wasm32v1-none`
         // never turns it on unasked.
         rustc: None,
-        supported: false,
+        status: Status::NotPlanned,
+        tracking: None,
         lowering: None,
     },
     Proposal {
         name: "tail-call",
+        title: "Tail calls",
         wasm_opt: "tail-call",
         rustc: Some("tail-call"),
-        supported: false,
+        status: Status::NotPlanned,
+        tracking: None,
         lowering: None,
     },
 ];
 
 pub fn supported() -> impl Iterator<Item = &'static Proposal> {
-    PROPOSALS.iter().filter(|proposal| proposal.supported)
+    PROPOSALS.iter().filter(|proposal| proposal.supported())
 }
 
 /// `wasm-opt` flags for exactly this release's language: MVP, plus each supported
@@ -127,13 +267,16 @@ pub fn wasm_opt_flags() -> Vec<String> {
 pub fn lowering_flags() -> Vec<String> {
     // Read everything this table knows, so the input validates whatever it uses.
     // `--all-features` is too much: it turns on GC without reference types, which
-    // `wasm-opt` rejects on its own.
+    // `wasm-opt` rejects on its own. Multi-memory is left out too: with it on,
+    // `wasm-opt` refuses to lower `memory.copy`, and a second memory cannot be lowered
+    // away in any case.
     let read = PROPOSALS
         .iter()
+        .filter(|proposal| proposal.name != "multi-memory")
         .map(|proposal| format!("--enable-{}", proposal.wasm_opt));
     let lower = PROPOSALS
         .iter()
-        .filter(|proposal| !proposal.supported)
+        .filter(|proposal| !proposal.supported())
         .filter_map(|proposal| proposal.lowering.map(str::to_string));
     read.chain(lower).collect()
 }
@@ -147,7 +290,7 @@ pub fn rustc_target_features() -> String {
             let feature = proposal.rustc?;
             Some(format!(
                 "{}{feature}",
-                if proposal.supported { '+' } else { '-' }
+                if proposal.supported() { '+' } else { '-' }
             ))
         })
         .collect::<Vec<_>>()
@@ -218,6 +361,52 @@ mod tests {
                 "{expected}: {features}"
             );
         }
+    }
+
+    /// A proposal marked for the next release, then tagged as an older one, would claim
+    /// more for that release than it has. Holds once the release workflow has injected
+    /// the tag's version; an untagged build is ahead of every release.
+    #[test]
+    fn no_proposal_is_from_a_later_release() {
+        let Some(this) = Version::this_release() else {
+            return;
+        };
+        for proposal in PROPOSALS {
+            if let Status::Since(since) = proposal.status {
+                assert!(
+                    since <= this,
+                    "{} is marked >={since}, but this is {this}",
+                    proposal.name
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn versions_read_as_tags_and_cargo_spell_them() {
+        assert_eq!("0.8.0".parse(), Ok(Version::new(0, 8, 0)));
+        assert_eq!("v0.7.1".parse(), Ok(Version::new(0, 7, 1)));
+        assert_eq!("1.2.3-rc.1".parse(), Ok(Version::new(1, 2, 3)));
+        assert!("0.8".parse::<Version>().is_err());
+        assert!("latest".parse::<Version>().is_err());
+        assert!(Version::new(0, 10, 0) > Version::new(0, 9, 9));
+    }
+
+    #[test]
+    fn a_release_has_what_arrived_by_then() {
+        let names = |release| {
+            PROPOSALS
+                .iter()
+                .filter(|proposal| proposal.supported_in(release))
+                .map(|proposal| proposal.name)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(names(Version::new(0, 1, 0)), ["mutable-globals"]);
+        assert_eq!(
+            names(Version::new(0, 7, 1)),
+            ["mutable-globals", "custom-page-sizes"]
+        );
+        assert!(names(Version::new(0, 8, 0)).contains(&"sign-extension-ops"));
     }
 
     #[test]

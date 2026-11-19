@@ -22,7 +22,7 @@ cargo binstall spacewasm_tools
 | `spacewasm validate`  | Load modules exactly as the flight interpreter would                                                                                               |
 | `spacewasm split`     | The link's split, on a module already linked                                                                                                       |
 | `spacewasm backtrace` | Interpreter PCs or module offsets, resolved to source                                                                                              |
-| `spacewasm features`  | The proposals this release implements, as `wasm-opt` and `rustc` flags                                                                             |
+| `spacewasm features`  | The proposals this release implements, as `wasm-opt` and `rustc` flags, and the feature matrix across releases                                     |
 | `spacewasm run`       | Run a WASI 0.1 (`wasip1`) module                                                                                                                   |
 | `spacewasm trace`     | Run every exported function, printing the last instructions each executed                                                                          |
 | `spacewasm lower`     | Rewrite a module built for more proposals than this release has into one it loads                                                                  |
@@ -42,13 +42,24 @@ spacewasm 0.8.0: WebAssembly 1.0, plus
   nontrapping-float-to-int-conversions
 
 wasm-opt:  --mvp-features --enable-mutable-globals --enable-custom-page-sizes --enable-sign-ext --enable-nontrapping-float-to-int
-rustc:     -Ctarget-cpu=mvp -Ctarget-feature=+mutable-globals,+sign-ext,+nontrapping-fptoint,-bulk-memory,-reference-types,-multivalue,-extended-const,-simd128,-tail-call
+rustc:     -Ctarget-cpu=mvp -Ctarget-feature=+mutable-globals,+sign-ext,+nontrapping-fptoint,-bulk-memory,-simd128,-multivalue,-reference-types,-extended-const,-tail-call
 ```
 
 `wasm-opt` starts from MVP and adds back, rather than subtracting from its own
 default, so a proposal a newer `wasm-opt` enables by default stays out. `rustc` turns
 every proposal it can gate on or off explicitly, for the same reason. `--wasm-opt` and
 `--rustc` print one line each, for scripts.
+
+`--matrix` prints the feature matrix: every proposal, the release that implemented it
+or what is planned for it, and its tracking issue. `--release VERSION` lists what an
+earlier release implements, for a deployment that has not upgraded:
+
+```console
+$ spacewasm features --release 0.7.1
+spacewasm 0.7.1: WebAssembly 1.0, plus
+  mutable-globals
+  custom-page-sizes
+```
 
 ## `link`
 

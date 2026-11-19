@@ -1,7 +1,10 @@
 //! `PROPOSALS` held to the decoder: every proposal it calls supported must decode, and
 //! every one it calls unsupported must be refused. A proposal added to `spacewasm` and
 //! not marked here, or the reverse, fails this rather than shipping the wrong flags.
+//! And `spacewasm features` prints the table, for this release or another.
 
+use assert_cmd::cargo::*;
+use predicates::prelude::*;
 use spacewasm::{CompilerOptions, PageAllocator};
 use spacewasm_tools::{DecoderLimits, Invalid, PROPOSALS, host_modules_for, validate};
 
@@ -58,6 +61,7 @@ fn sample(proposal: &str) -> &'static str {
             r#"(module (global i32 (i32.add (i32.const 1) (i32.const 2)))
                  (func (export "main")))"#
         }
+        "multi-memory" => r#"(module (memory 1) (memory 1) (func (export "main")))"#,
         "simd" => r#"(module (func (export "main") v128.const i64x2 0 0 drop))"#,
         "threads" => {
             r#"(module (memory 1 1 shared) (func (export "main")
@@ -77,7 +81,7 @@ fn the_table_matches_the_decoder() {
         let options = CompilerOptions::new(true, None, 16);
         let loads = validate(&module, options, hosts, DecoderLimits::default());
 
-        match (proposal.supported, &loads) {
+        match (proposal.supported(), &loads) {
             (true, Ok(_)) | (false, Err(_)) => {}
             (true, Err(err)) => {
                 wrong.push(format!("{}: marked supported, but {err}", proposal.name))
@@ -97,4 +101,25 @@ fn the_table_matches_the_decoder() {
         }
     }
     assert!(wrong.is_empty(), "\n{}", wrong.join("\n"));
+}
+
+#[test]
+fn the_matrix_lists_every_proposal() {
+    cargo_bin_cmd!("spacewasm")
+        .args(["features", "--matrix"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Custom page sizes"))
+        .stdout(predicate::str::contains(">=0.2.0"))
+        .stdout(predicate::str::contains("Bulk memory operations"));
+}
+
+#[test]
+fn an_older_release_lacks_what_came_later() {
+    cargo_bin_cmd!("spacewasm")
+        .args(["features", "--release", "v0.7.1"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("custom-page-sizes"))
+        .stdout(predicate::str::contains("sign-extension-ops").not());
 }
