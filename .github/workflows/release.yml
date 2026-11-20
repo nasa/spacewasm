@@ -151,6 +151,8 @@ jobs:
             runner: macos-15
           - target: x86_64-pc-windows-msvc
             runner: windows-latest
+          - target: aarch64-pc-windows-msvc
+            runner: windows-11-arm
     env:
       # The workspace release profile is the flight one: `panic = "abort"`, which
       # `spacewasm trace` cannot report a panic under, and full debug info. A

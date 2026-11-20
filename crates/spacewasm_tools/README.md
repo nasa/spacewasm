@@ -8,7 +8,7 @@ cargo install spacewasm_tools
 ```
 
 Or download a prebuilt binary, for Linux (x86_64, arm64), macOS (Apple silicon, Intel)
-and Windows (x86_64), from the [releases](https://github.com/nasa/spacewasm/releases)
+and Windows (x86_64, arm64), from the [releases](https://github.com/nasa/spacewasm/releases)
 page, which [`cargo binstall`](https://github.com/cargo-bins/cargo-binstall) does for
 you:
 
