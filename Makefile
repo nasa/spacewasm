@@ -1,4 +1,4 @@
-.PHONY: help fuzz fuzz-validate fuzz-validate-differential fuzz-malformed fuzz-exec-differential fuzz-cmin seed-to-wasm trace-wasm trace-wasm-debug trace trace-debug clean-artifacts gen-header
+.PHONY: help fuzz fuzz-validate fuzz-validate-differential fuzz-malformed fuzz-exec-differential fuzz-cmin fuzz-corpus-init fuzz-corpus-pull fuzz-corpus-push seed-to-wasm trace-wasm trace-wasm-debug trace trace-debug clean-artifacts gen-header
 
 # Target Configuration (auto-detect if not set)
 SPACEWASM_TARGET ?= $(shell rustc -vV | grep 'host:' | cut -d' ' -f2)
@@ -32,6 +32,11 @@ help:
 	@echo "  make fuzz-malformed                Run the malformed-input decoder fuzzer"
 	@echo "  make fuzz-exec-differential       Run the execution differential fuzzer (SpaceWasm vs wasmi)"
 	@echo "  make fuzz-cmin FUZZER=<name>       Minimize a fuzzer's corpus in place (e.g. FUZZER=exec-differential)"
+	@echo ""
+	@echo "Shared Corpus (the fuzz-corpus draft release, used by CI):"
+	@echo "  make fuzz-corpus-init              Create the draft release (once per repository)"
+	@echo "  make fuzz-corpus-pull [FUZZER=..]  Merge the shared corpus into fuzz/corpus"
+	@echo "  make fuzz-corpus-push [FUZZER=..]  Pull, minimize and upload fuzz/corpus"
 	@echo ""
 	@echo "Crash Analysis:"
 	@echo "  make trace CRASH=<file>            Convert seed + trace (release)"
@@ -77,6 +82,17 @@ fuzz-cmin:
 	fi
 	cargo +nightly fuzz cmin $(FUZZER) --target $(SPACEWASM_TARGET)
 
+# Sync fuzz/corpus with the shared corpus in the `fuzz-corpus` draft release.
+# Without FUZZER, every fuzz target is synced.
+fuzz-corpus-init:
+	.github/scripts/fuzz-corpus.sh init
+
+fuzz-corpus-pull:
+	.github/scripts/fuzz-corpus.sh pull $(FUZZER)
+
+fuzz-corpus-push:
+	SPACEWASM_TARGET=$(SPACEWASM_TARGET) .github/scripts/fuzz-corpus.sh push $(FUZZER)
+
 # Convert seed to Wasm and trace execution (release mode)
 trace:
 	@if [ -z "$(CRASH)" ]; then \
@@ -85,7 +101,7 @@ trace:
 		exit 1; \
 	fi
 	@echo "Converting seed to Wasm and tracing execution (release mode)..."
-	@cargo run --release -p spacewasm-fuzzing --bin seed_to_wasm --target $(SPACEWASM_TARGET) -- $(if $(TARGET),--target $(TARGET)) $(CRASH) --stdout 2>/dev/null | \
+	@cargo run --release --manifest-path fuzz/Cargo.toml -p spacewasm-fuzzing --bin seed_to_wasm --target $(SPACEWASM_TARGET) -- $(if $(TARGET),--target $(TARGET)) $(CRASH) --stdout 2>/dev/null | \
 		cargo run --release -p spacewasm_tools --features strict-assertions --bin spacewasm --target $(SPACEWASM_TARGET) -- trace --limit $(or $(LIMIT),50)
 
 # Convert seed to Wasm and trace execution (debug mode with ASAN)
@@ -96,7 +112,7 @@ trace-debug:
 		exit 1; \
 	fi
 	@echo "Converting seed to Wasm and tracing execution (debug mode with ASAN)..."
-	@cargo run -p spacewasm-fuzzing --bin seed_to_wasm --target $(SPACEWASM_TARGET) -- $(if $(TARGET),--target $(TARGET)) $(CRASH) --stdout 2>/dev/null | \
+	@cargo run --manifest-path fuzz/Cargo.toml -p spacewasm-fuzzing --bin seed_to_wasm --target $(SPACEWASM_TARGET) -- $(if $(TARGET),--target $(TARGET)) $(CRASH) --stdout 2>/dev/null | \
 		RUSTFLAGS="-Zsanitizer=address" cargo +nightly run --target $(SPACEWASM_TARGET) -p spacewasm_tools --features strict-assertions --bin spacewasm -- trace --limit $(or $(LIMIT),50)
 
 # Convert fuzzer seed to Wasm
@@ -107,9 +123,9 @@ seed-to-wasm:
 		exit 1; \
 	fi
 	@if [ -n "$(OUT)" ]; then \
-		cargo run --release -p spacewasm-fuzzing --bin seed_to_wasm --target $(SPACEWASM_TARGET) -- $(if $(TARGET),--target $(TARGET)) $(CRASH) $(OUT); \
+		cargo run --release --manifest-path fuzz/Cargo.toml -p spacewasm-fuzzing --bin seed_to_wasm --target $(SPACEWASM_TARGET) -- $(if $(TARGET),--target $(TARGET)) $(CRASH) $(OUT); \
 	else \
-		cargo run --release -p spacewasm-fuzzing --bin seed_to_wasm --target $(SPACEWASM_TARGET) -- $(if $(TARGET),--target $(TARGET)) $(CRASH) $(CRASH).wasm; \
+		cargo run --release --manifest-path fuzz/Cargo.toml -p spacewasm-fuzzing --bin seed_to_wasm --target $(SPACEWASM_TARGET) -- $(if $(TARGET),--target $(TARGET)) $(CRASH) $(CRASH).wasm; \
 	fi
 
 # Trace Wasm file execution (release mode)

@@ -7,10 +7,22 @@ edition = "2024"
 [package.metadata]
 cargo-fuzz = true
 
+# The fuzzing crates form their own workspace, separate from the root one, so
+# their dependencies (wasm-smith, wasmi, libfuzzer-sys, ...) are locked in
+# `fuzz/Cargo.lock` and never pulled into the flight build.
+[workspace]
+members = [".", "fuzzing"]
+
+[workspace.lints.clippy]
+disallowed_methods = "allow"
+
+[lints]
+workspace = true
+
 [dependencies]
 libfuzzer-sys = "=0.4.13"
 spacewasm = { path = "..", features = ["strict-assertions"] }
-spacewasm-fuzzing = { path = "../crates/fuzzing", features = ["differential"] }
+spacewasm-fuzzing = { path = "fuzzing", features = ["differential"] }
 
 [[bin]]
 name = "validate"
