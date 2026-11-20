@@ -214,6 +214,13 @@ jobs:
         with:
           tool: cargo-fuzz
 
+      # The prebuilt cargo-fuzz is a musl binary, and `cargo fuzz` defaults
+      # `--target` to the triple it was built for. Sanitizers do not support
+      # static musl, so build for the toolchain's host (as the Makefile does).
+      - name: Select fuzz target triple
+        run: |
+          echo "SPACEWASM_TARGET=$(rustc -vV | sed -n 's/^host: //p')" >> "$GITHUB_ENV"
+
       # Every fuzz target builds the same dependencies, so all of them (and
       # the nightly `fuzz-corpus` job) share one cache, saved by a single job.
       # A cache per target would add several near-identical entries to the
@@ -228,13 +235,13 @@ jobs:
           cache-bin: false
 
       - name: Build fuzzer
-        run: cargo +nightly-2026-08-30 fuzz build ${{ matrix.target }}
+        run: cargo +nightly-2026-08-30 fuzz build ${{ matrix.target }} --target "$SPACEWASM_TARGET"
 
       # The corpus is seeded and kept minimized by the nightly `fuzz-corpus`
-      # job (fuzz-corpus.yml). libFuzzer replays every corpus input through the oracle
-      # before fuzzing, so this run re-checks all of the coverage the corpus
-      # has reached, even when the replay outlasts the 30s budget. A cache
-      # miss just means fuzzing from scratch.
+      # job (fuzz-corpus.yml). libFuzzer replays every corpus input through
+      # the oracle before fuzzing, so this run re-checks all of the coverage
+      # the corpus has reached, even when the replay outlasts the 30s budget.
+      # A cache miss just means fuzzing from scratch.
       - name: Restore fuzzing corpus
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
@@ -243,7 +250,7 @@ jobs:
           restore-keys: fuzz-corpus-${{ matrix.target }}-
 
       - name: Run fuzzer (30s)
-        run: cargo +nightly-2026-08-30 fuzz run ${{ matrix.target }} -- -max_total_time=30
+        run: cargo +nightly-2026-08-30 fuzz run ${{ matrix.target }} --target "$SPACEWASM_TARGET" -- -max_total_time=30
 
       - name: Upload crash artifacts
         if: failure()
