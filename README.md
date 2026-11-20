@@ -233,6 +233,11 @@ make fuzz-exec-differential
 make trace CRASH=fuzz/artifacts/no-traps/crash-xxx
 ```
 
+CI replays a shared, minimized corpus for every fuzz target and fuzzes for 30s on each run.
+Maintainers can seed it from a local fuzzing session with `make fuzz-corpus-push` (and fetch
+it with `make fuzz-corpus-pull`). The corpus is stored as assets of the `fuzz-corpus` *draft*
+release; keep it a draft, since published releases are immutable in this repository.
+
 ## Feature Support Matrix
 
 Below is a table of the implemented and planned WebAssembly proposals with links to their tracking issue / implementation pull-request.
