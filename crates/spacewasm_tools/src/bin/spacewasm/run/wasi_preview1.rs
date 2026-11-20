@@ -55,13 +55,13 @@ fn next_i64(it: &mut std::slice::Iter<'_, Value>) -> i64 {
 ///
 /// The wiggle-generated wrappers return `Result<i32, wiggle::anyhow::Error>`:
 ///
-/// * `Ok(errno)` — the syscall ran to completion. `errno` is the WASI status
+/// * `Ok(errno)`: the syscall ran to completion. `errno` is the WASI status
 ///   returned to the guest (`0` on success, or a `wasi_snapshot_preview1` errno
 ///   such as `EBADF`/`EFAULT`). wiggle has *already* folded the recoverable
 ///   guest-memory faults into an `Errno` at this point (e.g. a borrowed pointer
 ///   becomes `Errno::Fault`, an invalid enum becomes `Errno::Inval`), so those
 ///   are handed straight back to the guest as the `i32` result.
-/// * `Err(trap)` — an unrecoverable host trap that the guest cannot observe as
+/// * `Err(trap)`: an unrecoverable host trap that the guest cannot observe as
 ///   an errno: an out-of-bounds or misaligned guest pointer (which the WASI
 ///   spec mandates trap on), an unexpected OS-level error, etc. These abort the
 ///   guest via [`HostFunctionBreak::Trap`] (surfacing to the embedder as
@@ -73,7 +73,7 @@ fn next_i64(it: &mut std::slice::Iter<'_, Value>) -> i64 {
 /// `I32Exit` "error" specially (see [`proc_exit_binding`]).
 ///
 /// `HostFunctionBreak::Trap` carries no payload, so the trap's cause is reported
-/// on stderr before it is discarded — otherwise every one of the ~44 bindings
+/// on stderr before it is discarded. Otherwise every one of the ~44 bindings
 /// collapses into an indistinguishable `Trap(Host)` and the embedder cannot tell
 /// which WASI call failed or why. `name` identifies the binding.
 fn finish(name: &str, result: wiggle::anyhow::Result<i32>) -> HostFunctionResult {
@@ -104,11 +104,11 @@ macro_rules! next_arg {
 /// ([`spacewasm::Memory::as_shared_cells`]), typed argument extraction, and the
 /// shared error mapping ([`finish`]).
 ///
-/// * `$ctx`     — the shared `WasiCtx` handle to clone into the closure.
-/// * `$name`    — the wiggle function, also used verbatim as the exported name.
-/// * `$params`  — the interpreter parameter-signature string.
-/// * `$results` — the interpreter result-signature string.
-/// * `[ .. ]`   — the argument types in order (`i` = i32, `I` = i64).
+/// * `$ctx`: the shared `WasiCtx` handle to clone into the closure.
+/// * `$name`: the wiggle function, also used verbatim as the exported name.
+/// * `$params`: the interpreter parameter-signature string.
+/// * `$results`: the interpreter result-signature string.
+/// * `[ .. ]`: the argument types in order (`i` = i32, `I` = i64).
 macro_rules! wasi_binding {
     (
         $ctx:ident,
@@ -141,7 +141,7 @@ macro_rules! wasi_binding {
 /// The `proc_exit` binding.
 ///
 /// It cannot use [`wasi_binding!`]/[`finish`] because wasi-common models
-/// `proc_exit` as a diverging call: its wiggle wrapper always returns `Err` —
+/// `proc_exit` as a diverging call: its wiggle wrapper always returns `Err`:
 /// an `I32Exit(code)` for a valid status, or a generic trap for an out-of-range
 /// one. Rather than calling `std::process::exit` (which would skip the caller's
 /// Drop-based cleanup, such as restoring the terminal from raw mode), it records

@@ -1,14 +1,15 @@
 //! `spacewasm`: ground tooling for the `spacewasm` interpreter.
 //!
-//! * `link` — a Cargo linker: `rust-lld`, then `wasm-opt` held to this release's features,
+//! * `link`: a Cargo linker, `rust-lld` then `wasm-opt` held to this release's features,
 //!   splitting the debug info into a symbol file
-//! * `split` — the same split on a module already linked
-//! * `validate` — load a module exactly as the flight interpreter would
-//! * `backtrace` — interpreter PCs or module offsets, resolved to source
-//! * `features` — the proposals this release implements, as `wasm-opt` and `rustc` flags
-//! * `run` — execute a WASI 0.1 module, as `spacewasi` did
-//! * `trace` — run each export and print its last instructions, as `spacewasm-trace` did
-//! * `lower` — rewrite a module into one this release loads, as `wasm2mvp.sh` did
+//! * `split`: the same split on a module already linked
+//! * `validate`: load a module exactly as the flight interpreter would
+//! * `backtrace`: interpreter PCs or module offsets, resolved to source
+//! * `features`: the proposals this release implements, as `wasm-opt`, `rustc` and
+//!   `clang` flags
+//! * `run`: execute a WASI 0.1 module, as `spacewasi` did
+//! * `trace`: run each export and print its last instructions, as `spacewasm-trace` did
+//! * `lower`: rewrite a module into one this release loads, as `wasm2mvp.sh` did
 //!
 //! `load` is what `run` and `trace` share: the ground interpreter, with real hosts.
 

@@ -612,7 +612,7 @@ fn with_wasmi_validate_engine<R>(f: impl FnOnce(&wasmi::Engine) -> R) -> R {
 ///   should have refused. Reported by panicking.
 /// * **Completeness** -- SpaceWasm *rejects* what wasmi *accepts*: a module
 ///   SpaceWasm should have admitted. Reported by panicking, *unless* the rejection
-///   is not a Wasm-validation failure ([`is_benign_rejection`]) -- an
+///   is not a Wasm-validation failure (`is_benign_rejection`) -- an
 ///   embedded resource limit, or an instantiation-time check that SpaceWasm's
 ///   combined decode+validate+instantiate pass performs at load but the spec (and
 ///   thus wasmi's validator) defers. Those rejections are legitimate and filtered
@@ -1367,7 +1367,7 @@ fn from_wasmi(v: &wasmi::Val) -> Value {
 /// the remaining calls are skipped: their starting state is no longer the same.
 ///
 /// The module is skipped entirely when SpaceWasm rejects it at load for a reason
-/// [`is_benign_rejection`] allows, which includes the instantiation-time
+/// `is_benign_rejection` allows, which includes the instantiation-time
 /// element/data bounds checks the spec defers past validation.
 ///
 /// Best driven with the [`crate::generators::ExecModule`] generator, which allows

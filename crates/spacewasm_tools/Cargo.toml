@@ -17,6 +17,9 @@ path = "src/bin/spacewasm/main.rs"
 # `clap`, and `run`'s WASI host, are only the binary's: a library user (a tool that is
 # Cargo's linker itself) should not compile them.
 required-features = ["bin"]
+# Its docs would land on the `spacewasm` library's page and overwrite it
+# (https://github.com/rust-lang/cargo/issues/6313). CI documents it on its own.
+doc = false
 
 [features]
 default = ["bin"]

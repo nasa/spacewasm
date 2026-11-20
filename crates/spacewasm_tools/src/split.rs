@@ -6,6 +6,7 @@
 //! optimised byte back to the linked byte it came from. Feeding it an identity map (line
 //! N is linked byte N) is what makes its output map read that way.
 
+use crate::features::Version;
 use crate::format::{MODULE_SECTION, OFFSETS_SECTION};
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -26,12 +27,18 @@ pub struct Optimizer {
 impl Optimizer {
     /// `program` held to this release's feature set, then `extra`.
     pub fn held(program: PathBuf, extra: &[String]) -> Optimizer {
+        Optimizer::with_features(program, crate::wasm_opt_flags(), extra)
+    }
+
+    /// [`Optimizer::held`] to an earlier `release`'s feature set.
+    pub fn held_to(program: PathBuf, release: Version, extra: &[String]) -> Optimizer {
+        Optimizer::with_features(program, crate::wasm_opt_flags_for(release), extra)
+    }
+
+    fn with_features(program: PathBuf, features: Vec<String>, extra: &[String]) -> Optimizer {
         Optimizer {
             program,
-            args: crate::wasm_opt_flags()
-                .into_iter()
-                .chain(extra.iter().cloned())
-                .collect(),
+            args: features.into_iter().chain(extra.iter().cloned()).collect(),
         }
     }
 }
