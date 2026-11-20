@@ -1,6 +1,6 @@
 //! # c_example
 //!
-//! A C-ABI test runner for [`spacewasm_c_api`].
+//! A C-ABI test runner for `spacewasm_c_api`.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

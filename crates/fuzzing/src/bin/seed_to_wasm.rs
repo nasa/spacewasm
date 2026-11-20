@@ -10,8 +10,11 @@
 //! `--target` (default: `no_traps`).
 //!
 //! Usage:
-//!   seed_to_wasm [--target no_traps|validate|malformed|exec_differential] <seed-file> [output.wasm]
-//!   seed_to_wasm [--target no_traps|validate|malformed|exec_differential] <seed-file> --stdout
+//!
+//! ```text
+//! seed_to_wasm [--target no_traps|validate|malformed|exec_differential] <seed-file> [output.wasm]
+//! seed_to_wasm [--target no_traps|validate|malformed|exec_differential] <seed-file> --stdout
+//! ```
 
 use spacewasm_fuzzing::generators::{wasm_from_seed, Target};
 use std::env;

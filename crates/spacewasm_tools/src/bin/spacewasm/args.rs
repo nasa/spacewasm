@@ -71,7 +71,7 @@ pub struct RunArgs {
     #[arg(long)]
     pub cwd_is_root: bool,
 
-    /// Override argv[0].
+    /// Override `argv[0]`.
     #[arg(long, value_name = "ARGV0")]
     pub argv0: Option<String>,
 
@@ -207,19 +207,25 @@ pub struct BacktraceArgs {
 #[derive(Args)]
 pub struct FeaturesArgs {
     /// Print only the `wasm-opt` flags, one line.
-    #[arg(long, conflicts_with_all = ["rustc", "matrix", "release"])]
+    #[arg(long, conflicts_with_all = ["rustc", "clang", "matrix"])]
     pub wasm_opt: bool,
 
     /// Print only the `-Ctarget-feature` value for `rustc`.
-    #[arg(long, conflicts_with_all = ["matrix", "release"])]
+    #[arg(long, conflicts_with_all = ["clang", "matrix"])]
     pub rustc: bool,
+
+    /// Print only the `clang` flags, one line: `-mcpu=mvp` and a `-mNAME` / `-mno-NAME`
+    /// for every proposal. Add the build's own `--target=wasm32`.
+    #[arg(long, conflicts_with = "matrix")]
+    pub clang: bool,
 
     /// Print the feature matrix: every proposal, and since which release it is
     /// implemented or what is planned for it.
     #[arg(long, conflicts_with = "release")]
     pub matrix: bool,
 
-    /// List the proposals another release implements, e.g. `0.7.1` or `v0.7.1`.
+    /// List the proposals another release implements, e.g. `0.7.1` or `v0.7.1`. With
+    /// `--wasm-opt`, `--rustc` or `--clang`, that release's flags.
     #[arg(long, value_name = "VERSION")]
     pub release: Option<Version>,
 }

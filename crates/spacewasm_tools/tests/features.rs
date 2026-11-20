@@ -123,3 +123,23 @@ fn an_older_release_lacks_what_came_later() {
         .stdout(predicate::str::contains("custom-page-sizes"))
         .stdout(predicate::str::contains("sign-extension-ops").not());
 }
+
+#[test]
+fn an_older_release_has_its_own_flags() {
+    cargo_bin_cmd!("spacewasm")
+        .args(["features", "--release", "0.7.1", "--rustc"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("-sign-ext"));
+    cargo_bin_cmd!("spacewasm")
+        .args(["features", "--release", "0.7.1", "--wasm-opt"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--enable-sign-ext").not());
+    cargo_bin_cmd!("spacewasm")
+        .args(["features", "--release", "0.7.1", "--clang"])
+        .assert()
+        .success()
+        .stdout(predicate::str::starts_with("-mcpu=mvp "))
+        .stdout(predicate::str::contains("-mno-sign-ext"));
+}

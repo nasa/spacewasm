@@ -3,22 +3,33 @@
 
 use crate::Outcome;
 use crate::args::FeaturesArgs;
-use spacewasm_tools::{PROPOSALS, Status, Version, rustc_target_features, wasm_opt_flags};
+use spacewasm_tools::{
+    PROPOSALS, Status, Version, clang_flags, clang_flags_for, rustc_target_features,
+    rustc_target_features_for, supported_in, wasm_opt_flags, wasm_opt_flags_for,
+};
 
 pub fn run(args: &FeaturesArgs) -> Outcome {
+    let release = args.release.map(Version::known).transpose()?;
     if args.wasm_opt {
-        println!("{}", wasm_opt_flags().join(" "));
+        let flags = release.map_or_else(wasm_opt_flags, wasm_opt_flags_for);
+        println!("{}", flags.join(" "));
         return Ok(true);
     }
     if args.rustc {
-        println!("{}", rustc_target_features());
+        let features = release.map_or_else(rustc_target_features, rustc_target_features_for);
+        println!("{features}");
+        return Ok(true);
+    }
+    if args.clang {
+        let flags = release.map_or_else(clang_flags, clang_flags_for);
+        println!("{}", flags.join(" "));
         return Ok(true);
     }
     if args.matrix {
         matrix();
         return Ok(true);
     }
-    if let Some(release) = args.release {
+    if let Some(release) = release {
         return release_features(release);
     }
 
@@ -35,6 +46,7 @@ pub fn run(args: &FeaturesArgs) -> Outcome {
         "rustc:     -Ctarget-cpu=mvp -Ctarget-feature={}",
         rustc_target_features()
     );
+    println!("clang:     {}", clang_flags().join(" "));
     Ok(true)
 }
 
@@ -67,28 +79,16 @@ fn matrix() {
 }
 
 fn release_features(release: Version) -> Outcome {
-    if release < Version::FIRST {
-        return Err(format!(
-            "there is no spacewasm {release}; the first is {}",
-            Version::FIRST
-        )
-        .into());
-    }
-    // A build from an untagged tree is ahead of every tagged release, so it can answer for
-    // all of them.
-    if let Some(this) = Version::this_release()
-        && release > this
-    {
-        return Err(format!(
-            "this is spacewasm {this}, which cannot know what {release} implements. \
-             Upgrade spacewasm_tools to ask about it"
-        )
-        .into());
-    }
-
     println!("spacewasm {release}: WebAssembly 1.0, plus");
-    for proposal in PROPOSALS.iter().filter(|p| p.supported_in(release)) {
+    for proposal in supported_in(release) {
         println!("  {}", proposal.name);
     }
+    println!();
+    println!("wasm-opt:  {}", wasm_opt_flags_for(release).join(" "));
+    println!(
+        "rustc:     -Ctarget-cpu=mvp -Ctarget-feature={}",
+        rustc_target_features_for(release)
+    );
+    println!("clang:     {}", clang_flags_for(release).join(" "));
     Ok(true)
 }

@@ -17,9 +17,10 @@ pub struct Proposal {
     pub name: &'static str,
     /// Its row in the README's feature matrix.
     pub title: &'static str,
-    /// `wasm-opt`'s `--enable-…` / `--disable-…` suffix.
+    /// `wasm-opt`'s `--enable-NAME` / `--disable-NAME` suffix.
     pub wasm_opt: &'static str,
-    /// `rustc`'s `-Ctarget-feature` name, if it gates instructions there.
+    /// `rustc`'s `-Ctarget-feature` name, if it gates instructions there. It is LLVM's,
+    /// so `clang`'s `-mNAME` / `-mno-NAME` too.
     pub rustc: Option<&'static str>,
     /// Since which release `spacewasm` implements it, or what is planned for it.
     pub status: Status,
@@ -94,6 +95,26 @@ impl Version {
             .parse()
             .expect("Cargo's version is MAJOR.MINOR.PATCH");
         (version != Version::new(0, 0, 0)).then_some(version)
+    }
+
+    /// `self`, if this build can say what it implements: no earlier than the first
+    /// release, and no later than this one.
+    pub fn known(self) -> Result<Version, String> {
+        if self < Version::FIRST {
+            return Err(format!(
+                "there is no spacewasm {self}; the first is {}",
+                Version::FIRST
+            ));
+        }
+        // A build from an untagged tree is ahead of every tagged release, so it can answer
+        // for all of them.
+        match Version::this_release() {
+            Some(this) if self > this => Err(format!(
+                "this is spacewasm {this}, which cannot know what {self} implements. \
+                 Upgrade spacewasm_tools to build for it"
+            )),
+            _ => Ok(self),
+        }
     }
 }
 
@@ -251,12 +272,28 @@ pub fn supported() -> impl Iterator<Item = &'static Proposal> {
     PROPOSALS.iter().filter(|proposal| proposal.supported())
 }
 
+/// What `release` implements, for a deployment that has not upgraded.
+pub fn supported_in(release: Version) -> impl Iterator<Item = &'static Proposal> {
+    PROPOSALS
+        .iter()
+        .filter(move |proposal| proposal.supported_in(release))
+}
+
 /// `wasm-opt` flags for exactly this release's language: MVP, plus each supported
 /// proposal. Starting from MVP rather than subtracting from `wasm-opt`'s default keeps a
 /// proposal `wasm-opt` enables by default in a later version out.
 pub fn wasm_opt_flags() -> Vec<String> {
+    held_to(supported())
+}
+
+/// [`wasm_opt_flags`] for an earlier `release`.
+pub fn wasm_opt_flags_for(release: Version) -> Vec<String> {
+    held_to(supported_in(release))
+}
+
+fn held_to<'a>(supported: impl Iterator<Item = &'a Proposal>) -> Vec<String> {
     std::iter::once("--mvp-features".to_string())
-        .chain(supported().map(|proposal| format!("--enable-{}", proposal.wasm_opt)))
+        .chain(supported.map(|proposal| format!("--enable-{}", proposal.wasm_opt)))
         .collect()
 }
 
@@ -284,17 +321,50 @@ pub fn lowering_flags() -> Vec<String> {
 /// The `-Ctarget-feature` value for `rustc`: every proposal it can gate, on if supported
 /// and off if not, so a newer `rustc` default cannot slip one in.
 pub fn rustc_target_features() -> String {
-    PROPOSALS
-        .iter()
-        .filter_map(|proposal| {
-            let feature = proposal.rustc?;
-            Some(format!(
-                "{}{feature}",
-                if proposal.supported() { '+' } else { '-' }
-            ))
-        })
+    rustc_features(Proposal::supported)
+}
+
+/// [`rustc_target_features`] for an earlier `release`.
+pub fn rustc_target_features_for(release: Version) -> String {
+    rustc_features(|proposal| proposal.supported_in(release))
+}
+
+fn rustc_features(supported: impl Fn(&Proposal) -> bool) -> String {
+    llvm_features(supported)
+        .map(|(feature, on)| format!("{}{feature}", if on { '+' } else { '-' }))
         .collect::<Vec<_>>()
         .join(",")
+}
+
+/// `clang` flags for exactly this release's language: `-mcpu=mvp`, then every proposal
+/// LLVM can gate, on if supported and off if not, as [`rustc_target_features`] does.
+/// They name no `--target`, so they go with whichever `wasm32` one the build uses.
+pub fn clang_flags() -> Vec<String> {
+    clang(Proposal::supported)
+}
+
+/// [`clang_flags`] for an earlier `release`.
+pub fn clang_flags_for(release: Version) -> Vec<String> {
+    clang(|proposal| proposal.supported_in(release))
+}
+
+fn clang(supported: impl Fn(&Proposal) -> bool) -> Vec<String> {
+    std::iter::once("-mcpu=mvp".to_string())
+        .chain(
+            llvm_features(supported)
+                .map(|(feature, on)| format!("-m{}{feature}", if on { "" } else { "no-" })),
+        )
+        .collect()
+}
+
+/// Each LLVM target feature a proposal has, and whether `supported` turns it on. `rustc`
+/// and `clang` both spell LLVM's names.
+fn llvm_features(
+    supported: impl Fn(&Proposal) -> bool,
+) -> impl Iterator<Item = (&'static str, bool)> {
+    PROPOSALS
+        .iter()
+        .filter_map(move |proposal| Some((proposal.rustc?, supported(proposal))))
 }
 
 /// The proposal an instruction belongs to, from its first opcode byte (and, for the
@@ -363,6 +433,21 @@ mod tests {
         }
     }
 
+    #[test]
+    fn clang_spells_the_same_features_as_rustc() {
+        let flags = clang_flags();
+        assert_eq!(flags[0], "-mcpu=mvp");
+        for expected in ["-mmutable-globals", "-msign-ext", "-mno-bulk-memory"] {
+            assert!(flags.iter().any(|f| f == expected), "{expected}: {flags:?}");
+        }
+        let old = clang_flags_for(Version::new(0, 7, 1));
+        assert!(old.iter().any(|f| f == "-mno-sign-ext"), "{old:?}");
+        assert!(
+            old.iter().any(|f| f == "-mno-nontrapping-fptoint"),
+            "{old:?}"
+        );
+    }
+
     /// A proposal marked for the next release, then tagged as an older one, would claim
     /// more for that release than it has. Holds once the release workflow has injected
     /// the tag's version; an untagged build is ahead of every release.
@@ -379,6 +464,42 @@ mod tests {
                     proposal.name
                 );
             }
+        }
+    }
+
+    /// 0.7.1 had neither proposal 0.8.0 added: an F Prime still flying it must not get them.
+    #[test]
+    fn an_earlier_release_gets_only_its_own_flags() {
+        let old = Version::new(0, 7, 1);
+        assert_eq!(
+            wasm_opt_flags_for(old),
+            [
+                "--mvp-features",
+                "--enable-mutable-globals",
+                "--enable-custom-page-sizes"
+            ]
+        );
+        let features = rustc_target_features_for(old);
+        for expected in ["+mutable-globals", "-sign-ext", "-nontrapping-fptoint"] {
+            assert!(
+                features.split(',').any(|f| f == expected),
+                "{expected}: {features}"
+            );
+        }
+        assert_eq!(
+            wasm_opt_flags_for(Version::new(0, 8, 0)),
+            wasm_opt_flags(),
+            "0.8.0 is this release's set"
+        );
+    }
+
+    #[test]
+    fn only_releases_this_build_can_answer_for_are_known() {
+        assert!(Version::new(0, 0, 9).known().is_err());
+        assert_eq!(Version::new(0, 7, 1).known(), Ok(Version::new(0, 7, 1)));
+        if let Some(this) = Version::this_release() {
+            let next = Version::new(this.major, this.minor + 1, 0);
+            assert!(next.known().is_err());
         }
     }
 
