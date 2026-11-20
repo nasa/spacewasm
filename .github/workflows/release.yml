@@ -14,6 +14,26 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # Every tag, so the release notes can start from the previous release.
+          fetch-depth: 0
+
+      - name: Refuse a release that is already published
+        # With immutable releases on, a published release takes no more assets,
+        # so the binaries below could never be attached to it. That is what
+        # happens when the release is created from the GitHub UI before the
+        # workflow runs. Fail here, before any crate version is used up on
+        # crates.io. A draft (a re-run of this workflow) is fine.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          if draft=$(gh release view "$tag" --json isDraft --jq .isDraft 2>/dev/null) \
+            && [ "$draft" != "true" ]; then
+            echo "::error::Release $tag is already published, so its assets can no longer be uploaded. Push only the tag, and let this workflow create the release. Release under a new tag."
+            exit 1
+          fi
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
@@ -28,6 +48,44 @@ jobs:
 
       - name: Run tests
         run: cargo test --workspace --verbose
+
+      - name: Create the draft GitHub release
+        # A draft, because an immutable release takes no assets once published:
+        # the binaries are uploaded into the draft, and the `release` job
+        # publishes it only after every one of them is there. Created before
+        # anything goes to crates.io, which cannot be undone, so that a failure
+        # here costs nothing. A draft is visible only to maintainers.
+        #
+        # The notes start from the previous final release, so release
+        # candidates are skipped: v0.8.0-rc.2 and v0.8.0 both list everything
+        # since v0.7.1, rather than v0.8.0 listing only what changed since
+        # its last release candidate.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Draft release $tag already exists; leaving its notes untouched."
+            exit 0
+          fi
+
+          # `v0.8.0-rc.2` is a prerelease of `v0.8.0`.
+          core="${tag%%-*}"
+          flags=()
+          if [ "$core" != "$tag" ]; then
+            flags+=(--prerelease)
+          fi
+          # The newest final release older than this one.
+          previous=$(
+            git tag --list 'v[0-9]*' | grep -v -e '-' | { cat; echo "$core"; } \
+              | sort -uV | awk -v core="$core" '$0 == core { print last; exit } { last = $0 }'
+          )
+          if [ -n "$previous" ]; then
+            flags+=(--notes-start-tag "$previous")
+          fi
+          echo "Notes for $tag start from ${previous:-the first commit}."
+          gh release create "$tag" --draft --verify-tag --generate-notes "${flags[@]}"
 
       - name: Publish spacewasm to crates.io
         # --allow-dirty: the injected version is an uncommitted working-tree change.
@@ -60,24 +118,6 @@ jobs:
         run: cargo publish -p spacewasm_tools --allow-dirty
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-
-      - name: Create GitHub Release
-        # Do NOT use an action that regenerates notes unconditionally: if the
-        # release already exists (e.g. created from the GitHub UI, which also
-        # creates the tag that triggers this workflow), generate_release_notes
-        # *appends* a second copy of the changelog to the existing body
-        # (softprops/action-gh-release#827). Generate notes only when creating a
-        # brand-new release so the changelog is written exactly once.
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          tag="${GITHUB_REF_NAME}"
-          if gh release view "$tag" >/dev/null 2>&1; then
-            echo "Release $tag already exists; leaving its notes untouched."
-          else
-            gh release create "$tag" --generate-notes --verify-tag
-          fi
 
   binaries:
     name: Binary (${{ matrix.target }})
@@ -225,12 +265,36 @@ jobs:
             "${{ steps.package.outputs.archive }}.sha256" \
             --clobber
 
+  release:
+    name: Publish the GitHub release
+    # Only once every binary is in the draft: publishing makes the release
+    # immutable, so a binary that failed to upload could never be added. If one
+    # failed, re-run the failed jobs; the release stays a draft until then.
+    needs: [publish, binaries]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish the draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          # A release candidate is never "Latest".
+          if [ "${tag%%-*}" != "$tag" ]; then
+            latest=false
+          else
+            latest=true
+          fi
+          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --latest="$latest"
+          gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease,assets \
+            --jq '"draft=\(.isDraft) prerelease=\(.isPrerelease) assets=\(.assets | length)"'
+
   binstall:
     name: Verify cargo binstall (${{ matrix.runner }})
     # A misnamed archive does not fail `cargo binstall`, it quietly compiles from
     # source instead. Install the release exactly as a user would, with every
     # fallback disabled, so a packaging mistake fails the release instead.
-    needs: binaries
+    needs: release
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
