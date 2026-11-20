@@ -8,25 +8,29 @@
 //! Every argument belongs to `rust-lld`, so the link's own settings are environment
 //! variables, which Cargo's `[env]` table sets:
 //!
-//! * `SPACEWASM_OPT` — `wasm-opt` optimisation flags, e.g. `-Os --converge`. The feature
+//! * `SPACEWASM_OPT`: `wasm-opt` optimisation flags, e.g. `-Os --converge`. The feature
 //!   set is not among them: it is always exactly this release's ([`wasm_opt_flags`]).
 //!   Unset, `-Os`. `none` links without optimising.
-//! * `SPACEWASM_WASM_OPT` — the `wasm-opt` to run. Default `wasm-opt`.
-//! * `SPACEWASM_WASM_OPT_REQUIRED=1` — fail when `wasm-opt` is missing, instead of warning.
-//! * `SPACEWASM_LINKER` — the linker to run first. Default `rust-lld`.
-//! * `SPACEWASM_VALIDATE=0` — skip validating the result.
-//! * `SPACEWASM_DECODER_LIMITS` — the deployment's `DecoderStack` lengths to validate
+//! * `SPACEWASM_WASM_OPT`: the `wasm-opt` to run. Default `wasm-opt`.
+//! * `SPACEWASM_WASM_OPT_REQUIRED=1`: fail when `wasm-opt` is missing, instead of warning.
+//! * `SPACEWASM_LINKER`: the linker to run first. Default `rust-lld`.
+//! * `SPACEWASM_VALIDATE=0`: skip validating the result.
+//! * `SPACEWASM_DECODER_LIMITS`: the deployment's `DecoderStack` lengths to validate
 //!   against, as `FRAMES/DEPTH`. Default `64/256`.
+//! * `SPACEWASM_RELEASE`: the release that flies, if older than this one, e.g. `0.7.1`.
+//!   `wasm-opt` is held to its features instead, and an instruction it lacks fails the
+//!   link. [`link_for`] takes it as an argument instead.
 //!
 //! Validating decodes through `spacewasm`, so the binary must have installed its
 //! allocator (`spacewasm::global_allocator!`).
 //!
 //! [`wasm_opt_flags`]: crate::wasm_opt_flags
 
+use crate::features::Version;
 use crate::hosts::host_modules_for;
 use crate::replay::{DecoderLimits, ReplayError};
 use crate::split::{Optimizer, SplitError, split};
-use crate::validate::{Invalid, validate};
+use crate::validate::{Invalid, find_unsupported_in, validate};
 use spacewasm::CompilerOptions;
 use std::ffi::OsString;
 use std::fmt;
@@ -39,6 +43,7 @@ const ENV_WASM_OPT_REQUIRED: &str = "SPACEWASM_WASM_OPT_REQUIRED";
 const ENV_LINKER: &str = "SPACEWASM_LINKER";
 const ENV_VALIDATE: &str = "SPACEWASM_VALIDATE";
 const ENV_DECODER_LIMITS: &str = "SPACEWASM_DECODER_LIMITS";
+const ENV_RELEASE: &str = "SPACEWASM_RELEASE";
 
 /// Code pages a link-time check allows: generous, since the deployment's real budget is
 /// not known here, but small enough that the page table itself allocates. The table is a
@@ -83,6 +88,24 @@ pub fn is_link(args: &[OsString]) -> bool {
 ///
 /// `Ok(false)`: the linker ran and failed, and has said why.
 pub fn link(args: &[OsString]) -> Result<bool, LinkError> {
+    let release = match std::env::var(ENV_RELEASE) {
+        Ok(text) => Some(
+            text.parse::<Version>()
+                .map_err(|why| LinkError::Setup(format!("{ENV_RELEASE}: {why}")))?,
+        ),
+        Err(_) => None,
+    };
+    link_for(args, release)
+}
+
+/// [`link`] for the `release` that flies, `None` for this one. A tool that knows the
+/// release some other way, e.g. from the version of the framework embedding it, passes
+/// it here rather than through `SPACEWASM_RELEASE`.
+pub fn link_for(args: &[OsString], release: Option<Version>) -> Result<bool, LinkError> {
+    let release = release
+        .map(Version::known)
+        .transpose()
+        .map_err(LinkError::Setup)?;
     // `rust-lld` is on the PATH rustc gives its linker, not the ambient one.
     let linker = std::env::var_os(ENV_LINKER).unwrap_or_else(|| "rust-lld".into());
     let status = Command::new(&linker).args(args).status().map_err(|err| {
@@ -105,7 +128,7 @@ pub fn link(args: &[OsString]) -> Result<bool, LinkError> {
         return Ok(true);
     }
 
-    let optimizer = wasm_opt(&output)?;
+    let optimizer = wasm_opt(&output, release)?;
 
     // Beside the `<bin>.wasm` cargo copies out of `deps/`, under the bin's own name.
     let directory = output.parent().unwrap_or(Path::new("."));
@@ -135,7 +158,11 @@ pub fn link(args: &[OsString]) -> Result<bool, LinkError> {
     let hosts = host_modules_for(&module).map_err(|err| LinkError::Hosts(output.clone(), err))?;
     let options = CompilerOptions::new(true, None, LINK_CODE_PAGES);
     match validate(&module, options, hosts, limits) {
-        Ok(_) => Ok(true),
+        // This release's decoder accepts what an older one would refuse.
+        Ok(_) => match release.and_then(|release| find_unsupported_in(&module, release)) {
+            Some(err) => Err(LinkError::Unsupported(output, err)),
+            None => Ok(true),
+        },
         Err(err @ Invalid::Unsupported { .. }) => Err(LinkError::Unsupported(output, err)),
         // A limit or a host a link cannot know about: worth seeing, not worth failing on.
         Err(err @ Invalid::Rejected(_)) => {
@@ -190,8 +217,8 @@ impl Drop for Scratch {
     }
 }
 
-/// The `wasm-opt` to run, if any.
-fn wasm_opt(output: &Path) -> Result<Option<Optimizer>, LinkError> {
+/// The `wasm-opt` to run, if any, held to `release`'s features.
+fn wasm_opt(output: &Path, release: Option<Version>) -> Result<Option<Optimizer>, LinkError> {
     let extra = std::env::var(ENV_OPT).unwrap_or_else(|_| "-Os".into());
     if extra.trim() == "none" {
         return Ok(None);
@@ -224,7 +251,10 @@ fn wasm_opt(output: &Path) -> Result<Option<Optimizer>, LinkError> {
              (`spacewasm features`); leave it out"
         )));
     }
-    Ok(Some(Optimizer::held(program, &extra)))
+    Ok(Some(match release {
+        Some(release) => Optimizer::held_to(program, release, &extra),
+        None => Optimizer::held(program, &extra),
+    }))
 }
 
 /// A `wasm-opt` flag that changes the feature set rather than the optimisation.

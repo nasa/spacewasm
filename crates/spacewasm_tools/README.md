@@ -43,12 +43,18 @@ spacewasm 0.8.0: WebAssembly 1.0, plus
 
 wasm-opt:  --mvp-features --enable-mutable-globals --enable-custom-page-sizes --enable-sign-ext --enable-nontrapping-float-to-int
 rustc:     -Ctarget-cpu=mvp -Ctarget-feature=+mutable-globals,+sign-ext,+nontrapping-fptoint,-bulk-memory,-simd128,-multivalue,-reference-types,-extended-const,-tail-call
+clang:     -mcpu=mvp -mmutable-globals -msign-ext -mnontrapping-fptoint -mno-bulk-memory -mno-simd128 -mno-multivalue -mno-reference-types -mno-extended-const -mno-tail-call
 ```
 
 `wasm-opt` starts from MVP and adds back, rather than subtracting from its own
-default, so a proposal a newer `wasm-opt` enables by default stays out. `rustc` turns
-every proposal it can gate on or off explicitly, for the same reason. `--wasm-opt` and
-`--rustc` print one line each, for scripts.
+default, so a proposal a newer `wasm-opt` enables by default stays out. `rustc` and
+`clang` turn every proposal they can gate on or off explicitly, for the same reason;
+`clang`'s flags name no `--target`, so add the build's own `wasm32` one. `--wasm-opt`,
+`--rustc` and `--clang` print one line each, for scripts:
+
+```console
+$ clang --target=wasm32 $(spacewasm features --clang) -O2 -c module.c
+```
 
 `--matrix` prints the feature matrix: every proposal, the release that implemented it
 or what is planned for it, and its tracking issue. `--release VERSION` lists what an
@@ -60,6 +66,9 @@ spacewasm 0.7.1: WebAssembly 1.0, plus
   mutable-globals
   custom-page-sizes
 ```
+
+With `--wasm-opt`, `--rustc` or `--clang` it prints that release's flags instead, and
+`SPACEWASM_RELEASE` holds `link` to them.
 
 ## `link`
 
@@ -88,6 +97,7 @@ module: debug info is in custom sections, which the split removes.
 | `SPACEWASM_LINKER`            | The linker to run first. Default `rust-lld`                                                                               |
 | `SPACEWASM_VALIDATE`          | `0` skips validating the result                                                                                           |
 | `SPACEWASM_DECODER_LIMITS`    | The deployment's `DecoderStack` lengths to validate against, as `FRAMES/DEPTH`. Default `64/256`                          |
+| `SPACEWASM_RELEASE`           | The release that flies, if older than this one, e.g. `0.7.1`. `wasm-opt` is held to its features, and the link fails on an instruction it lacks |
 
 The link-time validation fails the build on an instruction this release does not
 implement. It knows no deployment's limits or host, so anything else it finds is a

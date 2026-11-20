@@ -1,8 +1,8 @@
 //! The symbol file: a module as linked, debug info and all, followed by two custom
 //! sections.
 //!
-//! * `spacewasm.module` — the exact module that flies.
-//! * `spacewasm.offsets` — a source map from each byte of that module to the linked byte
+//! * `spacewasm.module`: the exact module that flies.
+//! * `spacewasm.offsets`: a source map from each byte of that module to the linked byte
 //!   it was optimised from. Absent when nothing was optimised, since then the code
 //!   offsets of both agree.
 //!
