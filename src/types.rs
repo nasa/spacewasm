@@ -265,7 +265,7 @@ impl MemPageSize {
     pub fn alignment(&self) -> usize {
         match self {
             MemPageSize::_1 => 1,
-            MemPageSize::_65536 => 16,
+            MemPageSize::_65536 => 8,
         }
     }
 }
