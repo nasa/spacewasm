@@ -202,18 +202,30 @@ fn table_ref_not_unique() {
 }
 
 #[test]
+fn register_shadowing() {
+    run("regression/register_shadowing");
+}
+
+#[test]
+#[cfg(target_pointer_width = "64")]
+#[cfg_attr(miri, ignore = "allocates over 2 GiB")]
+fn data_high_offset() {
+    run("regression/data_high_offset");
+}
+
+#[test]
 fn pause_resume() {
     run("regression/pause-resume");
 }
 
 #[test]
-#[should_panic = "host function returned Some(I32(1)) while declaration expecting None"]
+#[should_panic = "host function return value does not match its declared type"]
 fn host_func_invalid_should_panic_none() {
     run("regression/host_func_invalid_should_panic_none");
 }
 
 #[test]
-#[should_panic = "host function returned None while declaration expecting Some(I32)"]
+#[should_panic = "host function return value does not match its declared type"]
 fn host_func_invalid_should_panic_some() {
     run("regression/host_func_invalid_should_panic_some");
 }

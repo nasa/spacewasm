@@ -36,6 +36,9 @@ runs:
           macos-arm64) WABT_SHA256=e5269d6bbe05dfeb179e4f21111b3a641d6ccaa38b0b21d472ae5c65f8c4ff5d ;;
           *) echo "::error::No pinned WABT checksum for platform $WABT_PLATFORM"; exit 1 ;;
         esac
+        # Unpack outside the checkout: the release workflow publishes with
+        # `cargo publish --allow-dirty`, which packages untracked files.
+        cd "${RUNNER_TEMP}"
         tarball="wabt-${WABT_VERSION}-${WABT_PLATFORM}.tar.gz"
         wget -q "https://github.com/WebAssembly/wabt/releases/download/${WABT_VERSION}/${tarball}"
         # macOS runners ship `shasum` (Perl) rather than GNU coreutils'

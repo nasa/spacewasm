@@ -206,9 +206,11 @@ pub enum BlockKind {
     If,
 }
 
-/// A control flow frame tracking jump targets for blocks, loops, and if-else statements.
-#[derive(Clone)]
-struct ControlFrame {
+/// A validator control frame. Opaque; embedders only provide storage for it.
+///
+/// cbindgen:ignore
+#[derive(Clone, Copy)]
+pub struct ControlFrame {
     kind: BlockKind,
     label: ResultType,
     out: ResultType,
@@ -219,6 +221,49 @@ struct ControlFrame {
     /// For if: the false-branch placeholder is at the TAIL of this list
     target: JumpTarget,
     unreachable: bool,
+}
+
+/// cbindgen:ignore
+impl ControlFrame {
+    /// Placeholder to initialize storage with. Its value is never read.
+    pub const EMPTY: ControlFrame = ControlFrame {
+        kind: BlockKind::Block,
+        label: ResultType(None),
+        out: ResultType(None),
+        height: 0,
+        target: JumpTarget::SENTINEL,
+        unreachable: false,
+    };
+}
+
+/// Validator scratch storage, reused for each function body. The slice lengths
+/// bound block nesting (including the function's own frame) and operand depth.
+///
+/// ```ignore
+/// let mut frames = [ControlFrame::EMPTY; 64];
+/// let mut operands = [OperandType::EMPTY; 256];
+/// let mut stack = DecoderStack::new(&mut frames, &mut operands);
+/// ```
+///
+/// cbindgen:ignore
+pub struct DecoderStack<'a> {
+    control_frames: &'a mut [ControlFrame],
+    operands: &'a mut [OperandType],
+}
+
+/// cbindgen:ignore
+impl<'a> DecoderStack<'a> {
+    /// Operand stack heights are recorded in a `u16`, and each operand can take
+    /// two words of the `u16` `Func::stack_usage`. Storage past this is unused.
+    pub const MAX_OPERANDS: usize = u16::MAX as usize / 2;
+
+    pub fn new(control_frames: &'a mut [ControlFrame], operands: &'a mut [OperandType]) -> Self {
+        let len = operands.len().min(Self::MAX_OPERANDS);
+        Self {
+            control_frames,
+            operands: &mut operands[..len],
+        }
+    }
 }
 
 /// The decoded representation of a global variable
@@ -239,28 +284,37 @@ pub struct CompilerOptions {
     /// Allow compiling memory.grow instructions into IR
     pub allow_memory_grow: bool,
 
-    /// Maximum number of iterations to resolve during a control flow backpatch.
-    /// This effectively limits a potentially long loop though can reject valid programs.
-    ///
-    /// `None` means unlimited iterations; `Some(n)` rejects a backpatch chain
-    /// longer than `n` with [`ValidationError::PossibleBackpatchCycle`]. This is
-    /// an explicit opt-out rather than a magic sentinel value.
+    /// Bound on control-flow backpatch iterations; `None` for unlimited. Longer
+    /// chains fail with [`ValidationError::PossibleBackpatchCycle`].
     pub max_backpatch_iterations: Option<u32>,
 
-    /// The maximum number of code pages allowed across all modules.
-    ///
-    /// # Sizing
-    /// Each page is a [`TextPage`] of 256 16-bit words (512 bytes). At
-    /// construction ([`CodeBuilder::new`]) this set the *page table* capacity:
-    /// a `Vec` of `max_code_pages` `Box<TextPage>` pointers.
-    ///
-    /// The 512-byte page bodies themselves are allocated lazily as the module is loaded.
-    ///
-    /// Choose `max_code_pages` to cover the largest total IR (across all modules
-    /// loaded onto the store). Oversizing it costs only the pointer table, not the page bodies.
-    /// It must be strictly less than `MAX_ADDRESSABLE_CODE_PAGES` (`2^24`) and must be sized to
-    /// fit inside a single heap memory page.
+    /// Maximum 512-byte code pages across all modules, below `2^24`. Only the page
+    /// table is allocated up front, and it must fit in one heap page.
     pub max_code_pages: usize,
+
+    /// An optional callback invoked before each Wasm instruction is compiled, with
+    /// the current IR program counter and the instruction's Wasm bytecode offset.
+    ///
+    /// Ground-only: used to map program counters back to a symbol file.
+    #[cfg(feature = "ir-map")]
+    pub pc_ir_callback: Option<fn(pc: JumpTarget, wasm_offset: usize)>,
+}
+
+impl CompilerOptions {
+    /// Create options with every optional hook disabled.
+    pub const fn new(
+        allow_memory_grow: bool,
+        max_backpatch_iterations: Option<u32>,
+        max_code_pages: usize,
+    ) -> Self {
+        CompilerOptions {
+            allow_memory_grow,
+            max_backpatch_iterations,
+            max_code_pages,
+            #[cfg(feature = "ir-map")]
+            pc_ir_callback: None,
+        }
+    }
 }
 
 /// Low-level builder for paged IR code.
@@ -435,23 +489,32 @@ impl CodeBuilder {
 /// - Back-patching forward jump targets
 /// - Managing a stack of control frames for nested blocks
 ///
-/// The `N` generic parameter limits the maximum number of code pages.
-pub struct TextBuilder<'a, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize> {
+/// Control frames and operand types live in the borrowed [`DecoderStack`].
+pub struct TextBuilder<'a> {
     code: &'a mut CodeBuilder,
     store: &'a Store,
     module: &'a Module,
     func: &'a Func,
-    control_frames: StaticVec<ControlFrame, MAX_CONTROL_FRAMES>,
-    value_stack: StaticVec<OperandType, MAX_STACK_DEPTH>,
+    control_frames: SliceStack<'a, ControlFrame>,
+    value_stack: SliceStack<'a, OperandType>,
     stack_highwater: usize,
     br_table_result: Option<ResultType>,
 }
 
+/// The type of an operand on the validator's stack.
+///
+/// cbindgen:ignore
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
-pub(crate) enum OperandType {
+pub enum OperandType {
     Unknown,
     Known(ValType),
+}
+
+/// cbindgen:ignore
+impl OperandType {
+    /// Placeholder to initialize storage with. Its value is never read.
+    pub const EMPTY: OperandType = OperandType::Unknown;
 }
 
 impl From<ValType> for OperandType {
@@ -482,32 +545,32 @@ impl From<OperandType> for u8 {
     }
 }
 
-impl<'a, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize>
-    TextBuilder<'a, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>
-{
+impl<'a> TextBuilder<'a> {
     pub fn new(
         code: &'a mut CodeBuilder,
         store: &'a Store,
         module: &'a Module,
         func: &'a Func,
-    ) -> Self {
+        stack: &'a mut DecoderStack<'_>,
+    ) -> Result<Self, ValidationError> {
         let mut builder = TextBuilder {
             code,
             store,
             module,
             func,
-            control_frames: Default::default(),
-            value_stack: Default::default(),
+            control_frames: SliceStack::new(stack.control_frames),
+            value_stack: SliceStack::new(stack.operands),
             stack_highwater: 0,
             br_table_result: None,
         };
 
         // Push the implicit function control frame per the spec
-        // This represents the function's return point
+        // This represents the function's return point. Without room for it
+        // no function can be compiled.
         let return_type = ResultType(func.return_ty);
-        let _ = builder.push_control(BlockKind::Block, return_type, return_type);
+        builder.push_control(BlockKind::Block, return_type, return_type)?;
 
-        builder
+        Ok(builder)
     }
 
     pub fn options(&self) -> &CompilerOptions {
@@ -565,7 +628,7 @@ impl<'a, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize>
             return Err(ValidationError::LocalIdxOutOfRange);
         }
 
-        let x = x.0 as u16;
+        let x = x.0 as usize;
 
         let signature = self
             .module
@@ -575,11 +638,11 @@ impl<'a, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize>
 
         // Search for the variable and compute it's offset
         let mut current_offset = 0usize;
-        let mut current_index = 0;
+        let mut current_index = 0usize;
 
         // Check the parameters first
         for (i, p_ty) in signature.params.iter().enumerate() {
-            if x == i as u16 {
+            if x == i {
                 // This offset is the offset from the start of the parameters list
                 // We need to convert this offset to be relative to the frame pointer
                 // which is immediately after the final parameter
@@ -600,10 +663,11 @@ impl<'a, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize>
 
         // Now check the local variables
         for (n, ty) in &self.func.locals {
+            let n = *n as usize;
             if current_index + n > x {
                 // This bucket has the local variable
                 // Compute it's offset as a word index from the frame
-                let offset = current_offset + ty.size() * (x - current_index) as usize;
+                let offset = current_offset + ty.size() * (x - current_index);
 
                 let word_offset = offset / 4;
                 if word_offset > (i16::MAX as usize) - 2 {
@@ -617,7 +681,7 @@ impl<'a, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize>
                 });
             }
 
-            let section_size = *n as usize * ty.size();
+            let section_size = n * ty.size();
             current_offset += section_size;
             current_index += n;
         }
@@ -818,6 +882,7 @@ impl<'a, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize>
         size
     }
 
+    #[inline(never)]
     pub(crate) fn push_stack(&mut self, ty: impl Into<OperandType>) -> Result<(), ValidationError> {
         self.value_stack.push(ty.into())?;
         let l = self.stack_height();
@@ -863,6 +928,7 @@ impl<'a, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize>
         }
     }
 
+    #[inline(never)]
     pub(crate) fn pop_stack(
         &mut self,
         expect: impl Into<OperandType>,

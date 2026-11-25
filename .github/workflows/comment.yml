@@ -59,6 +59,39 @@ jobs:
               return Number.isFinite(n) ? n : null;
             }
 
+            // Returns an artifact-supplied URL only if it is an https link to
+            // GitHub, else null. Anything else (other schemes or hosts) could
+            // point readers of a bot comment at an attacker-controlled page.
+            function safeArtifactUrl(url) {
+              try {
+                const parsed = new URL(String(url));
+                const allowed = ['github.com', 'githubusercontent.com'];
+                if (parsed.protocol === 'https:' &&
+                    allowed.some(h => parsed.hostname === h || parsed.hostname.endsWith('.' + h))) {
+                  return parsed.href;
+                }
+              } catch (_) { /* not a URL */ }
+              console.log('Rejected artifact URL: ' + JSON.stringify(url));
+              return null;
+            }
+
+            // Makes an artifact-supplied string safe for a single-line
+            // Markdown context (code span or table cell): drops backticks,
+            // pipes and HTML brackets, folds newlines and bounds the length.
+            function sanitizeMd(value, maxLen = 128) {
+              return String(value ?? '')
+                .replace(/[`|<>]/g, '')
+                .replace(/[\r\n]+/g, ' ')
+                .slice(0, maxLen);
+            }
+
+            // Makes an artifact-supplied string safe inside a fenced code
+            // block. Newlines are kept; backticks are dropped so the fence
+            // cannot be closed early.
+            function sanitizeCode(value, maxLen = 8192) {
+              return String(value ?? '').replace(/`/g, '').slice(0, maxLen);
+            }
+
             // Creates a new comment or updates the existing bot comment that
             // contains `marker` in its body.
             async function upsertComment(prNumber, marker, body) {
@@ -89,80 +122,152 @@ jobs:
                 }
             }
 
-            function colorize(new_value, old, lower_better) {
-                let color = "";
-                let change_text = "";
+            // Formats a number with thousands separators, wrapped in code.
+            function fmt(value, digits = 0, unit = "") {
+                const s = value.toLocaleString('en-US', {
+                    minimumFractionDigits: digits,
+                    maximumFractionDigits: digits,
+                });
+                return "`" + s + "`" + unit;
+            }
 
-                if (old != new_value) {
-                    if (old == 0) {
-                        pct_change = new_value > 0 ? Infinity : -Infinity;
-                    } else {
-                        pct_change = (100 * (new_value - old) / old).toFixed(1);
-                    }
-                    if (pct_change > 0) {
-                        color = lower_better ? "🔴 " : "🟢 ";
-                        change_text = "(↑" + String(pct_change) + "% from " + String(old) + ")";
-                    } else {
-                        color = lower_better ? "🟢 " : "🔴 ";
-                        change_text = "(↓" + String(-pct_change) + "% from " + String(old) + ")";
-                    }
+            // Returns the "base" and "Delta" cells comparing `value` against
+            // `old`. A missing baseline is reported as a new entry.
+            function compare(value, old, digits = 0, unit = "") {
+                if (old === undefined || old === null) {
+                    return ["—", "new"];
                 }
-                return color + String(new_value) + "<br>" + change_text;
+                const base = fmt(old, digits, unit);
+                const diff = value - old;
+                if (diff.toFixed(digits) == 0) {
+                    return [base, "no change"];
+                }
+                const sign = diff > 0 ? "+" : "−";
+                let delta = sign + fmt(Math.abs(diff), digits, unit);
+                if (old != 0) {
+                    delta += " (" + sign + Math.abs(100 * diff / old).toFixed(1) + "%)";
+                }
+                return [base, delta];
+            }
+
+            // A single summary cell: the value followed by its absolute and
+            // percentage change against `old`, if there is one.
+            function summarize(value, old) {
+                let cell = fmt(value, 0, " B");
+                if (old === null || old == value) {
+                    return cell;
+                }
+                const diff = value - old;
+                const sign = diff > 0 ? "+" : "−";
+                cell += " " + sign + fmt(Math.abs(diff), 0, " B");
+                if (old != 0) {
+                    cell += " (" + sign + Math.abs(100 * diff / old).toFixed(1) + "%)";
+                }
+                return cell;
+            }
+
+            // Sums the named sections, or null if any of them is missing.
+            function total(sizes, names) {
+                let sum = 0;
+                for (let name of names) {
+                    const n = finiteOrNull((sizes ?? {})[name]);
+                    if (n === null) {
+                        return null;
+                    }
+                    sum += n;
+                }
+                return sum;
             }
 
             const benchmark = readResults('benchmark-results');
             if (benchmark) {
                 const data = benchmark.current;
                 const old_data = benchmark.baseline;
-                const nm_url = benchmark.nm_artifacts_url;
+                const nm_url = safeArtifactUrl(benchmark.nm_artifacts_url);
 
                 let triples = benchmark.current.triples;
                 let elf_sections = benchmark.current.elf_sections;
 
-                let comment = "# ELF Section Sizes\n";
-                comment += "||" + elf_sections.map(i => "`"+i+"`").join("|") + "|\n";
-                comment += "|--:|" + ":-:|".repeat(triples.length) + "\n";
-                for (let triple of triples) {
-                    comment += "|**`"+triple+"`**|";
-                    for (let section_name of elf_sections) {
-                        let size = data[triple][section_name];
-                        let old_size = (old_data[triple] ?? {})[section_name] ?? size;
+                // .data is stored in flash and copied into RAM at startup, so
+                // it counts towards both.
+                const flash_sections = [".text", ".rodata", ".data"];
+                const ram_sections = [".data", ".bss"];
 
-                        comment += colorize(size, old_size, true) + "|";
-                    }
-                    comment += "\n";
-                }
-                comment += "\n<details><summary><i>view detailed section sizes and symbol table...</i></summary>\n\n";
-                comment += "<br><small>You can also download the <a href='"+nm_url+"'>full symbol tables</a>.</small>\n\n";
+                const size_marker = "<!-- spacewasm-size-report -->";
+                let comment = size_marker + "\n## Size Summary\n\n";
+                comment += "| Target | Flash | RAM (static) | Heap |\n";
+                comment += "| :-- | --: | --: | --: |\n";
                 for (let triple of triples) {
-                    comment += "### `"+triple+"`\n";
-                    comment += "```\n"+data[triple]["details"]+"\n";
+                    const old = old_data[triple];
+                    const heap = finiteOrNull(data[triple]["heap"]);
+                    comment += "| **`"+sanitizeMd(triple)+"`** | "
+                        + summarize(total(data[triple], flash_sections), total(old, flash_sections)) + " | "
+                        + summarize(total(data[triple], ram_sections), total(old, ram_sections)) + " | "
+                        + (heap === null ? "-" : summarize(heap, finiteOrNull((old ?? {})["heap"]))) + " |\n";
+                }
+                comment += "\n_Flash: `.text` + `.rodata` + `.data`. RAM: `.data` + `.bss`. Heap: bytes allocated from the SpaceWasm global allocator after running coremark. The embedded wasm module and its linear memory are excluded._\n";
+
+                comment += "\n<details><summary><i>view per-section sizes...</i></summary>\n\n";
+                comment += "| Target | Section | This PR | base | Delta |\n";
+                comment += "| :-- | :-- | --: | --: | --: |\n";
+                for (let triple of triples) {
+                    elf_sections.forEach((section_name, i) => {
+                        let size = finiteOrNull(data[triple][section_name]);
+                        let old_size = finiteOrNull((old_data[triple] ?? {})[section_name]);
+                        let target = i == 0 ? "**`"+sanitizeMd(triple)+"`**" : "";
+                        if (size === null) {
+                            comment += "| "+target+" | `"+sanitizeMd(section_name)+"` | - | - | - |\n";
+                            return;
+                        }
+                        let [base, delta] = compare(size, old_size, 0, " B");
+                        comment += "| "+target+" | `"+sanitizeMd(section_name)+"` | "+fmt(size, 0, " B")+" | "+base+" | "+delta+" |\n";
+                    });
+
+                    // Bytes handed out by the global allocator after running
+                    // coremark. Wasm linear memory is not included.
+                    let heap = finiteOrNull(data[triple]["heap"]);
+                    if (heap !== null) {
+                        let old_heap = finiteOrNull((old_data[triple] ?? {})["heap"]);
+                        let [base, delta] = compare(heap, old_heap, 0, " B");
+                        comment += "| | heap | "+fmt(heap, 0, " B")+" | "+base+" | "+delta+" |\n";
+                    }
+                }
+                comment += "\n</details>\n";
+                comment += "\n<details><summary><i>view ELF section headers and symbol table...</i></summary>\n\n";
+                if (nm_url !== null) {
+                    comment += "<br><small>You can also download the <a href='"+nm_url+"'>full symbol tables</a>.</small>\n\n";
+                }
+                for (let triple of triples) {
+                    comment += "### `"+sanitizeMd(triple)+"`\n";
+                    comment += "```\n"+sanitizeCode(data[triple]["details"])+"\n";
                     comment += "\nSymbol Table:\n";
-                    for (let symbol of data[triple]["nm"]) {
-                      comment += "\t" + symbol + "\n";
+                    for (let symbol of (data[triple]["nm"] ?? []).slice(0, 64)) {
+                      comment += "\t" + sanitizeCode(symbol, 256).replace(/[\r\n]+/g, ' ') + "\n";
                     }
                     comment += "\t...truncated (see artifact for full table)...\n```\n";
                 }
-                comment += "</details>\n\n";
+                comment += "</details>\n";
 
-                comment += "# Coremark Scores\n";
+                await upsertComment(prNumber, size_marker, comment);
 
-                comment += "||QEMU CPU / Board|Coremark Score|Host Time|\n";
-                comment += "|--:|:-:|:-:|:-:|\n";
+                // The coremark comment keeps matching on its heading so the
+                // combined comment posted before this split is reused.
+                comment = "## Coremark Scores\n\n";
+                comment += "| Target | QEMU CPU / Board | This PR | base | Delta | Host Time |\n";
+                comment += "| :-- | :-- | --: | --: | --: | --: |\n";
                 for (let triple of triples) {
-                    let score = data[triple]["coremark"]
-                    let t = data[triple]["coremark_time"]
-                    let old_score = (old_data[triple] ?? {})["coremark"] ?? score;
-                    comment += "|**`"+triple+"`**|"+data[triple]["qemu_info"]+"|"+colorize(score, old_score, false)+"|"+t.toFixed(2)+" s|\n";
+                    let score = finiteOrNull(data[triple]["coremark"]);
+                    let t = finiteOrNull(data[triple]["coremark_time"]);
+                    if (score === null || t === null) {
+                        comment += "| **`"+sanitizeMd(triple)+"`** | "+sanitizeMd(data[triple]["qemu_info"])+" | ❌ failed | - | - | - |\n";
+                        continue;
+                    }
+                    let old_score = finiteOrNull((old_data[triple] ?? {})["coremark"]);
+                    let [base, delta] = compare(score, old_score, 2);
+                    comment += "| **`"+sanitizeMd(triple)+"`** | "+sanitizeMd(data[triple]["qemu_info"])+" | "+fmt(score, 2)+" | "+base+" | "+delta+" | "+t.toFixed(2)+" s |\n";
                 }
-                comment += "\n";
 
-                
-                await upsertComment(
-                    parseInt(benchmark.prNumber, 10),
-                    'Coremark Scores',
-                    comment
-                );
+                await upsertComment(prNumber, 'Coremark Scores', comment);
             }
 
             const coverage = readResults('coverage-results');

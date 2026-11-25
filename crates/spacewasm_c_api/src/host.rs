@@ -51,7 +51,8 @@ pub enum spacewasm_hostcall_result_t {
     SPACEWASM_CONTINUE_SOME = 1,
     /// Trap the interpreter.
     SPACEWASM_TRAP = 2,
-    /// Pause the interpreter (cooperative yield).
+    /// Pause the interpreter. [`spacewasm_run`](crate::capi::spacewasm_run)
+    /// returns `SPACEWASM_RUN_PAUSE` until resumed.
     SPACEWASM_PAUSE = 3,
 }
 

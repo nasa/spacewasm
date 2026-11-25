@@ -16,11 +16,11 @@ use super::inspector::{Inspector, LimitedVec};
 use core::panic;
 use serde::{Deserialize, Serialize};
 use spacewasm::{
-    AllocError, Allocator, CodeBuilder, CompilerOptions, ConstantExprError, Engine, ExportDesc,
-    GlobalValue, GlobalValueError, HostFunction, HostGlobal, HostModule, InnerVec, Interpreter,
-    InterpreterResult, InterpreterRunner, InvokeError, Limit, Memory, MemoryError, Module,
-    ModuleRef, ParseError, Ref, TrapReason, ValType, ValidationError, Value, WasmMemoryAllocator,
-    WasmRef, WasmStream, global_allocator, vec,
+    AllocError, Allocator, CodeBuilder, CompilerOptions, ConstantExprError, ControlFrame,
+    DecoderStack, Engine, ExportDesc, GlobalValue, GlobalValueError, HostFunction, HostGlobal,
+    HostModule, InnerVec, Interpreter, InterpreterResult, InterpreterRunner, InvokeError, Limit,
+    Memory, MemoryError, Module, ModuleRef, OperandType, ParseError, Ref, TrapReason, ValType,
+    ValidationError, Value, WasmMemoryAllocator, WasmRef, WasmStream, global_allocator, vec,
 };
 use std::alloc::Layout;
 use std::cell::RefCell;
@@ -358,6 +358,8 @@ impl TestContext {
                 allow_memory_grow: true,
                 max_backpatch_iterations: None,
                 max_code_pages: MAX_CODE_PAGES,
+                #[cfg(feature = "ir-map")]
+                pc_ir_callback: None,
             })
             .unwrap(),
             instance_names: std::collections::HashMap::new(),
@@ -678,11 +680,15 @@ fn load_module(
     let module_ref = {
         let _loading = enter_loading();
 
-        let module = Module::new::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
+        let mut control_frames = [ControlFrame::EMPTY; MAX_CONTROL_FRAMES];
+        let mut operands = [OperandType::EMPTY; MAX_STACK_DEPTH];
+        let mut decoder_stack = DecoderStack::new(&mut control_frames, &mut operands);
+        let module = Module::new(
             module_name.as_ref().map(|f| f.as_ref()).unwrap_or(""),
             &mut stream,
             &mut ctx.engine.store,
             &mut ctx.code_builder,
+            &mut decoder_stack,
             spacewasm::Rc::new(RustSystemAllocator)
                 .unwrap()
                 .into_wasm_memory_allocator(),
@@ -722,7 +728,7 @@ fn invoke_function(
     test_log: Rc<RefCell<LimitedVec<String>>>,
 ) -> Result<Option<Value>, InterpreterResult> {
     // Check if the engine is paused from a previous invocation
-    if ctx.engine.host_pause_result.is_some() {
+    if ctx.engine.is_paused() {
         invoke_function_resume(ctx, args, test_log)
     } else {
         // Normal invocation path
@@ -1085,7 +1091,6 @@ fn check_decode_error(err: ParseError, text: String) {
         ) => {}
 
         // --- Data / element segment placement ---
-        (ValidationError::InvalidNegativeMemOffset, "data segment does not fit") => {}
         (ValidationError::MemoryError(MemoryError::OutOfBounds), "data segment does not fit") => {}
         (ValidationError::InvalidElementOutOfBounds, "elements segment does not fit") => {}
         // A bad element offset is either a type mismatch on the offset
@@ -1168,7 +1173,12 @@ pub fn convert_wast_for_miri() {
     // The `tests/` subdirectories containing `.wast` files. Hard-coded
     // rather than walked, since it's a fixed, small set; add to this list
     // if a new `.wast` suite subdirectory is introduced.
-    let wast_dirs: &[&str] = &["core", "regression", "custom-page-sizes"];
+    let wast_dirs: &[&str] = &[
+        "core",
+        "regression",
+        "custom-page-sizes",
+        "nontrapping-float-to-int",
+    ];
 
     for subdir in wast_dirs {
         let dir = tests_dir.join(subdir);
@@ -1501,6 +1511,25 @@ fn run_wast_command(
             } else {
                 ctx.current_module_index()
             };
+
+            // A later `register` under an existing name shadows the earlier
+            // module for subsequent imports. The engine rejects duplicate
+            // module names, so rename the shadowed module to a name no import
+            // can spell. It stays in the store, so existing links into it and
+            // `$name` references remain valid.
+            if let Some(shadowed) = ctx
+                .engine
+                .store
+                .modules()
+                .iter()
+                .position(|m| m.name == as_name.as_str())
+                .filter(|&i| i != module_index)
+            {
+                ctx.engine.store.modules_mut()[shadowed].name = format!("\0shadowed#{shadowed}")
+                    .as_str()
+                    .try_into()
+                    .unwrap();
+            }
 
             // Update the module name in the store to the registered alias
             // This allows linking to find it by the registered name

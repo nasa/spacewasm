@@ -12,7 +12,10 @@ impl Stack {
         Ok(Stack {
             ptr: unsafe {
                 GlobalAllocator
-                    .alloc(Layout::from_size_align(bytes, 4).unwrap())?
+                    .alloc(
+                        Layout::from_size_align(bytes, 4)
+                            .map_err(|_| AllocError::AllocationFailed)?,
+                    )?
                     .cast()
             },
             size,
@@ -86,9 +89,11 @@ impl Stack {
 impl Drop for Stack {
     fn drop(&mut self) {
         unsafe {
+            // SAFETY: this layout was validated by `Stack::new` when the
+            // stack was allocated.
             GlobalAllocator.dealloc(
                 self.ptr.cast(),
-                Layout::from_size_align(self.size * 4, 4).unwrap(),
+                Layout::from_size_align_unchecked(self.size * 4, 4),
             );
         }
     }

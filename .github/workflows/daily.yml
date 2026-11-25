@@ -41,3 +41,21 @@ jobs:
           MIRI_TEST_JOBS: 4
           MIRI_TEST_TARGETS: core_integration regression_integration custom_page_sizes_integration
         run: ./.github/scripts/run-tests-with-miri.sh
+
+  # Catches runner-image changes (e.g. ubuntu-latest moving to a new release)
+  # that break the QEMU install used by the CI benchmark job.
+  qemu-install:
+    name: QEMU Install
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install QEMU
+        uses: ./.github/actions/install-qemu
+
+      - name: Check emulators
+        run: |
+          qemu-system-arm --version
+          qemu-system-riscv32 --version
+          qemu-system-riscv64 --version

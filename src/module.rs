@@ -63,20 +63,31 @@ impl CustomSectionHandler for DefaultCustomSectionHandler {
 }
 
 impl Module {
-    pub fn new<const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize>(
+    /// Decode, validate, compile and instantiate a module from `stream`.
+    /// `decoder_stack` is the validator's scratch storage and bounds block nesting
+    /// and operand depth per function.
+    ///
+    /// # Errors invalidate the engine
+    /// Instantiation is not atomic: data and element segments may already be
+    /// written to imported memories and tables, and the page allocator is
+    /// poisoned. After an `Err`, drop the [`Engine`] and [`CodeBuilder`] and build
+    /// new ones; [`Engine::reset`] does not recover.
+    pub fn new(
         name: &str,
         stream: &mut dyn WasmStream,
         store: &mut Store,
         code_builder: &mut CodeBuilder,
+        decoder_stack: &mut DecoderStack,
         allocator: Rc<dyn WasmMemoryAllocator>,
     ) -> Result<Module, ParseError> {
         let mut wasm = Reader::new(stream);
 
-        Module::read::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
+        Module::read(
             name,
             &mut wasm,
             store,
             code_builder,
+            decoder_stack,
             &mut DefaultCustomSectionHandler,
             allocator,
         )
@@ -87,11 +98,12 @@ impl Module {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn read<const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize>(
+    fn read(
         name: &str,
         wasm: &mut Reader,
         store: &mut Store,
         code_builder: &mut CodeBuilder,
+        decoder_stack: &mut DecoderStack,
         custom_handler: &mut dyn CustomSectionHandler,
         allocator: Rc<dyn WasmMemoryAllocator>,
     ) -> Result<Module, SectionDecodeError> {
@@ -163,13 +175,14 @@ impl Module {
 
             wasm.with_limit(section_size, |wasm| {
                 module
-                    .read_section::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
+                    .read_section(
                         wasm,
                         store,
                         section_size,
                         section_ty,
                         custom_handler,
                         code_builder,
+                        decoder_stack,
                         allocator.clone(),
                     )
                     .map_err(|e| e.with_section(section_ty))
@@ -192,7 +205,7 @@ impl Module {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn read_section<const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize>(
+    fn read_section(
         &mut self,
         wasm: &mut Reader,
         store: &mut Store,
@@ -200,6 +213,7 @@ impl Module {
         section_ty: SectionKind,
         custom_handler: &mut dyn CustomSectionHandler,
         code_builder: &mut CodeBuilder,
+        decoder_stack: &mut DecoderStack,
         allocator: Rc<dyn WasmMemoryAllocator>,
     ) -> Result<(), ValidationError> {
         use SectionKind::*;
@@ -332,12 +346,7 @@ impl Module {
                 ElementSection::read(wasm, store, self)?;
             }
             Code => {
-                CodeSection::read::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
-                    wasm,
-                    code_builder,
-                    store,
-                    self,
-                )?;
+                CodeSection::read(wasm, code_builder, decoder_stack, store, self)?;
             }
             Data => {
                 DataSection::read(wasm, store, self)?;
@@ -609,7 +618,14 @@ impl Func {
 struct FunctionSection;
 impl FunctionSection {
     pub fn read(wasm: &mut Reader, module: &Module) -> Result<Vec<Func>, ValidationError> {
-        wasm.read_vec(|w| Func::read_func_section(w, module))
+        let functions = wasm.read_vec(|w| Func::read_func_section(w, module))?;
+
+        // Module functions are referenced by a 16-bit index (`Ref::Module`)
+        if functions.len() > u16::MAX as usize {
+            return Err(ValidationError::IdxTooLarge);
+        }
+
+        Ok(functions)
     }
 }
 
@@ -715,7 +731,14 @@ impl GlobalSection {
         store: &Store,
         module: &Module,
     ) -> Result<Vec<Global>, ValidationError> {
-        wasm.read_vec(|wasm| Global::read(wasm, store, module))
+        let globals = wasm.read_vec(|wasm| Global::read(wasm, store, module))?;
+
+        // Module globals are referenced by a 16-bit index (`Ref::Module`)
+        if globals.len() > u16::MAX as usize {
+            return Err(ValidationError::IdxTooLarge);
+        }
+
+        Ok(globals)
     }
 }
 
@@ -851,13 +874,14 @@ impl Element {
             return Err(ValidationError::InvalidTableIndex);
         }
 
-        let Value::I32(offset) = Expr::read_constant(wasm, store, module)? else {
-            return Err(ValidationError::InvalidElementOffset);
+        let offset = match Expr::read_constant(wasm, store, module)? {
+            Value::I32(i) => i as u32,
+            _ => return Err(ValidationError::InvalidElementOffset),
         };
 
         let init_len = wasm.read_u32()?;
         if let Some(table) = module.get_table(store)? {
-            if offset < 0 || (offset as usize) > table.len() {
+            if offset as usize > table.len() {
                 return Err(ValidationError::InvalidElementOffset);
             } else if (offset as u64 + init_len as u64) > table.len() as u64 {
                 return Err(ValidationError::InvalidElementOutOfBounds);
@@ -918,9 +942,10 @@ impl ElementSection {
 pub struct CodeSection;
 
 impl CodeSection {
-    pub fn read<const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize>(
+    pub fn read(
         wasm: &mut Reader,
         builder: &mut CodeBuilder,
+        stack: &mut DecoderStack,
         store: &Store,
         module: &mut Module,
     ) -> Result<(), ValidationError> {
@@ -930,9 +955,7 @@ impl CodeSection {
         }
 
         for i in 0..n as usize {
-            module.read_function_code::<MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>(
-                wasm, store, builder, i,
-            )?;
+            module.read_function_code(wasm, store, builder, stack, i)?;
         }
 
         Ok(())
@@ -967,24 +990,16 @@ impl Data {
         // Make sure we actually defined a linear memory for this module
         module.check_memory_defined()?;
 
-        let offset = Expr::read_constant(wasm, store, module)?;
-        let offset = match offset {
-            Value::I32(i) => {
-                if i < 0 {
-                    return Err(ValidationError::InvalidNegativeMemOffset);
-                }
-
-                i as u32
-            }
-            Value::I64(_) => return Err(ValidationError::InvalidMemOffsetType),
-            Value::F32(_) => return Err(ValidationError::InvalidMemOffsetType),
-            Value::F64(_) => return Err(ValidationError::InvalidMemOffsetType),
+        let offset = match Expr::read_constant(wasm, store, module)? {
+            Value::I32(i) => i as u32,
+            _ => return Err(ValidationError::InvalidMemOffsetType),
         };
 
         // Read the data onto the linear memory
         // Note! This is a deviation from the Wasm specification, technically we
         // should be reading into a separate buffer and only populating the linear memory
-        // _after_ the full module validates.
+        // _after_ the full module validates. This is sound because any load failure
+        // invalidates the engine (see `Module::new`).
         let len = wasm.read_u32()?;
         for i in 0..len {
             memory.store_u8(Memory::effective_address(offset, i)?, wasm.read_u8()?)?;

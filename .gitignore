@@ -54,6 +54,7 @@ dkms.conf
 # IDE
 .vscode
 .idea
+.*.swp
 
 
 # Added by cargo
@@ -64,6 +65,7 @@ dkms.conf
 /fuzz/corpus
 /fuzz/artifacts
 /fuzz/coverage
+/fuzz/logs
 
 # Benchmark artifacts
 benchmark-results.json

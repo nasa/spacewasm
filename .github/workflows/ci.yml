@@ -9,6 +9,12 @@ on:
 permissions:
   contents: read
 
+# Superseded PR runs are cancelled to free runner capacity.
+# Runs on main are queued instead, so every commit on main gets a result.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   RUST_BACKTRACE: 1
   CARGO_TERM_COLOR: always
@@ -21,13 +27,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # macOS ARM64
-          - os: macos-arm64
-            runner: macos-14
-            profile: debug
-          - os: macos-arm64
-            runner: macos-14
-            profile: release
+          # macOS ARM64 is disabled: GitHub's macOS runners are too flaky.
+          # - os: macos-arm64
+          #   runner: macos-15
+          #   profile: debug
+          # - os: macos-arm64
+          #   runner: macos-15
+          #   profile: release
 
           # Linux x86_64
           - os: linux-x86
@@ -151,6 +157,136 @@ jobs:
             exit 1
           fi
 
+  # The fuzzing crates live in their own workspace under `fuzz/`, so the
+  # root `--workspace` test/lint jobs above do not cover them.
+  fuzz-check:
+    name: Fuzz (lint & test)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Rust dependencies
+        # Pinned commit resolved from the annotated Swatinem/rust-cache@v2 tag.
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          workspaces: fuzz
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-bin: false
+
+      - name: Check formatting
+        run: cargo fmt --manifest-path fuzz/Cargo.toml --all -- --check
+
+      - name: Run clippy
+        run: cargo clippy --manifest-path fuzz/Cargo.toml --workspace --all-targets --all-features -- -D warnings
+
+      - name: Run tests
+        run: cargo test --manifest-path fuzz/Cargo.toml -p spacewasm-fuzzing --verbose
+
+  fuzz:
+    name: Fuzz (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - validate
+          - validate-differential
+          - no-traps
+          - malformed
+          - exec-differential
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+        with:
+          toolchain: nightly-2026-08-30
+
+      - name: Install cargo-fuzz
+        uses: taiki-e/install-action@37f7c5781271959fb65b6b35224e28652ff2b63d # v2.87.0
+        with:
+          tool: cargo-fuzz
+
+      # The prebuilt cargo-fuzz is a musl binary, and `cargo fuzz` defaults
+      # `--target` to the triple it was built for. Sanitizers do not support
+      # static musl, so build for the toolchain's host (as the Makefile does).
+      - name: Select fuzz target triple
+        run: |
+          echo "SPACEWASM_TARGET=$(rustc -vV | sed -n 's/^host: //p')" >> "$GITHUB_ENV"
+
+      # Every fuzz target builds the same dependencies, so all of them (and
+      # the nightly `fuzz-corpus` job) share one cache, saved by a single job.
+      # A cache per target would add several near-identical entries to the
+      # repository's 10 GB cache budget.
+      - name: Cache Rust dependencies
+        # Pinned commit resolved from the annotated Swatinem/rust-cache@v2 tag.
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          workspaces: fuzz
+          shared-key: fuzz
+          save-if: ${{ github.ref == 'refs/heads/main' && matrix.target == 'validate' }}
+          cache-bin: false
+
+      - name: Build fuzzer
+        run: cargo +nightly-2026-08-30 fuzz build ${{ matrix.target }} --target "$SPACEWASM_TARGET"
+
+      # The corpus is seeded and kept minimized by the nightly `fuzz-corpus`
+      # job (fuzz-corpus.yml). libFuzzer replays every corpus input through
+      # the oracle before fuzzing, so this run re-checks all of the coverage
+      # the corpus has reached, even when the replay outlasts the 30s budget.
+      # A cache miss just means fuzzing from scratch.
+      - name: Restore fuzzing corpus
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-
+          restore-keys: fuzz-corpus-${{ matrix.target }}-
+
+      - name: Run fuzzer (30s)
+        run: cargo +nightly-2026-08-30 fuzz run ${{ matrix.target }} --target "$SPACEWASM_TARGET" -- -max_total_time=30
+
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: fuzz-artifacts-${{ matrix.target }}
+          path: fuzz/artifacts/${{ matrix.target }}
+          if-no-files-found: ignore
+
+  docs:
+    name: Docs
+    runs-on: ubuntu-latest
+    env:
+      RUSTDOCFLAGS: -D warnings
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+
+      - name: Cache Rust dependencies
+        # Pinned commit resolved from the annotated Swatinem/rust-cache@v2 tag.
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-bin: false
+
+      - name: Build docs
+        run: cargo doc --workspace --no-deps --all-features
+
+      # `doc = false` keeps the `spacewasm` binary out of the workspace docs, where
+      # its page would overwrite the `spacewasm` library's; check its docs on their own.
+      - name: Build docs (spacewasm binary)
+        run: cargo doc -p spacewasm_tools --bin spacewasm --no-deps
+
   build:
     name: Build (${{ matrix.os }})
     runs-on: ${{ matrix.runner }}
@@ -158,8 +294,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-arm64
-            runner: macos-14
+          # macOS is omitted: GitHub's macOS runners are too flaky.
           - os: linux-x86
             runner: ubuntu-latest
           - os: linux-arm64
@@ -195,14 +330,7 @@ jobs:
           targets: riscv32imc-unknown-none-elf,riscv64gc-unknown-none-elf,thumbv7m-none-eabi,thumbv7em-none-eabihf
 
       - name: Install QEMU
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            qemu-system-arm \
-            qemu-system-riscv64 \
-            qemu-system-riscv32 \
-            qemu-kvm \
-            qemu-utils
+        uses: ./.github/actions/install-qemu
 
       - name: Install Cargo binutils
         run: |

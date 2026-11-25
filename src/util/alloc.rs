@@ -14,6 +14,9 @@ pub enum AllocError {
 
     /// Page was too small to fit this allocation
     PageTooSmall,
+
+    /// A dealloc has occurred, and no new allocs are allowed
+    HeapPoisoned,
 }
 
 impl From<u32> for AllocError {
@@ -21,6 +24,7 @@ impl From<u32> for AllocError {
         match value {
             1 => AllocError::OutOfMemory,
             2 => AllocError::PageTooSmall,
+            3 => AllocError::HeapPoisoned,
             _ => AllocError::AllocationFailed,
         }
     }
@@ -42,23 +46,12 @@ unsafe extern "C" {
     fn __spacewasm_dealloc(ptr: *mut u8, size: usize, align: usize);
 }
 
-/// Installs the process-global allocator that backs the `__spacewasm_alloc` and
-/// `__spacewasm_dealloc` FFI symbols.
+/// Install the process-global allocator behind `__spacewasm_alloc` and
+/// `__spacewasm_dealloc`.
 ///
-/// # Single-threaded requirement (UB otherwise)
-///
-/// The generated code stores the allocator instance and a pointer to it in
-/// `static mut` globals and dereferences them from the exported `extern "C"`
-/// functions **without any synchronization**. This is only sound in a
-/// single-threaded environment, which is the model SpaceWasm targets: the
-/// interpreter and its allocator run on a single thread.
-///
-/// Calling any of the generated `__spacewasm_*` functions concurrently from
-/// more than one thread (or re-entrantly, e.g. allocating from within an
-/// allocator callback that is itself mid-allocation) creates aliasing
-/// `&mut`/`&` references to the `static mut` state and is **undefined
-/// behavior**. Embedders that need multi-threaded access must provide their own
-/// synchronization *around* these entry points.
+/// # Safety
+/// The state is an unsynchronized `static mut`: calling the generated functions
+/// from more than one thread, or re-entrantly, is undefined behavior.
 #[macro_export]
 macro_rules! global_allocator {
     ($ty: ty, $val:expr) => {
@@ -105,16 +98,11 @@ macro_rules! global_allocator {
     };
 }
 
-/// Our allocator trait. This is very similar to [core::alloc::GlobalAlloc].
-/// We are not using that trait since it doesn't return Result<...> it just panics
-/// if an allocation fails. An adaptor is automatically implemented
+/// A fallible [`core::alloc::GlobalAlloc`].
 ///
 /// # Safety
-///
-/// layout must have non-zero size. Attempting to allocate for a zero-sized layout will
-/// result in undefined behavior.
-///
-/// The implementation must guarentee Ok() results are valid pointers against the requested layout.
+/// `Ok` pointers must be valid for the requested layout. Zero-sized layouts
+/// are not allowed.
 pub unsafe trait Allocator {
     /// # Safety
     /// The caller must ensure that the layout has non-zero size.
@@ -162,6 +150,7 @@ mod tests {
     fn test_alloc_error_from_u32() {
         assert_eq!(AllocError::from(1u32), AllocError::OutOfMemory);
         assert_eq!(AllocError::from(2u32), AllocError::PageTooSmall);
+        assert_eq!(AllocError::from(3u32), AllocError::HeapPoisoned);
         assert_eq!(AllocError::from(0u32), AllocError::AllocationFailed);
         // Any unrecognized code falls back to the generic failure.
         assert_eq!(AllocError::from(42u32), AllocError::AllocationFailed);
@@ -172,6 +161,7 @@ mod tests {
         assert_eq!(u32::from(AllocError::AllocationFailed), 0);
         assert_eq!(u32::from(AllocError::OutOfMemory), 1);
         assert_eq!(u32::from(AllocError::PageTooSmall), 2);
+        assert_eq!(u32::from(AllocError::HeapPoisoned), 3);
     }
 
     #[test]
@@ -180,6 +170,7 @@ mod tests {
             AllocError::AllocationFailed,
             AllocError::OutOfMemory,
             AllocError::PageTooSmall,
+            AllocError::HeapPoisoned,
         ] {
             let code: u32 = err.clone().into();
             assert_eq!(AllocError::from(code), err);

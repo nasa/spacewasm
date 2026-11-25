@@ -1,4 +1,5 @@
 #![no_std]
+#![cfg_attr(not(test), deny(clippy::disallowed_methods))]
 
 pub mod util;
 pub use util::*;
@@ -59,6 +60,9 @@ pub(crate) use ir_reader::*;
 
 mod engine;
 pub use engine::*;
+
+mod backtrace;
+pub use backtrace::*;
 
 #[cfg(any(test, kani))]
 pub mod test_support {

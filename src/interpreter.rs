@@ -8,8 +8,8 @@ impl LocalVariable {
 }
 
 #[repr(C)]
-struct CallFrame {
-    frame_length: u16,
+pub(crate) struct CallFrame {
+    pub(crate) frame_length: u16,
     module_delta: i8,
     parameter_size: u8,
 }
@@ -173,30 +173,27 @@ impl Engine {
 
         // This expect should be safe because we checked for stack overflow up-front.
         self.call_impl(0, f_ref.index)
-            .expect("unexpected call_impl overflowed the stack");
+            .expect_nofmt("unexpected call_impl overflowed the stack");
         self.jumped = false;
         self.result = None;
+        self.trap_pc = None;
+        self.trap_fp = 0;
 
         Ok(())
     }
 
-    /// Resume the interpreter after a host pause.
-    /// Optionally pushes a value to the operand stack as a host function return value.
-    ///
-    /// Returns [`ResumeError::NotPaused`] if the engine is not currently paused
-    /// waiting for a host function result, and [`ResumeError::ResultTypeMismatch`]
-    /// if `resume_value` does not match the paused host function's declared
-    /// result type (in which case the pending pause is left intact so the caller
-    /// may retry).
+    /// Resume after a host pause, pushing `resume_value` as the host function's
+    /// result. On [`ResumeError::ResultTypeMismatch`] the pause is kept, so the
+    /// call can be retried.
     pub fn resume(&mut self, resume_value: Option<Value>) -> Result<(), ResumeError> {
         // `resume` is only valid when a host function has paused the engine and
         // is awaiting a result. If nothing is pending, report it instead of
         // panicking.
-        let Some(pause_result) = self.host_pause_result.take() else {
+        let Some(pause) = self.host_pause else {
             return Err(ResumeError::NotPaused);
         };
 
-        match (pause_result, resume_value) {
+        match (pause.result, resume_value) {
             (ResultType(Some(ValType::F32)), Some(Value::F32(z))) => {
                 self.stack.write_f32(self.sp, z);
                 self.sp += 1;
@@ -214,13 +211,12 @@ impl Engine {
                 self.sp += 2;
             }
             (ResultType(None), None) => {}
-            _ => {
-                // Result the pause result ty
-                self.host_pause_result = Some(pause_result);
-                return Err(ResumeError::ResultTypeMismatch);
-            }
+            // The pause is left as it was, so the caller may retry.
+            _ => return Err(ResumeError::ResultTypeMismatch),
         }
 
+        self.host_pause = None;
+        self.pc = pause.resume_pc;
         Ok(())
     }
 }
@@ -269,7 +265,8 @@ pub enum InterpreterBreak {
     Finished,
     /// The program has been aborted
     Trap(TrapReason),
-    /// An instruction or host function has requested the interpreter to pause
+    /// A host function has requested the interpreter to pause; it recorded its declared
+    /// result type in [`Engine::host_pause`].
     Pause,
 }
 
@@ -340,16 +337,10 @@ impl Interpreter {
     }
 }
 
-/// This is a meta-trait that provides an auto implementation of run() for all IrVisitors
-/// of a certain shape.
-///
-/// For all types that implement [IrVisitor<State = Engine, Error = InstructionError>],
-/// this trait will be implemented to execute instructions given the state and store.
+/// Runs the interpreter; implemented for every `IrVisitor` over [`Engine`].
 pub trait InterpreterRunner {
-    /// Run the interpreter for a fixed number of cycles or until a trap/host pause.
-    ///
-    /// The `code` parameter contains the compiled IR pages. It's passed separately from
-    /// the engine to allow the interpreter to borrow it immutably while mutating the engine state.
+    /// Run up to `fuel` instructions, or until a trap or host pause. A paused
+    /// engine stays paused until [`Engine::resume`].
     fn run(
         &self,
         code: &[Box<TextPage>],
@@ -365,9 +356,16 @@ impl<T: IrVisitor<State = Engine, Error = InterpreterBreak>> InterpreterRunner f
         state: &mut T::State,
         n_instructions: usize,
     ) -> InterpreterResult {
+        // The paused host call's result is not on the operand stack yet. Running on
+        // would execute the rest of the guest without it.
+        if state.is_paused() {
+            return InterpreterResult::Pause;
+        }
+
         // Run up to n instructions
         for _ in 0..n_instructions {
-            let mut pc = state.pc;
+            let instruction_pc = state.pc;
+            let mut pc = instruction_pc;
 
             // If PC is SENTINEL, we're not executing anything
             if pc == JumpTarget::SENTINEL {
@@ -386,16 +384,38 @@ impl<T: IrVisitor<State = Engine, Error = InterpreterBreak>> InterpreterRunner f
             match i_res {
                 Ok(_) => {}
                 Err(InterpreterBreak::Trap(trap_reason)) => {
-                    // TODO(tumbar) How do we expose a backtrace?
-                    // We trapped, we need to unwind and reset the state
+                    // Record the start of the faulting instruction before unwinding.
+                    // Without the reset the engine would report busy and could be
+                    // resumed past the trap with an inconsistent stack.
+                    state.trap_pc = Some(instruction_pc);
+                    // The reset below does not clear the stack memory, so the
+                    // frame pointer alone is enough to walk the frames afterwards.
+                    state.trap_fp = state.fp;
                     state.sp = 0;
                     state.pc = JumpTarget::SENTINEL;
                     state.fp = 0;
                     state.jumped = false;
+                    // Drop the call's memory and table aliases so a later module
+                    // can still take unique ownership to import them.
+                    state.clear_memory();
+                    state.clear_table();
                     return InterpreterResult::Trap(trap_reason);
                 }
-                Err(InterpreterBreak::Pause) => return InterpreterResult::Pause,
-                Err(InterpreterBreak::Finished) => return InterpreterResult::Finished,
+                Err(InterpreterBreak::Pause) => {
+                    // Paused on the call itself: only `resume` moves past it, once the
+                    // host call's result is on the stack. Until then the PC, and a
+                    // backtrace from it, names the call that paused.
+                    if let Some(pause) = &mut state.host_pause {
+                        pause.resume_pc = state.pc;
+                    }
+                    state.pc = instruction_pc;
+                    return InterpreterResult::Pause;
+                }
+                Err(InterpreterBreak::Finished) => {
+                    state.clear_memory();
+                    state.clear_table();
+                    return InterpreterResult::Finished;
+                }
             }
         }
 
@@ -409,15 +429,6 @@ impl From<MemoryError> for InterpreterBreak {
             MemoryError::OutOfBounds => InterpreterBreak::Trap(TrapReason::MemoryOutOfBounds),
             MemoryError::OutOfMemory => InterpreterBreak::Trap(TrapReason::OutOfMemory),
             _ => unreachable!(),
-        }
-    }
-}
-
-impl From<HostFunctionBreak> for InterpreterBreak {
-    fn from(err: HostFunctionBreak) -> Self {
-        match err {
-            HostFunctionBreak::Trap => InterpreterBreak::Trap(TrapReason::Host),
-            HostFunctionBreak::Pause => InterpreterBreak::Pause,
         }
     }
 }
@@ -1286,6 +1297,88 @@ impl BaseVisitor for Interpreter {
         state.sp += 1;
         Ok(())
     }
+
+    fn i32_extend8_s(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        let v = state.stack.read_u32(state.sp - 1) as i8;
+        state.stack.write_u32(state.sp - 1, v as i32 as u32);
+        Ok(())
+    }
+
+    fn i32_extend16_s(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        let v = state.stack.read_u32(state.sp - 1) as i16;
+        state.stack.write_u32(state.sp - 1, v as i32 as u32);
+        Ok(())
+    }
+
+    fn i64_extend8_s(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        let v = state.stack.read_u64(state.sp - 2) as i8;
+        state.stack.write_u64(state.sp - 2, v as i64 as u64);
+        Ok(())
+    }
+
+    fn i64_extend16_s(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        let v = state.stack.read_u64(state.sp - 2) as i16;
+        state.stack.write_u64(state.sp - 2, v as i64 as u64);
+        Ok(())
+    }
+
+    fn i64_extend32_s(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        let v = state.stack.read_u64(state.sp - 2) as i32;
+        state.stack.write_u64(state.sp - 2, v as i64 as u64);
+        Ok(())
+    }
+
+    fn i32_trunc_sat_f32_s(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        let f = state.stack.read_f32(state.sp - 1);
+        state.stack.write_u32(state.sp - 1, f as i32 as u32);
+        Ok(())
+    }
+
+    fn i32_trunc_sat_f32_u(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        let f = state.stack.read_f32(state.sp - 1);
+        state.stack.write_u32(state.sp - 1, f as u32);
+        Ok(())
+    }
+
+    fn i32_trunc_sat_f64_s(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        state.sp -= 1;
+        let f = state.stack.read_f64(state.sp - 1);
+        state.stack.write_u32(state.sp - 1, f as i32 as u32);
+        Ok(())
+    }
+
+    fn i32_trunc_sat_f64_u(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        state.sp -= 1;
+        let f = state.stack.read_f64(state.sp - 1);
+        state.stack.write_u32(state.sp - 1, f as u32);
+        Ok(())
+    }
+
+    fn i64_trunc_sat_f32_s(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        let f = state.stack.read_f32(state.sp - 1);
+        state.stack.write_u64(state.sp - 1, f as i64 as u64);
+        state.sp += 1;
+        Ok(())
+    }
+
+    fn i64_trunc_sat_f32_u(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        let f = state.stack.read_f32(state.sp - 1);
+        state.stack.write_u64(state.sp - 1, f as u64);
+        state.sp += 1;
+        Ok(())
+    }
+
+    fn i64_trunc_sat_f64_s(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        let f = state.stack.read_f64(state.sp - 2);
+        state.stack.write_u64(state.sp - 2, f as i64 as u64);
+        Ok(())
+    }
+
+    fn i64_trunc_sat_f64_u(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+        let f = state.stack.read_f64(state.sp - 2);
+        state.stack.write_u64(state.sp - 2, f as u64);
+        Ok(())
+    }
 }
 
 impl IrVisitor for Interpreter {
@@ -1451,22 +1544,22 @@ impl IrVisitor for Interpreter {
             match p_ty {
                 ValType::I32 => {
                     sv.push(Value::I32(state.stack.read_u32(state.sp + offset) as i32))
-                        .unwrap();
+                        .unwrap_nofmt();
                     offset += 1;
                 }
                 ValType::I64 => {
                     sv.push(Value::I64(state.stack.read_u64(state.sp + offset) as i64))
-                        .unwrap();
+                        .unwrap_nofmt();
                     offset += 2;
                 }
                 ValType::F32 => {
                     sv.push(Value::F32(state.stack.read_f32(state.sp + offset)))
-                        .unwrap();
+                        .unwrap_nofmt();
                     offset += 1;
                 }
                 ValType::F64 => {
                     sv.push(Value::F64(state.stack.read_f64(state.sp + offset)))
-                        .unwrap();
+                        .unwrap_nofmt();
                     offset += 2;
                 }
             }
@@ -1494,21 +1587,19 @@ impl IrVisitor for Interpreter {
                         state.stack.write_f64(state.sp, f);
                         state.sp += 2;
                     }
-                    (got, expected) => {
-                        panic!(
-                            "host function returned {got:?} while declaration expecting {expected:?}"
-                        )
+                    _ => {
+                        panic!("host function return value does not match its declared type")
                     }
                 }
 
                 Ok(())
             }
+            // `run` fills in where to resume, and leaves the PC on this call.
             ControlFlow::Break(HostFunctionBreak::Pause) => {
-                let other = state.host_pause_result.replace(f.returns());
-                if other.is_some() {
-                    panic!("Unexpected paused engine state");
-                }
-
+                state.host_pause = Some(HostPause {
+                    result: f.returns(),
+                    resume_pc: JumpTarget::SENTINEL,
+                });
                 Err(InterpreterBreak::Pause)
             }
             ControlFlow::Break(HostFunctionBreak::Trap) => {
@@ -1856,72 +1947,97 @@ mod kani_proofs {
         assert_eq!(decoded.parameter_size, 0x78);
     }
 
-    /// Model the stack-pointer arithmetic of a call-frame push (`call_impl`)
-    /// followed by the matching return unwind (`return_`), proving that the
-    /// frame pointer round-trips and that none of the offset computations
-    /// overflow or underflow under the invariants that hold at the call site.
+    /// push either or advances sp or causes a stack overflow
     #[kani::proof]
-    fn proof_call_return_sp_arithmetic() {
-        // Symbolic caller state at the call site. `prev_fp` is the caller's
-        // frame pointer; `sp0` is the stack pointer once the callee's arguments
-        // have been pushed — this value becomes the callee frame pointer.
-        let prev_fp: u32 = kani::any();
-        let sp0: u32 = kani::any();
-        // Word counts drawn from the callee definition.
-        let parameter_words: u8 = kani::any();
+    fn proof_call_push_step_invariant() {
+        let fp: u32 = kani::any();
+        let sp: usize = kani::any();
+        let stack_len: usize = kani::any();
+        kani::assume(stack_len <= 1_000_000);
+        kani::assume((fp as usize) <= sp && sp <= stack_len);
+        kani::assume(sp - fp as usize <= u16::MAX as usize);
+
+        let stack_usage: u16 = kani::any();
         let local_size: u16 = kani::any();
+        let parameter_size: u8 = kani::any();
+        kani::assume((stack_usage as usize) <= 1_000_000);
+        kani::assume((local_size as usize) <= 1_000_000);
+
+        let required_stack_space = stack_usage as usize + 2 + local_size as usize;
+
+        let old_fp = fp;
+        let old_sp = sp;
+
+        if stack_len < sp + required_stack_space {
+            // StackOverflow: call_impl returns before touching fp/sp at all.
+            assert_eq!(fp, old_fp, "a rejected call must not move fp");
+            assert_eq!(sp, old_sp, "a rejected call must not move sp");
+            return;
+        }
+
+        let frame_length = (sp - fp as usize) as u32;
+        assert!(
+            frame_length <= u16::MAX as u32,
+            "frame_length must fit CallFrame's 16-bit field"
+        );
+
+        let frame = CallFrame {
+            frame_length: frame_length as u16,
+            module_delta: 0,
+            parameter_size,
+        };
+
+        let decoded = CallFrame::from_bits(frame.into_bits());
+        assert_eq!(decoded.frame_length, frame_length as u16);
+
+        let new_fp = sp as u32;
+        let new_sp = sp + 2 + local_size as usize;
+
+        assert!(
+            (new_fp as usize) <= new_sp,
+            "the new frame pointer must not exceed the new stack pointer"
+        );
+        assert!(
+            new_sp <= stack_len,
+            "the new stack pointer must stay within the stack's capacity \
+             -- exactly what the StackOverflow guard above must guarantee"
+        );
+    }
+
+    /// Popping from stack keeps `fp' <= sp' <= stack_len`.
+    #[kani::proof]
+    fn proof_call_pop_step_invariant() {
+        let fp: u32 = kani::any();
+        let sp: usize = kani::any();
+        let stack_len: usize = kani::any();
+        kani::assume(stack_len <= 1_000_000);
+        kani::assume((fp as usize) + 2 <= sp && sp <= stack_len);
+
+        let frame_length: u16 = kani::any();
+        let parameter_size: u8 = kani::any();
+        kani::assume((frame_length as u32) <= fp);
+        kani::assume((parameter_size as u32) <= frame_length as u32);
+
         let return_size: usize = kani::any();
         // Entry/normal returns move at most a 64-bit (2-word) result.
         kani::assume(return_size <= 2);
 
-        // Invariants established by construction and validation:
-        // - the new frame pointer never precedes the caller frame pointer,
-        // - the caller pushed `parameter_words` argument words below the fp,
-        // - the frame span fits the 16-bit `CallFrame::frame_length` field,
-        // - the stack pointer stays inside the addressable (u32) range so the
-        //   widening/narrowing conversions cannot mask overflow.
-        kani::assume(prev_fp <= sp0);
-        kani::assume(sp0 >= parameter_words as u32);
-        let frame_span = sp0 - prev_fp;
-        kani::assume(frame_span <= u16::MAX as u32);
-        kani::assume((sp0 as usize) + 2 + local_size as usize <= u32::MAX as usize);
-
-        // --- call_impl: push the frame and allocate locals ---
-        let frame = CallFrame {
-            frame_length: frame_span as u16,
-            module_delta: 0,
-            parameter_size: parameter_words,
-        };
-        // The interpreter sets `fp = sp` before allocating the frame + locals.
-        let fp = sp0;
-        let sp_after_push = sp0 as usize + 2 + local_size as usize;
-        assert!(
-            sp_after_push >= sp0 as usize + 2,
-            "allocating locals never shrinks the frame"
-        );
-
-        // --- return_: unwind the frame ---
-        let decoded = CallFrame::from_bits(frame.into_bits());
-        let return_fp = fp - decoded.frame_length as u32;
-        assert_eq!(
-            return_fp, prev_fp,
-            "return must restore the caller frame pointer"
-        );
-
-        // `parameter_start = fp - parameter_size` must not underflow.
-        let parameter_start = fp as usize - decoded.parameter_size as usize;
+        let return_fp = fp - frame_length as u32;
+        let parameter_start = fp as usize - parameter_size as usize;
         assert!(
             parameter_start <= fp as usize,
-            "parameter_start must not underflow past the frame pointer"
+            "parameter_start must not underflow past fp"
         );
 
-        // A non-entry return writes results into
-        // `[parameter_start, parameter_start + return_size)` and leaves `sp`
-        // there; verify that stays within the space the push allocated.
-        let sp_after_return = parameter_start + return_size;
+        let new_sp = parameter_start + return_size;
+
         assert!(
-            sp_after_return <= sp_after_push,
-            "the return stack pointer stays within the pushed frame"
+            (return_fp as usize) <= new_sp,
+            "the restored frame pointer must not exceed the restored stack pointer"
+        );
+        assert!(
+            new_sp <= stack_len,
+            "the restored stack pointer must stay within the stack's capacity"
         );
     }
 }

@@ -11,11 +11,8 @@ pub struct Store {
 }
 
 impl Store {
-    /// Construct a store from a runtime-built collection of host modules,
-    /// rather than a const-sized array. Useful for embedders (e.g. the C FFI
-    /// layer) that accumulate host modules dynamically. Returns
-    /// [`AllocError::OutOfMemory`] if `max_modules` exceeds the 256-module
-    /// limit, instead of panicking.
+    /// Create a store from host modules built at runtime, with room for
+    /// `max_modules` (<= 256) guest modules.
     pub fn from_host_modules(
         max_modules: usize,
         host_modules: Vec<HostModule>,
@@ -59,12 +56,7 @@ impl Store {
         self.modules.pop()
     }
 
-    /// Push a module onto the store, returning the [`ModuleRef`] of the newly
-    /// appended module.
-    ///
-    /// Returns [`AllocError::OutOfMemory`] when the store is already at capacity
-    /// (the module count configured via [`Store::from_host_modules`] /
-    /// [`Engine::new`]) instead of panicking.
+    /// Append a module. [`AllocError::OutOfMemory`] if the store is full.
     #[inline(always)]
     pub fn push_module(&mut self, module: Module) -> Result<ModuleRef, AllocError> {
         self.modules.try_push(module)?;
@@ -110,15 +102,8 @@ impl Store {
         }
     }
 
-    /// Returns a mutable reference to a module's linear memory.
-    ///
-    /// # Invariant
-    /// When the module has no memory, the `None` arm returns a `&mut` to the
-    /// shared `zero_memory` sentinel (aliased by every memory-less module).
-    /// Callers MUST check [`Memory::is_zero`] before mutating through the
-    /// returned reference — the only caller, `interpreter.rs::memory_grow`,
-    /// does exactly this. Mutating the sentinel would corrupt global state
-    /// shared across all modules.
+    /// A module's linear memory. A module without one gets the shared zero-memory
+    /// sentinel: check [`Memory::is_zero`] before mutating.
     pub fn get_memory_mut(&mut self, module_ref: ModuleRef) -> &mut Rc<Memory> {
         match &self.modules[module_ref.0 as usize].memory {
             None => &mut self.zero_memory,
@@ -165,17 +150,27 @@ impl Engine {
             module: ModuleRef(0),
             store,
             result: None,
-            host_pause_result: None,
+            host_pause: None,
+            trap_pc: None,
+            trap_fp: 0,
         })
     }
 
+    /// Abandons any call and resets execution state: program counter, stack,
+    /// pending result, host pause and trap. Loaded modules stay loaded.
+    ///
+    /// Module memories, tables and globals are not cleared, so the next call
+    /// observes whatever earlier calls wrote. This is also not a recovery path
+    /// after a failed module load (see [`Module::new`]).
     pub fn reset(&mut self) {
         self.pc = JumpTarget::SENTINEL;
         self.sp = 0;
         self.fp = 0;
         self.jumped = false;
         self.result = None;
-        self.host_pause_result = None;
+        self.host_pause = None;
+        self.trap_pc = None;
+        self.trap_fp = 0;
         self.clear_memory();
         self.clear_table();
     }
@@ -188,9 +183,8 @@ impl Engine {
         self.table = self.store.zero_table.clone();
     }
 
-    /// Append a module to the store without running its start function.
-    /// Note: The start function still needs to be run (if there is one)
-    /// Returns the ModuleRef of the new module
+    /// Append a module without running its start function. An `Err` invalidates
+    /// the engine; see [`Module::new`].
     pub fn push_module(&mut self, module: Module) -> Result<ModuleRef, AllocError> {
         self.store.push_module(module)
     }
@@ -199,6 +193,13 @@ impl Engine {
     #[inline(always)]
     pub fn is_idle(&self) -> bool {
         self.pc == JumpTarget::SENTINEL
+    }
+
+    /// Returns `true` if a host function has paused the engine and it is waiting on
+    /// [`Engine::resume`]. Running a paused engine executes nothing.
+    #[inline(always)]
+    pub fn is_paused(&self) -> bool {
+        self.host_pause.is_some()
     }
 
     /// Returns `true` if the module at `module_ref` declares a start function

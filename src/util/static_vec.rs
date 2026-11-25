@@ -27,6 +27,7 @@ impl<T: Sized + Clone, const N: usize> Clone for StaticVec<T, N> {
     }
 }
 
+#[cfg(any(test, kani))]
 impl<T: Sized, const N: usize> StaticVec<T, N> {
     pub(crate) fn truncate(&mut self, new_len: usize) {
         assert!(new_len <= self.len as usize);

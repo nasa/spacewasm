@@ -98,6 +98,30 @@ fn new_guest_allocator() -> *mut CAllocator {
     )
 }
 
+/// Decoder scratch storage at the C API default limits, owned by the test.
+struct DecoderStorage {
+    control_frames: [core::mem::MaybeUninit<spacewasm_control_frame_t>; 64],
+    operands: [core::mem::MaybeUninit<spacewasm_operand_t>; 256],
+}
+
+impl DecoderStorage {
+    fn new() -> Self {
+        Self {
+            control_frames: [const { core::mem::MaybeUninit::uninit() }; 64],
+            operands: [const { core::mem::MaybeUninit::uninit() }; 256],
+        }
+    }
+
+    fn as_c(&mut self) -> spacewasm_decoder_stack_t {
+        spacewasm_decoder_stack_t {
+            control_frames: self.control_frames.as_mut_ptr().cast(),
+            control_frames_len: self.control_frames.len(),
+            operands: self.operands.as_mut_ptr().cast(),
+            operands_len: self.operands.len(),
+        }
+    }
+}
+
 // ---- value helpers ----------------------------------------------------------
 
 fn i32_val(x: i32) -> spacewasm_value_t {
@@ -225,6 +249,35 @@ static TRAP_WASM: &[u8] = &[
     0x00, 0x0a, 0x05, 0x01, 0x03, 0x00, 0x00, 0x0b,
 ];
 
+/// `main(x)` calls `f`, which reaches `g` through `call_indirect`. With a
+/// non-zero `x`, `g` calls the host function `env.probe`; with zero it
+/// executes `unreachable`. Exercises the backtrace API through three frames.
+///
+/// ```wat
+/// (module
+///   (type $t_i (func (param i32)))
+///   (import "env" "probe" (func $probe))
+///   (table 1 funcref)
+///   (elem (i32.const 0) $g)
+///   (func $main (export "main") (param i32) local.get 0 call $f)
+///   (func $f (param i32) (local i32 i64)
+///     local.get 0 i32.const 0 call_indirect (type $t_i))
+///   (func $g (param i32)
+///     local.get 0 if call $probe else unreachable end))
+/// ```
+#[rustfmt::skip]
+static CHAIN_WASM: &[u8] = &[
+    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x60,
+    0x01, 0x7f, 0x00, 0x60, 0x00, 0x00, 0x02, 0x0d, 0x01, 0x03, 0x65, 0x6e,
+    0x76, 0x05, 0x70, 0x72, 0x6f, 0x62, 0x65, 0x00, 0x01, 0x03, 0x04, 0x03,
+    0x00, 0x00, 0x00, 0x04, 0x04, 0x01, 0x70, 0x00, 0x01, 0x07, 0x08, 0x01,
+    0x04, 0x6d, 0x61, 0x69, 0x6e, 0x00, 0x01, 0x09, 0x07, 0x01, 0x00, 0x41,
+    0x00, 0x0b, 0x01, 0x03, 0x0a, 0x22, 0x03, 0x06, 0x00, 0x20, 0x00, 0x10,
+    0x02, 0x0b, 0x0d, 0x02, 0x01, 0x7f, 0x01, 0x7e, 0x20, 0x00, 0x41, 0x00,
+    0x11, 0x00, 0x00, 0x0b, 0x0b, 0x00, 0x20, 0x00, 0x04, 0x40, 0x10, 0x00,
+    0x05, 0x00, 0x0b, 0x0b,
+];
+
 /// A module with a `start` function that writes `42` to linear memory at offset
 /// 0, exporting `memory` and a `get` function that reads it back.
 #[rustfmt::skip]
@@ -337,6 +390,44 @@ static GLOBAL_IMPORTER_WASM: &[u8] = &[
     0x72, 0x65, 0x65, 0x78, 0x70, 0x6f, 0x72, 0x74, 0x03, 0x00,
 ];
 
+/// Owns and exports a table whose slot 0 returns 11.
+/// ```wat
+/// (module
+///   (table (export "t") 2 funcref)
+///   (type $ret_i32 (func (result i32)))
+///   (func $f (result i32) (i32.const 11))
+///   (elem (i32.const 0) $f)
+///   (func (export "call0") (result i32)
+///     (call_indirect (type $ret_i32) (i32.const 0)))
+///   (func (export "trap") (unreachable)))
+/// ```
+#[rustfmt::skip]
+static TABLE_OWNER_WASM: &[u8] = &[
+    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x60,
+    0x00, 0x01, 0x7f, 0x60, 0x00, 0x00, 0x03, 0x04, 0x03, 0x00, 0x00, 0x01,
+    0x04, 0x04, 0x01, 0x70, 0x00, 0x02, 0x07, 0x14, 0x03, 0x01, 0x74, 0x01,
+    0x00, 0x05, 0x63, 0x61, 0x6c, 0x6c, 0x30, 0x00, 0x01, 0x04, 0x74, 0x72,
+    0x61, 0x70, 0x00, 0x02, 0x09, 0x07, 0x01, 0x00, 0x41, 0x00, 0x0b, 0x01,
+    0x00, 0x0a, 0x12, 0x03, 0x04, 0x00, 0x41, 0x0b, 0x0b, 0x07, 0x00, 0x41,
+    0x00, 0x11, 0x00, 0x00, 0x0b, 0x03, 0x00, 0x00, 0x0b,
+];
+
+/// Imports `a.t` and writes slot 1 through an element segment, which needs
+/// unique ownership of the table.
+/// ```wat
+/// (module
+///   (import "a" "t" (table 2 funcref))
+///   (func $g (result i32) (i32.const 22))
+///   (elem (i32.const 1) $g))
+/// ```
+#[rustfmt::skip]
+static TABLE_IMPORTER_WASM: &[u8] = &[
+    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x05, 0x01, 0x60,
+    0x00, 0x01, 0x7f, 0x02, 0x09, 0x01, 0x01, 0x61, 0x01, 0x74, 0x01, 0x70,
+    0x00, 0x02, 0x03, 0x02, 0x01, 0x00, 0x09, 0x07, 0x01, 0x00, 0x41, 0x01,
+    0x0b, 0x01, 0x00, 0x0a, 0x06, 0x01, 0x04, 0x00, 0x41, 0x16, 0x0b,
+];
+
 // ---- shared driving helpers -------------------------------------------------
 
 /// Default compiler options bounding a test store to `max_code_pages` pages.
@@ -379,6 +470,7 @@ fn load_module_onto(
 ) -> Result<u32, spacewasm_status_t> {
     let mut cursor = Cursor { data, pos: 0, step };
     let mut idx = 0u32;
+    let mut decoder = DecoderStorage::new();
     let st = unsafe {
         spacewasm_load_module(
             store,
@@ -386,6 +478,7 @@ fn load_module_onto(
             Some(cursor_read),
             &mut cursor as *mut Cursor as *mut c_void,
             alloc,
+            decoder.as_c(),
             &mut idx,
         )
     };
@@ -1153,6 +1246,7 @@ fn streaming_read_error() {
     assert!(!alloc.is_null(), "allocator_new");
 
     let mut idx = 0u32;
+    let mut decoder = DecoderStorage::new();
     let st = unsafe {
         spacewasm_load_module(
             store,
@@ -1160,6 +1254,7 @@ fn streaming_read_error() {
             Some(failing_read),
             core::ptr::null_mut(),
             alloc,
+            decoder.as_c(),
             &mut idx,
         )
     };
@@ -1425,6 +1520,7 @@ fn null_arg_handling() {
         step: 0,
     };
     let mut idx = 0u32;
+    let mut decoder = DecoderStorage::new();
     let st = unsafe {
         spacewasm_load_module(
             store,
@@ -1432,6 +1528,7 @@ fn null_arg_handling() {
             Some(cursor_read),
             &mut cursor as *mut Cursor as *mut c_void,
             alloc,
+            decoder.as_c(),
             &mut idx,
         )
     };
@@ -1574,6 +1671,7 @@ fn validation_error_codes_map() {
         (InvalidMaxLimit, status::SPACEWASM_ERR_INVALID_MAX_LIMIT),
         (ExpectedTerminal(0), status::SPACEWASM_ERR_EXPECTED_TERMINAL),
         (InvalidOpcode(0), status::SPACEWASM_ERR_INVALID_OPCODE),
+        (InvalidFcOpcode(10), status::SPACEWASM_ERR_INVALID_OPCODE),
         (MalformedCodeSize, status::SPACEWASM_ERR_MALFORMED_CODE_SIZE),
         (
             InvalidCodeSectionFunctionCount,
@@ -1641,10 +1739,6 @@ fn validation_error_codes_map() {
         (
             InvalidMemOffsetType,
             status::SPACEWASM_ERR_INVALID_MEM_OFFSET_TYPE,
-        ),
-        (
-            InvalidNegativeMemOffset,
-            status::SPACEWASM_ERR_INVALID_NEGATIVE_MEM_OFFSET,
         ),
         (InvalidMemOffset, status::SPACEWASM_ERR_INVALID_MEM_OFFSET),
         (MultipleMemories, status::SPACEWASM_ERR_MULTIPLE_MEMORIES),
@@ -1784,6 +1878,10 @@ fn validation_error_codes_map() {
             status::SPACEWASM_ERR_PAGE_TOO_SMALL,
         ),
         (
+            AllocError(AllocError::HeapPoisoned),
+            status::SPACEWASM_ERR_HEAP_POISONED,
+        ),
+        (
             MemoryError(MemoryError::OutOfBounds),
             status::SPACEWASM_ERR_MEM_OUT_OF_BOUNDS,
         ),
@@ -1798,6 +1896,10 @@ fn validation_error_codes_map() {
         (
             MemoryError(MemoryError::PageTooSmall),
             status::SPACEWASM_ERR_PAGE_TOO_SMALL,
+        ),
+        (
+            MemoryError(MemoryError::HeapPoisoned),
+            status::SPACEWASM_ERR_HEAP_POISONED,
         ),
         // Miscellaneous
         (
@@ -1827,6 +1929,10 @@ fn alloc_status_maps() {
         status::alloc_status(PageTooSmall),
         status::SPACEWASM_ERR_PAGE_TOO_SMALL
     );
+    assert_eq!(
+        status::alloc_status(HeapPoisoned),
+        status::SPACEWASM_ERR_HEAP_POISONED
+    );
 }
 
 #[test]
@@ -1847,6 +1953,10 @@ fn memory_status_maps() {
     assert_eq!(
         status::memory_status(PageTooSmall),
         status::SPACEWASM_ERR_PAGE_TOO_SMALL
+    );
+    assert_eq!(
+        status::memory_status(HeapPoisoned),
+        status::SPACEWASM_ERR_HEAP_POISONED
     );
 }
 
@@ -1900,6 +2010,7 @@ fn simple_error_mappers() {
         spacewasm::AllocError::AllocationFailed,
         spacewasm::AllocError::OutOfMemory,
         spacewasm::AllocError::PageTooSmall,
+        spacewasm::AllocError::HeapPoisoned,
     ] {
         assert_eq!(
             status::host_val_list_status(HostFunctionError::AllocError(ae.clone())),
@@ -2044,6 +2155,64 @@ fn trap_is_reported() {
 }
 
 #[test]
+fn trap_records_pc_and_returns_to_idle() {
+    let _guard = ALLOC_LOCK.lock().unwrap();
+    ensure_global_allocator();
+
+    let store = new_store(1024, 1, 256);
+    let alloc = new_guest_allocator();
+    let idx = load_module_onto(alloc, store, c"main", TRAP_WASM, 0).expect("load");
+
+    let mut func = 0u32;
+    assert_eq!(
+        unsafe { spacewasm_find_export_func(store, idx, c"boom".as_ptr(), &mut func) },
+        status::SPACEWASM_OK
+    );
+
+    assert_eq!(
+        backtrace_of(store).0,
+        status::SPACEWASM_ERR_WRONG_STATE,
+        "nothing invoked yet"
+    );
+
+    // Before running, the PC is the function entry: the `unreachable` itself.
+    assert_eq!(
+        unsafe { spacewasm_invoke(store, idx, func, core::ptr::null(), 0) },
+        status::SPACEWASM_OK
+    );
+    let (st, entry) = backtrace_of(store);
+    assert_eq!((st, entry.len()), (status::SPACEWASM_OK, 1));
+
+    let mut trap = spacewasm_trap_t::SPACEWASM_TRAP_NONE;
+    assert_eq!(
+        run_to_completion(store, &mut trap),
+        spacewasm_run_status_t::SPACEWASM_RUN_TRAP
+    );
+
+    // The trap PC points at the faulting instruction, not the one after it.
+    assert_eq!(backtrace_of(store), (status::SPACEWASM_OK, entry.clone()));
+
+    // The engine is idle again, and can't be run past the trap.
+    assert_eq!(
+        unsafe { spacewasm_run(store, 64, &mut trap) },
+        spacewasm_run_status_t::SPACEWASM_RUN_TRAP
+    );
+    assert_eq!(trap, spacewasm_trap_t::SPACEWASM_TRAP_NONE);
+
+    // A new call can be invoked without a reset, and its backtrace replaces the trap's.
+    assert_eq!(
+        unsafe { spacewasm_invoke(store, idx, func, core::ptr::null(), 0) },
+        status::SPACEWASM_OK
+    );
+    assert_eq!(backtrace_of(store), (status::SPACEWASM_OK, entry));
+
+    unsafe {
+        spacewasm_destroy(store);
+        spacewasm_allocator_destroy(alloc);
+    }
+}
+
+#[test]
 fn module_with_start_runs() {
     let _guard = ALLOC_LOCK.lock().unwrap();
     ensure_global_allocator();
@@ -2058,6 +2227,7 @@ fn module_with_start_runs() {
         pos: 0,
         step: 0,
     };
+    let mut decoder = DecoderStorage::new();
     let mut idx = 0u32;
     assert_eq!(
         unsafe {
@@ -2067,6 +2237,7 @@ fn module_with_start_runs() {
                 Some(cursor_read),
                 &mut cursor as *mut Cursor as *mut c_void,
                 alloc,
+                decoder.as_c(),
                 &mut idx,
             )
         },
@@ -2174,7 +2345,17 @@ fn run_slices_out_of_fuel_then_resumes() {
     let final_status = loop {
         let rs = unsafe { spacewasm_run(store, 64, &mut trap) };
         match rs {
-            spacewasm_run_status_t::SPACEWASM_RUN_OUT_OF_FUEL => saw_out_of_fuel = true,
+            spacewasm_run_status_t::SPACEWASM_RUN_OUT_OF_FUEL => {
+                saw_out_of_fuel = true;
+                let mut pc = 0u32;
+                let mut len = 0usize;
+                assert_eq!(
+                    unsafe { spacewasm_backtrace(store, &mut pc, 1, &mut len) },
+                    status::SPACEWASM_OK,
+                    "backtrace is readable between run slices"
+                );
+                assert_eq!(len, 1);
+            }
             other => break other,
         }
     };
@@ -2257,6 +2438,77 @@ fn reset_abandons_in_progress_call() {
         status::SPACEWASM_ERR_NULL_ARG,
         "null engine"
     );
+
+    unsafe {
+        spacewasm_destroy(store);
+        spacewasm_allocator_destroy(alloc);
+    }
+}
+
+/// A finished or trapped call must not keep the engine's alias of the caller's
+/// table alive: a module loaded afterwards that writes that table through an
+/// element segment needs unique ownership of it, and was rejected with
+/// `TABLE_REF_NOT_UNIQUE` until `spacewasm_reset`.
+#[test]
+fn table_import_after_call() {
+    let _guard = ALLOC_LOCK.lock().unwrap();
+    ensure_global_allocator();
+
+    let store = new_store(1024, 3, 256);
+    let alloc = new_guest_allocator();
+    let a = load_module_onto(alloc, store, c"a", TABLE_OWNER_WASM, 0).expect("load a");
+
+    let mut call0 = 0u32;
+    let mut trap_fn = 0u32;
+    unsafe {
+        assert_eq!(
+            spacewasm_find_export_func(store, a, c"call0".as_ptr(), &mut call0),
+            status::SPACEWASM_OK
+        );
+        assert_eq!(
+            spacewasm_find_export_func(store, a, c"trap".as_ptr(), &mut trap_fn),
+            status::SPACEWASM_OK
+        );
+    }
+
+    // After a finished call.
+    assert_eq!(
+        unsafe { spacewasm_invoke(store, a, call0, core::ptr::null(), 0) },
+        status::SPACEWASM_OK
+    );
+    let mut trap = spacewasm_trap_t::SPACEWASM_TRAP_NONE;
+    assert_eq!(
+        run_to_completion(store, &mut trap),
+        spacewasm_run_status_t::SPACEWASM_RUN_FINISHED
+    );
+    load_module_onto(alloc, store, c"b", TABLE_IMPORTER_WASM, 0).expect("load b after finish");
+
+    // After a trapped call.
+    assert_eq!(
+        unsafe { spacewasm_invoke(store, a, trap_fn, core::ptr::null(), 0) },
+        status::SPACEWASM_OK
+    );
+    assert_eq!(
+        run_to_completion(store, &mut trap),
+        spacewasm_run_status_t::SPACEWASM_RUN_TRAP
+    );
+    load_module_onto(alloc, store, c"c", TABLE_IMPORTER_WASM, 0).expect("load c after trap");
+
+    // The table is still usable from its owner.
+    assert_eq!(
+        unsafe { spacewasm_invoke(store, a, call0, core::ptr::null(), 0) },
+        status::SPACEWASM_OK
+    );
+    assert_eq!(
+        run_to_completion(store, &mut trap),
+        spacewasm_run_status_t::SPACEWASM_RUN_FINISHED
+    );
+    let mut out = i32_val(0);
+    assert_eq!(
+        unsafe { spacewasm_get_result(store, spacewasm_valtype_t::SPACEWASM_I32, &mut out) },
+        status::SPACEWASM_OK
+    );
+    assert_eq!(unsafe { out.u.i32_ }, 11);
 
     unsafe {
         spacewasm_destroy(store);
@@ -2486,6 +2738,162 @@ unsafe extern "C" fn mem_probe(
     let arg = unsafe { (*params).u.i32_ };
     unsafe { *out = i32_val(arg + 1) };
     spacewasm_hostcall_result_t::SPACEWASM_CONTINUE_SOME
+}
+
+/// Host implementation of `env.probe`: pauses, so the embedder can read the
+/// backtrace of the call that reached it.
+unsafe extern "C" fn backtrace_probe(
+    _caller: *mut SpacewasmCaller,
+    _userdata: *mut c_void,
+    _params: *const spacewasm_value_t,
+    _n: usize,
+    _out: *mut spacewasm_value_t,
+) -> spacewasm_hostcall_result_t {
+    spacewasm_hostcall_result_t::SPACEWASM_PAUSE
+}
+
+/// `spacewasm_backtrace` into a buffer of 8, as `(status, entries)`.
+fn backtrace_of(store: *const CEngine) -> (spacewasm_status_t, std::vec::Vec<u32>) {
+    let mut pcs = [u32::MAX; 8];
+    let mut len = 0usize;
+    let st = unsafe { spacewasm_backtrace(store, pcs.as_mut_ptr(), pcs.len(), &mut len) };
+    (st, pcs[..len.min(pcs.len())].to_vec())
+}
+
+#[test]
+fn backtrace_through_host_call_and_trap() {
+    let _guard = ALLOC_LOCK.lock().unwrap();
+    ensure_global_allocator();
+
+    let mut host = core::mem::MaybeUninit::<spacewasm_host_t>::uninit();
+    assert_eq!(
+        unsafe { spacewasm_host_new(1, host.as_mut_ptr()) },
+        status::SPACEWASM_OK
+    );
+    let mut hmod = 0u32;
+    unsafe {
+        assert_eq!(
+            spacewasm_add_host_module(host.as_mut_ptr(), c"env".as_ptr(), 1, 0, &mut hmod),
+            status::SPACEWASM_OK
+        );
+        assert_eq!(
+            spacewasm_add_host_function(
+                host.as_mut_ptr(),
+                hmod,
+                c"probe".as_ptr(),
+                c"".as_ptr(),
+                c"".as_ptr(),
+                Some(backtrace_probe),
+                core::ptr::null_mut(),
+            ),
+            status::SPACEWASM_OK
+        );
+    }
+    let mut store: *mut CEngine = core::ptr::null_mut();
+    assert_eq!(
+        unsafe { spacewasm_new(host.as_mut_ptr(), 1024, 1, opts(256), &mut store) },
+        status::SPACEWASM_OK
+    );
+    let alloc = new_guest_allocator();
+    let idx = load_module_onto(alloc, store, c"main", CHAIN_WASM, 0).expect("load");
+    let mut func = 0u32;
+    assert_eq!(
+        unsafe { spacewasm_find_export_func(store, idx, c"main".as_ptr(), &mut func) },
+        status::SPACEWASM_OK
+    );
+
+    // Idle: no call stack.
+    assert_eq!(backtrace_of(store).0, status::SPACEWASM_ERR_WRONG_STATE);
+
+    // Before running, the backtrace is just the entry PC.
+    let params = [i32_val(1)];
+    assert_eq!(
+        unsafe { spacewasm_invoke(store, idx, func, params.as_ptr(), params.len()) },
+        status::SPACEWASM_OK
+    );
+    let (st, entry) = backtrace_of(store);
+    assert_eq!((st, entry.len()), (status::SPACEWASM_OK, 1));
+
+    // Paused in the host call: g <- f <- main, innermost the `call` to the host.
+    let mut trap = spacewasm_trap_t::SPACEWASM_TRAP_NONE;
+    assert_eq!(
+        run_to_completion(store, &mut trap),
+        spacewasm_run_status_t::SPACEWASM_RUN_PAUSE
+    );
+    let (st, paused) = backtrace_of(store);
+    assert_eq!((st, paused.len()), (status::SPACEWASM_OK, 3), "{paused:x?}");
+    assert!(!paused.contains(&entry[0]));
+
+    // Truncated: only the innermost entry is written, but the full depth is reported.
+    let mut one = [u32::MAX; 2];
+    let mut len = 0usize;
+    assert_eq!(
+        unsafe { spacewasm_backtrace(store, one.as_mut_ptr(), 1, &mut len) },
+        status::SPACEWASM_ERR_CAPACITY
+    );
+    assert_eq!((len, one), (3, [paused[0], u32::MAX]));
+    // Depth only.
+    assert_eq!(
+        unsafe { spacewasm_backtrace(store, core::ptr::null_mut(), 0, &mut len) },
+        status::SPACEWASM_ERR_CAPACITY
+    );
+    assert_eq!(len, 3);
+
+    // Finished: no call stack.
+    assert_eq!(unsafe { spacewasm_resume(store) }, status::SPACEWASM_OK);
+    assert_eq!(
+        run_to_completion(store, &mut trap),
+        spacewasm_run_status_t::SPACEWASM_RUN_FINISHED
+    );
+    assert_eq!(backtrace_of(store).0, status::SPACEWASM_ERR_WRONG_STATE);
+
+    // Trap in g: same callers, innermost the faulting instruction. It survives
+    // the trap's reset to idle.
+    let params = [i32_val(0)];
+    assert_eq!(
+        unsafe { spacewasm_invoke(store, idx, func, params.as_ptr(), params.len()) },
+        status::SPACEWASM_OK
+    );
+    assert_eq!(
+        run_to_completion(store, &mut trap),
+        spacewasm_run_status_t::SPACEWASM_RUN_TRAP
+    );
+    assert_eq!(trap, spacewasm_trap_t::SPACEWASM_TRAP_UNREACHABLE);
+    let (st, trapped) = backtrace_of(store);
+    assert_eq!(
+        (st, trapped.len()),
+        (status::SPACEWASM_OK, 3),
+        "{trapped:x?}"
+    );
+    assert_ne!(
+        trapped[0], paused[0],
+        "faulting instruction, not the host call"
+    );
+    assert_eq!(trapped[1..], paused[1..], "same call sites in f and main");
+
+    // Null arguments.
+    let mut pcs = [0u32; 8];
+    assert_eq!(
+        unsafe { spacewasm_backtrace(core::ptr::null(), pcs.as_mut_ptr(), 8, &mut len) },
+        status::SPACEWASM_ERR_NULL_ARG
+    );
+    assert_eq!(
+        unsafe { spacewasm_backtrace(store, pcs.as_mut_ptr(), 8, core::ptr::null_mut()) },
+        status::SPACEWASM_ERR_NULL_ARG
+    );
+    assert_eq!(
+        unsafe { spacewasm_backtrace(store, core::ptr::null_mut(), 8, &mut len) },
+        status::SPACEWASM_ERR_NULL_ARG
+    );
+
+    // Reset clears it.
+    assert_eq!(unsafe { spacewasm_reset(store) }, status::SPACEWASM_OK);
+    assert_eq!(backtrace_of(store).0, status::SPACEWASM_ERR_WRONG_STATE);
+
+    unsafe {
+        spacewasm_destroy(store);
+        spacewasm_allocator_destroy(alloc);
+    }
 }
 
 #[test]
@@ -2855,6 +3263,7 @@ fn start_function_traps() {
         pos: 0,
         step: 0,
     };
+    let mut decoder = DecoderStorage::new();
     let mut idx = 0u32;
     assert_eq!(
         unsafe {
@@ -2864,6 +3273,7 @@ fn start_function_traps() {
                 Some(cursor_read),
                 &mut cursor as *mut Cursor as *mut c_void,
                 alloc,
+                decoder.as_c(),
                 &mut idx,
             )
         },
@@ -3096,6 +3506,28 @@ fn pause_and_resume_with_value() {
         "should pause"
     );
 
+    // GHSA-hm35-gr3g-4jxx: running again without resuming must not finish the
+    // guest without the host result. It stays paused, on the call.
+    let mut paused_at = [0u32; 1];
+    let mut depth = 0usize;
+    assert_eq!(
+        unsafe { spacewasm_backtrace(store, paused_at.as_mut_ptr(), 1, &mut depth) },
+        status::SPACEWASM_OK
+    );
+    for _ in 0..2 {
+        assert_eq!(
+            unsafe { spacewasm_run(store, 10000, &mut trap) },
+            spacewasm_run_status_t::SPACEWASM_RUN_PAUSE,
+            "run while paused"
+        );
+        let mut pc = [0u32; 1];
+        assert_eq!(
+            unsafe { spacewasm_backtrace(store, pc.as_mut_ptr(), 1, &mut depth) },
+            status::SPACEWASM_OK
+        );
+        assert_eq!(pc, paused_at, "run while paused moved the PC");
+    }
+
     // Resume with value 99
     assert_eq!(
         unsafe { spacewasm_resume_value(store, i32_val(99)) },
@@ -3224,4 +3656,82 @@ fn resume_with_wrong_type_is_retryable() {
         spacewasm_destroy(store);
         spacewasm_allocator_destroy(alloc);
     }
+}
+
+/// Load `ADD_WASM` with `decoder` as the validator scratch storage.
+fn load_with_decoder(decoder: spacewasm_decoder_stack_t) -> spacewasm_status_t {
+    let store = new_store(1024, 1, 256);
+    let alloc = new_guest_allocator();
+    assert!(!alloc.is_null(), "allocator_new");
+
+    let mut cursor = Cursor {
+        data: ADD_WASM,
+        pos: 0,
+        step: 0,
+    };
+    let mut idx = 0u32;
+    let st = unsafe {
+        spacewasm_load_module(
+            store,
+            c"main".as_ptr(),
+            Some(cursor_read),
+            &mut cursor as *mut Cursor as *mut c_void,
+            alloc,
+            decoder,
+            &mut idx,
+        )
+    };
+    unsafe {
+        spacewasm_allocator_destroy(alloc);
+        spacewasm_destroy(store);
+    }
+    st
+}
+
+#[test]
+fn decoder_stack_bounds_are_caller_supplied() {
+    let _guard = ALLOC_LOCK.lock().unwrap();
+    ensure_global_allocator();
+
+    let mut frames = [const { core::mem::MaybeUninit::<spacewasm_control_frame_t>::uninit() }; 1];
+    let mut operands = [const { core::mem::MaybeUninit::<spacewasm_operand_t>::uninit() }; 2];
+    let fits = spacewasm_decoder_stack_t {
+        control_frames: frames.as_mut_ptr().cast(),
+        control_frames_len: 1,
+        operands: operands.as_mut_ptr().cast(),
+        operands_len: 2,
+    };
+    // `add` needs the function frame and two operands: exactly this much.
+    assert_eq!(load_with_decoder(fits), status::SPACEWASM_OK);
+
+    // One operand short is a capacity rejection, not a crash.
+    let short = spacewasm_decoder_stack_t {
+        operands_len: 1,
+        ..fits
+    };
+    assert_eq!(
+        load_with_decoder(short),
+        status::SPACEWASM_ERR_OUT_OF_MEMORY
+    );
+
+    // No room for the implicit function frame.
+    let no_frames = spacewasm_decoder_stack_t {
+        control_frames: core::ptr::null_mut(),
+        control_frames_len: 0,
+        ..fits
+    };
+    assert_eq!(
+        load_with_decoder(no_frames),
+        status::SPACEWASM_ERR_OUT_OF_MEMORY
+    );
+
+    // A null array with a length is a null argument.
+    let null_operands = spacewasm_decoder_stack_t {
+        operands: core::ptr::null_mut(),
+        ..fits
+    };
+    assert_eq!(
+        load_with_decoder(null_operands),
+        status::SPACEWASM_ERR_NULL_ARG
+    );
 }

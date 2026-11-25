@@ -2,7 +2,7 @@ use crate::*;
 use ::core::marker::PhantomData;
 
 #[derive(Default)]
-pub struct Compiler<'a, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize> {
+pub struct Compiler<'a> {
     _marker: PhantomData<&'a ()>,
 }
 
@@ -43,6 +43,15 @@ macro_rules! instruction {
         }
     };
 
+    // Extended opcode, no operands (extended opcode embedded into immediate)
+    ($name:ident, ext, $ext_opcode:expr, $opcode:expr, ($($in_ty:ident)*) -> ($($out_ty:ident)*)) => {
+        fn $name(&self, state: &mut Self::State) -> Result<(), Self::Error> {
+            validate!(state, ($($in_ty)*) -> ($($out_ty)*));
+            state.instr_imm_8($ext_opcode, $opcode)?;
+            Ok(())
+        }
+    };
+
     // An instruction with a MemArg operand
     ($name:ident, $opcode:expr, mem, $ty_align:tt, ($($in_ty:ident)*) -> ($($out_ty:ident)*)) => {
         fn $name(&self, m: MemArg, state: &mut Self::State) -> Result<(), Self::Error> {
@@ -58,9 +67,20 @@ macro_rules! instruction {
     };
 }
 
-impl<'a, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize> WasmVisitor
-    for Compiler<'a, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>
-{
+impl<'a> WasmVisitor for Compiler<'a> {
+    #[cfg(feature = "ir-map")]
+    fn before_instruction(
+        &self,
+        state: &mut Self::State,
+        wasm_offset: usize,
+    ) -> Result<(), Self::Error> {
+        if let Some(callback) = state.options().pc_ir_callback {
+            callback(state.pc(), wasm_offset)
+        }
+
+        Ok(())
+    }
+
     fn drop(&self, state: &mut Self::State) -> Result<(), Self::Error> {
         let ty = state.pop_stack_t()?;
         state.instr_imm_8(
@@ -383,11 +403,9 @@ impl<'a, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize> WasmVisi
     }
 }
 
-impl<'a, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize> BaseVisitor
-    for Compiler<'a, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>
-{
+impl<'a> BaseVisitor for Compiler<'a> {
     type Error = ValidationError;
-    type State = TextBuilder<'a, MAX_CONTROL_FRAMES, MAX_STACK_DEPTH>;
+    type State = TextBuilder<'a>;
 
     fn unreachable(&self, state: &mut Self::State) -> Result<(), Self::Error> {
         state.instr_imm_8(UNREACHABLE, 0)?;
@@ -597,4 +615,19 @@ impl<'a, const MAX_CONTROL_FRAMES: usize, const MAX_STACK_DEPTH: usize> BaseVisi
     instruction!(f64_convert_i64_s, F64_CONVERT_I64_S, (I64) -> (F64));
     instruction!(f64_convert_i64_u, F64_CONVERT_I64_U, (I64) -> (F64));
     instruction!(f64_promote_f32, F64_PROMOTE_F32, (F32) -> (F64));
+
+    instruction!(i32_extend8_s, I32_EXTEND_8_S, (I32) -> (I32));
+    instruction!(i32_extend16_s, I32_EXTEND_16_S, (I32) -> (I32));
+    instruction!(i64_extend8_s, I64_EXTEND_8_S, (I64) -> (I64));
+    instruction!(i64_extend16_s, I64_EXTEND_16_S, (I64) -> (I64));
+    instruction!(i64_extend32_s, I64_EXTEND_32_S, (I64) -> (I64));
+
+    instruction!(i32_trunc_sat_f32_s, ext, EXTENDED_FC, fc::I32_TRUNC_SAT_F32_S as u8, (F32) -> (I32));
+    instruction!(i32_trunc_sat_f32_u, ext, EXTENDED_FC, fc::I32_TRUNC_SAT_F32_U as u8, (F32) -> (I32));
+    instruction!(i32_trunc_sat_f64_s, ext, EXTENDED_FC, fc::I32_TRUNC_SAT_F64_S as u8, (F64) -> (I32));
+    instruction!(i32_trunc_sat_f64_u, ext, EXTENDED_FC, fc::I32_TRUNC_SAT_F64_U as u8, (F64) -> (I32));
+    instruction!(i64_trunc_sat_f32_s, ext, EXTENDED_FC, fc::I64_TRUNC_SAT_F32_S as u8, (F32) -> (I64));
+    instruction!(i64_trunc_sat_f32_u, ext, EXTENDED_FC, fc::I64_TRUNC_SAT_F32_U as u8, (F32) -> (I64));
+    instruction!(i64_trunc_sat_f64_s, ext, EXTENDED_FC, fc::I64_TRUNC_SAT_F64_S as u8, (F64) -> (I64));
+    instruction!(i64_trunc_sat_f64_u, ext, EXTENDED_FC, fc::I64_TRUNC_SAT_F64_U as u8, (F64) -> (I64));
 }

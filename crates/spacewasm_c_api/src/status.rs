@@ -28,6 +28,7 @@ pub enum spacewasm_status_t {
     SPACEWASM_ERR_ALLOC_FAILED = 16,
     SPACEWASM_ERR_OUT_OF_MEMORY = 17,
     SPACEWASM_ERR_PAGE_TOO_SMALL = 18,
+    SPACEWASM_ERR_HEAP_POISONED = 19,
 
     // Memory access errors
     SPACEWASM_ERR_MEM_OUT_OF_BOUNDS = 32,
@@ -92,7 +93,6 @@ pub enum spacewasm_status_t {
     SPACEWASM_ERR_INVALID_MEM_INDEX = 118,
     SPACEWASM_ERR_MEMORY_NOT_DEFINED = 119,
     SPACEWASM_ERR_INVALID_MEM_OFFSET_TYPE = 120,
-    SPACEWASM_ERR_INVALID_NEGATIVE_MEM_OFFSET = 121,
     SPACEWASM_ERR_INVALID_MEM_OFFSET = 122,
     SPACEWASM_ERR_MULTIPLE_MEMORIES = 123,
     SPACEWASM_ERR_MULTIPLE_TABLES = 124,
@@ -224,6 +224,7 @@ pub fn alloc_status(e: AllocError) -> spacewasm_status_t {
         AllocError::AllocationFailed => SPACEWASM_ERR_ALLOC_FAILED,
         AllocError::OutOfMemory => SPACEWASM_ERR_OUT_OF_MEMORY,
         AllocError::PageTooSmall => SPACEWASM_ERR_PAGE_TOO_SMALL,
+        AllocError::HeapPoisoned => SPACEWASM_ERR_HEAP_POISONED,
     }
 }
 
@@ -233,6 +234,7 @@ pub fn memory_status(e: MemoryError) -> spacewasm_status_t {
         MemoryError::OutOfMemory => SPACEWASM_ERR_OUT_OF_MEMORY,
         MemoryError::AllocationFailed => SPACEWASM_ERR_ALLOC_FAILED,
         MemoryError::PageTooSmall => SPACEWASM_ERR_PAGE_TOO_SMALL,
+        MemoryError::HeapPoisoned => SPACEWASM_ERR_HEAP_POISONED,
     }
 }
 
@@ -270,6 +272,7 @@ pub fn validation_status(e: &ValidationError) -> spacewasm_status_t {
         ValidationError::InvalidMaxLimit => SPACEWASM_ERR_INVALID_MAX_LIMIT,
         ValidationError::ExpectedTerminal(_) => SPACEWASM_ERR_EXPECTED_TERMINAL,
         ValidationError::InvalidOpcode(_) => SPACEWASM_ERR_INVALID_OPCODE,
+        ValidationError::InvalidFcOpcode(_) => SPACEWASM_ERR_INVALID_OPCODE,
         ValidationError::MalformedCodeSize => SPACEWASM_ERR_MALFORMED_CODE_SIZE,
         ValidationError::InvalidCodeSectionFunctionCount => {
             SPACEWASM_ERR_INVALID_CODE_SECTION_FUNCTION_COUNT
@@ -299,7 +302,6 @@ pub fn validation_status(e: &ValidationError) -> spacewasm_status_t {
         ValidationError::InvalidMemIndex => SPACEWASM_ERR_INVALID_MEM_INDEX,
         ValidationError::MemoryNotDefined => SPACEWASM_ERR_MEMORY_NOT_DEFINED,
         ValidationError::InvalidMemOffsetType => SPACEWASM_ERR_INVALID_MEM_OFFSET_TYPE,
-        ValidationError::InvalidNegativeMemOffset => SPACEWASM_ERR_INVALID_NEGATIVE_MEM_OFFSET,
         ValidationError::InvalidMemOffset => SPACEWASM_ERR_INVALID_MEM_OFFSET,
         ValidationError::InvalidLabelIndex => SPACEWASM_ERR_INVALID_LABEL_INDEX,
         ValidationError::InvalidElseBlock => SPACEWASM_ERR_INVALID_ELSE_BLOCK,

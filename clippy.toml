@@ -1,0 +1,14 @@
+# Lints for the flight crates (`spacewasm` and `spacewasm_c_api`).
+#
+# `Result::unwrap`/`expect` pass the error value to the panic handler as
+# `&dyn Debug`, which keeps its `Debug` impl and much of `core::fmt` in
+# embedded builds. Flight code must use `spacewasm::UnwrapNoFmt` instead.
+#
+# This list is workspace-wide, but the lint is only denied in the flight
+# crates (see `#![deny(clippy::disallowed_methods)]` in their `lib.rs`).
+disallowed-methods = [
+    { path = "core::result::Result::unwrap", reason = "formats the error with `Debug`; use `spacewasm::UnwrapNoFmt::unwrap_nofmt`" },
+    { path = "core::result::Result::expect", reason = "formats the error with `Debug`; use `spacewasm::UnwrapNoFmt::expect_nofmt`" },
+    { path = "core::result::Result::unwrap_err", reason = "formats the value with `Debug`" },
+    { path = "core::result::Result::expect_err", reason = "formats the value with `Debug`" },
+]

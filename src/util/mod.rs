@@ -22,5 +22,11 @@ pub use rc::*;
 mod static_vec;
 pub(crate) use static_vec::*;
 
+mod slice_stack;
+pub(crate) use slice_stack::*;
+
 mod string;
 pub(crate) use string::*;
+
+mod panic;
+pub use panic::*;

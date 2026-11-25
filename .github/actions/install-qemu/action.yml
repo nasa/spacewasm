@@ -1,0 +1,15 @@
+name: Install QEMU
+description: >
+  Install the QEMU system emulators used by the benchmark job
+
+runs:
+  using: composite
+  steps:
+    - name: Install QEMU
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          qemu-system-arm \
+          qemu-system-riscv \
+          qemu-utils

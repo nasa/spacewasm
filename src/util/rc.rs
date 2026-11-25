@@ -82,56 +82,54 @@ impl<T> Rc<[T]> {
 }
 
 impl<T, A: Allocator + Clone> Rc<[T], A> {
-    /// Creates a new `Rc<[T]>` with uninitialized memory for `len` elements.
-    /// Returns a pointer to the start of the slice data and the Rc.
-    ///
-    /// # Safety
-    /// Caller must initialize all `len` elements before using the Rc.
-    unsafe fn new_uninit_slice_in(
-        alloc: A,
-        len: usize,
-    ) -> Result<(*mut T, Rc<[T], A>), AllocError> {
-        unsafe {
-            let count_layout = core::alloc::Layout::new::<Cell<u32>>();
-            let slice_layout =
-                core::alloc::Layout::array::<T>(len).map_err(|_| AllocError::OutOfMemory)?;
-            let (full_layout, slice_offset) = count_layout
-                .extend(slice_layout)
-                .map_err(|_| AllocError::OutOfMemory)?;
-            let full_layout = full_layout.pad_to_align();
+    /// Creates a new `Rc<[T]>` by calling `init` for each element.
+    pub fn new_slice_in<F>(alloc: A, len: usize, mut init: F) -> Result<Rc<[T], A>, AllocError>
+    where
+        F: FnMut(usize) -> T,
+    {
+        let count_layout = core::alloc::Layout::new::<Cell<u32>>();
+        let slice_layout =
+            core::alloc::Layout::array::<T>(len).map_err(|_| AllocError::OutOfMemory)?;
+        let (full_layout, slice_offset) = count_layout
+            .extend(slice_layout)
+            .map_err(|_| AllocError::OutOfMemory)?;
+        let full_layout = full_layout.pad_to_align();
 
+        unsafe {
             // Allocate new memory for RcInner<[T]>
             let ptr = alloc.alloc(full_layout)?;
 
             // Write the count field (note: count is u32, not usize)
             core::ptr::write(ptr as *mut Cell<u32>, Cell::new(1));
 
-            // Get pointer to the slice data (uninitialized)
-            let slice_ptr = ptr.add(slice_offset) as *mut T;
-
-            // Create the fat pointer for RcInner<[T]>
-            let rc_inner_ptr =
-                core::ptr::slice_from_raw_parts_mut(ptr as *mut (), len) as *mut RcInner<[T]>;
-
-            let rc = Self::from_inner_in(NonNull::new_unchecked(rc_inner_ptr), alloc);
-            Ok((slice_ptr, rc))
-        }
-    }
-
-    /// Creates a new `Rc<[T]>` by calling `init` for each element.
-    pub fn new_slice_in<F>(alloc: A, len: usize, mut init: F) -> Result<Rc<[T], A>, AllocError>
-    where
-        F: FnMut(usize) -> T,
-    {
-        unsafe {
-            let (slice_ptr, rc) = Self::new_uninit_slice_in(alloc, len)?;
+            // Until every element is written the allocation is not a valid
+            // `RcInner<[T]>`, so it is owned by a guard rather than an `Rc`.
+            let mut guard = UninitSliceGuard {
+                ptr,
+                layout: full_layout,
+                slice: ptr.add(slice_offset) as *mut T,
+                init: 0,
+                alloc,
+            };
 
             // Initialize each element
             for i in 0..len {
-                core::ptr::write(slice_ptr.add(i), init(i));
+                core::ptr::write(guard.slice.add(i), init(i));
+                guard.init = i + 1;
             }
 
-            Ok(rc)
+            // Every element is written: hand the allocation over to an `Rc`.
+            let guard = core::mem::ManuallyDrop::new(guard);
+            let alloc = core::ptr::read(&guard.alloc);
+
+            // Create the fat pointer for RcInner<[T]>
+            let rc_inner_ptr =
+                core::ptr::slice_from_raw_parts_mut(guard.ptr as *mut (), len) as *mut RcInner<[T]>;
+
+            Ok(Self::from_inner_in(
+                NonNull::new_unchecked(rc_inner_ptr),
+                alloc,
+            ))
         }
     }
 
@@ -144,21 +142,29 @@ impl<T, A: Allocator + Clone> Rc<[T], A> {
     }
 }
 
+/// Owns a partially initialized slice allocation while [`Rc::new_slice_in`]
+/// fills it. If initialization unwinds, drops the first `init` elements and
+/// frees the allocation.
+struct UninitSliceGuard<T, A: Allocator> {
+    ptr: *mut u8,
+    layout: core::alloc::Layout,
+    slice: *mut T,
+    init: usize,
+    alloc: A,
+}
+
+impl<T, A: Allocator> Drop for UninitSliceGuard<T, A> {
+    fn drop(&mut self) {
+        unsafe {
+            // SAFETY: exactly the first `init` elements have been written.
+            core::ptr::drop_in_place(core::ptr::slice_from_raw_parts_mut(self.slice, self.init));
+            self.alloc.dealloc(self.ptr, self.layout);
+        }
+    }
+}
+
 impl<T: ?Sized, A: Allocator + Clone> Clone for Rc<T, A> {
-    /// Makes a clone of the `Rc` pointer.
-    ///
-    /// This creates another pointer to the same allocation, increasing the
-    /// strong reference count.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use std::rc::Rc;
-    ///
-    /// let five = Rc::new(5);
-    ///
-    /// let _ = Rc::clone(&five);
-    /// ```
+    /// Another pointer to the same allocation; increments the strong count.
     #[inline]
     fn clone(&self) -> Self {
         unsafe {
@@ -174,14 +180,10 @@ impl<T: ?Sized, A: Allocator> Rc<T, A> {
         self.inner().count() == 1
     }
 
-    /// Convert `Rc<T>` into `Rc<U>` using a coercion function (e.g., for trait objects)
-    ///
-    /// The coercion function should convert a reference `&T` to `&U`, typically for
-    /// trait object coercion like `|x| x as &dyn Trait`.
+    /// Convert `Rc<T>` to `Rc<U>` with `coerce`, e.g. `|x| x as &dyn Trait`.
     ///
     /// # Safety
-    /// The caller must ensure that the coercion is valid and that the resulting
-    /// `RcInner<U>` has the same memory layout as `RcInner<T>`.
+    /// `RcInner<U>` must have the same layout as `RcInner<T>`.
     pub unsafe fn into_dyn<U: ?Sized, F>(self, coerce: F) -> Rc<U, A>
     where
         F: FnOnce(&T) -> &U,
@@ -306,7 +308,7 @@ impl<T: ?Sized> RcInner<T> {
         // `strong` is widened to usize, but the backing field is u32, so the
         // wraparound-to-zero we're detecting only happens in the `as u32`
         // truncation above - check the truncated value, not `strong` itself.
-        assert_ne!(strong as u32, 0);
+        assert!(strong as u32 != 0, "Rc strong count overflowed");
     }
 
     #[inline]
@@ -597,6 +599,37 @@ mod tests {
     }
 
     #[test]
+    fn test_rc_slice_init_panic_drops_only_written() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        static DROPPED: AtomicUsize = AtomicUsize::new(0);
+
+        // Dropping an element that was never written would read a garbage
+        // `Box` and fail under Miri, or count more than the written prefix.
+        struct Tracked(std::boxed::Box<usize>);
+        impl Drop for Tracked {
+            fn drop(&mut self) {
+                assert!(*self.0 < 3, "dropped an unwritten element");
+                DROPPED.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+
+        DROPPED.store(0, Ordering::SeqCst);
+
+        let result = std::panic::catch_unwind(|| {
+            Rc::new_slice_in(RustSystemAllocator, 8, |i| {
+                if i == 3 {
+                    panic!("init failed");
+                }
+                Tracked(std::boxed::Box::new(i))
+            })
+        });
+
+        assert!(result.is_err());
+        assert_eq!(DROPPED.load(Ordering::SeqCst), 3);
+    }
+
+    #[test]
     fn test_rc_slice_large() {
         let rc = Rc::new_slice_in(RustSystemAllocator, 1000, |i| i as u32).unwrap();
 
@@ -644,133 +677,142 @@ mod kani_proofs {
     use super::*;
     use crate::test_support::RustSystemAllocator;
 
-    /// Verify reference counting correctness: clone increments, drop decrements
-    /// Counter invariants: never zero while Rc exists, never overflows
+    /// `count >= 1` for all new `Rc`
     #[kani::proof]
-    fn proof_rc_reference_counting() {
+    fn proof_new_satisfies_invariant() {
+        let rc = Rc::new_in(RustSystemAllocator, 42u32);
+        kani::assume(rc.is_ok());
+        let rc = rc.unwrap();
+
+        assert_eq!(rc.inner().count(), 1, "a new Rc must start with count 1");
+    }
+
+    /// Increment only increments by 1
+    #[kani::proof]
+    fn proof_inc_step_invariant() {
         let rc1 = Rc::new_in(RustSystemAllocator, 42u32);
         kani::assume(rc1.is_ok());
         let rc1 = rc1.unwrap();
 
-        // Initial state: count must be 1
-        assert_eq!(rc1.inner().count(), 1, "Initial count must be 1");
+        let count: u32 = kani::any();
+        kani::assume(count >= 1 && count < u32::MAX);
+        rc1.inner().count.set(count);
 
-        // Clone increments count
         let rc2 = rc1.clone();
-        assert_eq!(rc1.inner().count(), 2, "Count must be 2 after first clone");
-        assert_eq!(rc2.inner().count(), 2, "Both Rcs must see same count");
-        assert_eq!(*rc1, 42, "Value must be accessible through rc1");
-        assert_eq!(*rc2, 42, "Value must be accessible through rc2");
 
-        // Second clone increments again
-        let rc3 = rc1.clone();
-        assert_eq!(rc1.inner().count(), 3, "Count must be 3 after second clone");
-        assert_eq!(rc2.inner().count(), 3, "All Rcs must see same count");
-        assert_eq!(rc3.inner().count(), 3, "All Rcs must see same count");
-
-        // Drop rc3 - count decrements
-        drop(rc3);
-        assert_eq!(rc1.inner().count(), 2, "Count must be 2 after dropping rc3");
         assert_eq!(
-            rc2.inner().count(),
-            2,
-            "Both remaining Rcs must see count 2"
+            rc1.inner().count(),
+            (count + 1) as usize,
+            "inc must increase the count by exactly one"
         );
+        assert!(rc1.inner().count() >= 1, "count must stay >= 1 after inc");
 
-        // Drop rc2 - count decrements to 1
-        drop(rc2);
-        assert_eq!(rc1.inner().count(), 1, "Count must be 1 after dropping rc2");
-
-        // rc1 drops at end of scope - count becomes 0, memory deallocated
+        core::mem::forget(rc1);
+        core::mem::forget(rc2);
     }
 
-    /// Verify that Rc properly deallocates when last reference is dropped
-    /// Tests the drop path and ensures no memory leaks
+    /// Incrementing at `u32::MAX` must abort
     #[kani::proof]
-    fn proof_rc_last_drop_deallocates() {
-        let value: u32 = kani::any();
-
-        {
-            let rc1 = Rc::new_in(RustSystemAllocator, value);
-            kani::assume(rc1.is_ok());
-            let rc1 = rc1.unwrap();
-            assert_eq!(rc1.inner().count(), 1, "Count must be 1");
-
-            {
-                let rc2 = rc1.clone();
-                assert_eq!(rc1.inner().count(), 2, "Count must be 2");
-                assert_eq!(*rc2, value, "Value must match");
-                // rc2 drops here
-            }
-
-            assert_eq!(rc1.inner().count(), 1, "Count must be 1 after rc2 dropped");
-            assert_eq!(*rc1, value, "Value still accessible");
-            // rc1 drops here - this triggers deallocation
-        }
-
-        // After this scope, all memory must be freed
-        // Kani will verify no memory leaks
-    }
-
-    /// Verify get_mut returns Some only when unique (count == 1)
-    /// Ensures exclusive access invariant is maintained
-    #[kani::proof]
-    fn proof_rc_get_mut_uniqueness() {
-        let value: u32 = kani::any();
-
-        let rc1 = Rc::new_in(RustSystemAllocator, value);
-        kani::assume(rc1.is_ok());
-        let mut rc1 = rc1.unwrap();
-
-        // When unique, get_mut should succeed
-        assert_eq!(rc1.inner().count(), 1, "Count must be 1");
-        let mut_ref = rc1.get_mut();
-        assert!(mut_ref.is_some(), "get_mut must return Some when unique");
-
-        let new_value: u32 = kani::any();
-        *mut_ref.unwrap() = new_value;
-        assert_eq!(*rc1, new_value, "Mutation must be visible");
-
-        // After clone, get_mut should fail
-        let _rc2 = rc1.clone();
-        assert_eq!(rc1.inner().count(), 2, "Count must be 2");
-        let mut_ref2 = rc1.get_mut();
-        assert!(
-            mut_ref2.is_none(),
-            "get_mut must return None when not unique"
-        );
-
-        // After drop, get_mut should succeed again
-        drop(_rc2);
-        assert_eq!(rc1.inner().count(), 1, "Count must be 1 again");
-        let mut_ref3 = rc1.get_mut();
-        assert!(
-            mut_ref3.is_some(),
-            "get_mut must return Some when unique again"
-        );
-    }
-
-    /// Verify is_unique correctly identifies when Rc has no other references
-    #[kani::proof]
-    fn proof_rc_is_unique() {
-        let rc1 = Rc::new_in(RustSystemAllocator, 100u32);
+    #[kani::should_panic]
+    fn proof_inc_overflow_aborts() {
+        let rc1 = Rc::new_in(RustSystemAllocator, 42u32);
         kani::assume(rc1.is_ok());
         let rc1 = rc1.unwrap();
 
-        // Initially unique
-        assert!(rc1.is_unique(), "Must be unique initially");
-        assert_eq!(rc1.inner().count(), 1, "Count must be 1");
-
-        // After clone, not unique
+        rc1.inner().count.set(u32::MAX);
         let rc2 = rc1.clone();
-        assert!(!rc1.is_unique(), "Must not be unique after clone");
-        assert!(!rc2.is_unique(), "Must not be unique after clone");
-        assert_eq!(rc1.inner().count(), 2, "Count must be 2");
 
-        // After drop, unique again
-        drop(rc2);
-        assert!(rc1.is_unique(), "Must be unique again after drop");
-        assert_eq!(rc1.inner().count(), 1, "Count must be 1 again");
+        core::mem::forget(rc1);
+        core::mem::forget(rc2);
+    }
+
+    /// Decrement only decrements by 1
+    #[kani::proof]
+    fn proof_dec_step_invariant() {
+        let rc1 = Rc::new_in(RustSystemAllocator, 42u32);
+        kani::assume(rc1.is_ok());
+        let rc1 = rc1.unwrap();
+
+        let count: u32 = kani::any();
+        kani::assume(count >= 1);
+        rc1.inner().count.set(count);
+
+        let new_count = rc1.inner().dec();
+
+        assert_eq!(
+            new_count,
+            (count - 1) as usize,
+            "dec must decrease the count by exactly one"
+        );
+        assert_eq!(
+            new_count == 0,
+            count == 1,
+            "dec must reach 0 exactly when the last reference is dropped"
+        );
+
+        core::mem::forget(rc1);
+    }
+
+    /// Access granted only when `count == 1`.
+    #[kani::proof]
+    fn proof_get_mut_step_invariant() {
+        let rc1 = Rc::new_in(RustSystemAllocator, 42u32);
+        kani::assume(rc1.is_ok());
+        let mut rc1 = rc1.unwrap();
+
+        let count: u32 = kani::any();
+        kani::assume(count >= 1);
+        rc1.inner().count.set(count);
+
+        assert_eq!(
+            rc1.is_unique(),
+            count == 1,
+            "is_unique must reflect count == 1"
+        );
+        assert_eq!(
+            rc1.get_mut().is_some(),
+            count == 1,
+            "get_mut must return Some iff count == 1"
+        );
+
+        rc1.inner().count.set(1);
+    }
+
+    /// End-to-end clone/drop
+    #[kani::proof]
+    fn proof_rc_lifecycle_regression() {
+        let backing_alloc = RustSystemAllocator;
+        let initial_bytes = backing_alloc.total_allocated();
+
+        {
+            let rc1 = Rc::new_in(backing_alloc, 42u32).unwrap();
+            assert_eq!(rc1.inner().count(), 1, "Initial count must be 1");
+
+            let rc2 = rc1.clone();
+            assert_eq!(rc1.inner().count(), 2, "Count must be 2 after first clone");
+            assert_eq!(rc2.inner().count(), 2, "Both Rcs must see same count");
+
+            let rc3 = rc1.clone();
+            assert_eq!(rc1.inner().count(), 3, "Count must be 3 after second clone");
+
+            drop(rc3);
+            assert_eq!(rc1.inner().count(), 2, "Count must be 2 after dropping rc3");
+
+            drop(rc2);
+            assert_eq!(rc1.inner().count(), 1, "Count must be 1 after dropping rc2");
+
+            assert!(
+                backing_alloc.total_allocated() > initial_bytes,
+                "allocation must still be live while rc1 holds it"
+            );
+            // rc1 drops here, deallocating.
+        }
+
+        assert_eq!(
+            backing_alloc.total_allocated(),
+            initial_bytes,
+            "the final drop must free the allocation exactly once"
+        );
     }
 
     /// Verify Rc::new_slice allocates correct layout and initializes all elements
@@ -893,51 +935,5 @@ mod kani_proofs {
 
         assert_eq!(ref1, ref2, "All derefs must point to same address");
         assert_eq!(ref2, ref3, "All derefs must point to same address");
-    }
-
-    /// Verify count increments correctly right up to the edge of overflow.
-    /// Directly seeds the private count field near `u32::MAX` instead of
-    /// looping from 1, since reaching that boundary by cloning one at a
-    /// time is infeasible to unwind (it would take billions of iterations).
-    #[kani::proof]
-    fn proof_rc_count_increment_near_max() {
-        let rc1 = Rc::new_in(RustSystemAllocator, 42u32);
-        kani::assume(rc1.is_ok());
-        let rc1 = rc1.unwrap();
-
-        let count: u32 = kani::any();
-        kani::assume(count >= u32::MAX - 2 && count < u32::MAX);
-        rc1.inner().count.set(count);
-
-        let rc2 = rc1.clone();
-        assert_eq!(
-            rc1.inner().count(),
-            (count + 1) as usize,
-            "Count must increment correctly up to the boundary"
-        );
-
-        // Prevent Drop from decrementing a count it never incremented for real
-        core::mem::forget(rc1);
-        core::mem::forget(rc2);
-    }
-
-    /// Verify that incrementing the count past `u32::MAX` aborts instead of
-    /// silently wrapping to 0 (which would cause a premature deallocation
-    /// while other `Rc`s are still alive).
-    #[kani::proof]
-    #[kani::should_panic]
-    fn proof_rc_count_overflow_aborts() {
-        let rc1 = Rc::new_in(RustSystemAllocator, 42u32);
-        kani::assume(rc1.is_ok());
-        let rc1 = rc1.unwrap();
-
-        rc1.inner().count.set(u32::MAX);
-        let rc2 = rc1.clone();
-
-        // The clone above is expected to abort before reaching here. If CBMC
-        // continues past the failed assertion anyway, prevent Drop from
-        // running on the corrupted (wrapped-to-0) count.
-        core::mem::forget(rc1);
-        core::mem::forget(rc2);
     }
 }
